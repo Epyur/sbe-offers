@@ -200,3 +200,71 @@
 .tn-offers-error {
   color: var(--content-system-negative);
 }
+/* Элементы разделов: блоки формы, каталог, КП, доступ. */
+.tn-offers-block-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tn-offers-block-node {
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.tn-offers-node-kind,
+.tn-offers-node-level {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.tn-offers-chip-row {
+  flex-wrap: wrap;
+}
+
+.tn-offers-chip-btn {
+  border: 1px solid var(--border-secondary-enabled);
+  cursor: pointer;
+}
+
+.tn-offers-link {
+  cursor: pointer;
+  color: var(--content-accent-enabled);
+  text-decoration: underline;
+}
+
+.tn-offers-unit {
+  width: 70px;
+  flex: 0 0 auto;
+}
+
+.tn-offers-num-input {
+  width: 100px;
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.tn-offers-form-label {
+  min-width: 180px;
+  color: var(--content-secondary-enabled);
+}
+
+.tn-offers-input.is-required {
+  border-color: var(--content-accent-enabled);
+}
+
+.tn-offers-code {
+  font-family: var(--font-monospace);
+  font-size: 1.2em;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+}
+
+.tn-offers-code-result {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}

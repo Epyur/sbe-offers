@@ -149,6 +149,21 @@ export class OffersService {
     return this.request<{ url: string; expiresAt: string }>('POST', `/offers/${id}/link`);
   }
 
+  /** Скачивание DOCX байтами: сервер отдаёт файл, а не JSON. */
+  async exportDocx(id: number): Promise<Uint8Array> {
+    const token = await this.getToken();
+    const res = await requestUrl({
+      url: `${this.base()}/api/offers/offers/${id}/export?format=docx`,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      throw: false,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      throw new OffersError(this.extractError(res.text, res.status), res.status);
+    }
+    return new Uint8Array(res.arrayBuffer);
+  }
+
   async listAccess(): Promise<AccessEntry[]> {
     const res = await this.request<{ entries: AccessEntry[] }>('GET', '/access/list');
     return res.entries || [];
