@@ -251,21 +251,18 @@ func (s *Server) handleBotDocx(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
 		return
 	}
-	chatID := r.URL.Query().Get("chat_id")
-	var email string
-	if chatID != "" {
-		var ok bool
-		email, ok = s.emailForChat(w, r, chatID)
-		if !ok {
-			return
-		}
+	// chat_id обязателен: без него нельзя проверить, чьё это предложение, и
+	// ручка превратилась бы в выдачу любого DOCX любому держателю секрета.
+	email, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id"))
+	if !ok {
+		return
 	}
 	offer, err := s.loadOffer(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
 		return
 	}
-	if email != "" && !strings.EqualFold(offer.OwnerEmail, email) {
+	if !strings.EqualFold(offer.OwnerEmail, email) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
 		return
 	}
@@ -335,21 +332,17 @@ func (s *Server) handleBotOfferLink(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
 		return
 	}
-	chatID := r.URL.Query().Get("chat_id")
-	email := ""
-	if chatID != "" {
-		var ok bool
-		email, ok = s.emailForChat(w, r, chatID)
-		if !ok {
-			return
-		}
+	// chat_id обязателен — см. handleBotDocx.
+	email, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id"))
+	if !ok {
+		return
 	}
 	offer, err := s.loadOffer(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
 		return
 	}
-	if email != "" && !strings.EqualFold(offer.OwnerEmail, email) {
+	if !strings.EqualFold(offer.OwnerEmail, email) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
 		return
 	}

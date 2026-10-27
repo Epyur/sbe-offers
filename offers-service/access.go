@@ -92,7 +92,7 @@ func (s *Server) latestCode(ctx context.Context, email, chatID string) (botCode,
 	err := s.pool.QueryRow(ctx, `
 SELECT id, email, code, kind, chat_id, expires_at, used_at, attempts
 FROM bot_codes
-WHERE email = $1 AND (chat_id = '' OR chat_id = $2) AND used_at IS NULL
+WHERE email = $1 AND (chat_id = $2 OR ($2 <> '' AND kind = 'admin' AND chat_id = '')) AND used_at IS NULL
 ORDER BY created_at DESC LIMIT 1`, email, chatID).
 		Scan(&c.ID, &c.Email, &c.Code, &c.Kind, &c.ChatID, &c.ExpiresAt, &c.UsedAt, &c.Attempts)
 	return c, err
@@ -256,7 +256,11 @@ func (s *Server) handleBotVerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := verifyCodeLogic(c, code, time.Now()); msg != "" {
 		if msg == "неверный код" || strings.Contains(msg, "попыток") {
-			_, _ = s.pool.Exec(r.Context(), `UPDATE bot_codes SET attempts = attempts + 1 WHERE id = $1`, c.ID)
+			// Инкремент только пока лимит не выбран: иначе чужой перебор
+			// безгранично накручивал бы счётчик.
+			_, _ = s.pool.Exec(r.Context(),
+				`UPDATE bot_codes SET attempts = attempts + 1 WHERE id = $1 AND attempts < $2`,
+				c.ID, maxCodeAttempts)
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
 		return
@@ -277,7 +281,7 @@ ON CONFLICT (chat_id) DO UPDATE SET email = EXCLUDED.email, confirmed_at = now()
 		return
 	}
 	_, err = s.pool.Exec(r.Context(), `
-INSERT INTO offers_access (email, role) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING`,
+INSERT INTO offers_access (email, role) VALUES ($1, $2) ON CONFLICT (email) DO UPDATE SET updated_at = now()`,
 		email, defaultRoleForNewUser())
 	if err != nil {
 		log.Printf("verify code access: %v", err)
@@ -289,8 +293,15 @@ INSERT INTO offers_access (email, role) VALUES ($1, $2) ON CONFLICT (email) DO N
 	writeJSON(w, http.StatusOK, map[string]any{"email": email, "role": role})
 }
 
-// roleForEmail — роль из локальной карты доступа бота.
+// roleForEmail — роль человека в приложении. Источник правды — central
+// auth-service (та же карта, что у плагина через /permissions/me): иначе
+// назначение роли в ЦУП не доходило бы до бота, а отзыв доступа не действовал.
+// Локальная offers_access хранит только факт первого входа и роль по умолчанию
+// (viewer) — используется как запасной вариант, если auth-service недоступен.
 func (s *Server) roleForEmail(ctx context.Context, email string) string {
+	if role, err := s.effectiveRole(ctx, appIDFromEnv(), email); err == nil && role != "" {
+		return role
+	}
 	var role string
 	if err := s.pool.QueryRow(ctx,
 		`SELECT role FROM offers_access WHERE email = $1`, normalizeEmail(email)).Scan(&role); err != nil {

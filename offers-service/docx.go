@@ -250,8 +250,12 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 	sb.WriteString(escapeXML(title))
 	sb.WriteString(`</w:t></w:r></w:p>`)
 
-	number := offer.Number
-	dateLine := "№ " + number + " от " + offer.CreatedAt[:10]
+	dateLine := "№ " + offer.Number
+	// Дата — только если она есть: у предложения, собранного в коде без БД,
+	// createdAt пустой, и срез [:10] уронил бы весь экспорт.
+	if len(offer.CreatedAt) >= 10 {
+		dateLine += " от " + offer.CreatedAt[:10]
+	}
 	sb.WriteString(paragraphXML(dateLine, "right"))
 	if offer.Client.Name != "" {
 		sb.WriteString(paragraphXML("Клиент: "+offer.Client.Name, ""))

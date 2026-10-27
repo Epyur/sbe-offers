@@ -122,7 +122,7 @@ async function showCatalog(chatId: string, query: string, offset: number): Promi
 }
 
 async function startDraft(chatId: string, session: ChatSession): Promise<void> {
-  if (session.role === 'viewer') {
+  if (session.role !== 'editor' && session.role !== 'admin') {
     await sendMessage(chatId, NOT_ALLOWED_TO_EDIT, MAIN_KEYBOARD);
     return;
   }
@@ -239,7 +239,9 @@ async function handleText(chatId: string, text: string): Promise<void> {
       await sendMessage(chatId, `Вы вошли как ${session.email}.`, MAIN_KEYBOARD);
       return;
     }
-    saveSession(chatId, { ...newSession(), step: session.step, email: session.email });
+    // Роль не теряем: иначе после /start сессия становится безролевой и
+    // проходит проверку «не viewer» — то есть сборка КП открылась бы всем.
+    saveSession(chatId, { ...newSession(), step: session.step, email: session.email, role: session.role });
     await sendMessage(chatId, AUTH_PROMPT);
     return;
   }

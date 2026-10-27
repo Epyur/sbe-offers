@@ -131,3 +131,49 @@ func TestRenderBlockContentRejectsBrokenJSON(t *testing.T) {
 		t.Fatalf("в ошибке должно быть название блока, получили %q", err.Error())
 	}
 }
+
+func TestRenderedDocxKeepsTemplateParts(t *testing.T) {
+	form := defaultForm("client")
+	offer := Offer{Number: "001/2026", CreatedAt: "2026-10-26T10:00:00.000Z", OwnerEmail: "m@tn.ru",
+		Items:      []OfferItem{{Name: "X", Unit: "шт", Qty: 1, Price: 10, Sum: 10}},
+		Total:      10,
+		FormValues: map[string]string{}}
+	data, err := renderOfferDocx(form, offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, _ := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	for _, want := range []string{"[Content_Types].xml", "word/document.xml", "word/header1.xml", "word/footer1.xml"} {
+		if !names[want] {
+			t.Fatalf("в результате нет части бланка %q", want)
+		}
+	}
+	var docXML string
+	for _, f := range zr.File {
+		if f.Name == "word/document.xml" {
+			rc, _ := f.Open()
+			raw, _ := io.ReadAll(rc)
+			rc.Close()
+			docXML = string(raw)
+		}
+	}
+	if strings.Contains(docXML, "{{Текст}}") {
+		t.Fatal("заглушка бланка {{Текст}} осталась в документе")
+	}
+	if !strings.Contains(docXML, "sectPr") {
+		t.Fatal("потерян sectPr — размеры страницы бланка не применились")
+	}
+}
+
+func TestRenderOfferDocxWithoutCreatedAt(t *testing.T) {
+	form := defaultForm("client")
+	offer := Offer{Number: "001/2026", CreatedAt: "",
+		Items: []OfferItem{{Name: "X", Unit: "шт", Qty: 1, Price: 10, Sum: 10}}, Total: 10}
+	if _, err := renderOfferDocx(form, offer); err != nil {
+		t.Fatalf("пустая дата создания не должна ронять рендер: %v", err)
+	}
+}

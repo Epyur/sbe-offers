@@ -11,3 +11,8 @@ data.json
 *.p12
 **/rclone.conf
 testdata/out.docx
+# Локальные артефакты go build: бинарь Windows на 19 МБ в репозитории не нужен.
+offers-service/offers
+offers-service/offers.exe
+offers-service/*.test
+offers-bot/dist/

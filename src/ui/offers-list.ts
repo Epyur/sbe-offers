@@ -3,6 +3,12 @@ import type { OffersView } from './offers-view';
 import type { CatalogItem, Offer, OfferItem } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
+/** Округление до копеек без двоичных хвостов — тот же приём, что на сервере
+ * (множитель 1000 снимает артефакт 1.005 * 100 = 100.49999999999999). */
+function roundCents(value: number): number {
+  return Math.round(Math.round(value * 1000) / 10) / 100;
+}
+
 function money(value: number): string {
   const cents = Math.round(value * 100);
   const sign = cents < 0 ? '-' : '';
@@ -82,7 +88,6 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
 
 async function downloadDocx(view: OffersView, offer: Offer): Promise<void> {
   try {
-    const url = `${view.plugin.settings.apiUrl.replace(/\/+$/, '')}/api/offers/offers/${offer.id}/export?format=docx`;
     const fileName = `Коммерческое предложение ${offer.number.replace('/', '-')}.docx`;
     const bytes = await view.plugin.offersService.exportDocx(offer.id);
     const folder = 'yourbase/sbe_offers/exports';
@@ -92,7 +97,6 @@ async function downloadDocx(view: OffersView, offer: Offer): Promise<void> {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     await adapter.writeBinary(path, buffer);
     new Notice(`Файл сохранён: ${path}`);
-    void url;
   } catch (e: unknown) {
     new Notice(`Не удалось получить файл: ${errorMessage(e)}`);
   }
@@ -291,6 +295,6 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
 
 function totalText(items: OfferItem[]): string {
   let total = 0;
-  for (const item of items) total += Math.round(item.qty * item.price * 100) / 100;
-  return `Итого: ${money(Math.round(total * 100) / 100)} ₽`;
+  for (const item of items) total += roundCents(item.qty * item.price);
+  return `Итого: ${money(roundCents(total))} ₽`;
 }
