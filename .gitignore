@@ -16,3 +16,7 @@ offers-service/offers
 offers-service/offers.exe
 offers-service/*.test
 offers-bot/dist/
+
+# Серверные папки живут только на ветке backend: main — чистый релизный срез плагина.
+offers-service/
+offers-bot/

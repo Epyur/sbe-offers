@@ -139,3 +139,25 @@ offers_access   (email PK, role, created_at, updated_at)
 Бакет `sbe-offers` (rclone CLI, remote `firstvds_offers` из env `S3_*`).
 Ключи — `offers/{номер}/{случайный}/.docx`. Ссылки — `rclone link --expire 48h`.
 Не использовать `mailers-backup` (там ротация 7 дней).
+
+## Локальная проверка (2026-10-27)
+
+Стенд без сервера: docker-compose.local.yml — Postgres 16 + offers-service +
+заглушка auth-service (scripts/auth-stub.mjs, роли задаются
+AUTH_STUB_ROLES="owner@tn.ru=superadmin,manager@tn.ru=editor").
+
+`
+docker compose -f docker-compose.local.yml up -d --build
+node scripts/offers_local_e2e.mjs http://127.0.0.1:18080
+docker compose -f docker-compose.local.yml down -v
+`
+
+Прогон покрывает 59 проверок по HTTP: авторизация (401/403/просрочка/чужой
+pp_id), каталог (создание, правка, архив, поиск, валидация, 404 на
+несуществующую карточку), форма (сохранение, валидация, форма по умолчанию
+только когда строки в БД нет), предложения (расчёт до копеек, нумерация,
+видимость по ролям, права на чужое), DOCX (zip, шапка/футер бланка, плейсхолдеры),
+ручки /bot/* под секретом, коды входа, идемпотентность.
+
+**S3 необязателен.** Без S3_ENDPOINT сервис стартует и отдаёт DOCX байтами;
+ручки ссылок отвечают 503 «хранилище не настроено».
