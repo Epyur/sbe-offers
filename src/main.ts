@@ -73,8 +73,8 @@ export default class SbeOffersPlugin extends Plugin {
         appName: this.manifest.name,
         version: this.manifest.version,
         summary:
-          'Появился новый раздел «Коммерческие предложения»: каталог систем и материалов, ' +
-          'настройка формы предложения и сборка самих предложений — прямо в приложении или через Telegram-бота.',
+          'Исправлен доступ к настройкам: администраторы снова видят каталог систем и материалов, ' +
+          'форму предложения и раздел доступа к боту, а менеджеры — сборку предложений.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();

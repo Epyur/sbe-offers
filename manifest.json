@@ -1,7 +1,7 @@
 {
   "id": "sbe-offers",
   "name": "LogicTEAM.КП",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minAppVersion": "1.11.4",
   "description": "Коммерческие предложения: каталог систем и материалов, конфигуратор формы КП, сборка предложений в плагине и через Telegram-бота, генерация DOCX.",
   "author": "Полищук Евгений (polishchuk@tn.ru)",
