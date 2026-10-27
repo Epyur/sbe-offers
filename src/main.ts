@@ -73,8 +73,8 @@ export default class SbeOffersPlugin extends Plugin {
         appName: this.manifest.name,
         version: this.manifest.version,
         summary:
-          'Исправлено несколько ошибок: настроенная форма предложения теперь сохраняется и попадает в документ, ' +
-          'выгрузка в Word больше не зависает при недоступном хранилище, а суммы в боте считаются без расхождений.',
+          'Улучшена надёжность работы: настройки предложения и сохранённые данные теперь не теряются при ' +
+          'перезапуске, выгрузка в Word выполняется быстрее, а суммы всегда отображаются без расхождений.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();
