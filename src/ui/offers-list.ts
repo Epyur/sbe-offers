@@ -2,21 +2,7 @@ import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
 import { canEditOffers, type CatalogItem, type Offer, type OfferItem } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
-
-/** Округление до копеек без двоичных хвостов — тот же приём, что на сервере
- * (множитель 1000 снимает артефакт 1.005 * 100 = 100.49999999999999). */
-function roundCents(value: number): number {
-  return Math.round(Math.round(value * 1000) / 10) / 100;
-}
-
-function money(value: number): string {
-  const cents = Math.round(value * 100);
-  const sign = cents < 0 ? '-' : '';
-  const abs = Math.abs(cents);
-  const whole = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  const frac = (abs % 100).toString().padStart(2, '0');
-  return `${sign}${whole},${frac}`;
-}
+import { formatMoney, itemsTotal } from '../utils/money';
 
 export function renderOffersList(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка предложений…' });
@@ -71,7 +57,7 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
       void openEditor(view, container, offer);
     });
     row.createEl('td', { text: offer.client?.name ?? '—' });
-    row.createEl('td', { cls: 'tn-offers-num', text: `${money(offer.total)} ₽` });
+    row.createEl('td', { cls: 'tn-offers-num', text: `${formatMoney(offer.total)} ₽` });
     const statusCell = row.createEl('td');
     statusCell.createSpan({
       cls: 'tn-offers-chip',
@@ -190,7 +176,7 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   const catalogSelect = itemsCard.createEl('select', { cls: 'tn-offers-input' });
   catalogSelect.createEl('option', { value: '', text: '— выбрать карточку каталога —' });
   for (const card of catalog) {
-    catalogSelect.createEl('option', { value: String(card.id), text: `${card.name} (${money(card.basePrice)} / ${card.unit})` });
+    catalogSelect.createEl('option', { value: String(card.id), text: `${card.name} (${formatMoney(card.basePrice)} / ${card.unit})` });
   }
   const addFromCatalog = itemsCard.createEl('button', { text: '➕ Добавить из каталога', cls: 'tn-btn tn-btn-ghost' });
   addFromCatalog.addEventListener('click', () => {
@@ -294,7 +280,5 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
 }
 
 function totalText(items: OfferItem[]): string {
-  let total = 0;
-  for (const item of items) total += roundCents(item.qty * item.price);
-  return `Итого: ${money(roundCents(total))} ₽`;
+  return `Итого: ${formatMoney(itemsTotal(items))} ₽`;
 }

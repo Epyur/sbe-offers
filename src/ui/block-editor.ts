@@ -79,6 +79,9 @@ function nodeRow(container: HTMLElement, nodes: RichNode[], node: RichNode, inde
       node.text = input.value;
       deps.onChange?.();
     });
+    // Поля вставляются туда, где стоит курсор: админ не должен помнить
+    // синтаксис {{...}} наизусть.
+    renderPlaceholderPicker(deps.placeholders, input);
   }
 
   if (node.type === 'heading') {

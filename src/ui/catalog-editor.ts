@@ -2,6 +2,7 @@ import { Modal, Notice, Setting } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { CatalogItem } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { formatMoney } from '../utils/money';
 
 const KIND_LABELS: Record<string, string> = {
   system: 'Система',
@@ -60,7 +61,7 @@ async function load(view: OffersView, container: HTMLElement, query: string): Pr
     row.createEl('td', { text: item.name });
     row.createEl('td', { text: KIND_LABELS[item.kind] ?? item.kind });
     row.createEl('td', { text: item.unit });
-    row.createEl('td', { cls: 'tn-offers-num', text: formatPrice(item.basePrice) });
+    row.createEl('td', { cls: 'tn-offers-num', text: `${formatMoney(item.basePrice)} ₽` });
     const actionsCell = row.createEl('td');
     if (view.admin) {
       const edit = actionsCell.createEl('button', { text: '✏️', cls: 'tn-btn tn-btn-ghost' });
@@ -81,13 +82,6 @@ async function archive(view: OffersView, item: CatalogItem, after: () => void): 
   } catch (e: unknown) {
     new Notice(`Не удалось убрать карточку: ${errorMessage(e)}`);
   }
-}
-
-function formatPrice(value: number): string {
-  const cents = Math.round(value * 100);
-  const whole = Math.floor(cents / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  const frac = (cents % 100).toString().padStart(2, '0');
-  return `${whole},${frac} ₽`;
 }
 
 class CatalogItemModal extends Modal {

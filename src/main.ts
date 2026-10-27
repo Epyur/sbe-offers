@@ -73,8 +73,8 @@ export default class SbeOffersPlugin extends Plugin {
         appName: this.manifest.name,
         version: this.manifest.version,
         summary:
-          'Исправлен доступ к настройкам: администраторы снова видят каталог систем и материалов, ' +
-          'форму предложения и раздел доступа к боту, а менеджеры — сборку предложений.',
+          'Исправлено несколько ошибок: настроенная форма предложения теперь сохраняется и попадает в документ, ' +
+          'выгрузка в Word больше не зависает при недоступном хранилище, а суммы в боте считаются без расхождений.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();
