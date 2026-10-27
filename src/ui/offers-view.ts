@@ -9,7 +9,7 @@ import { renderOffersList } from './offers-list';
 import { renderCatalogEditor } from './catalog-editor';
 import { renderFormEditor } from './form-editor';
 import { renderAccessEditor } from './access-editor';
-import type { Role } from '../types/offers';
+import { isAdminRole, type Role } from '../types/offers';
 
 export type NavKey = 'offers' | 'catalog' | 'form' | 'access';
 
@@ -43,15 +43,25 @@ export class OffersView extends ItemView {
 
   async onOpen(): Promise<void> {
     const container = this.contentEl;
+    container.empty();
     container.addClass('tn-offers-container');
     this.rootEl = container.createDiv({ cls: 'tn-offers-app' });
 
-    await this.loadRole();
+    // Каркас строится ДО запроса роли: иначе ошибку «Ключ недействителен»
+    // некуда написать — подзаголовка страницы ещё нет.
     this.buildShell();
+    await this.loadRole();
+    this.buildNavForRole();
     this.renderPage();
   }
 
   refresh(): void {
+    this.renderPage();
+  }
+
+  /** Перечитать роль с сервера (кнопка в шапке) — права могли изменить в ЦУП. */
+  async reloadRole(): Promise<void> {
+    await this.loadRole();
     this.renderPage();
   }
 
@@ -65,19 +75,26 @@ export class OffersView extends ItemView {
       this.myRole = '';
       this.myEmail = '';
       if (e instanceof OffersError && e.status !== 0) {
-        this.pageSubEl?.setText(e.message);
+        this.pageSubEl.setText(e.message);
       }
     }
   }
 
   private get isAdmin(): boolean {
-    return this.myRole === 'admin';
+    return isAdminRole(this.myRole);
   }
 
   private buildShell(): void {
     const topbar = this.rootEl.createDiv({ cls: 'tn-offers-topbar' });
     topbar.createDiv({ cls: 'tn-offers-module-title', text: 'LogicTEAM.КП' });
     topbar.createDiv({ cls: 'tn-offers-spacer' });
+    const reloadBtn = topbar.createEl('button', {
+      text: '↻ Обновить права',
+      cls: 'tn-btn tn-btn-ghost',
+    });
+    reloadBtn.addEventListener('click', () => {
+      void this.reloadRole();
+    });
 
     const main = this.rootEl.createDiv({ cls: 'tn-offers-main' });
     const sidebar = main.createDiv({ cls: 'tn-offers-sidebar' });
@@ -96,6 +113,13 @@ export class OffersView extends ItemView {
     this.pageTitleEl = content.createEl('h1', { cls: 'tn-offers-page-title' });
     this.pageSubEl = content.createDiv({ cls: 'tn-offers-page-sub' });
     this.bodyEl = content.createDiv({ cls: 'tn-offers-body' });
+  }
+
+  private buildNavForRole(): void {
+    // Сменилась роль — если текущий раздел теперь недоступен, уходим на «КП».
+    if (!this.isAdmin && (this.key === 'form' || this.key === 'access')) {
+      this.key = 'offers';
+    }
   }
 
   private buildNav(): void {

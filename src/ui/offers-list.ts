@@ -1,6 +1,6 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import type { CatalogItem, Offer, OfferItem } from '../types/offers';
+import { canEditOffers, type CatalogItem, type Offer, type OfferItem } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /** Округление до копеек без двоичных хвостов — тот же приём, что на сервере
@@ -26,7 +26,7 @@ export function renderOffersList(view: OffersView, container: HTMLElement): void
 async function load(view: OffersView, container: HTMLElement): Promise<void> {
   container.empty();
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
-  if (view.role !== 'viewer' && view.role !== '') {
+  if (canEditOffers(view.role)) {
     const create = actions.createEl('button', { text: '➕ Новое предложение', cls: 'tn-btn tn-btn-primary' });
     create.addEventListener('click', () => {
       void openEditor(view, container, null);

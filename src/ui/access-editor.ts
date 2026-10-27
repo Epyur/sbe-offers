@@ -4,6 +4,7 @@ import type { AccessEntry, Role } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 function roleLabel(role: string): string {
+  if (role === 'superadmin') return 'Глобальный администратор';
   if (role === 'admin') return 'Администратор';
   if (role === 'editor') return 'Менеджер';
   if (role === 'viewer') return 'Просмотр';
@@ -11,8 +12,8 @@ function roleLabel(role: string): string {
 }
 
 export async function renderAccessEditor(view: OffersView, container: HTMLElement): Promise<void> {
-  container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка…' });
   container.empty();
+  container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка…' });
 
   const issue = container.createDiv({ cls: 'tn-offers-card' });
   issue.createDiv({ cls: 'tn-offers-muted', text: 'Код входа для бота (действует 7 дней)' });
@@ -50,7 +51,7 @@ export async function renderAccessEditor(view: OffersView, container: HTMLElemen
   const listCard = container.createDiv({ cls: 'tn-offers-card' });
   listCard.createDiv({ cls: 'tn-offers-muted', text: 'Кто вошёл в бота' });
 
-  let entries: AccessEntry[] = [];
+let entries: AccessEntry[] = [];
   try {
     entries = await view.plugin.offersService.listAccess();
   } catch (e: unknown) {
@@ -74,7 +75,13 @@ export async function renderAccessEditor(view: OffersView, container: HTMLElemen
     for (const role of ['viewer', 'editor', 'admin'] as Role[]) {
       select.createEl('option', { value: role, text: roleLabel(role) });
     }
-    select.value = entry.role || 'viewer';
+    // superadmin приходит из центральной таблицы прав, а не из карты бота:
+    // показываем отдельным пунктом только для показа.
+    const entryRole: string = entry.role;
+    if (entryRole === 'superadmin') {
+      select.createEl('option', { value: 'superadmin', text: roleLabel('superadmin') });
+    }
+    select.value = entryRole || 'viewer';
     select.addEventListener('change', () => {
       void (async () => {
         try {

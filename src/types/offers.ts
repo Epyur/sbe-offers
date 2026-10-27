@@ -81,11 +81,25 @@ export interface AccessEntry {
   updatedAt: string;
 }
 
-export type Role = 'viewer' | 'editor' | 'admin';
+export type Role = 'viewer' | 'editor' | 'admin' | 'superadmin';
 
 export const ROLE_RANK: Record<string, number> = {
   '': 0,
   viewer: 1,
   editor: 2,
   admin: 3,
+  // Глобальный админ экосистемы (роль центральной таблицы auth-service) —
+  // выше админа приложения. Без него административные разделы не показывались
+  // владельцу приложения.
+  superadmin: 4,
 };
+
+/** Доступен ли административный уровень (админ приложения или глобальный). */
+export function isAdminRole(role: string): boolean {
+  return role === 'admin' || role === 'superadmin';
+}
+
+/** Может ли роль собирать предложения. */
+export function canEditOffers(role: string): boolean {
+  return role === 'editor' || role === 'admin' || role === 'superadmin';
+}
