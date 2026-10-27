@@ -43,6 +43,42 @@ func (s *Server) handleBotCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": filterCatalogItems(items, r.URL.Query().Get("q"))})
 }
 
+// handleBotListOffers — «Мои КП» в боте: только предложения привязанного email.
+func (s *Server) handleBotListOffers(w http.ResponseWriter, r *http.Request) {
+	email, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id"))
+	if !ok {
+		return
+	}
+	rows, err := s.pool.Query(r.Context(),
+		`SELECT id FROM offers_offer WHERE lower(owner_email) = lower($1) ORDER BY created_at DESC LIMIT 50`, email)
+	if err != nil {
+		log.Printf("bot list offers: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+		return
+	}
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
+			return
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	offers := make([]Offer, 0, len(ids))
+	for _, id := range ids {
+		offer, err := s.loadOffer(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		offers = append(offers, offer)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"offers": offers})
+}
+
 func (s *Server) handleBotCreateOffer(w http.ResponseWriter, r *http.Request) {
 	var req botOfferRequest
 	if err := decodeJSON(w, r, &req, 4<<20); err != nil {

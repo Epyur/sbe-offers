@@ -400,6 +400,19 @@ paths:
         '200':
           description: Карточки
   /api/offers/bot/offers:
+    get:
+      summary: Предложения привязанного к чату человека
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Список предложений
     post:
       summary: Создать черновик предложения из бота
       security:
