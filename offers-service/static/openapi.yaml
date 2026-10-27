@@ -1,0 +1,625 @@
+openapi: 3.0.3
+info:
+  title: offers-service (LogicTEAM.КП)
+  version: 0.1.0
+  description: |
+    Коммерческие предложения: каталог систем и материалов, форма КП,
+    сборка предложений, экспорт DOCX, доступ к Telegram-боту.
+
+    Авторизация плагина — JWT `app_id=offers` (заголовок `Authorization: Bearer`).
+    Ручки `/api/offers/bot/*` вызываются только сервисом бота с заголовком
+    `X-Service-Secret` и JWT не требуют.
+paths:
+  /api/offers/health:
+    get:
+      summary: Состояние сервиса
+      security: []
+      responses:
+        '200':
+          description: Сервис жив
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/offers/docs/:
+    get:
+      summary: Страница Swagger UI
+      security: []
+      responses:
+        '200':
+          description: HTML-страница
+  /api/offers/openapi.yaml:
+    get:
+      summary: Схема OpenAPI
+      security: []
+      responses:
+        '200':
+          description: YAML-схема
+
+  /api/offers/permissions/me:
+    get:
+      summary: Роль текущего пользователя
+      responses:
+        '200':
+          description: Роль и признак доступа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: string
+                  role:
+                    type: string
+                    enum: ['', viewer, editor, admin]
+                  hasAccess:
+                    type: boolean
+  /api/offers/permissions/list:
+    get:
+      summary: Все глобальные роли (admin)
+      responses:
+        '200':
+          description: Список ролей
+  /api/offers/permissions/set:
+    post:
+      summary: Установить роль (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                role:
+                  type: string
+                  enum: ['', viewer, editor, admin]
+      responses:
+        '200':
+          description: Роль сохранена
+
+  /api/offers/catalog:
+    get:
+      summary: Список карточек каталога
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Поиск по названию и описанию
+        - name: archived
+          in: query
+          schema:
+            type: string
+            enum: ['1']
+          description: '1 — включить архивные'
+      responses:
+        '200':
+          description: Карточки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CatalogItem'
+    post:
+      summary: Создать карточку (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogItem'
+      responses:
+        '200':
+          description: Созданная карточка
+  /api/offers/catalog/{id}:
+    put:
+      summary: Изменить карточку (admin)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatalogItem'
+      responses:
+        '200':
+          description: Обновлённая карточка
+    delete:
+      summary: Убрать карточку в архив (admin)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Карточка в архиве
+
+  /api/offers/form:
+    get:
+      summary: Форма КП
+      parameters:
+        - name: mode
+          in: query
+          schema:
+            type: string
+            default: client
+      responses:
+        '200':
+          description: Форма
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferForm'
+    put:
+      summary: Сохранить форму КП (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfferForm'
+      responses:
+        '200':
+          description: Сохранённая форма
+
+  /api/offers/offers:
+    get:
+      summary: Список предложений (видны свои; admin — все)
+      responses:
+        '200':
+          description: Предложения
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Offer'
+    post:
+      summary: Создать предложение (editor)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Offer'
+      responses:
+        '200':
+          description: Созданное предложение
+  /api/offers/offers/{id}:
+    get:
+      summary: Получить предложение
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Предложение
+        '403':
+          description: Нет доступа
+    put:
+      summary: Изменить предложение (editor; своё)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Offer'
+      responses:
+        '200':
+          description: Обновлённое предложение
+    delete:
+      summary: Удалить предложение
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Удалено
+  /api/offers/offers/{id}/export:
+    post:
+      summary: Экспорт в DOCX
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [docx]
+      responses:
+        '200':
+          description: Файл DOCX
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Предложение пустое или форма с дефектом
+  /api/offers/offers/{id}/link:
+    post:
+      summary: Временная ссылка на DOCX (~48 часов)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Ссылка
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  expiresAt:
+                    type: string
+
+  /api/offers/access/list:
+    get:
+      summary: Кто вошёл в бота (admin)
+      responses:
+        '200':
+          description: Список
+  /api/offers/access/role:
+    post:
+      summary: Назначить роль вошедшему (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                role:
+                  type: string
+                  enum: [viewer, editor, admin]
+      responses:
+        '200':
+          description: Роль сохранена
+  /api/offers/access/codes:
+    post:
+      summary: Выдать код входа (admin, действует 7 дней)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+      responses:
+        '200':
+          description: Код
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  expiresAt:
+                    type: string
+
+  /api/offers/bot/request-code:
+    post:
+      summary: Самозапрос кода на e-mail (без JWT, только сервис бота)
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                chat_id:
+                  type: string
+      responses:
+        '200':
+          description: Код отправлен на почту
+        '503':
+          description: Письмо не удалось отправить
+  /api/offers/bot/verify-code:
+    post:
+      summary: Проверить код и привязать chat_id
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, email, code]
+              properties:
+                chat_id:
+                  type: string
+                email:
+                  type: string
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Вход выполнен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: string
+                  role:
+                    type: string
+  /api/offers/bot/identity:
+    get:
+      summary: Кто привязан к chat_id
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Личность
+        '404':
+          description: chat_id не привязан
+  /api/offers/bot/catalog:
+    get:
+      summary: Каталог для бота
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Карточки
+  /api/offers/bot/offers:
+    post:
+      summary: Создать черновик предложения из бота
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, items]
+              properties:
+                chat_id:
+                  type: string
+                client:
+                  $ref: '#/components/schemas/OfferClient'
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OfferItem'
+                formValues:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '200':
+          description: Черновик создан
+  /api/offers/bot/offers/{id}:
+    patch:
+      summary: Изменить состав черновика из бота
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Обновлённый черновик
+  /api/offers/bot/offers/{id}/docx:
+    post:
+      summary: Получить DOCX (base64) для отправки в чат
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Документ в base64
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  docx_base64:
+                    type: string
+                  file_name:
+                    type: string
+  /api/offers/bot/offers/{id}/link:
+    post:
+      summary: Временная ссылка на DOCX для бота
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ссылка
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    serviceSecret:
+      type: apiKey
+      in: header
+      name: X-Service-Secret
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    CatalogItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [system, material, work]
+        name:
+          type: string
+        unit:
+          type: string
+        basePrice:
+          type: number
+        description:
+          type: string
+        sortOrder:
+          type: integer
+        archived:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    Placeholder:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+    Block:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        content:
+          type: array
+          description: Узлы (абзац, заголовок, список, таблица)
+          items:
+            type: object
+        showInClient:
+          type: boolean
+        showInInternal:
+          type: boolean
+    OfferForm:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        mode:
+          type: string
+        title:
+          type: string
+        placeholders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Placeholder'
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Block'
+        requiredFields:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+    OfferClient:
+      type: object
+      properties:
+        name:
+          type: string
+        contact:
+          type: string
+    OfferItem:
+      type: object
+      properties:
+        catalogId:
+          type: integer
+          format: int64
+          nullable: true
+        name:
+          type: string
+        unit:
+          type: string
+        qty:
+          type: number
+        price:
+          type: number
+        sum:
+          type: number
+    Offer:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+          example: 007/2026
+        ownerEmail:
+          type: string
+        client:
+          $ref: '#/components/schemas/OfferClient'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfferItem'
+        formValues:
+          type: object
+          additionalProperties:
+            type: string
+        total:
+          type: number
+        status:
+          type: string
+          enum: [draft, final]
+        docxKey:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+security:
+  - bearerAuth: []
