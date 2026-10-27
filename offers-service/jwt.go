@@ -77,6 +77,10 @@ func appIDFromEnv() string {
 
 func roleRank(role string) int {
 	switch role {
+	case "superadmin":
+		// Глобальный админ (роль из центральной таблицы auth-service) — выше
+		// админа приложения; без этой ветки владелец приложения получал 403.
+		return 4
 	case "admin":
 		return 3
 	case "editor":

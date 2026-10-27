@@ -116,6 +116,12 @@ FROM offers_form WHERE mode = $1`, mode).
 	if err != nil {
 		return defaultForm(mode), nil
 	}
+	// Пустые массивы из БД означают «форма не настроена» — отдаём форму по
+	// умолчанию, иначе администратору пришлось бы с нуля собирать даже базовые
+	// поля клиента, а DOCX выходил бы без единого плейсхолдера.
+	if len(form.Placeholders) == 0 && len(form.Blocks) == 0 {
+		return defaultForm(mode), nil
+	}
 	form.Placeholders = []Placeholder{}
 	form.Blocks = []Block{}
 	form.RequiredFields = []string{}

@@ -3,6 +3,9 @@ package main
 import "testing"
 
 func TestRoleRank(t *testing.T) {
+	if roleRank("superadmin") <= roleRank("admin") {
+		t.Fatalf("superadmin должен быть выше admin")
+	}
 	if roleRank("admin") <= roleRank("editor") {
 		t.Fatalf("admin должен быть выше editor")
 	}
