@@ -148,3 +148,29 @@ node plugins/scripts/check_offers_openapi.mjs
   `1.005` (множитель 1000 вместо 100); `headingXML` отдавал `Heading1` вместо
   `Heading2` для level 3; `validateCatalogItem` отвергал карточку без явного
   типа, хотя пустой тип по умолчанию `system`.
+
+## Выпуск 0.1.0 — 2026-10-27
+
+**Задеплоено на сервер:** offers-db, offers, offers-nl-proxy подняты,
+uth-service пересобран (seed приложения offers). offers-bot **остановлен**:
+нужен токен своего бота из @BotFather в OFFERS_TELEGRAM_BOT_TOKEN (в .env
+пусто). После заполнения — docker compose up -d offers-bot.
+
+**E2E (зелёный):** permissions/me → superadmin; каталог (создание, поиск по
+слову); форма отдаётся с базовыми полями; КП  01/2026 с итогом
+2999.97 (3 × 999.99 без хвостов); DOCX 77 КБ с document.xml,
+header1.xml, ooter1.xml бланка и названием клиента со спецсимволами;
+пустое КП → 400; без токена → 401.
+
+**Выложено на самораздачу:** ackend → main, обе ветки запушены,
+https://epyur.fvds.ru/plugins/sbe-offers/* отдаёт те же три sha256, что
+локальная сборка; запись sbe-offers есть в реестре на сервере и в
+sbe-apstore-registry.
+
+**Найдено и исправлено при деплое:** oleRank не знал superadmin
+(владелец приложения получал 403); ненастроенная форма отдавалась пустой;
+go.mod требовал go 1.25 при образе 1.24.
+
+**Скрипты:** scripts/offers_db_role.sh (роль offers_app),
+scripts/offers_token.sh (JWT для E2E), scripts/offers_e2e.sh,
+scripts/offers_release_check.sh.
