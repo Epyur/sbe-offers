@@ -85,6 +85,35 @@ Offer = { id, number: "007/2026", ownerEmail,
 `POST /access/role` (admin, `{email, role}`); `POST /access/codes` (admin,
 `{email}`) → `{code, expiresAt}` — код действует 7 дней.
 
+## Токен Telegram-бота (2026-10-29)
+
+**Один хозяин токена — `offers-service`, таблица `offers_bot_config`.** Переменной
+окружения `TELEGRAM_BOT_TOKEN` у бота нет и заводить её нельзя: у соседнего
+`portal-embed` второй источник (`.env` рядом с базой) полтора суток отправлял
+уведомления чужим ботом (`web/portal-embed/AGENTS.md`, запись 2026-10-29).
+
+Плагин (раздел «Бот и доступ», только admin):
+
+| Ручка | Тело | Ответ |
+|---|---|---|
+| `GET /bot/config` | — | `{configured, botUsername, updatedBy, updatedAt}` — сам токен наружу не отдаётся никогда |
+| `POST /bot/config` | `{token}` | Проверяет токен `getMe` через бота и только потом пишет; 400 — токен пуст, не по форме (`123456789:AA…`) или отвергнут Telegram; 503 — бот недоступен |
+| `DELETE /bot/config` | — | `{configured: false}` |
+| `GET /bot/status` | — | `{configured, running, botUsername, lastError, checkedAt}`; `running` — отметка бота не старше минуты |
+
+Бот (`X-Service-Secret`):
+
+| Ручка | Тело | Ответ |
+|---|---|---|
+| `GET /bot/token` | — | `{token, username}`; пустая строка — «ещё не настроен» |
+| `POST /bot/heartbeat` | `{last_error}` | `{ok}` — бот отмечается раз в итерацию поллинга |
+
+Проверку токена делает **бот**, а не сервис: с VDS путь в Telegram есть только
+через SOCKS-сайдкар. Ручка бота — `POST /internal/verify` (`X-Service-Secret`,
+только внутренняя docker-сеть). Бот кэширует токен на 15 секунд: смена в
+плагине действует почти сразу и без перезапуска контейнеров. При отказе
+`resolveBotToken()` бросает ошибку — отката на окружение нет намеренно.
+
 ## Ручки бота (X-Service-Secret)
 
 | Ручка | Тело/параметры | Ответ |

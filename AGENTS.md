@@ -1,235 +1,320 @@
-# AGENTS.md — sbe-offers (LogicTEAM.КП)
+# AGENTS.md тАФ sbe-offers (LogicTEAM.╨Ъ╨Я)
 
-Коммерческие предложения: каталог систем и материалов, конфигуратор формы КП,
-сборка предложений в плагине и через **собственного Telegram-бота**, экспорт в
-DOCX. Линейные менеджеры работают в боте, администратор настраивает каталог и
-форму в плагине.
+╨Ъ╨╛╨╝╨╝╨╡╤А╤З╨╡╤Б╨║╨╕╨╡ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╤П: ╨║╨░╤В╨░╨╗╨╛╨│ ╤Б╨╕╤Б╤В╨╡╨╝ ╨╕ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓, ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨░╤В╨╛╤А ╤Д╨╛╤А╨╝╤Л ╨Ъ╨Я,
+╤Б╨▒╨╛╤А╨║╨░ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╨╣ ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡ ╨╕ ╤З╨╡╤А╨╡╨╖ **╤Б╨╛╨▒╤Б╤В╨▓╨╡╨╜╨╜╨╛╨│╨╛ Telegram-╨▒╨╛╤В╨░**, ╤Н╨║╤Б╨┐╨╛╤А╤В ╨▓
+DOCX. ╨Ы╨╕╨╜╨╡╨╣╨╜╤Л╨╡ ╨╝╨╡╨╜╨╡╨┤╨╢╨╡╤А╤Л ╤А╨░╨▒╨╛╤В╨░╤О╤В ╨▓ ╨▒╨╛╤В╨╡, ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А ╨╜╨░╤Б╤В╤А╨░╨╕╨▓╨░╨╡╤В ╨║╨░╤В╨░╨╗╨╛╨│ ╨╕
+╤Д╨╛╤А╨╝╤Г ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡.
 
-**Бэк — в этой же папке**: `offers-service/` (Go, API) и `offers-bot/` (Node,
-Telegram long polling) — на ветке `backend` (main — чистый релизный срез кода
-плагина, без бэка; см. правило «Бэки в папках плагинов» в корневом
+**╨С╤Н╨║ тАФ ╨▓ ╤Н╤В╨╛╨╣ ╨╢╨╡ ╨┐╨░╨┐╨║╨╡**: `offers-service/` (Go, API) ╨╕ `offers-bot/` (Node,
+Telegram long polling) тАФ ╨╜╨░ ╨▓╨╡╤В╨║╨╡ `backend` (main тАФ ╤З╨╕╤Б╤В╤Л╨╣ ╤А╨╡╨╗╨╕╨╖╨╜╤Л╨╣ ╤Б╤А╨╡╨╖ ╨║╨╛╨┤╨░
+╨┐╨╗╨░╨│╨╕╨╜╨░, ╨▒╨╡╨╖ ╨▒╤Н╨║╨░; ╤Б╨╝. ╨┐╤А╨░╨▓╨╕╨╗╨╛ ┬л╨С╤Н╨║╨╕ ╨▓ ╨┐╨░╨┐╨║╨░╤Е ╨┐╨╗╨░╨│╨╕╨╜╨╛╨▓┬╗ ╨▓ ╨║╨╛╤А╨╜╨╡╨▓╨╛╨╝
 `plugins/AGENTS.md`).
 
-Дизайн — `docs/superpowers/specs/2026-10-26-sbe-offers-design.md`,
-план — `docs/superpowers/plans/2026-10-26-sbe-offers.md`.
+╨Ф╨╕╨╖╨░╨╣╨╜ тАФ `docs/superpowers/specs/2026-10-26-sbe-offers-design.md`,
+╨┐╨╗╨░╨╜ тАФ `docs/superpowers/plans/2026-10-26-sbe-offers.md`.
 
-## Назначение (текущее)
+## ╨Э╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╨╡ (╤В╨╡╨║╤Г╤Й╨╡╨╡)
 
-- **Каталог** (`offers_catalog`) — карточки систем/материалов/работ: наименование,
-  тип, единица, базовая цена, описание. Ведёт только admin; архивируются, а не
-  удаляются (на них ссылаются старые предложения).
-- **Форма КП** (`offers_form`) — плейсхолдеры + блоки документа (абзац,
-  заголовок, список, таблица) + обязательные поля. Редактор — свой блок-редактор
-  по образцу конфигуратора протоколов ЛИМС.
-- **КП** (`offers_offer`) — снимок: позиции с ценой на момент добавления,
-  значения формы, итог, статус `draft`/`final`, номер `{NNN}/{yyyy}` сквозной по
-  году. Видимость: admin видит все, остальные — свои.
-- **Telegram-бот** — вход по e-mail и коду (самозапрос на почту либо код от
-  администратора), сборка КП из каталога и свободными строками, DOCX файлом в
-  чат или ссылкой по кнопке.
-- **Точка входа** — магазин: «Установленные → Открыть» (`publishService('sbe-offers', {open})`).
+- **╨Ъ╨░╤В╨░╨╗╨╛╨│** (`offers_catalog`) тАФ ╨║╨░╤А╤В╨╛╤З╨║╨╕ ╤Б╨╕╤Б╤В╨╡╨╝/╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓/╤А╨░╨▒╨╛╤В: ╨╜╨░╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╨╕╨╡,
+  ╤В╨╕╨┐, ╨╡╨┤╨╕╨╜╨╕╤Ж╨░, ╨▒╨░╨╖╨╛╨▓╨░╤П ╤Ж╨╡╨╜╨░, ╨╛╨┐╨╕╤Б╨░╨╜╨╕╨╡. ╨Т╨╡╨┤╤С╤В ╤В╨╛╨╗╤М╨║╨╛ admin; ╨░╤А╤Е╨╕╨▓╨╕╤А╤Г╤О╤В╤Б╤П, ╨░ ╨╜╨╡
+  ╤Г╨┤╨░╨╗╤П╤О╤В╤Б╤П (╨╜╨░ ╨╜╨╕╤Е ╤Б╤Б╤Л╨╗╨░╤О╤В╤Б╤П ╤Б╤В╨░╤А╤Л╨╡ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╤П).
+- **╨д╨╛╤А╨╝╨░ ╨Ъ╨Я** (`offers_form`) тАФ ╨┐╨╗╨╡╨╣╤Б╤Е╨╛╨╗╨┤╨╡╤А╤Л + ╨▒╨╗╨╛╨║╨╕ ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░ (╨░╨▒╨╖╨░╤Ж,
+  ╨╖╨░╨│╨╛╨╗╨╛╨▓╨╛╨║, ╤Б╨┐╨╕╤Б╨╛╨║, ╤В╨░╨▒╨╗╨╕╤Ж╨░) + ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨┐╨╛╨╗╤П. ╨а╨╡╨┤╨░╨║╤В╨╛╤А тАФ ╤Б╨▓╨╛╨╣ ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А
+  ╨┐╨╛ ╨╛╨▒╤А╨░╨╖╤Ж╤Г ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨░╤В╨╛╤А╨░ ╨┐╤А╨╛╤В╨╛╨║╨╛╨╗╨╛╨▓ ╨Ы╨Ш╨Ь╨б.
+- **╨Ъ╨Я** (`offers_offer`) тАФ ╤Б╨╜╨╕╨╝╨╛╨║: ╨┐╨╛╨╖╨╕╤Ж╨╕╨╕ ╤Б ╤Ж╨╡╨╜╨╛╨╣ ╨╜╨░ ╨╝╨╛╨╝╨╡╨╜╤В ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜╨╕╤П,
+  ╨╖╨╜╨░╤З╨╡╨╜╨╕╤П ╤Д╨╛╤А╨╝╤Л, ╨╕╤В╨╛╨│, ╤Б╤В╨░╤В╤Г╤Б `draft`/`final`, ╨╜╨╛╨╝╨╡╤А `{NNN}/{yyyy}` ╤Б╨║╨▓╨╛╨╖╨╜╨╛╨╣ ╨┐╨╛
+  ╨│╨╛╨┤╤Г. ╨Т╨╕╨┤╨╕╨╝╨╛╤Б╤В╤М: admin ╨▓╨╕╨┤╨╕╤В ╨▓╤Б╨╡, ╨╛╤Б╤В╨░╨╗╤М╨╜╤Л╨╡ тАФ ╤Б╨▓╨╛╨╕.
+- **Telegram-╨▒╨╛╤В** тАФ ╨▓╤Е╨╛╨┤ ╨┐╨╛ e-mail ╨╕ ╨║╨╛╨┤╤Г (╤Б╨░╨╝╨╛╨╖╨░╨┐╤А╨╛╤Б ╨╜╨░ ╨┐╨╛╤З╤В╤Г ╨╗╨╕╨▒╨╛ ╨║╨╛╨┤ ╨╛╤В
+  ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А╨░), ╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я ╨╕╨╖ ╨║╨░╤В╨░╨╗╨╛╨│╨░ ╨╕ ╤Б╨▓╨╛╨▒╨╛╨┤╨╜╤Л╨╝╨╕ ╤Б╤В╤А╨╛╨║╨░╨╝╨╕, DOCX ╤Д╨░╨╣╨╗╨╛╨╝ ╨▓
+  ╤З╨░╤В ╨╕╨╗╨╕ ╤Б╤Б╤Л╨╗╨║╨╛╨╣ ╨┐╨╛ ╨║╨╜╨╛╨┐╨║╨╡.
+- **╨в╨╛╤З╨║╨░ ╨▓╤Е╨╛╨┤╨░** тАФ ╨╝╨░╨│╨░╨╖╨╕╨╜: ┬л╨г╤Б╤В╨░╨╜╨╛╨▓╨╗╨╡╨╜╨╜╤Л╨╡ тЖТ ╨Ю╤В╨║╤А╤Л╤В╤М┬╗ (`publishService('sbe-offers', {open})`).
 
-## Архитектура
+## ╨Р╤А╤Е╨╕╤В╨╡╨║╤В╤Г╤А╨░
 
 ```
-sbe-offers (плагин)  ──JWT app_id=offers──►  offers-service (Go)  ──►  Postgres offers
-                                                    │                    └─► S3 sbe-offers (DOCX)
-offers-bot (Node)  ──X-Service-Secret──►  offers-service
-        └── long polling через SOCKS5-сайдкар offers-nl-proxy (nl_egress_proxy)
+sbe-offers (╨┐╨╗╨░╨│╨╕╨╜)  тФАтФАJWT app_id=offersтФАтФАтЦ║  offers-service (Go)  тФАтФАтЦ║  Postgres offers
+                                                    тФВ                    тФФтФАтЦ║ S3 sbe-offers (DOCX)
+offers-bot (Node)  тФАтФАX-Service-SecretтФАтФАтЦ║  offers-service
+        тФФтФАтФА long polling ╤З╨╡╤А╨╡╨╖ SOCKS5-╤Б╨░╨╣╨┤╨║╨░╤А offers-nl-proxy (nl_egress_proxy)
 ```
 
-- Личность — общий `auth-service`: email; роли `viewer` < `editor` < `admin` —
-  из центральной таблицы прав (см. `authperms.go`).
-- **Коды входа, привязки chat_id и роли бота живут в `offers-service`**
-  (`bot_codes`, `offers_bot_link`, `offers_access`) — auth-service не правится.
-- Telegram с VDS в РФ недоступен напрямую (диапазоны AS62041 заблокированы
-  хостером) — поллер ходит через SOCKS5, как `portal-embed`.
+- ╨Ы╨╕╤З╨╜╨╛╤Б╤В╤М тАФ ╨╛╨▒╤Й╨╕╨╣ `auth-service`: email; ╤А╨╛╨╗╨╕ `viewer` < `editor` < `admin` тАФ
+  ╨╕╨╖ ╤Ж╨╡╨╜╤В╤А╨░╨╗╤М╨╜╨╛╨╣ ╤В╨░╨▒╨╗╨╕╤Ж╤Л ╨┐╤А╨░╨▓ (╤Б╨╝. `authperms.go`).
+- **╨Ъ╨╛╨┤╤Л ╨▓╤Е╨╛╨┤╨░, ╨┐╤А╨╕╨▓╤П╨╖╨║╨╕ chat_id ╨╕ ╤А╨╛╨╗╨╕ ╨▒╨╛╤В╨░ ╨╢╨╕╨▓╤Г╤В ╨▓ `offers-service`**
+  (`bot_codes`, `offers_bot_link`, `offers_access`) тАФ auth-service ╨╜╨╡ ╨┐╤А╨░╨▓╨╕╤В╤Б╤П.
+- Telegram ╤Б VDS ╨▓ ╨а╨д ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╡╨╜ ╨╜╨░╨┐╤А╤П╨╝╤Г╤О (╨┤╨╕╨░╨┐╨░╨╖╨╛╨╜╤Л AS62041 ╨╖╨░╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╨╜╤Л
+  ╤Е╨╛╤Б╤В╨╡╤А╨╛╨╝) тАФ ╨┐╨╛╨╗╨╗╨╡╤А ╤Е╨╛╨┤╨╕╤В ╤З╨╡╤А╨╡╨╖ SOCKS5, ╨║╨░╨║ `portal-embed`.
 
-## Структура плагина
+## ╨б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╨┐╨╗╨░╨│╨╕╨╜╨░
 
-| Файл | Что это |
+| ╨д╨░╨╣╨╗ | ╨з╤В╨╛ ╤Н╤В╨╛ |
 |---|---|
-| `src/main.ts` | `SbeOffersPlugin`: настройки, view, publishService, новость в ЦУП |
+| `src/main.ts` | `SbeOffersPlugin`: ╨╜╨░╤Б╤В╤А╨╛╨╣╨║╨╕, view, publishService, ╨╜╨╛╨▓╨╛╤Б╤В╤М ╨▓ ╨ж╨г╨Я |
 | `src/constants.ts` | `OFFERS_VIEW_TYPE`, `OFFERS_APP_ID`, `OFFERS_PLUGIN_ID` |
 | `src/types/offers.ts` | `CatalogItem`, `OfferForm`, `Offer`, `OfferItem`, `AccessEntry`, `Role` |
 | `src/types/settings.ts` | `OffersSettings { apiUrl, lastAnnouncedVersion }` |
-| `src/services/offers.service.ts` | HTTP к `/api/offers/*`, `OffersError`, `exportDocx` |
-| `src/ui/offers-view.ts` | фасад: топбар + сайдбар + контент |
-| `src/ui/offers-list.ts` | «🧾 КП»: список, карточка, редактор состава, DOCX, ссылка |
-| `src/ui/catalog-editor.ts` | «🗂 Каталог»: таблица, модалка карточки |
-| `src/ui/form-editor.ts` | «⚙️ Форма КП»: поля, блоки, обязательные |
-| `src/ui/block-editor.ts` | блок-редактор с чипами `{{поле}}` |
-| `src/ui/access-editor.ts` | «👤 Бот и доступ»: коды, роли вошедших |
-| `src/ui/help.ts` | текст справки (вшит в плагин) |
-| `src/styles.css` | классы `tn-offers-*` |
+| `src/services/offers.service.ts` | HTTP ╨║ `/api/offers/*`, `OffersError`, `exportDocx` |
+| `src/ui/offers-view.ts` | ╤Д╨░╤Б╨░╨┤: ╤В╨╛╨┐╨▒╨░╤А + ╤Б╨░╨╣╨┤╨▒╨░╤А + ╨║╨╛╨╜╤В╨╡╨╜╤В |
+| `src/ui/offers-list.ts` | ┬лЁЯз╛ ╨Ъ╨Я┬╗: ╤Б╨┐╨╕╤Б╨╛╨║, ╨║╨░╤А╤В╨╛╤З╨║╨░, ╤А╨╡╨┤╨░╨║╤В╨╛╤А ╤Б╨╛╤Б╤В╨░╨▓╨░, DOCX, ╤Б╤Б╤Л╨╗╨║╨░ |
+| `src/ui/catalog-editor.ts` | ┬лЁЯЧВ ╨Ъ╨░╤В╨░╨╗╨╛╨│┬╗: ╤В╨░╨▒╨╗╨╕╤Ж╨░, ╨╝╨╛╨┤╨░╨╗╨║╨░ ╨║╨░╤А╤В╨╛╤З╨║╨╕ |
+| `src/ui/form-editor.ts` | ┬лтЪЩя╕П ╨д╨╛╤А╨╝╨░ ╨Ъ╨Я┬╗: ╨┐╨╛╨╗╤П, ╨▒╨╗╨╛╨║╨╕, ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ |
+| `src/ui/block-editor.ts` | ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А ╤Б ╤З╨╕╨┐╨░╨╝╨╕ `{{╨┐╨╛╨╗╨╡}}` |
+| `src/ui/access-editor.ts` | ┬лЁЯСд ╨С╨╛╤В ╨╕ ╨┤╨╛╤Б╤В╤Г╨┐┬╗: ╨║╨╛╨┤╤Л, ╤А╨╛╨╗╨╕ ╨▓╨╛╤И╨╡╨┤╤И╨╕╤Е |
+| `src/ui/help.ts` | ╤В╨╡╨║╤Б╤В ╤Б╨┐╤А╨░╨▓╨║╨╕ (╨▓╤И╨╕╤В ╨▓ ╨┐╨╗╨░╨│╨╕╨╜) |
+| `src/styles.css` | ╨║╨╗╨░╤Б╤Б╤Л `tn-offers-*` |
 
-## Структура сервера
+## ╨б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╤Б╨╡╤А╨▓╨╡╤А╨░
 
-`offers-service/`: `main.go` (роуты, миграции), `jwt.go`, `register.go`,
-`authperms.go` (копия из других сервисов — править сразу во всех),
+`offers-service/`: `main.go` (╤А╨╛╤Г╤В╤Л, ╨╝╨╕╨│╤А╨░╤Ж╨╕╨╕), `jwt.go`, `register.go`,
+`authperms.go` (╨║╨╛╨┐╨╕╤П ╨╕╨╖ ╨┤╤А╤Г╨│╨╕╤Е ╤Б╨╡╤А╨▓╨╕╤Б╨╛╨▓ тАФ ╨┐╤А╨░╨▓╨╕╤В╤М ╤Б╤А╨░╨╖╤Г ╨▓╨╛ ╨▓╤Б╨╡╤Е),
 `permissions.go`, `catalog.go`, `form.go`, `offers.go`, `docx.go`,
 `access.go`, `botapi.go`, `s3.go`, `email.go`, `static.go`, `template.go`,
 `static/openapi.yaml`.
 
-`offers-bot/`: `src/main.ts`, `src/poller.ts` (транспорт и маршрутизация),
-`src/telegram.ts` (Bot API через SOCKS), `src/session.ts` (машина состояний
-входа), `src/flow.ts` (сборка КП), `src/api.ts`, `Dockerfile`.
+`offers-bot/`: `src/main.ts`, `src/poller.ts` (╤В╤А╨░╨╜╤Б╨┐╨╛╤А╤В ╨╕ ╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╤П),
+`src/telegram.ts` (Bot API ╤З╨╡╤А╨╡╨╖ SOCKS), `src/session.ts` (╨╝╨░╤И╨╕╨╜╨░ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣
+╨▓╤Е╨╛╨┤╨░), `src/flow.ts` (╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я), `src/api.ts`, `Dockerfile`.
 
-## Настройки (data.json)
+## ╨Э╨░╤Б╤В╤А╨╛╨╣╨║╨╕ (data.json)
 
 `apiUrl` (default `https://epyur.fvds.ru`), `lastAnnouncedVersion`.
 
-## Переменные окружения (сервер)
+## ╨Я╨╡╤А╨╡╨╝╨╡╨╜╨╜╤Л╨╡ ╨╛╨║╤А╤Г╨╢╨╡╨╜╨╕╤П (╤Б╨╡╤А╨▓╨╡╤А)
 
 `DATABASE_URL`, `PORT`, `JWT_SECRET`, `OFFERS_APP_ID` (`offers`),
 `OFFERS_APP_NAME`, `OFFERS_OWNER_EMAIL`, `OFFERS_SERVICE_SECRET`,
 `OFFERS_BOT_SECRET`, `AUTH_SERVICE_URL`, `S3_ENDPOINT`/`S3_ACCESS_KEY`/
 `S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`.
-Бот: `TELEGRAM_BOT_TOKEN` (свой, из @BotFather), `TELEGRAM_SOCKS_PROXY`,
+╨С╨╛╤В: `TELEGRAM_BOT_TOKEN` (╤Б╨▓╨╛╨╣, ╨╕╨╖ @BotFather), `TELEGRAM_SOCKS_PROXY`,
 `OFFERS_API_URL`, `OFFERS_BOT_SECRET`, `OFFERS_BOT_RATE_LIMIT`.
 
-## Проверки
+## ╨Я╤А╨╛╨▓╨╡╤А╨║╨╕
 
 ```
-npx tsc --noEmit && npm run build          # плагин
+npx tsc --noEmit && npm run build          # ╨┐╨╗╨░╨│╨╕╨╜
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd offers-bot && npm run typecheck && npm run build && node --test "src/flow.test.ts"
 node plugins/scripts/check_offers_openapi.mjs
 ```
 
-## Правила
+## ╨Я╤А╨░╨▓╨╕╨╗╨░
 
 - `catch(e: unknown)` + `errorMessage()`; `requestUrl()`; `window.setTimeout()`;
-  без `any`; UI на русском; классы `tn-offers-*` на семантических токенах.
-- Коммиты/пуши — только по явной команде пользователя.
-- **«Фиксируй» = поднять версию (+0.0.1 в `manifest.json` и `package.json`),
-  обновить документацию, подготовить сообщение коммита и СПРОСИТЬ подтверждение
-  commit/push.** Не поднимать версию при коммите чисто бэковых изменений.
-- Go — только permissive-лицензии (MIT/BSD/Apache-2.0).
-- `.gitattributes` с `-text` на `manifest.json`/`main.js`/`styles.css` — есть.
-- Правка данных в БД обязана двигать `updated_at`.
+  ╨▒╨╡╨╖ `any`; UI ╨╜╨░ ╤А╤Г╤Б╤Б╨║╨╛╨╝; ╨║╨╗╨░╤Б╤Б╤Л `tn-offers-*` ╨╜╨░ ╤Б╨╡╨╝╨░╨╜╤В╨╕╤З╨╡╤Б╨║╨╕╤Е ╤В╨╛╨║╨╡╨╜╨░╤Е.
+- ╨Ъ╨╛╨╝╨╝╨╕╤В╤Л/╨┐╤Г╤И╨╕ тАФ ╤В╨╛╨╗╤М╨║╨╛ ╨┐╨╛ ╤П╨▓╨╜╨╛╨╣ ╨║╨╛╨╝╨░╨╜╨┤╨╡ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П.
+- **┬л╨д╨╕╨║╤Б╨╕╤А╤Г╨╣┬╗ = ╨┐╨╛╨┤╨╜╤П╤В╤М ╨▓╨╡╤А╤Б╨╕╤О (+0.0.1 ╨▓ `manifest.json` ╨╕ `package.json`),
+  ╨╛╨▒╨╜╨╛╨▓╨╕╤В╤М ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Ж╨╕╤О, ╨┐╨╛╨┤╨│╨╛╤В╨╛╨▓╨╕╤В╤М ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨║╨╛╨╝╨╝╨╕╤В╨░ ╨╕ ╨б╨Я╨а╨Ю╨б╨Ш╨в╨м ╨┐╨╛╨┤╤В╨▓╨╡╤А╨╢╨┤╨╡╨╜╨╕╨╡
+  commit/push.** ╨Э╨╡ ╨┐╨╛╨┤╨╜╨╕╨╝╨░╤В╤М ╨▓╨╡╤А╤Б╨╕╤О ╨┐╤А╨╕ ╨║╨╛╨╝╨╝╨╕╤В╨╡ ╤З╨╕╤Б╤В╨╛ ╨▒╤Н╨║╨╛╨▓╤Л╤Е ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╨╣.
+- Go тАФ ╤В╨╛╨╗╤М╨║╨╛ permissive-╨╗╨╕╤Ж╨╡╨╜╨╖╨╕╨╕ (MIT/BSD/Apache-2.0).
+- `.gitattributes` ╤Б `-text` ╨╜╨░ `manifest.json`/`main.js`/`styles.css` тАФ ╨╡╤Б╤В╤М.
+- ╨Я╤А╨░╨▓╨║╨░ ╨┤╨░╨╜╨╜╤Л╤Е ╨▓ ╨С╨Ф ╨╛╨▒╤П╨╖╨░╨╜╨░ ╨┤╨▓╨╕╨│╨░╤В╤М `updated_at`.
 
-## История работ
+## ╨Ш╤Б╤В╨╛╤А╨╕╤П ╤А╨░╨▒╨╛╤В
 
-### 2026-10-26 — v0.1.0 (создание)
+### 2026-10-26 тАФ v0.1.0 (╤Б╨╛╨╖╨┤╨░╨╜╨╕╨╡)
 
-Полный цикл: brainstorming → дизайн-спека → план → реализация. Решения
-пользователя, зафиксированные в спеке: отдельный плагин со своим сервером и
-своим ботом; форма КП конфигурируется администратором по образцу ЛИМС; карточки
-систем и материалов заводит администратор; вход в бота по e-mail и коду
-(самозапрос открыт всем, код также может выдать администратор); экспорт
-**только DOCX** (PDF не делаем); бот отдаёт файл в чат, ссылкой — по кнопке;
-согласования нет, `draft` → `final`.
+╨Я╨╛╨╗╨╜╤Л╨╣ ╤Ж╨╕╨║╨╗: brainstorming тЖТ ╨┤╨╕╨╖╨░╨╣╨╜-╤Б╨┐╨╡╨║╨░ тЖТ ╨┐╨╗╨░╨╜ тЖТ ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П. ╨а╨╡╤И╨╡╨╜╨╕╤П
+╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П, ╨╖╨░╤Д╨╕╨║╤Б╨╕╤А╨╛╨▓╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Б╨┐╨╡╨║╨╡: ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ ╨┐╨╗╨░╨│╨╕╨╜ ╤Б╨╛ ╤Б╨▓╨╛╨╕╨╝ ╤Б╨╡╤А╨▓╨╡╤А╨╛╨╝ ╨╕
+╤Б╨▓╨╛╨╕╨╝ ╨▒╨╛╤В╨╛╨╝; ╤Д╨╛╤А╨╝╨░ ╨Ъ╨Я ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨╕╤А╤Г╨╡╤В╤Б╤П ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А╨╛╨╝ ╨┐╨╛ ╨╛╨▒╤А╨░╨╖╤Ж╤Г ╨Ы╨Ш╨Ь╨б; ╨║╨░╤А╤В╨╛╤З╨║╨╕
+╤Б╨╕╤Б╤В╨╡╨╝ ╨╕ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨╖╨░╨▓╨╛╨┤╨╕╤В ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А; ╨▓╤Е╨╛╨┤ ╨▓ ╨▒╨╛╤В╨░ ╨┐╨╛ e-mail ╨╕ ╨║╨╛╨┤╤Г
+(╤Б╨░╨╝╨╛╨╖╨░╨┐╤А╨╛╤Б ╨╛╤В╨║╤А╤Л╤В ╨▓╤Б╨╡╨╝, ╨║╨╛╨┤ ╤В╨░╨║╨╢╨╡ ╨╝╨╛╨╢╨╡╤В ╨▓╤Л╨┤╨░╤В╤М ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А); ╤Н╨║╤Б╨┐╨╛╤А╤В
+**╤В╨╛╨╗╤М╨║╨╛ DOCX** (PDF ╨╜╨╡ ╨┤╨╡╨╗╨░╨╡╨╝); ╨▒╨╛╤В ╨╛╤В╨┤╨░╤С╤В ╤Д╨░╨╣╨╗ ╨▓ ╤З╨░╤В, ╤Б╤Б╤Л╨╗╨║╨╛╨╣ тАФ ╨┐╨╛ ╨║╨╜╨╛╨┐╨║╨╡;
+╤Б╨╛╨│╨╗╨░╤Б╨╛╨▓╨░╨╜╨╕╤П ╨╜╨╡╤В, `draft` тЖТ `final`.
 
-- **`offers-service`**: каталог, форма КП, КП со снимком цен и нумерацией
-  `{NNN}/{yyyy}` (advisory-lock на год), DOCX на корпоративном бланке с
-  подстановкой плейсхолдеров, коды входа и роли бота, bot API под
-  `X-Service-Secret`, Swagger с первого коммита.
-- **`offers-bot`**: long polling через SOCKS5, вход по e-mail+коду, сборка КП
-  (каталог, свободные строки «Название | кол-во | цена», «Мои КП»), DOCX файлом
-  и ссылкой.
-- **Плагин**: фасад из пяти разделов, свой блок-редактор, модалки каталога,
-  справка, новость в ЦУП.
-- **Инфраструктура**: `sbe-core/docker` — `offers-db`, `offers`, `offers-bot`,
-  сайдкар `offers-nl-proxy`, Caddy `/api/offers/*` до общего `/api/*`, seed
-  приложения `offers` в `auth-service/seed.go`.
-- **Проверки**: `go test` — 24 теста (сумма и округление копеек, номер,
-  валидация формы и КП, DOCX с экранированием и защитой от пустого КП, коды и
-  их истечение, роли); бот — 10 тестов (машина состояний входа, сборка и итог
-  черновика, пустой каталог); `npx tsc --noEmit` и `npm run build` — чисто;
-  `check_offers_openapi.mjs` — 31 маршрут, схема сходится.
+- **`offers-service`**: ╨║╨░╤В╨░╨╗╨╛╨│, ╤Д╨╛╤А╨╝╨░ ╨Ъ╨Я, ╨Ъ╨Я ╤Б╨╛ ╤Б╨╜╨╕╨╝╨║╨╛╨╝ ╤Ж╨╡╨╜ ╨╕ ╨╜╤Г╨╝╨╡╤А╨░╤Ж╨╕╨╡╨╣
+  `{NNN}/{yyyy}` (advisory-lock ╨╜╨░ ╨│╨╛╨┤), DOCX ╨╜╨░ ╨║╨╛╤А╨┐╨╛╤А╨░╤В╨╕╨▓╨╜╨╛╨╝ ╨▒╨╗╨░╨╜╨║╨╡ ╤Б
+  ╨┐╨╛╨┤╤Б╤В╨░╨╜╨╛╨▓╨║╨╛╨╣ ╨┐╨╗╨╡╨╣╤Б╤Е╨╛╨╗╨┤╨╡╤А╨╛╨▓, ╨║╨╛╨┤╤Л ╨▓╤Е╨╛╨┤╨░ ╨╕ ╤А╨╛╨╗╨╕ ╨▒╨╛╤В╨░, bot API ╨┐╨╛╨┤
+  `X-Service-Secret`, Swagger ╤Б ╨┐╨╡╤А╨▓╨╛╨│╨╛ ╨║╨╛╨╝╨╝╨╕╤В╨░.
+- **`offers-bot`**: long polling ╤З╨╡╤А╨╡╨╖ SOCKS5, ╨▓╤Е╨╛╨┤ ╨┐╨╛ e-mail+╨║╨╛╨┤╤Г, ╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я
+  (╨║╨░╤В╨░╨╗╨╛╨│, ╤Б╨▓╨╛╨▒╨╛╨┤╨╜╤Л╨╡ ╤Б╤В╤А╨╛╨║╨╕ ┬л╨Э╨░╨╖╨▓╨░╨╜╨╕╨╡ | ╨║╨╛╨╗-╨▓╨╛ | ╤Ж╨╡╨╜╨░┬╗, ┬л╨Ь╨╛╨╕ ╨Ъ╨Я┬╗), DOCX ╤Д╨░╨╣╨╗╨╛╨╝
+  ╨╕ ╤Б╤Б╤Л╨╗╨║╨╛╨╣.
+- **╨Я╨╗╨░╨│╨╕╨╜**: ╤Д╨░╤Б╨░╨┤ ╨╕╨╖ ╨┐╤П╤В╨╕ ╤А╨░╨╖╨┤╨╡╨╗╨╛╨▓, ╤Б╨▓╨╛╨╣ ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А, ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨║╨░╤В╨░╨╗╨╛╨│╨░,
+  ╤Б╨┐╤А╨░╨▓╨║╨░, ╨╜╨╛╨▓╨╛╤Б╤В╤М ╨▓ ╨ж╨г╨Я.
+- **╨Ш╨╜╤Д╤А╨░╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░**: `sbe-core/docker` тАФ `offers-db`, `offers`, `offers-bot`,
+  ╤Б╨░╨╣╨┤╨║╨░╤А `offers-nl-proxy`, Caddy `/api/offers/*` ╨┤╨╛ ╨╛╨▒╤Й╨╡╨│╨╛ `/api/*`, seed
+  ╨┐╤А╨╕╨╗╨╛╨╢╨╡╨╜╨╕╤П `offers` ╨▓ `auth-service/seed.go`.
+- **╨Я╤А╨╛╨▓╨╡╤А╨║╨╕**: `go test` тАФ 24 ╤В╨╡╤Б╤В╨░ (╤Б╤Г╨╝╨╝╨░ ╨╕ ╨╛╨║╤А╤Г╨│╨╗╨╡╨╜╨╕╨╡ ╨║╨╛╨┐╨╡╨╡╨║, ╨╜╨╛╨╝╨╡╤А,
+  ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╤Д╨╛╤А╨╝╤Л ╨╕ ╨Ъ╨Я, DOCX ╤Б ╤Н╨║╤А╨░╨╜╨╕╤А╨╛╨▓╨░╨╜╨╕╨╡╨╝ ╨╕ ╨╖╨░╤Й╨╕╤В╨╛╨╣ ╨╛╤В ╨┐╤Г╤Б╤В╨╛╨│╨╛ ╨Ъ╨Я, ╨║╨╛╨┤╤Л ╨╕
+  ╨╕╤Е ╨╕╤Б╤В╨╡╤З╨╡╨╜╨╕╨╡, ╤А╨╛╨╗╨╕); ╨▒╨╛╤В тАФ 10 ╤В╨╡╤Б╤В╨╛╨▓ (╨╝╨░╤И╨╕╨╜╨░ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨▓╤Е╨╛╨┤╨░, ╤Б╨▒╨╛╤А╨║╨░ ╨╕ ╨╕╤В╨╛╨│
+  ╤З╨╡╤А╨╜╨╛╨▓╨╕╨║╨░, ╨┐╤Г╤Б╤В╨╛╨╣ ╨║╨░╤В╨░╨╗╨╛╨│); `npx tsc --noEmit` ╨╕ `npm run build` тАФ ╤З╨╕╤Б╤В╨╛;
+  `check_offers_openapi.mjs` тАФ 31 ╨╝╨░╤А╤И╤А╤Г╤В, ╤Б╤Е╨╡╨╝╨░ ╤Б╤Е╨╛╨┤╨╕╤В╤Б╤П.
 
-## Статистика ошибок и отступлений
+## ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨╛╤И╨╕╨▒╨╛╨║ ╨╕ ╨╛╤В╤Б╤В╤Г╨┐╨╗╨╡╨╜╨╕╨╣
 
-- Нарушений правил нет: 0 `any`, 0 `fetch` в плагине, 0 инлайн-стилей,
-  `window.setTimeout()` корректен, все `catch(e: unknown)` + `errorMessage()`.
+- ╨Э╨░╤А╤Г╤И╨╡╨╜╨╕╨╣ ╨┐╤А╨░╨▓╨╕╨╗ ╨╜╨╡╤В: 0 `any`, 0 `fetch` ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡, 0 ╨╕╨╜╨╗╨░╨╣╨╜-╤Б╤В╨╕╨╗╨╡╨╣,
+  `window.setTimeout()` ╨║╨╛╤А╤А╨╡╨║╤В╨╡╨╜, ╨▓╤Б╨╡ `catch(e: unknown)` + `errorMessage()`.
 - `npx tsc --noEmit` EXIT=0, `npm run build` OK.
-- Найдено при прогоне тестов и исправлено: `roundMoney` терял копейку на
-  `1.005` (множитель 1000 вместо 100); `headingXML` отдавал `Heading1` вместо
-  `Heading2` для level 3; `validateCatalogItem` отвергал карточку без явного
-  типа, хотя пустой тип по умолчанию `system`.
+- ╨Э╨░╨╣╨┤╨╡╨╜╨╛ ╨┐╤А╨╕ ╨┐╤А╨╛╨│╨╛╨╜╨╡ ╤В╨╡╤Б╤В╨╛╨▓ ╨╕ ╨╕╤Б╨┐╤А╨░╨▓╨╗╨╡╨╜╨╛: `roundMoney` ╤В╨╡╤А╤П╨╗ ╨║╨╛╨┐╨╡╨╣╨║╤Г ╨╜╨░
+  `1.005` (╨╝╨╜╨╛╨╢╨╕╤В╨╡╨╗╤М 1000 ╨▓╨╝╨╡╤Б╤В╨╛ 100); `headingXML` ╨╛╤В╨┤╨░╨▓╨░╨╗ `Heading1` ╨▓╨╝╨╡╤Б╤В╨╛
+  `Heading2` ╨┤╨╗╤П level 3; `validateCatalogItem` ╨╛╤В╨▓╨╡╤А╨│╨░╨╗ ╨║╨░╤А╤В╨╛╤З╨║╤Г ╨▒╨╡╨╖ ╤П╨▓╨╜╨╛╨│╨╛
+  ╤В╨╕╨┐╨░, ╤Е╨╛╤В╤П ╨┐╤Г╤Б╤В╨╛╨╣ ╤В╨╕╨┐ ╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О `system`.
+
+## Выпуск 0.1.0 — 2026-10-27
+
+**Задеплоено на сервер:** `offers-db`, `offers`, `offers-nl-proxy` подняты,
+auth-service пересобран (seed приложения `offers`). **`offers-bot` остановлен:**
+нужен токен своего бота из @BotFather в `OFFERS_TELEGRAM_BOT_TOKEN` (в `.env`
+пусто). После заполнения — `docker compose up -d offers-bot`.
+
+**E2E (зелёный):** `permissions/me` → `superadmin`; каталог (создание, поиск по
+слову); форма отдаётся с базовыми полями; КП № 01/2026 с итогом 2999.97
+(3 × 999.99 без хвостов); DOCX 77 КБ с `document.xml`, `header1.xml`,
+`footer1.xml` бланка и названием клиента со спецсимволами; пустое КП → 400;
+без токена → 401.
+
+**Выложено на самораздачу:** `backend` → `main`, обе ветки запушены,
+`https://epyur.fvds.ru/plugins/sbe-offers/*` отдаёт те же три sha256, что
+локальная сборка; запись `sbe-offers` есть в реестре на сервере и в
+`sbe-apstore-registry`.
+
+**Найдено и исправлено при деплое:** `roleRank` не знал `superadmin` (владелец
+приложения получал 403); ненастроенная форма отдавалась пустой; `go.mod`
+требовал go 1.25 при образе 1.24.
+
+**Скрипты:** `scripts/offers_db_role.sh` (роль `offers_app`),
+`scripts/offers_token.sh` (JWT для E2E), `scripts/offers_e2e.sh`,
+`scripts/offers_release_check.sh`.
 
 ## 0.1.1 — 2026-10-27 (исправление доступа)
 
 Жалоба пользователя: «не могу заполнять каталог, UI выглядит битым».
 
-**Причина.** Роль в центре называется superadmin (глобальный админ), а плагин
-проверял ровно 'admin': у владельца приложения не было ни кнопки «➕ Карточка»
-в каталоге, ни разделов «Форма КП» и «Бот и доступ». Сервер пускал (его
-oleRank считает superadmin выше dmin — починено ещё при деплое),
-а вьюха молчала.
+**Причина.** Роль в центре называется `superadmin` (глобальный администратор), а
+плагин проверял ровно `admin`: у владельца приложения не было ни кнопки
+«+ Карточка» в каталоге, ни разделов «Форма КП» и «Бот и доступ». Сервер
+пропускал (его `roleRank` считает `superadmin` выше `admin` — починено ещё при
+деплое), а вьюха молчала.
 
 **Правка.**
-- isAdminRole() — административный уровень это dmin **или** superadmin;
-  canEditOffers() — сборка КП для editor и выше. Ими пользуются вьюха,
+- `isAdminRole()` — административный уровень это `admin` **или** `superadmin`;
+  `canEditOffers()` — сборка КП для `editor` и выше. Ими пользуются вьюха,
   каталог и список КП вместо строковых сравнений.
-- Каркас вьюхи строится ДО запроса роли: раньше ошибка «Ключ недействителен»
+- Каркас вьюхи строится до запроса роли: раньше ошибка «Ключ недействителен»
   терялась — подзаголовка, куда её писать, ещё не было.
-- В шапке — «↻ Обновить права»: роль можно перечитать без перезапуска.
+- В шапке — «Обновить права»: роль можно перечитать без перезапуска.
 - При смене роли недоступный раздел сбрасывается на «КП».
 - Раздел «Бот и доступ» больше не мигает пустым контейнером при загрузке;
-  superadmin показывается в списке отдельным пунктом (не выбирается — его
+  `superadmin` показывается в списке отдельным пунктом (не выбирается — его
   выдаёт только ЦУП).
 
 **Выпуск:** 0.1.0 → **0.1.1**, самораздача (три sha256 сверены), запись в
 реестре на сервере и в git обновлена, текст новости в ЦУП переписан.
-
-px tsc --noEmit EXIT=0, 
-pm run build OK.
+`npx tsc --noEmit` EXIT=0, `npm run build` OK.
 
 **Уроки (стоило поймать раньше):** клиент и сервер должны брать одну и ту же
-модель ролей из одного места. Серверную часть (oleRank) поймал E2E на
+модель ролей из одного места. Серверную часть (`roleRank`) поймал E2E на
 сервере, клиентскую — только живая жалоба: локальные тесты и E2E проверяли
-dmin, а в базе лежал superadmin. В 	ypes/offers.ts теперь есть
-ROLE_RANK с superadmin — сверять новые проверки ролей по нему.
+`admin`, а в базе лежал `superadmin`. В `src/types/offers.ts` теперь есть
+`ROLE_RANK` с `superadmin` — сверять новые проверки ролей по нему.
+
 ## 0.1.2 — 2026-10-27 (проверка на локальном стенде, навык ub-mode)
 
 **Как проверяли.** Подняли систему целиком в локальном Docker:
-docker-compose.local.yml — Postgres 16 + offers-service из своего Dockerfile +
-заглушка auth-service (scripts/auth-stub.mjs, отдаёт карту ролей). Без заглушки
+`docker-compose.local.yml` — Postgres 16 + `offers-service` из своего Dockerfile +
+заглушка auth-service (`scripts/auth-stub.mjs`, отдаёт карту ролей). Без заглушки
 права проверить нельзя: сервис спрашивает их у auth-service.
 
-**Интеграционный прогон** — scripts/offers_local_e2e.mjs: **59 проверок по HTTP**
-(health, Swagger, авторизация 401/403/просрочка/чужой app_id, каталог create/update/
-archive/search/валидация, форма save/read/валидация, предложения — расчёт, нумерация,
-права, DOCX, ручки бота под секретом, коды входа, идемпотентность). Все зелёные.
-Отдельно проверены сквозной сценарий бота (вход по коду → сборка → DOCX → «Мои КП» →
-правка состава) и содержимое готового document.xml.
+**Интеграционный прогон** — `scripts/offers_local_e2e.mjs`: **59 проверок по
+HTTP** (health, Swagger, авторизация 401/403/просрочка/чужой app_id, каталог
+create/update/archive/search/валидация, форма save/read/валидация, предложения —
+расчёт, нумерация, права, DOCX, ручки бота под секретом, коды входа,
+идемпотентность). Все зелёные. Отдельно проверены сквозной сценарий бота (вход по
+коду → сборка → DOCX → «Мои КП» → правка состава) и содержимое готового
+`document.xml`.
 
 **Пять дефектов, которых юнит-тесты не видели:**
 
 1. **Сохранённая форма не доходила до DOCX** (главный). Проверка «форма пустая»
-   стояла ДО разбора JSON и сравнивала 
-il-слайс — срабатывала всегда, поэтому
-   администратор настраивал форму, а в файле печатался шаблон по умолчанию. Теперь
-   «не настроена» = строки нет в БД; пустые массивы — это настроенная пустая форма.
-   Тест TestResolvedFormKeepsSavedContent.
-2. **Сервис не стартовал без S3** (log.Fatalf). Теперь работает без хранилища,
+   стояла ДО разбора JSON и сравнивала nil-слайс — срабатывала всегда, поэтому
+   администратор настраивал форму, а в файле печатался шаблон по умолчанию.
+   Теперь «не настроена» = строки нет в БД; пустые массивы — это настроенная
+   пустая форма. Тест `TestResolvedFormKeepsSavedContent`.
+2. **Сервис не стартовал без S3** (`log.Fatalf`). Теперь работает без хранилища,
    ссылки на файлы честно отвечают «хранилище не настроено».
 3. **Экспорт DOCX зависал до 5 минут** при недоступном S3 (rclone ждал таймаут).
-   Экспорт байтами больше не обращается к хранилищу: enderOffer отделён от
-   uildOfferDocx.
-4. **Правка несуществующей карточки → 500 «db error»** вместо 404 (pgx.ErrNoRows).
-5. **Имя файла в чате** было ООО_Из_Бота — sanitizeKey заменял пробелы
+   Экспорт байтами больше не обращается к хранилищу: `renderOffer` отделён от
+   `buildOfferDocx`.
+4. **Правка несуществующей карточки → 500 «db error»** вместо 404 (`pgx.ErrNoRows`).
+5. **Имя файла в чате** было `ООО_Из_Бота` — `sanitizeKey` заменял пробелы
    подчёркиваниями; теперь имя читаемое, чистятся только запрещённые символы.
 
 **Правки по навыку ub-mode (первый заход, до локального прогона):**
-isAdminRole() (superadmin в проверках прав — та же ошибка, что была в плагине),
-dbError() вместо 30 копий log.Printf + writeJSON, prepareOffer() как единая
-граница входа, src/utils/money.ts — одно округление денег вместо трёх копий,
-удалён мёртвый ormatPrice, подключён enderPlaceholderPicker.
-Исправлен **баг денег в боте**: 1.005 печаталось как «1,00» вместо «1,01».
+`isAdminRole()` (superadmin в проверках прав — та же ошибка, что была в плагине),
+`dbError()` вместо 30 копий `log.Printf` + `writeJSON`, `prepareOffer()` как
+единая граница входа, `src/utils/money.ts` — одно округление денег вместо трёх
+копий, удалён мёртвый `formatPrice`, подключён `renderPlaceholderPicker`.
+Исправлен **баг денег в боте**: `1.005` печаталось как «1,00» вместо «1,01».
 
-**Покрытие Go:** 16.9% → 23.2% (45 тестов). Ручек HTTP в покрытии пока нет — они
-проверяются интеграционным прогоном, пока не подключён Postgres к go test.
+**Покрытие Go:** 16.9% → 23.2% (45 тестов). Ручек HTTP в покрытии пока нет —
+они проверяются интеграционным прогоном, пока не подключён Postgres к `go test`.
 
 **Выпуск:** 0.1.1 → **0.1.2**, main запушен, самораздача (три sha256 сверены),
 реестр обновлён, новость в ЦУП переписана под этот выпуск.
 
-**Стенд:** docker compose -f docker-compose.local.yml up -d --build, затем
-
-ode scripts/offers_local_e2e.mjs; в репозиторий compose и скрипты входят (они
+**Стенд:** `docker compose -f docker-compose.local.yml up -d --build`, затем
+`node scripts/offers_local_e2e.mjs`; в репозиторий compose и скрипты входят (они
 нужны следующему, кто будет проверять), dist и бинари — нет.
+
+## Серверный код восстановлен в git — 2026-10-27
+
+**Что было.** При выпуске 0.1.2 правки `offers-service/` делались на ветке `main`,
+где эти папки закрыты `.gitignore` (коммит `9ffa671` «main — только код плагина»).
+Поэтому `git add -A` их не взял: коммит `ef4e987` содержит только плагин, а Go-правки
+жили лишь на диске. Ветку `backend` создали от `main` уже ПОСЛЕ удаления папок из
+индекса, так что серверный код не попал ни туда, ни туда — `git ls-tree backend` давал
+0 файлов в `offers-service/` и `offers-bot/`. Код уцелел на диске и на сервере,
+переключение веток его не затёрло.
+
+**Что сделано (на `backend`).**
+1. Из `.gitignore` убраны строки `offers-service/` и `offers-bot/`; исключения
+   артефактов остались: `.env*`, `*.exe`, `offers-service/*.test`, `offers-service/cover`,
+   `offers-bot/dist/`, `**/rclone.conf`.
+2. `offers-service/` (36 файлов Go, Swagger, шаблон DOCX) и `offers-bot/` (8 файлов)
+   добавлены и закоммичены на `backend`.
+3. На `main` `.gitignore` не тронут: там эти папки закрыты намеренно.
+4. Проверка: `git ls-tree -r backend --name-only` показывает файлы обеих папок.
+
+**Проверки перед коммитом (ветка `backend`):** `gofmt -l .` — пусто, `go vet ./...` —
+чисто, `go test -count=1 ./...` — **45 тестов, покрытие 22.9%**; `offers-bot`:
+`tsc --noEmit`, `npm run build`, `node --test` — 10 тестов; плагин: `npx tsc --noEmit`
+EXIT=0, `npm run build` OK; `scripts/check_offers_openapi.mjs` — 31 маршрут, схема
+совпадает.
+
+**Правило на будущее:** перед коммитом правок сервиса — проверять, что файлы попали
+в индекс (`git status --short`), а не просто лежат на диске. Если правка сервиса
+нужна, а ветка `main` — переключаться на `backend` ДО правок, не после.
+
+## 0.1.3 — 2026-10-27 (деплой и самораздача)
+
+**Что вошло.** Плагин не менялся по существу: только версия 0.1.2 → **0.1.3** и
+переписанный текст новости в ЦУП. Номер поднят потому, что с прошлого выпуска в
+`main` появился новый `main.js` (правки 0.1.2 лежали в `backend` и до `main` не
+дошли), а повторять номер нельзя — обновление бы не приехало.
+
+**Деплой сервера.** `docker compose up -d --build offers` пересобрал образ, но
+контейнер остался старым (`Created` и `StartedAt` не двигались): Caddy проксирует
+на него, а сам он жил с 13:49. Понадобилось `docker compose up -d --force-recreate
+--no-deps offers`. **Правило: после `--build` проверять, что у контейнера новый
+`docker ps` `CREATED`, и только потом закрывать деплой.**
+
+**Проверки на бою.** health 200, `/docs/` 200, `/openapi.yaml` 200, без токена 401;
+`permissions/me` → `superadmin`; каталог (4 карточки), форма (`client`,
+«Коммерческое предложение»), список КП (№ 001/2026) читаются; в БД шесть таблиц,
+данные на месте.
+
+**Не задеплоено по причине, которую нельзя закрыть кодом.** `offers-bot` остаётся
+остановленным: `OFFERS_TELEGRAM_BOT_TOKEN` в `.env` пуст, нужен токен своего бота
+из @BotFather. После заполнения — `docker compose up -d offers-bot`.
+
+**Самораздача.** `lims_selfhost.sh sbe-offers` — три sha256 сошлись на сервере и
+по https: `manifest e1796cf…`, `main 2836063…`, `styles 3092269…` (styles не
+менялся с 0.1.1). `POST`-строка `registry_file_overrides` обновлена; git-копия
+`sbe-apstore-registry/registry.json` — коммит `46811dc`.
+
+**`registry.json` на диске сервера — не источник выдачи.** Caddy отдаёт
+`/registry.json` не файлом, а проксирует в auth-service, который накладывает
+сверху `registry_file_overrides` из БД. Поэтому правка файла в `/opt/mailers/www/`
+ни на что не влияет; проверять выдачу — только по https или по таблице.
 
 ## 0.1.4 - 2026-10-29 (bot token is entered from the plugin)
 
@@ -257,9 +342,9 @@ while the "Bot and access" section looked healthy.
   without a token: it heartbeats the reason and retries every 15 s, so the token
   entered in the plugin takes effect without a restart. New `verify-server.ts`
   serves `POST /internal/verify` on the internal network only.
-- Plugin: a "Telegram-╨▒╨╛╤В" card at the top of "Bot and access" - masked field,
-  "╨Я╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╨╕ ╤Б╨╛╤Е╤А╨░╨╜╨╕╤В╤М", "╨г╨┤╨░╨╗╨╕╤В╤М ╤В╨╛╨║╨╡╨╜", "╨Я╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╤Б╨╡╨╣╤З╨░╤Б", a coloured state
-  line ("╨С╨╛╤В ╤А╨░╨▒╨╛╤В╨░╨╡╤В: @..." / "╨в╨╛╨║╨╡╨╜ ╨╜╨╡ ╨╖╨░╨┤╨░╨╜" / "╨С╨╛╤В ╨╜╨╡ ╨╛╤В╨▓╨╡╤З╨░╨╡╤В ┬╖ ╨╛╤И╨╕╨▒╨║╨░") and
+- Plugin: a "Telegram-бот" card at the top of "Bot and access" - masked field,
+  "Проверить и сохранить", "Удалить токен", "Проверить сейчас", a coloured state
+  line ("Бот работает: @..." / "Токен не задан" / "Бот не отвечает · ошибка") and
   the @BotFather hint.
 - `TELEGRAM_BOT_TOKEN` removed from `docker-compose.yml` and both
   `.env.example` files; `offers` got `OFFERS_BOT_URL`, `offers-bot` got
@@ -288,74 +373,61 @@ Recommended thresholds are CRAP < 10 and duplication < 0.8; the remaining high C
 values come from zero test coverage on UI and HTTP, the same as everywhere else in
 this plugin, and are recorded rather than hidden.
 
-## Release 0.1.4 — 2026-10-29 (deployed, self-hosted)
+## Roles left the bot, sign-in survives a restart — 2026-10-29 (commit fbf036b)
 
-**Deployed.** ``docker compose up -d --build --force-recreate --no-deps offers``
-plus ``--build offers-bot``; both containers report a new ``CREATED``. On the
-server, ``docker-compose.yml`` lost ``TELEGRAM_BOT_TOKEN`` and gained
-``OFFERS_BOT_URL`` (offers) and ``VERIFY_PORT`` (bot); ``.env`` lost the dead
-``OFFERS_TELEGRAM_BOT_TOKEN`` line. Backups: ``docker-compose.yml.bak-offersbot-20261029``,
-``.env.bak-offersbot-20261029``, ``/tmp/offers-src-backup-20261029.tgz``.
+**User's requirement:** plugin roles and bot roles must not overlap at all; the bot
+needs no roles — anyone who gets access to the bot may build offers. Two-level roles
+had been matched obscurely, so "Менеджер" in the plugin showed up as "просмотр" in the
+bot.
 
-**Live checks.** health 200, ``/docs/`` 200, ``/openapi.yaml`` 200,
-``/bot/config`` without a token 401; ``offers_bot_config`` created with the seven
-columns; ``/internal/verify`` reachable from the offers container and refusing a
-wrong secret (403) and a garbage token (400 straight from Telegram through the SOCKS
-sidecar); ``/bot/token`` returns an empty token; the bot container stays up and logs
-"токен не задан — ждём".
+**Done.**
+- `offers-bot/src/session.ts`: the `role` field is gone from `ChatSession`;
+  `applyLogin(session, email)` takes no role.
+- `offers-bot/src/flow.ts`: `AUTH_OK(email)` no longer names a role,
+  `NOT_ALLOWED_TO_EDIT` deleted.
+- `offers-bot/src/poller.ts`: the gate in `startDraft` removed.
+- `offers-bot/src/api.ts`: `BotIdentity { email }` replaces `{ email, role }`, so the
+  compiler prevents leaning on a role again.
+- `offers-service/access.go`: `bot/identity` and `bot/verify-code` return only `email`;
+  `roleForEmail` deleted as dead code.
+- Plugin `src/ui/access-editor.ts`: the "Роль" column and the role picker are gone;
+  `roleLabel` deleted. **Plugin roles (viewer/editor/admin) stay in the plugin only.**
 
-**Defect found during deployment and fixed (commit 1e9491b).** The heartbeat was a
-plain ``UPDATE``: with no row yet, it wrote nothing and still answered ``ok``, so the
-plugin could not see a running bot before the first token. Now ``INSERT … ON
-CONFLICT``. Verified on the server by deleting the row, restarting the bot, and
-reading it back: one row, empty token, Russian error text byte-exact UTF-8,
-timestamp set. **Lesson: a "success" response is not proof that anything was
-written — check the row, not the status.**
+**Sign-in survives a restart.** The user reported being asked for a code after every
+bot restart. The permanent `chat_id → email` link was already in `offers_bot_link` and
+never lost; what was lost was the in-memory session. New `restoreSession(email)` in
+`session.ts` (pure, tested) and `sessionRestored(chatId)` in the poller: for a chat
+absent from memory the bot asks `identity`, so a known chat is immediately signed in.
+Used in both the text handler and the callback handler. An unknown chat still gets a
+code; an unreachable service does not break sign-in.
 
-**Self-hosting.** ``lims_selfhost.sh sbe-offers`` — the three sha256 matched over
-https: ``manifest dfd0e56…``, ``main 93161c8…``, ``styles e4b33b4…``. Registry commit
-``1c036d1`` in ``sbe-apstore-registry``, pushed. Server ``registry_file_overrides``
-row updated by the script.
+**Checks.** TDD: tests written first and seen failing for the right reason
+(`roles-removed.test.ts` 3 checks, `restore.test.ts` 3). Bot: 28 tests, `tsc` and
+`tsc --noUnusedLocals` clean, build OK. `crapper`: `sessionRestored` CC 5,
+`restoreSession` CC 2 — within the threshold; `dryer` finds no duplication in the new
+code. Dead import `draftTotal` removed.
 
-**Branches.** ``backend`` b221d9d + fix 1e9491b; ``main`` 7a551e9 (plugin slice).
-**Still to do by the admin:** paste the token from @BotFather into the plugin's
-"Бот и доступ" section — until then the bot is up but silent by design.
+**Deployed.** Bot container recreated; a known chat is recognised without a code
+(`810181470 → polishchuk@tn.ru`, `8905120569 → miloserdov@tn.ru`), an unknown chat gets
+404 from `identity`, which means a code will be requested.
 
-## Live defects after release 0.1.4 — 2026-10-29 (fixed on the server)
+### Debt: dispatcher functions (deliberately not refactored)
 
-Reported by the user right after enabling the plugin on a working computer: "the bot
-is not responding" while the signed-in people list worked, and changing a person's role
-in the plugin did not change it in the bot. Both were real, both mine.
+`handleCallback` (CC 24) and `handleText` (CC 23) in `offers-bot/src/poller.ts` stay as
+they are — the user chose to record them as debt rather than refactor now. Why they
+are over the CRAP threshold:
 
-### 1. "Bot is not responding" on a live bot
+- both are dispatchers mixing three concerns: anti-flood/entry guard, sign-in state
+  machine, and a table of handlers;
+- sign-in is checked twice (once per function) — the restart fix above had to be
+  written in both places;
+- `back` and `done` each repeat the "draft not found" branch with slightly different
+  text; `pick:` and `link:` carry their own `try/catch`;
+- `done` builds a one-element `missing` array instead of `if (!draft.clientName)`;
+- nothing is testable: checking "undo removes the last item" requires the whole poller
+  with network.
 
-`report()` in the poller silenced a repeated identical error text. During normal
-operation that text is always the same (empty string), so the heartbeat was sent
-**once** and `bot_last_seen_at` froze — measured at 14 minutes old while the bot was
-receiving messages. `/bot/status` then honestly reported a dead bot from stale data.
-
-Fixed: the liveness mark is a measurement, not a message — it is sent every loop
-iteration. After redeploy the age is ~9 s. `heartbeat.test.ts` (3 checks) fails on the
-old code, including a source guard against re-adding the early return.
-
-### 2. A role saved in the plugin never reached the bot
-
-`handleSetAccessRole` wrote only to the local `offers_access`, while `roleForEmail`
-reads the **central** map in auth-service (the rule since 2026-09-09). The plugin
-showed the saved value; the bot kept using the old one. Live example before the fix:
-
-| chat | person | central table | plugin showed |
-|---|---|---|---|
-| 8905120569 | miloserdov@tn.ru | `superadmin` | `editor` |
-
-Fixed: the role is written to auth-service first via `setPermissionUpstream` (the same
-path as `/permissions/set`), then the local table is kept in sync as a fallback.
-Verified on the server — `bot/identity` returns `viewer` after the write.
-
-**Side effect to know about:** the verification run set `miloserdov@tn.ru` to `viewer`
-in the central table for `offers` (it was `superadmin`). Assign the intended role in
-"Bot and access" — it now actually reaches the bot.
-
-**Checks:** `go vet` and 51 Go tests clean, bot 22 tests, `tsc` EXIT=0.
-Deployed 2026-10-29 13:57 (`offers` and `offers-bot` recreated), commit `807c2fb`
-on `backend`, pushed. Plugin code did not change — `main` and self-hosting keep 0.1.4.
+Planned shape when taken on: `handleText` → guard → ensureAuthed → command table;
+`handleCallback` → answer → ensureAuthed → prefix table; the ten buttons become small
+functions in `callbacks.ts`, texts in `flow.ts`. Order: tests on current behaviour
+first, then the move, then `crapper`/`dryer`.

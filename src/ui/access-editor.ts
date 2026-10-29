@@ -1,15 +1,7 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import type { AccessEntry, BotStatusInfo, Role } from '../types/offers';
+import type { AccessEntry, BotStatusInfo } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
-
-function roleLabel(role: string): string {
-  if (role === 'superadmin') return 'Глобальный администратор';
-  if (role === 'admin') return 'Администратор';
-  if (role === 'editor') return 'Менеджер';
-  if (role === 'viewer') return 'Просмотр';
-  return '—';
-}
 
 function formatMoment(value: string): string {
   if (!value) return '—';
@@ -229,6 +221,12 @@ function renderCodeIssuer(view: OffersView, container: HTMLElement): void {
 async function renderSignedInList(view: OffersView, container: HTMLElement): Promise<void> {
   const listCard = container.createDiv({ cls: 'tn-offers-card' });
   listCard.createDiv({ cls: 'tn-offers-muted', text: 'Кто вошёл в бота' });
+  // Роли здесь нет намеренно (2026-10-29): в боте ролей нет, любой вошедший
+  // собирает КП. Показываем только e-mail и дату входа.
+  listCard.createDiv({
+    cls: 'tn-offers-muted',
+    text: 'Каждый, кто вошёл, может собирать предложения.',
+  });
 
   let entries: AccessEntry[] = [];
   try {
@@ -244,44 +242,16 @@ async function renderSignedInList(view: OffersView, container: HTMLElement): Pro
 
   const table = listCard.createEl('table', { cls: 'tn-offers-table' });
   const head = table.createEl('thead').createEl('tr');
-  for (const title of ['E-mail', 'Роль', 'Вошёл']) head.createEl('th', { text: title });
+  for (const title of ['E-mail', 'Вошёл']) head.createEl('th', { text: title });
   const body = table.createEl('tbody');
   for (const entry of entries) {
     const row = body.createEl('tr');
     row.createEl('td', { text: entry.email });
-    const roleCell = row.createEl('td');
-    roleCell.appendChild(renderRoleSelect(view, entry));
     row.createEl('td', {
       cls: 'tn-offers-muted',
       text: entry.updatedAt ? new Date(entry.updatedAt).toLocaleString('ru-RU') : '—',
     });
   }
-}
-
-/** Выбор роли человека в боте. superadmin приходит из центральной таблицы прав,
- *  а не из карты бота: показываем отдельным пунктом только для показа. */
-function renderRoleSelect(view: OffersView, entry: AccessEntry): HTMLSelectElement {
-  const select = document.createElement('select');
-  select.addClass('tn-offers-input');
-  for (const role of ['viewer', 'editor', 'admin'] as Role[]) {
-    select.createEl('option', { value: role, text: roleLabel(role) });
-  }
-  const entryRole: string = entry.role;
-  if (entryRole === 'superadmin') {
-    select.createEl('option', { value: 'superadmin', text: roleLabel('superadmin') });
-  }
-  select.value = entryRole || 'viewer';
-  select.addEventListener('change', () => {
-    void (async () => {
-      try {
-        await view.plugin.offersService.setRole(entry.email, select.value as Role);
-        new Notice(`Роль ${entry.email}: ${roleLabel(select.value)}`);
-      } catch (e: unknown) {
-        new Notice(`Не удалось изменить роль: ${errorMessage(e)}`);
-      }
-    })();
-  });
-  return select;
 }
 
 export async function renderAccessEditor(view: OffersView, container: HTMLElement): Promise<void> {
