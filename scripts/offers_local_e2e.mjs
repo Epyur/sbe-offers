@@ -331,7 +331,64 @@ console.log('\n9. Коды входа (без почты: проверяем о�
   ok('выдача кода без JWT → 401', issueNoAuth.status === 401, `получили ${issueNoAuth.status}`);
 }
 
-console.log('\n10. Идемпотентность и повторные запросы');
+console.log('\n10. Токен Telegram-бота (2026-10-29)');
+{
+  const managerToken = makeJwt('manager@tn.ru');
+  const noAuth = await call('GET', '/bot/config');
+  ok('настройки бота без JWT → 401', noAuth.status === 401, `получили ${noAuth.status}`);
+
+  const notAdmin = await call('GET', '/bot/config', { token: managerToken });
+  ok('настройки бота не админу → 403', notAdmin.status === 403, `получили ${notAdmin.status}`);
+
+  const empty = await call('GET', '/bot/config', { token: ownerToken });
+  ok('до настройки токен не задан', empty.status === 200 && empty.json?.configured === false,
+    `получили ${empty.status} ${JSON.stringify(empty.json)}`);
+  ok('токен наружу не отдаётся', !JSON.stringify(empty.json ?? {}).includes('token'));
+
+  const emptyToken = await call('POST', '/bot/config', { token: ownerToken, body: { token: '   ' } });
+  ok('пустой токен → 400', emptyToken.status === 400, `получили ${emptyToken.status}`);
+
+  const wrongShape = await call('POST', '/bot/config', { token: ownerToken, body: { token: 'abc' } });
+  ok('токен не по форме → 400', wrongShape.status === 400, `получили ${wrongShape.status}`);
+
+  const rejected = await call('POST', '/bot/config', { token: ownerToken, body: { token: '123456:WRONG' } });
+  ok('токен, отвергнутый Telegram → 400', rejected.status === 400, `получили ${rejected.status}`);
+  ok('отвергнутый токен не сохранён',
+    (await call('GET', '/bot/config', { token: ownerToken })).json?.configured === false);
+
+  const saved = await call('POST', '/bot/config', { token: ownerToken, body: { token: '123456789:GOOD\n' } });
+  ok('верный токен сохранён', saved.status === 200 && saved.json?.configured === true,
+    `получили ${saved.status} ${JSON.stringify(saved.json)}`);
+  ok('имя бота пришло от бота', saved.json?.botUsername === 'offers_test_bot');
+  ok('в ответе нет самого токена', !JSON.stringify(saved.json ?? {}).includes('GOOD'));
+
+  const botToken = await call('GET', '/bot/token', { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('бот читает токен из сервиса', botToken.status === 200 && botToken.json?.token === '123456789:GOOD');
+
+  const botTokenNoSecret = await call('GET', '/bot/token');
+  ok('токен без секрета не выдаётся', botTokenNoSecret.status === 401, `получили ${botTokenNoSecret.status}`);
+
+  const hb = await call('POST', '/bot/heartbeat', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { last_error: '' },
+  });
+  ok('отметка «бот жив» принята', hb.status === 200, `получили ${hb.status}`);
+
+  const status = await call('GET', '/bot/status', { token: ownerToken });
+  ok('статус: настроен и работает', status.json?.configured === true && status.json?.running === true,
+    JSON.stringify(status.json));
+
+  const off = await call('DELETE', '/bot/config', { token: ownerToken });
+  ok('токен удалён', off.status === 200 && off.json?.configured === false);
+
+  const afterDelete = await call('GET', '/bot/status', { token: ownerToken });
+  ok('после удаления бот не работает', afterDelete.json?.configured === false);
+
+  const emptyAgain = await call('GET', '/bot/token', { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('боту возвращается пустой токен', emptyAgain.json?.token === '');
+}
+
+console.log('\n11. Идемпотентность и повторные запросы');
 {
   const a = await call('GET', '/catalog', { token: ownerToken });
   const b = await call('GET', '/catalog', { token: ownerToken });

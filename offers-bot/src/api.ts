@@ -1,6 +1,6 @@
 /** Клиент offers-service для бота: только те ручки, что защищены X-Service-Secret. */
 
-const API_URL = (process.env.OFFERS_API_URL ?? 'http://offers:3000').replace(/\/+$/, '');
+export const API_URL = (process.env.OFFERS_API_URL ?? 'http://offers:3000').replace(/\/+$/, '');
 const BOT_SECRET = process.env.OFFERS_BOT_SECRET ?? '';
 const TIMEOUT_MS = 60000;
 
@@ -137,4 +137,10 @@ export async function offerLink(id: number, chatId: string): Promise<{ url: stri
 export async function listOffers(chatId: string): Promise<OfferPayload[]> {
   const res = await call<{ offers: OfferPayload[] }>('GET', `/bot/offers?chat_id=${encodeURIComponent(chatId)}`);
   return res.offers ?? [];
+}
+
+/** Отметка «бот жив» + последняя ошибка: по ней плагин рисует состояние без
+ *  обращения к контейнеру бота. */
+export async function heartbeat(lastError: string): Promise<void> {
+  await call('POST', '/bot/heartbeat', { last_error: lastError });
 }

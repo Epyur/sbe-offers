@@ -99,6 +99,16 @@ func main() {
 	mux.HandleFunc("POST /api/offers/access/role", s.requirePerm("admin")(s.handleSetAccessRole))
 	mux.HandleFunc("POST /api/offers/access/codes", s.requirePerm("admin")(s.handleIssueAdminCode))
 
+	// Токен своего Telegram-бота (2026-10-29): вводится из настроек плагина,
+	// хранится здесь и больше нигде. Чтение/запись — только администратору,
+	// сам токен наружу не отдаётся никогда.
+	mux.HandleFunc("GET /api/offers/bot/config", s.requirePerm("admin")(s.handleGetBotConfig))
+	mux.HandleFunc("POST /api/offers/bot/config", s.requirePerm("admin")(s.handleSetBotConfig))
+	mux.HandleFunc("DELETE /api/offers/bot/config", s.requirePerm("admin")(s.handleDeleteBotConfig))
+	mux.HandleFunc("GET /api/offers/bot/status", s.requirePerm("admin")(s.handleBotStatus))
+	mux.HandleFunc("GET /api/offers/bot/token", s.requireServiceSecret(s.handleBotToken))
+	mux.HandleFunc("POST /api/offers/bot/heartbeat", s.requireServiceSecret(s.handleBotHeartbeat))
+
 	mux.HandleFunc("POST /api/offers/bot/request-code", s.requireServiceSecret(s.handleBotRequestCode))
 	mux.HandleFunc("POST /api/offers/bot/verify-code", s.requireServiceSecret(s.handleBotVerifyCode))
 	mux.HandleFunc("GET /api/offers/bot/identity", s.requireServiceSecret(s.handleBotIdentity))
@@ -211,6 +221,19 @@ func (s *Server) migrate(ctx context.Context) error {
 			role       TEXT NOT NULL DEFAULT 'viewer',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		// Токен Telegram-бота — ОДИН хозяин (2026-10-29): до этой правки он
+		// приходил из TELEGRAM_BOT_TOKEN окружения, и в соседнем portal-embed
+		// именно второй источник полтора суток слал чужим ботом. Пустая строка —
+		// «токен не задан», отдельного признака не нужно.
+		`CREATE TABLE IF NOT EXISTS offers_bot_config (
+			id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+			bot_token       TEXT NOT NULL DEFAULT '',
+			bot_username    TEXT NOT NULL DEFAULT '',
+			updated_by      TEXT NOT NULL DEFAULT '',
+			updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+			bot_last_seen_at TIMESTAMPTZ,
+			bot_last_error  TEXT NOT NULL DEFAULT ''
 		)`,
 	}
 	for _, stmt := range stmts {

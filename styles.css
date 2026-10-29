@@ -813,3 +813,38 @@
   flex-wrap: wrap;
   margin-top: 8px;
 }
+
+/* Карточка «Telegram-бот» (2026-10-29): состояние бота — первое, что должен
+   увидеть администратор, поэтому оно цветное и стоит над полем токена. */
+.tn-offers-card-title {
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+
+.tn-offers-bot-state {
+  margin: 8px 0 2px;
+  padding: 6px 10px;
+  border-radius: var(--tn-radius);
+  background: var(--background-secondary-a-hover);
+}
+
+.tn-offers-bot-state.is-ok {
+  color: var(--content-system-positive);
+}
+
+.tn-offers-bot-state.is-bad {
+  color: var(--content-system-negative);
+}
+
+.tn-offers-bot-state + .tn-offers-muted {
+  margin-bottom: 8px;
+  font-size: 0.9em;
+}
+
+.tn-offers-card .tn-offers-error {
+  margin-bottom: 8px;
+}
+
+.tn-offers-card .is-hidden {
+  display: none;
+}

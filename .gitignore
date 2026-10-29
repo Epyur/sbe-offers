@@ -18,3 +18,6 @@ offers-service/*.test
 offers-bot/dist/
 offers-service/cover
 offers-service/target/
+# Анализ кода (crapper/dryer): отчёты .metrics/ - артефакт инструмента, не код.
+.metrics/
+offers-service/.metrics/

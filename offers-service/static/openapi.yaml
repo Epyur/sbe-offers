@@ -317,6 +317,122 @@ paths:
                   expiresAt:
                     type: string
 
+  # Токен Telegram-бота (2026-10-29). Один хозяин: таблица offers_bot_config.
+  # Плагину токен наружу не отдаётся — только «задан ли» и чей это бот.
+  /api/offers/bot/config:
+    get:
+      summary: Настройки бота — задан ли токен (admin)
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  botUsername:
+                    type: string
+                  updatedBy:
+                    type: string
+                  updatedAt:
+                    type: string
+    post:
+      summary: Проверить токен через бота и сохранить (admin)
+      description: >-
+        Токен проверяется getMe через offers-bot (с сервера Telegram недоступен),
+        и только потом записывается. Неверный токен рабочий не заменяет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Токен сохранён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  botUsername:
+                    type: string
+                  updatedBy:
+                    type: string
+                  updatedAt:
+                    type: string
+        '400':
+          description: Токен пуст, не по форме или отвергнут Telegram
+        '503':
+          description: Бот недоступен — проверить токен негде, ничего не сохранено
+    delete:
+      summary: Удалить токен — бот перестаёт принимать сообщения (admin)
+      responses:
+        '200':
+          description: Токен удалён
+  /api/offers/bot/status:
+    get:
+      summary: Работает ли бот сейчас (admin)
+      responses:
+        '200':
+          description: Состояние
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  running:
+                    type: boolean
+                  botUsername:
+                    type: string
+                  lastError:
+                    type: string
+                  checkedAt:
+                    type: string
+  /api/offers/bot/token:
+    get:
+      summary: Действующий токен бота (только offers-bot)
+      security:
+        - serviceSecret: []
+      responses:
+        '200':
+          description: Токен; пустая строка — администратор ещё не вводил
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  username:
+                    type: string
+  /api/offers/bot/heartbeat:
+    post:
+      summary: Отметка «бот жив» и последняя ошибка (только offers-bot)
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                last_error:
+                  type: string
+      responses:
+        '200':
+          description: Отмечено
   /api/offers/bot/request-code:
     post:
       summary: Самозапрос кода на e-mail (без JWT, только сервис бота)

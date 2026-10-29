@@ -315,3 +315,60 @@ EXIT=0, `npm run build` OK; `scripts/check_offers_openapi.mjs` — 31 маршр
 `/registry.json` не файлом, а проксирует в auth-service, который накладывает
 сверху `registry_file_overrides` из БД. Поэтому правка файла в `/opt/mailers/www/`
 ни на что не влияет; проверять выдачу — только по https или по таблице.
+
+## 0.1.4 - 2026-10-29 (bot token is entered from the plugin)
+
+User request: "it is not clear how to enter or change the bot token in order to
+start the bot". Option A was chosen by the user (own setting in offers-service).
+
+**Cause.** The token came only from `TELEGRAM_BOT_TOKEN` in the bot's environment,
+i.e. `OFFERS_TELEGRAM_BOT_TOKEN` in the server `.env`: setting it needed SSH, a
+change needed a container restart, and an empty token made the poller return silently
+while the "Bot and access" section looked healthy.
+
+**What was done.**
+- `offers-service`: table `offers_bot_config` (single row: token, bot username,
+  author, `bot_last_seen_at`, `bot_last_error`); `botconfig.go` and six routes;
+  the plugin's ones behind `requirePerm("admin")` - `GET/POST/DELETE /bot/config`
+  and `GET /bot/status`; internal ones behind `requireServiceSecret` -
+  `GET /bot/token` and `POST /bot/heartbeat`. The token is never returned to the
+  plugin.
+- Saving verifies the token first (`getMe` through the bot) and writes only on
+  success, so a typo cannot replace a working token. Bot unreachable -> the request
+  fails and nothing is stored.
+- `offers-bot`: `resolveBotToken()` reads `GET /api/offers/bot/token`, caches
+  for 15 s and **throws** on any failure - no fallback to the environment, the lesson
+  from the `portal-embed` incident of the same day. The poller no longer exits
+  without a token: it heartbeats the reason and retries every 15 s, so the token
+  entered in the plugin takes effect without a restart. New `verify-server.ts`
+  serves `POST /internal/verify` on the internal network only.
+- Plugin: a "Telegram-бот" card at the top of "Bot and access" - masked field,
+  "Проверить и сохранить", "Удалить токен", "Проверить сейчас", a coloured state
+  line ("Бот работает: @..." / "Токен не задан" / "Бот не отвечает · ошибка") and
+  the @BotFather hint.
+- `TELEGRAM_BOT_TOKEN` removed from `docker-compose.yml` and both
+  `.env.example` files; `offers` got `OFFERS_BOT_URL`, `offers-bot` got
+  `VERIFY_PORT`.
+
+**Checks.** `gofmt`/`go vet` clean, `go test` - 51 tests, coverage 23.1%
+(6 new: token normalisation, format check, no token field in the response, verify
+via bot: ok / Telegram error / bot down). Bot: typecheck, build, 19 tests (9 new,
+including "does not fall back to `TELEGRAM_BOT_TOKEN`"). Plugin: `tsc --noEmit`
+EXIT=0, `npm run build` OK. Swagger: 37 routes, schema matches
+(`check_offers_openapi.mjs`). Local stand: `bot-stub.mjs` plus a new section 10
+in `offers_local_e2e.mjs` - 77 checks green, twice in a row.
+
+**Not done yet.** No commit, no deployment, no self-hosting: the server still runs
+the old bot with the token from `.env`. Deploying needs
+`docker compose up -d --build offers offers-bot` and then entering the token in the
+plugin; the `OFFERS_TELEGRAM_BOT_TOKEN` line should be removed from the server
+`.env` (backup first).
+
+**ub-mode checks (2026-10-29).** ``dryer`` finds no duplication in the new code
+(the remaining pairs are pre-existing). ``crapper`` on the fresh code flagged four
+oversized functions, all split before releasing: the bot card (CC 13 -> pieces of 5
+and below), the access editor (10/12 -> 1 and 6), ``verifyTokenViaBot`` (9 -> 5 plus
+``askBotToVerify`` 6) and ``startVerifyServer`` (10 -> 3 plus ``handleVerify`` 8).
+Recommended thresholds are CRAP < 10 and duplication < 0.8; the remaining high CRAP
+values come from zero test coverage on UI and HTTP, the same as everywhere else in
+this plugin, and are recorded rather than hidden.

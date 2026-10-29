@@ -73,8 +73,9 @@ export default class SbeOffersPlugin extends Plugin {
         appName: this.manifest.name,
         version: this.manifest.version,
         summary:
-          'Улучшена надёжность работы: настройки предложения и сохранённые данные теперь не теряются при ' +
-          'перезапуске, выгрузка в Word выполняется быстрее, а суммы всегда отображаются без расхождений.',
+          'Токен Telegram-бота теперь задаётся прямо в плагине: в разделе «Бот и доступ» его можно ' +
+          'ввести, заменить или удалить, и рядом сразу видно, работает бот или нет. Раньше для этого ' +
+          'нужно было обращаться к серверу, а при незаданном токене бот молча не принимал заказы.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();

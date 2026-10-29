@@ -5,11 +5,65 @@
  */
 import https from 'node:https';
 import { SocksProxyAgent } from 'socks-proxy-agent';
+import { API_URL } from './api.ts';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
 const SOCKS_PROXY_URL = process.env.TELEGRAM_SOCKS_PROXY ?? 'socks5://127.0.0.1:1080';
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 const socksAgent = new SocksProxyAgent(SOCKS_PROXY_URL);
+
+// --- Токен бота живёт ТОЛЬКО в offers-service (таблица offers_bot_config): его
+// вводит администратор из настроек плагина (2026-10-29). Переменной окружения
+// TELEGRAM_BOT_TOKEN здесь больше нет и не будет: в соседнем portal-embed именно
+// второй источник (.env рядом с базой) полтора суток слал уведомления чужим
+// ботом, потому что при 403 сервер откатывался на значение из окружения.
+// Не получили токен — это отказ, а не повод работать другим ботом.
+// Кэш 15 с: смена токена в плагине действует почти сразу, без перезапуска
+// контейнера, и при этом мы не дёргаем offers-service на каждый запрос. ---
+const TOKEN_CACHE_TTL_MS = 15_000;
+let tokenCache: { token: string; expiresAt: number } | null = null;
+
+/** Забыть кэш токена — нужно проверке из настроек плагина: она должна видеть,
+ *  что сохранённый токен сейчас другой, а не предыдущий. */
+export function forgetCachedToken(): void {
+  tokenCache = null;
+}
+
+/** Действующий токен бота. Бросает, если токен не задан или сервис недоступен:
+ *  лучше видимая ошибка, чем молча чужой бот. */
+export async function resolveBotToken(): Promise<string> {
+  if (tokenCache && tokenCache.expiresAt > Date.now()) return tokenCache.token;
+  const AUTH = process.env.OFFERS_BOT_SECRET ?? '';
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/offers/bot/token`, {
+      headers: { 'X-Service-Secret': AUTH },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    throw new Error(`не удалось получить токен бота: сервис недоступен (${(e as Error).message})`);
+  }
+  if (!res.ok) {
+    throw new Error(`не удалось получить токен бота: /api/offers/bot/token ответил ${res.status}`);
+  }
+  const data = (await res.json()) as { token?: string };
+  const token = typeof data.token === 'string' ? data.token.trim() : '';
+  if (!token) {
+    throw new Error('токен бота не задан: администратор ещё не ввёл его в настройках плагина');
+  }
+  tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+  return token;
+}
+
+/** Есть ли действующий токен — по нему решается, включать ли приём сообщений.
+ *  Ошибку не бросает: отсутствие токена означает «бот выключен», а не поломку. */
+export async function hasBotToken(): Promise<boolean> {
+  try {
+    await resolveBotToken();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface TelegramApiResult<T> {
   ok: boolean;
@@ -36,19 +90,16 @@ export interface TelegramUpdate {
   callback_query?: TelegramCallbackQuery;
 }
 
-export function telegramTokenConfigured(): boolean {
-  return BOT_TOKEN !== '';
-}
-
 export async function telegramRequest<T>(
   method: string,
   body: Record<string, unknown>,
   timeoutMs = 15000,
 ): Promise<TelegramApiResult<T>> {
+  const token = await resolveBotToken();
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const req = https.request(
-      `${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/${method}`,
+      `${TELEGRAM_API_BASE}/bot${token}/${method}`,
       {
         method: 'POST',
         agent: socksAgent,
@@ -76,6 +127,40 @@ export async function telegramRequest<T>(
 /** Предел файла для чата: у ботов Telegram лимит отправки ~50 МБ, но путь
  *  идёт через туннель — держимся заведомо безопасных 20 МБ. */
 export const MAX_DOCUMENT_BYTES = 20 << 20;
+
+/** Сверить предлагаемый токен с Telegram (getMe) — этим живёт ручка
+ *  /internal/verify: сервис сам в Telegram не ходит, туда есть путь только
+ *  отсюда, через SOCKS. Возвращает @username бота. */
+export async function verifyToken(token: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      `${TELEGRAM_API_BASE}/bot${token.trim()}/getMe`,
+      { method: 'POST', agent: socksAgent, headers: { 'Content-Type': 'application/json' } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as TelegramApiResult<{
+              username?: string;
+              first_name?: string;
+            }>;
+            if (!parsed.ok) {
+              reject(new Error(parsed.description || 'Telegram отклонил токен'));
+              return;
+            }
+            resolve(parsed.result?.username ?? parsed.result?.first_name ?? '');
+          } catch (e) {
+            reject(new Error(`Telegram ответил не по формату: ${(e as Error).message}`));
+          }
+        });
+      },
+    );
+    req.setTimeout(15000, () => req.destroy(new Error('Telegram не ответил за 15 секунд')));
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 /** Делит длинный текст по границам строк/предложений под лимит Telegram. */
 export function splitForTelegram(text: string, limit = 4000): string[] {
@@ -155,10 +240,11 @@ export async function sendDocument(
   parts.push(Buffer.from('\r\n', 'utf8'));
   parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
   const body = Buffer.concat(parts);
+  const token = await resolveBotToken();
 
   const res = await new Promise<TelegramApiResult<unknown>>((resolve, reject) => {
     const req = https.request(
-      `${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendDocument`,
+      `${TELEGRAM_API_BASE}/bot${token}/sendDocument`,
       {
         method: 'POST',
         agent: socksAgent,

@@ -9,7 +9,6 @@ import {
   getUpdates,
   sendDocument,
   sendMessage,
-  telegramTokenConfigured,
   type TelegramUpdate,
 } from './telegram.ts';
 import {
@@ -424,26 +423,55 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
 }
 
 export async function runPoller(): Promise<void> {
-  if (!telegramTokenConfigured()) {
-    console.error('offers-bot: TELEGRAM_BOT_TOKEN не задан — поллер не запущен');
-    return;
-  }
   let offset = 0;
+  let toldAboutToken = false;
+  let lastSentError = '';
   console.log('offers-bot: поллер запущен');
-  for (;;) {
+
+  const report = async (error: string): Promise<void> => {
+    // Одинаковое сообщение не шлём повторно: иначе раз в 15 секунд
+    // переписывается одна и та же строка в базе.
+    if (error === lastSentError) return;
+    lastSentError = error;
     try {
-      const updates = await getUpdates(offset);
-      for (const update of updates) {
-        offset = update.update_id + 1;
-        try {
-          await handleUpdate(update);
-        } catch (e) {
-          console.error('offers-bot: ошибка обработки сообщения:', (e as Error).message);
-        }
-      }
+      await api.heartbeat(error);
     } catch (e) {
-      console.error('offers-bot: getUpdates:', (e as Error).message);
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      console.error('offers-bot: heartbeat не доставлен:', (e as Error).message);
+    }
+  };
+
+  for (;;) {
+    let updates: TelegramUpdate[];
+    try {
+      updates = await getUpdates(offset);
+      if (toldAboutToken) {
+        toldAboutToken = false;
+        console.log('offers-bot: токен получен — приём сообщений работает');
+      }
+      await report('');
+    } catch (e) {
+      const text = (e as Error).message;
+      // Токен ещё не ввели в настройках плагина — это не авария: контейнер
+      // продолжает работать и подхватит токен сам, без перезапуска.
+      if (text.includes('токен бота не задан')) {
+        if (!toldAboutToken) {
+          toldAboutToken = true;
+          console.warn('offers-bot: токен не задан — ждём, пока его введут в настройках плагина');
+        }
+      } else {
+        console.error('offers-bot: getUpdates:', text);
+      }
+      await report(text);
+      await new Promise((resolve) => setTimeout(resolve, 15000));
+      continue;
+    }
+    for (const update of updates) {
+      offset = update.update_id + 1;
+      try {
+        await handleUpdate(update);
+      } catch (e) {
+        console.error('offers-bot: ошибка обработки сообщения:', (e as Error).message);
+      }
     }
   }
 }

@@ -83,6 +83,28 @@ export interface AccessEntry {
 
 export type Role = 'viewer' | 'editor' | 'admin' | 'superadmin';
 
+/**
+ * Настройки Telegram-бота. Токена в ответе сервера нет и не будет — только
+ * признак «задан», чей это бот и кто его менял (2026-10-29).
+ */
+export interface BotConfigInfo {
+  configured: boolean;
+  botUsername: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/** Живое состояние бота для строки статуса. */
+export interface BotStatusInfo {
+  configured: boolean;
+  running: boolean;
+  botUsername: string;
+  lastError: string;
+  checkedAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export const ROLE_RANK: Record<string, number> = {
   '': 0,
   viewer: 1,
