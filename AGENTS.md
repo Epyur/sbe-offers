@@ -230,3 +230,93 @@ dbError() вместо 30 копий log.Printf + writeJSON, prepareOffer() ка
 
 ode scripts/offers_local_e2e.mjs; в репозиторий compose и скрипты входят (они
 нужны следующему, кто будет проверять), dist и бинари — нет.
+
+## 0.1.4 - 2026-10-29 (bot token is entered from the plugin)
+
+User request: "it is not clear how to enter or change the bot token in order to
+start the bot". Option A was chosen by the user (own setting in offers-service).
+
+**Cause.** The token came only from `TELEGRAM_BOT_TOKEN` in the bot's environment,
+i.e. `OFFERS_TELEGRAM_BOT_TOKEN` in the server `.env`: setting it needed SSH, a
+change needed a container restart, and an empty token made the poller return silently
+while the "Bot and access" section looked healthy.
+
+**What was done.**
+- `offers-service`: table `offers_bot_config` (single row: token, bot username,
+  author, `bot_last_seen_at`, `bot_last_error`); `botconfig.go` and six routes;
+  the plugin's ones behind `requirePerm("admin")` - `GET/POST/DELETE /bot/config`
+  and `GET /bot/status`; internal ones behind `requireServiceSecret` -
+  `GET /bot/token` and `POST /bot/heartbeat`. The token is never returned to the
+  plugin.
+- Saving verifies the token first (`getMe` through the bot) and writes only on
+  success, so a typo cannot replace a working token. Bot unreachable -> the request
+  fails and nothing is stored.
+- `offers-bot`: `resolveBotToken()` reads `GET /api/offers/bot/token`, caches
+  for 15 s and **throws** on any failure - no fallback to the environment, the lesson
+  from the `portal-embed` incident of the same day. The poller no longer exits
+  without a token: it heartbeats the reason and retries every 15 s, so the token
+  entered in the plugin takes effect without a restart. New `verify-server.ts`
+  serves `POST /internal/verify` on the internal network only.
+- Plugin: a "Telegram-╨▒╨╛╤В" card at the top of "Bot and access" - masked field,
+  "╨Я╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╨╕ ╤Б╨╛╤Е╤А╨░╨╜╨╕╤В╤М", "╨г╨┤╨░╨╗╨╕╤В╤М ╤В╨╛╨║╨╡╨╜", "╨Я╤А╨╛╨▓╨╡╤А╨╕╤В╤М ╤Б╨╡╨╣╤З╨░╤Б", a coloured state
+  line ("╨С╨╛╤В ╤А╨░╨▒╨╛╤В╨░╨╡╤В: @..." / "╨в╨╛╨║╨╡╨╜ ╨╜╨╡ ╨╖╨░╨┤╨░╨╜" / "╨С╨╛╤В ╨╜╨╡ ╨╛╤В╨▓╨╡╤З╨░╨╡╤В ┬╖ ╨╛╤И╨╕╨▒╨║╨░") and
+  the @BotFather hint.
+- `TELEGRAM_BOT_TOKEN` removed from `docker-compose.yml` and both
+  `.env.example` files; `offers` got `OFFERS_BOT_URL`, `offers-bot` got
+  `VERIFY_PORT`.
+
+**Checks.** `gofmt`/`go vet` clean, `go test` - 51 tests, coverage 23.1%
+(6 new: token normalisation, format check, no token field in the response, verify
+via bot: ok / Telegram error / bot down). Bot: typecheck, build, 19 tests (9 new,
+including "does not fall back to `TELEGRAM_BOT_TOKEN`"). Plugin: `tsc --noEmit`
+EXIT=0, `npm run build` OK. Swagger: 37 routes, schema matches
+(`check_offers_openapi.mjs`). Local stand: `bot-stub.mjs` plus a new section 10
+in `offers_local_e2e.mjs` - 77 checks green, twice in a row.
+
+**Not done yet.** No commit, no deployment, no self-hosting: the server still runs
+the old bot with the token from `.env`. Deploying needs
+`docker compose up -d --build offers offers-bot` and then entering the token in the
+plugin; the `OFFERS_TELEGRAM_BOT_TOKEN` line should be removed from the server
+`.env` (backup first).
+
+**ub-mode checks (2026-10-29).** ``dryer`` finds no duplication in the new code
+(the remaining pairs are pre-existing). ``crapper`` on the fresh code flagged four
+oversized functions, all split before releasing: the bot card (CC 13 -> pieces of 5
+and below), the access editor (10/12 -> 1 and 6), ``verifyTokenViaBot`` (9 -> 5 plus
+``askBotToVerify`` 6) and ``startVerifyServer`` (10 -> 3 plus ``handleVerify`` 8).
+Recommended thresholds are CRAP < 10 and duplication < 0.8; the remaining high CRAP
+values come from zero test coverage on UI and HTTP, the same as everywhere else in
+this plugin, and are recorded rather than hidden.
+
+## Release 0.1.4 — 2026-10-29 (deployed, self-hosted)
+
+**Deployed.** ``docker compose up -d --build --force-recreate --no-deps offers``
+plus ``--build offers-bot``; both containers report a new ``CREATED``. On the
+server, ``docker-compose.yml`` lost ``TELEGRAM_BOT_TOKEN`` and gained
+``OFFERS_BOT_URL`` (offers) and ``VERIFY_PORT`` (bot); ``.env`` lost the dead
+``OFFERS_TELEGRAM_BOT_TOKEN`` line. Backups: ``docker-compose.yml.bak-offersbot-20261029``,
+``.env.bak-offersbot-20261029``, ``/tmp/offers-src-backup-20261029.tgz``.
+
+**Live checks.** health 200, ``/docs/`` 200, ``/openapi.yaml`` 200,
+``/bot/config`` without a token 401; ``offers_bot_config`` created with the seven
+columns; ``/internal/verify`` reachable from the offers container and refusing a
+wrong secret (403) and a garbage token (400 straight from Telegram through the SOCKS
+sidecar); ``/bot/token`` returns an empty token; the bot container stays up and logs
+"токен не задан — ждём".
+
+**Defect found during deployment and fixed (commit 1e9491b).** The heartbeat was a
+plain ``UPDATE``: with no row yet, it wrote nothing and still answered ``ok``, so the
+plugin could not see a running bot before the first token. Now ``INSERT … ON
+CONFLICT``. Verified on the server by deleting the row, restarting the bot, and
+reading it back: one row, empty token, Russian error text byte-exact UTF-8,
+timestamp set. **Lesson: a "success" response is not proof that anything was
+written — check the row, not the status.**
+
+**Self-hosting.** ``lims_selfhost.sh sbe-offers`` — the three sha256 matched over
+https: ``manifest dfd0e56…``, ``main 93161c8…``, ``styles e4b33b4…``. Registry commit
+``1c036d1`` in ``sbe-apstore-registry``, pushed. Server ``registry_file_overrides``
+row updated by the script.
+
+**Branches.** ``backend`` b221d9d + fix 1e9491b; ``main`` 7a551e9 (plugin slice).
+**Still to do by the admin:** paste the token from @BotFather into the plugin's
+"Бот и доступ" section — until then the bot is up but silent by design.
