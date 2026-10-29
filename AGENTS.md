@@ -372,3 +372,62 @@ and below), the access editor (10/12 -> 1 and 6), ``verifyTokenViaBot`` (9 -> 5 
 Recommended thresholds are CRAP < 10 and duplication < 0.8; the remaining high CRAP
 values come from zero test coverage on UI and HTTP, the same as everywhere else in
 this plugin, and are recorded rather than hidden.
+
+## Roles left the bot, sign-in survives a restart — 2026-10-29 (commit fbf036b)
+
+**User's requirement:** plugin roles and bot roles must not overlap at all; the bot
+needs no roles — anyone who gets access to the bot may build offers. Two-level roles
+had been matched obscurely, so "Менеджер" in the plugin showed up as "просмотр" in the
+bot.
+
+**Done.**
+- `offers-bot/src/session.ts`: the `role` field is gone from `ChatSession`;
+  `applyLogin(session, email)` takes no role.
+- `offers-bot/src/flow.ts`: `AUTH_OK(email)` no longer names a role,
+  `NOT_ALLOWED_TO_EDIT` deleted.
+- `offers-bot/src/poller.ts`: the gate in `startDraft` removed.
+- `offers-bot/src/api.ts`: `BotIdentity { email }` replaces `{ email, role }`, so the
+  compiler prevents leaning on a role again.
+- `offers-service/access.go`: `bot/identity` and `bot/verify-code` return only `email`;
+  `roleForEmail` deleted as dead code.
+- Plugin `src/ui/access-editor.ts`: the "Роль" column and the role picker are gone;
+  `roleLabel` deleted. **Plugin roles (viewer/editor/admin) stay in the plugin only.**
+
+**Sign-in survives a restart.** The user reported being asked for a code after every
+bot restart. The permanent `chat_id → email` link was already in `offers_bot_link` and
+never lost; what was lost was the in-memory session. New `restoreSession(email)` in
+`session.ts` (pure, tested) and `sessionRestored(chatId)` in the poller: for a chat
+absent from memory the bot asks `identity`, so a known chat is immediately signed in.
+Used in both the text handler and the callback handler. An unknown chat still gets a
+code; an unreachable service does not break sign-in.
+
+**Checks.** TDD: tests written first and seen failing for the right reason
+(`roles-removed.test.ts` 3 checks, `restore.test.ts` 3). Bot: 28 tests, `tsc` and
+`tsc --noUnusedLocals` clean, build OK. `crapper`: `sessionRestored` CC 5,
+`restoreSession` CC 2 — within the threshold; `dryer` finds no duplication in the new
+code. Dead import `draftTotal` removed.
+
+**Deployed.** Bot container recreated; a known chat is recognised without a code
+(`810181470 → polishchuk@tn.ru`, `8905120569 → miloserdov@tn.ru`), an unknown chat gets
+404 from `identity`, which means a code will be requested.
+
+### Debt: dispatcher functions (deliberately not refactored)
+
+`handleCallback` (CC 24) and `handleText` (CC 23) in `offers-bot/src/poller.ts` stay as
+they are — the user chose to record them as debt rather than refactor now. Why they
+are over the CRAP threshold:
+
+- both are dispatchers mixing three concerns: anti-flood/entry guard, sign-in state
+  machine, and a table of handlers;
+- sign-in is checked twice (once per function) — the restart fix above had to be
+  written in both places;
+- `back` and `done` each repeat the "draft not found" branch with slightly different
+  text; `pick:` and `link:` carry their own `try/catch`;
+- `done` builds a one-element `missing` array instead of `if (!draft.clientName)`;
+- nothing is testable: checking "undo removes the last item" requires the whole poller
+  with network.
+
+Planned shape when taken on: `handleText` → guard → ensureAuthed → command table;
+`handleCallback` → answer → ensureAuthed → prefix table; the ten buttons become small
+functions in `callbacks.ts`, texts in `flow.ts`. Order: tests on current behaviour
+first, then the move, then `crapper`/`dryer`.
