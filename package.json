@@ -1,6 +1,6 @@
 {
   "name": "sbe-offers",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Коммерческие предложения как SBE-плагин: каталог систем и материалов, форма КП, сборка в плагине и через Telegram-бота, DOCX.",
   "main": "main.js",
   "scripts": {
