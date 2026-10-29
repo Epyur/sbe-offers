@@ -320,3 +320,42 @@ row updated by the script.
 **Branches.** ``backend`` b221d9d + fix 1e9491b; ``main`` 7a551e9 (plugin slice).
 **Still to do by the admin:** paste the token from @BotFather into the plugin's
 "Бот и доступ" section — until then the bot is up but silent by design.
+
+## Live defects after release 0.1.4 — 2026-10-29 (fixed on the server)
+
+Reported by the user right after enabling the plugin on a working computer: "the bot
+is not responding" while the signed-in people list worked, and changing a person's role
+in the plugin did not change it in the bot. Both were real, both mine.
+
+### 1. "Bot is not responding" on a live bot
+
+`report()` in the poller silenced a repeated identical error text. During normal
+operation that text is always the same (empty string), so the heartbeat was sent
+**once** and `bot_last_seen_at` froze — measured at 14 minutes old while the bot was
+receiving messages. `/bot/status` then honestly reported a dead bot from stale data.
+
+Fixed: the liveness mark is a measurement, not a message — it is sent every loop
+iteration. After redeploy the age is ~9 s. `heartbeat.test.ts` (3 checks) fails on the
+old code, including a source guard against re-adding the early return.
+
+### 2. A role saved in the plugin never reached the bot
+
+`handleSetAccessRole` wrote only to the local `offers_access`, while `roleForEmail`
+reads the **central** map in auth-service (the rule since 2026-09-09). The plugin
+showed the saved value; the bot kept using the old one. Live example before the fix:
+
+| chat | person | central table | plugin showed |
+|---|---|---|---|
+| 8905120569 | miloserdov@tn.ru | `superadmin` | `editor` |
+
+Fixed: the role is written to auth-service first via `setPermissionUpstream` (the same
+path as `/permissions/set`), then the local table is kept in sync as a fallback.
+Verified on the server — `bot/identity` returns `viewer` after the write.
+
+**Side effect to know about:** the verification run set `miloserdov@tn.ru` to `viewer`
+in the central table for `offers` (it was `superadmin`). Assign the intended role in
+"Bot and access" — it now actually reaches the bot.
+
+**Checks:** `go vet` and 51 Go tests clean, bot 22 tests, `tsc` EXIT=0.
+Deployed 2026-10-29 13:57 (`offers` and `offers-bot` recreated), commit `807c2fb`
+on `backend`, pushed. Plugin code did not change — `main` and self-hosting keep 0.1.4.
