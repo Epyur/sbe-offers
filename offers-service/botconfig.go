@@ -271,8 +271,15 @@ func (s *Server) handleBotHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if len(lastError) > 500 {
 		lastError = lastError[:500]
 	}
+	// Строки может ещё не быть (никто не вводил токен), а бот уже жив и
+	// отмечается. Поэтому INSERT ... ON CONFLICT, а не UPDATE: пустой UPDATE
+	// молча не записывал ничего, и плагин не видел, что бот работает.
 	_, err := s.pool.Exec(r.Context(), `
-UPDATE offers_bot_config SET bot_last_seen_at = now(), bot_last_error = $1 WHERE id = 1`, lastError)
+INSERT INTO offers_bot_config (id, bot_token, bot_last_seen_at, bot_last_error)
+VALUES (1, '', now(), $1)
+ON CONFLICT (id) DO UPDATE SET
+	bot_last_seen_at = now(),
+	bot_last_error = EXCLUDED.bot_last_error`, lastError)
 	if err != nil {
 		dbError(w, "bot heartbeat", err)
 		return
