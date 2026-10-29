@@ -167,6 +167,18 @@ func (s *Server) handleSetAccessRole(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "роль должна быть viewer, editor или admin"})
 		return
 	}
+	// Источник правды — центральная карта auth-service (с 2026-09-09), и бот
+	// читает роль ИМЕННО оттуда (roleForEmail → effectiveRole). Писать только
+	// в локальную offers_access было ошибкой: плагин показывал сохранённую
+	// роль, а бот продолжал работать по прежней (живая жалоба 2026-10-29).
+	// Локальную таблицу держим синхронной — она запасной вариант, если
+	// auth-service недоступен.
+	if err := setPermissionUpstream(r.Context(), actorEmailFromCtx(r), email, role); err != nil {
+		log.Printf("set access role upstream: %v", err)
+		writeJSON(w, http.StatusBadGateway,
+			map[string]any{"error": "не удалось сохранить роль в центральных правах: " + err.Error()})
+		return
+	}
 	var saved struct {
 		Email     string `json:"email"`
 		Role      string `json:"role"`

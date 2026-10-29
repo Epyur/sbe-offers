@@ -428,11 +428,14 @@ export async function runPoller(): Promise<void> {
   let lastSentError = '';
   console.log('offers-bot: поллер запущен');
 
+  // Отметка «бот жив» — САМО измерение, а не сообщение: её надо слать каждую
+  // итерацию, иначе bot_last_seen_at замирает и плагин объявляет живого бота
+  // мёртвым. Поэтому тот же текст ошибки не глушим, а лишь не логируем
+  // повторно в консоль.
   const report = async (error: string): Promise<void> => {
-    // Одинаковое сообщение не шлём повторно: иначе раз в 15 секунд
-    // переписывается одна и та же строка в базе.
-    if (error === lastSentError) return;
-    lastSentError = error;
+    if (error !== lastSentError) {
+      lastSentError = error;
+    }
     try {
       await api.heartbeat(error);
     } catch (e) {
