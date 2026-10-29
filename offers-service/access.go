@@ -294,25 +294,9 @@ INSERT INTO offers_access (email, role) VALUES ($1, $2) ON CONFLICT (email) DO U
 		return
 	}
 
-	role := s.roleForEmail(r.Context(), email)
-	writeJSON(w, http.StatusOK, map[string]any{"email": email, "role": role})
-}
-
-// roleForEmail — роль человека в приложении. Источник правды — central
-// auth-service (та же карта, что у плагина через /permissions/me): иначе
-// назначение роли в ЦУП не доходило бы до бота, а отзыв доступа не действовал.
-// Локальная offers_access хранит только факт первого входа и роль по умолчанию
-// (viewer) — используется как запасной вариант, если auth-service недоступен.
-func (s *Server) roleForEmail(ctx context.Context, email string) string {
-	if role, err := s.effectiveRole(ctx, appIDFromEnv(), email); err == nil && role != "" {
-		return role
-	}
-	var role string
-	if err := s.pool.QueryRow(ctx,
-		`SELECT role FROM offers_access WHERE email = $1`, normalizeEmail(email)).Scan(&role); err != nil {
-		return ""
-	}
-	return role
+	// Роли в ответе боту больше нет (2026-10-29): в боте ролей нет, кто вошёл по
+	// коду — тот собирает КП. См. комментарий у handleBotIdentity.
+	writeJSON(w, http.StatusOK, map[string]any{"email": email})
 }
 
 func (s *Server) handleBotIdentity(w http.ResponseWriter, r *http.Request) {
@@ -328,7 +312,12 @@ func (s *Server) handleBotIdentity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "chat_id не привязан"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"email": email, "role": s.roleForEmail(r.Context(), email)})
+	// Роли здесь НЕТ намеренно (2026-10-29): в боте ролей нет, любой, кто прошёл
+	// вход по коду, собирает КП. Роли плагина (viewer/editor/admin) действуют
+	// только в плагине и на бота не распространяются — раньше эти два уровня
+	// сопоставлялись неочевидно, и «менеджер» в плагине выглядел как «просмотр»
+	// в боте.
+	writeJSON(w, http.StatusOK, map[string]any{"email": email})
 }
 
 // requireServiceSecret защищает ручки бота: их вызывает только offers-bot со

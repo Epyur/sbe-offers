@@ -46,7 +46,7 @@ test('вход: ровно 6 цифр — проверка', () => {
 });
 
 test('вход: после входа текст не трогаем машиной входа', () => {
-  const s = applyLogin(newSession(), 'ivanov@tn.ru', 'editor');
+  const s = applyLogin(newSession(), 'ivanov@tn.ru');
   assert.equal(s.step, 'authed');
   assert.equal(nextStep(s, 'что-то').kind, 'ignore');
 });

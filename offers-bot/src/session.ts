@@ -9,8 +9,6 @@ export interface ChatSession {
   step: ChatStep;
   /** E-mail, на который запрошен код (нужен для проверки). */
   email: string;
-  /** Роль после входа: '' — ещё не известна. */
-  role: '' | 'viewer' | 'editor' | 'admin';
   /** Черновик предложения — живёт в памяти процесса. */
   draft?: OfferDraft;
 }
@@ -39,7 +37,7 @@ export interface OfferDraft {
 }
 
 export function newSession(): ChatSession {
-  return { step: 'idle', email: '', role: '' };
+  return { step: 'idle', email: '' };
 }
 
 export function isEmail(text: string): boolean {
@@ -52,7 +50,7 @@ export type StepResult =
   | { kind: 'prompt'; text: string }
   | { kind: 'request_code'; email: string; text: string }
   | { kind: 'verify_code'; email: string; code: string }
-  | { kind: 'authed'; email: string; role: ChatSession['role'] }
+  | { kind: 'authed'; email: string }
   | { kind: 'ignore' };
 
 /**
@@ -86,12 +84,30 @@ export function nextStep(session: ChatSession, text: string): StepResult {
   return { kind: 'verify_code', email: session.email, code: t };
 }
 
-/** Применить результат входа к сессии. */
-export function applyLogin(session: ChatSession, email: string, role: ChatSession['role']): ChatSession {
-  return { ...session, step: 'authed', email, role };
+/**
+ * Применить результат входа к сессии. Роли у бота нет намеренно (2026-10-29):
+ * любой, кто прошёл вход по коду, собирает КП. Права в боте не дублируют
+ * права плагина и не зависят от них.
+ */
+export function applyLogin(session: ChatSession, email: string): ChatSession {
+  return { ...session, step: 'authed', email };
 }
 
 /** Уходит ли поток в ожидание кода после запроса. */
 export function applyCodeRequested(session: ChatSession, email: string): ChatSession {
   return { ...session, step: 'await_code', email };
+}
+
+/**
+ * Восстановить сессию из постоянной привязки chat_id → email (offers_bot_link).
+ * Знакомый чат считается уже вошедшим: перезапуск бота больше не заставляет
+ * человека заново запрашивать код (2026-10-29).
+ *
+ * Решение принимается здесь, а не в поллере, чтобы правило «кого считаем
+ * вошедшим» жило в одном месте и проверялось без сети.
+ */
+export function restoreSession(email: string): ChatSession {
+  const known = email.trim();
+  if (!known) return newSession();
+  return applyLogin(newSession(), known);
 }

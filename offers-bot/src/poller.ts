@@ -16,6 +16,7 @@ import {
   applyLogin,
   newSession,
   nextStep,
+  restoreSession,
   type ChatSession,
 } from './session.ts';
 import {
@@ -24,12 +25,10 @@ import {
   DRAFT_KEYBOARD,
   HELP_TEXT,
   MAIN_KEYBOARD,
-  NOT_ALLOWED_TO_EDIT,
   addCatalogItem,
   addManualItem,
   catalogMessage,
   draftSummary,
-  draftTotal,
   formatMoney,
   newDraft,
   parseManualItem,
@@ -57,6 +56,36 @@ function sessionFor(chatId: string): ChatSession {
 
 function saveSession(chatId: string, session: ChatSession): void {
   sessions.set(chatId, session);
+}
+
+/**
+ * Сессия чата с восстановлением из базы (2026-10-29).
+ *
+ * В памяти сессии нет после перезапуска бота — а постоянная привязка
+ * chat_id → email лежит в offers_bot_link и никуда не девается. Поэтому для
+ * незнакомого в памяти чата спрашиваем сервис, кто это: знакомый сразу
+ * считается вошедшим, и человеку не приходится заново запрашивать код.
+ *
+ * Ошибку запроса не считаем фатальной: не смогли спросить — человек просто
+ * войдёт по коду, как раньше.
+ */
+async function sessionRestored(chatId: string): Promise<ChatSession> {
+  const known = sessions.get(chatId);
+  if (known) return known;
+  let email = '';
+  try {
+    const who = await api.identity(chatId);
+    email = who.email ?? '';
+  } catch {
+    // 404 = чат не привязан, прочие ошибки = сервис недоступен. Оба случая
+    // означают одно: входа нет, работаем как с новым человеком.
+  }
+  const restored = restoreSession(email);
+  sessions.set(chatId, restored);
+  if (restored.step === 'authed') {
+    console.log(`offers-bot: чат ${chatId} восстановлен — ${restored.email}`);
+  }
+  return restored;
 }
 
 function rateOk(chatId: string): boolean {
@@ -121,10 +150,7 @@ async function showCatalog(chatId: string, query: string, offset: number): Promi
 }
 
 async function startDraft(chatId: string, session: ChatSession): Promise<void> {
-  if (session.role !== 'editor' && session.role !== 'admin') {
-    await sendMessage(chatId, NOT_ALLOWED_TO_EDIT, MAIN_KEYBOARD);
-    return;
-  }
+  // Роли в боте нет: кто вошёл по коду — тот и собирает КП (2026-10-29).
   const draft = newDraft();
   saveSession(chatId, { ...session, draft });
   await sendMessage(
@@ -231,16 +257,18 @@ async function handleText(chatId: string, text: string): Promise<void> {
     return;
   }
 
-  const session = sessionFor(chatId);
+  // Восстанавливаем вход из постоянной привязки: после перезапуска бота
+    // знакомый человек не должен заново запрашивать код.
+  const session = await sessionRestored(chatId);
 
   if (trimmed === '/start') {
     if (session.step === 'authed') {
       await sendMessage(chatId, `Вы вошли как ${session.email}.`, MAIN_KEYBOARD);
       return;
     }
-    // Роль не теряем: иначе после /start сессия становится безролевой и
-    // проходит проверку «не viewer» — то есть сборка КП открылась бы всем.
-    saveSession(chatId, { ...newSession(), step: session.step, email: session.email, role: session.role });
+    // /start до входа сбрасывает только шаг: e-mail сохраняем, чтобы человек
+    // не вводил его заново. Роли в боте нет, терять нечего.
+    saveSession(chatId, { ...newSession(), step: session.step, email: session.email });
     await sendMessage(chatId, AUTH_PROMPT);
     return;
   }
@@ -264,9 +292,8 @@ async function handleText(chatId: string, text: string): Promise<void> {
       case 'verify_code': {
         try {
           const who = await api.verifyCode(chatId, result.email, result.code);
-          const logged = applyLogin(session, who.email, (who.role || 'viewer') as ChatSession['role']);
-          saveSession(chatId, logged);
-          await sendMessage(chatId, AUTH_OK(who.email, who.role), MAIN_KEYBOARD);
+          saveSession(chatId, applyLogin(session, who.email));
+          await sendMessage(chatId, AUTH_OK(who.email), MAIN_KEYBOARD);
         } catch (e) {
           await sendMessage(chatId, (e as Error).message);
         }
@@ -313,7 +340,9 @@ async function handleText(chatId: string, text: string): Promise<void> {
 
 async function handleCallback(chatId: string, data: string, callbackId: string): Promise<void> {
   await answerCallback(callbackId);
-  const session = sessionFor(chatId);
+  // Та же логика, что у текста: после перезапуска нажатие на кнопку не должно
+  // снова требовать код, если чат уже привязан.
+  const session = await sessionRestored(chatId);
   if (session.step !== 'authed') {
     await sendMessage(chatId, AUTH_PROMPT);
     return;

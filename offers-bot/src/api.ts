@@ -70,7 +70,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   }
 }
 
-export async function identity(chatId: string): Promise<{ email: string; role: string }> {
+// Роли в ответе нет: в боте ролей нет (2026-10-29). Тип описывает реальную
+// форму ответа — так компилятор не даст случайно снова опереться на роль.
+export interface BotIdentity {
+  email: string;
+}
+
+export async function identity(chatId: string): Promise<BotIdentity> {
   return call('GET', `/bot/identity?chat_id=${encodeURIComponent(chatId)}`);
 }
 
@@ -82,7 +88,7 @@ export async function verifyCode(
   chatId: string,
   email: string,
   code: string,
-): Promise<{ email: string; role: string }> {
+): Promise<BotIdentity> {
   return call('POST', '/bot/verify-code', { chat_id: chatId, email, code });
 }
 
