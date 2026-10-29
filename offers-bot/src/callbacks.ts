@@ -1,0 +1,308 @@
+/**
+ * Обработчики кнопок черновика (Task 1 плана 2026-10-29).
+ *
+ * Раньше эти десять веток жили внутри `handleCallback` в поллере, и функция
+ * перевалила за CC 24. Теперь каждая ветка — отдельная маленькая функция,
+ * которую можно проверить без сети. Ветка проверки входа и защита от повторов
+ * остались в `routes.ts`: они одинаковы для текста и для кнопок.
+ */
+import { answerCallback, editMessage, sendDocument } from './telegram.ts';
+import {
+  DRAFT_KEYBOARD,
+  MAIN_KEYBOARD,
+  addCatalogItem,
+  addManualItem,
+  catalogMessage,
+  draftSummary,
+  formatMoney,
+  newDraft,
+  parseManualItem,
+  removeItem,
+} from './flow.ts';
+import * as api from './api.ts';
+import type { BotDeps } from './routes.ts';
+import type { ChatSession, OfferDraft } from './session.ts';
+
+const PAGE_SIZE = 8;
+
+export interface CallbackCtx {
+  deps: BotDeps;
+  chatId: string;
+  session: ChatSession;
+  /**
+   * Сохранить сессию и сделать её текущей в этом контексте.
+   *
+   * Раньше контекст держал снимок сессии и после сохранения продолжал читать
+   * старый: второй шаг сценария видел состояние ДО первого. Теперь контекст
+   * обновляется вместе с сохранением — это единственное место, где меняется
+   * `ctx.session`.
+   */
+  save(next: ChatSession): void;
+  /** Страница каталога: запрос и смещение, живёт в памяти поллера. */
+  pages: Map<string, { query: string; offset: number }>;
+}
+
+/**
+ * Единственное место, где сессия меняется в контексте: и в поллере, и в
+ * хранилище — одно состояние. Снимок сессии в контексте после сохранения
+ * обновляется, иначе цепочка шагов читает прошлое состояние.
+ */
+export function apply(ctx: CallbackCtx, next: ChatSession): void {
+  ctx.session = next;
+  ctx.deps.save(ctx.chatId, next);
+}
+
+/** Общая проверка «черновик должен быть» — была скопирована в трёх местах. */
+export function requireDraft(ctx: CallbackCtx): OfferDraft | null {
+  return ctx.session.draft ?? null;
+}
+
+function catalogKeyboard(items: api.CatalogItem[]): Record<string, unknown> {
+  const rows = items.map((item) => [
+    {
+      text: `${item.name} — ${formatMoney(item.basePrice)}`,
+      callback_data: `pick:${item.id}`,
+    },
+  ]);
+  rows.push([{ text: '« Назад к черновику', callback_data: 'back' }]);
+  return { inline_keyboard: rows };
+}
+
+export async function showCatalog(ctx: CallbackCtx, query: string, offset: number): Promise<void> {
+  if (!ctx.session.draft) {
+    apply(ctx, { ...ctx.session, draft: newDraft() });
+  }
+  let items: api.CatalogItem[] = [];
+  try {
+    items = await api.catalog(query);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось загрузить каталог: ${(e as Error).message}`);
+    return;
+  }
+  if (items.length === 0) {
+    await ctx.deps.send(ctx.chatId, catalogMessage([], query));
+    return;
+  }
+  const page = items.slice(offset, offset + PAGE_SIZE);
+  ctx.pages.set(ctx.chatId, { query, offset });
+  const hasMore = items.length > offset + PAGE_SIZE;
+  const keyboard = catalogKeyboard(page);
+  if (hasMore) {
+    (keyboard.inline_keyboard as unknown[][]).splice(0, 0, [
+      { text: 'Ещё ▸', callback_data: 'more' },
+    ]);
+  }
+  await ctx.deps.send(ctx.chatId, catalogMessage(page, query), keyboard);
+}
+
+export async function startDraft(ctx: CallbackCtx): Promise<void> {
+  // Роли в боте нет: кто вошёл по коду — тот и собирает КП (2026-10-29).
+  const draft = newDraft();
+  apply(ctx, { ...ctx.session, draft });
+  await ctx.deps.send(
+    ctx.chatId,
+    'Собираем предложение.\n\nДобавьте позиции из каталога или впишите свои, затем нажмите «Готово».\n\n' +
+      draftSummary(draft),
+    DRAFT_KEYBOARD,
+  );
+}
+
+export async function sendDocx(ctx: CallbackCtx, offerId: number): Promise<void> {
+  try {
+    const doc = await api.docx(offerId, ctx.chatId);
+    const bytes = Buffer.from(doc.docx_base64, 'base64');
+    await sendDocument(ctx.chatId, doc.file_name, bytes, 'Коммерческое предложение');
+    await ctx.deps.send(ctx.chatId, 'Файл готов. Можно изменить состав или получить ссылку.', {
+      inline_keyboard: [
+        [{ text: '🔗 Ссылкой', callback_data: `link:${offerId}` }],
+        [{ text: '🧾 Новое КП', callback_data: 'new' }],
+      ],
+    });
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось собрать файл: ${(e as Error).message}`, MAIN_KEYBOARD);
+  }
+}
+
+export async function finishDraft(ctx: CallbackCtx): Promise<void> {
+  const draft = ctx.session.draft;
+  if (!draft) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  if (draft.items.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'В предложении нет позиций. Добавьте хотя бы одну.', DRAFT_KEYBOARD);
+    return;
+  }
+  try {
+    const offer = await api.createOffer({
+      chatId: ctx.chatId,
+      client: { name: draft.clientName, contact: draft.clientContact },
+      items: draft.items,
+      formValues: draft.formValues,
+    });
+    const done = { ...draft, offerId: offer.id, step: 'done' as const };
+    apply(ctx, { ...ctx.session, draft: done });
+    await ctx.deps.send(ctx.chatId, `Предложение № ${offer.number}.\n\n${draftSummary(done)}`);
+    await sendDocx(ctx, offer.id);
+  } catch (e) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось сохранить предложение: ${(e as Error).message}`,
+      DRAFT_KEYBOARD,
+    );
+  }
+}
+
+export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<boolean> {
+  const draft = ctx.session.draft;
+  if (!draft) return false;
+
+  if (draft.step === 'manual') {
+    const parsed = parseManualItem(text);
+    if (!parsed) {
+      await ctx.deps.send(
+        ctx.chatId,
+        'Не разобрал строку. Формат: Название | количество | цена.\nНапример: Монтаж водостока | 12 | 850',
+      );
+      return true;
+    }
+    apply(ctx, { ...ctx.session, draft: addManualItem(draft, parsed.name, parsed.qty, parsed.price) });
+    await ctx.deps.send(ctx.chatId, draftSummary(ctx.session.draft!), DRAFT_KEYBOARD);
+    return true;
+  }
+
+  if (draft.pendingCatalog) {
+    const qty = Number(text.replace(',', '.'));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      await ctx.deps.send(ctx.chatId, 'Количество должно быть числом больше нуля. Сколько добавить?');
+      return true;
+    }
+    const card = draft.pendingCatalog;
+    const next = addCatalogItem(
+      draft,
+      { id: card.id, name: card.name, unit: card.unit, basePrice: card.price },
+      qty,
+    );
+    apply(ctx, { ...ctx.session, draft: next });
+    await ctx.deps.send(ctx.chatId, draftSummary(next), DRAFT_KEYBOARD);
+    return true;
+  }
+
+  if (draft.step === 'fields' && draft.currentField) {
+    const values = { ...draft.formValues, [draft.currentField]: text.trim() };
+    const next = { ...draft, formValues: values, currentField: undefined };
+    apply(ctx, { ...ctx.session, draft: next });
+    await finishDraft(ctx);
+    return true;
+  }
+
+  return false;
+}
+
+// --- Кнопки ------------------------------------------------------------
+
+export async function onNew(ctx: CallbackCtx): Promise<void> {
+  await startDraft(ctx);
+}
+
+export async function onCatalog(ctx: CallbackCtx): Promise<void> {
+  await showCatalog(ctx, '', 0);
+}
+
+export async function onMore(ctx: CallbackCtx): Promise<void> {
+  const page = ctx.pages.get(ctx.chatId) ?? { query: '', offset: 0 };
+  await showCatalog(ctx, page.query, page.offset + PAGE_SIZE);
+}
+
+export async function onBack(ctx: CallbackCtx): Promise<void> {
+  const draft = requireDraft(ctx);
+  if (!draft) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не найден.', MAIN_KEYBOARD);
+    return;
+  }
+  await ctx.deps.send(ctx.chatId, draftSummary(draft), DRAFT_KEYBOARD);
+}
+
+export async function onManual(ctx: CallbackCtx): Promise<void> {
+  apply(ctx, { ...ctx.session, draft: { ...(ctx.session.draft ?? newDraft()), step: 'manual' } });
+  await ctx.deps.send(ctx.chatId, 'Введите позицию строкой: Название | количество | цена');
+}
+
+export async function onUndo(ctx: CallbackCtx): Promise<void> {
+  const draft = requireDraft(ctx);
+  if (!draft || draft.items.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'Убирать нечего.', DRAFT_KEYBOARD);
+    return;
+  }
+  const next = removeItem(draft, draft.items.length - 1);
+  apply(ctx, { ...ctx.session, draft: next });
+  await ctx.deps.send(ctx.chatId, draftSummary(next), DRAFT_KEYBOARD);
+}
+
+export async function onDone(ctx: CallbackCtx): Promise<void> {
+  const draft = requireDraft(ctx);
+  if (!draft) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не найден.', MAIN_KEYBOARD);
+    return;
+  }
+  if (!draft.clientName) {
+    apply(ctx, { ...ctx.session, draft: { ...draft, step: 'fields', currentField: 'clientName' } });
+    await ctx.deps.send(ctx.chatId, 'Название клиента (организация)?');
+    return;
+  }
+  await finishDraft(ctx);
+}
+
+export async function onPick(ctx: CallbackCtx, id: number): Promise<void> {
+  try {
+    const items = await api.catalog('');
+    const card = items.find((i) => i.id === id);
+    if (!card) {
+      await ctx.deps.send(ctx.chatId, 'Карточка не найдена — возможно, её убрали из каталога.');
+      return;
+    }
+    const draft = ctx.session.draft ?? newDraft();
+    apply(ctx, {
+      ...ctx.session,
+      draft: {
+        ...draft,
+        pendingCatalog: { id: card.id, name: card.name, unit: card.unit, price: card.basePrice },
+      },
+    });
+    await ctx.deps.send(ctx.chatId, `Сколько добавить «${card.name}» (${card.unit})?`);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить карточку: ${(e as Error).message}`);
+  }
+}
+
+export async function onDoc(ctx: CallbackCtx, id: number): Promise<void> {
+  await sendDocx(ctx, id);
+}
+
+export async function onLink(ctx: CallbackCtx, id: number): Promise<void> {
+  try {
+    const link = await api.offerLink(id, ctx.chatId);
+    await ctx.deps.send(ctx.chatId, `Ссылка действует 48 часов:\n${link.url}`);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить ссылку: ${(e as Error).message}`);
+  }
+}
+
+/** Таблица кнопок по префиксу: точное совпадение или `prefix:число`. */
+export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
+  new: onNew,
+  cat: onCatalog,
+  more: onMore,
+  back: onBack,
+  manual: onManual,
+  undo: onUndo,
+  done: onDone,
+};
+
+export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promise<void>> = {
+  pick: onPick,
+  doc: onDoc,
+  link: onLink,
+};
+
+export { answerCallback, editMessage };
