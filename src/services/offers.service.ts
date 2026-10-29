@@ -4,6 +4,8 @@ import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { OFFERS_APP_ID } from '../constants';
 import type {
   AccessEntry,
+  BotConfigInfo,
+  BotStatusInfo,
   CatalogItem,
   Offer,
   OfferForm,
@@ -175,5 +177,25 @@ export class OffersService {
 
   async issueCode(email: string): Promise<{ code: string; expiresAt: string }> {
     return this.request<{ code: string; expiresAt: string }>('POST', '/access/codes', { email });
+  }
+
+  /** Настройки Telegram-бота: задан ли токен и чей это бот. */
+  async getBotConfig(): Promise<BotConfigInfo> {
+    return this.request<BotConfigInfo>('GET', '/bot/config');
+  }
+
+  /** Сохранить токен. Сервер сначала проверяет его через бота и только потом
+   *  пишет — неверный токен рабочий не заменит. */
+  async saveBotToken(token: string): Promise<BotConfigInfo> {
+    return this.request<BotConfigInfo>('POST', '/bot/config', { token });
+  }
+
+  async deleteBotToken(): Promise<{ configured: boolean }> {
+    return this.request<{ configured: boolean }>('DELETE', '/bot/config');
+  }
+
+  /** Работает ли бот сейчас (по отметке «бот жив», без запроса к контейнеру). */
+  async getBotStatus(): Promise<BotStatusInfo> {
+    return this.request<BotStatusInfo>('GET', '/bot/status');
   }
 }
