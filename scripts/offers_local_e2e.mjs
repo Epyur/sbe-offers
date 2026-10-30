@@ -827,5 +827,39 @@ console.log('\n14. Бриф в плагине: чтение и правка (Tas
   ok('сводка брифа попала в файл', (docWithBrief.text ?? '').length > 1000);
 }
 
+console.log('\n15. База знаний: карточки систем доходят до плагина (2026-10-30)');
+{
+  // Проверка ровно того, что сломалось на бою: в compose у `offers` не были
+  // заданы KB_SERVICE_URL/KB_SERVICE_SECRET, сервер отвечал kbEnabled: false,
+  // и плагин писал «База знаний не настроена». Стенд этого не ловил, потому
+  // что KB в нём не было. Теперь ловит: если переменные пропадут снова,
+  // раздел покраснеет.
+  // Сначала проверяем, что база знаний ПОДКЛЮЧЕНА — именно это ломалось на бою.
+  const cards = await call('GET', '/context/cards', { token: ownerToken });
+  ok('карточки отдаются → 200', cards.status === 200, `получили ${cards.status} ${cards.text?.slice(0, 160)}`);
+  ok(
+    'база знаний считается настроенной',
+    cards.json?.kbEnabled === true,
+    `kbEnabled=${JSON.stringify(cards.json?.kbEnabled)} — проверьте KB_SERVICE_URL/KB_SERVICE_SECRET у сервиса offers`,
+  );
+
+  // Кеш на свежей базе пуст — это нормально, GET отдаёт кеш. Перечитываем
+  // и уже потом проверяем содержимое.
+  const refreshed = await call('POST', '/context/refresh', { token: ownerToken });
+  ok('перечитывание из базы знаний → 200', refreshed.status === 200, `получили ${refreshed.status}`);
+  ok('перечитывание не вернуло ошибку', !refreshed.json?.error, JSON.stringify(refreshed.json?.error));
+  ok('карточки систем пришли', (refreshed.json?.cards ?? []).length > 0, `карточек ${refreshed.json?.cards?.length}`);
+
+  const card = (refreshed.json?.cards ?? [])[0];
+  ok('у карточки есть название', (card?.title ?? '').length > 0, JSON.stringify(card?.title));
+  ok('у карточки есть описание', card?.hasDescription === true, JSON.stringify(card?.hasDescription));
+  ok('у карточки есть состав', card?.hasComposition === true, JSON.stringify(card?.hasComposition));
+
+  // После перечитывания кеш уже наполнен — GET его отдаёт.
+  const cached = await call('GET', '/context/cards', { token: ownerToken });
+  ok('после перечитывания карточки видны в списке', (cached.json?.cards ?? []).length > 0,
+    `карточек ${cached.json?.cards?.length}`);
+}
+
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);

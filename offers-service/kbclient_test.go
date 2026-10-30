@@ -210,3 +210,31 @@ func TestKBClientFileLink(t *testing.T) {
 		t.Errorf("в запросе нет ключа: %q", s.lastQuery)
 	}
 }
+
+// Настоящий kb-service отдаёт список в поле items, а не notes (2026-10-30).
+// Тест подставлял выдуманное поле и не ловил, что карточки на бою не читаются:
+// соединение есть, kbEnabled=true, а список всегда пуст.
+func TestKBClientNotesReadsItemsField(t *testing.T) {
+	s, c := newKBStub(t)
+	s.body = `{"items":[{"id":5605,"title":"ТН-СТИЛОБАТ ЭКСПЕРТ ТРОТУАР","path":"Инженерная гидроизоляция/Системы/ТН.md"}],"total":2,"page":1,"size":200}`
+	notes, err := c.Notes(context.Background(), 11181)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Title != "ТН-СТИЛОБАТ ЭКСПЕРТ ТРОТУАР" {
+		t.Fatalf("поле items не разобрано: %#v", notes)
+	}
+}
+
+// Старое поле notes тоже понимаем: ответ сервиса мог отличаться в прошлых версиях.
+func TestKBClientNotesReadsLegacyNotesField(t *testing.T) {
+	s, c := newKBStub(t)
+	s.body = `{"notes":[{"id":1,"title":"Старая карточка"}]}`
+	notes, err := c.Notes(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Title != "Старая карточка" {
+		t.Fatalf("поле notes перестало читаться: %#v", notes)
+	}
+}

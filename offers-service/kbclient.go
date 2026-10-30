@@ -229,6 +229,11 @@ func (c *KBClient) TagID(ctx context.Context, name string) (int64, error) {
 }
 
 // Notes — карточки с тегом.
+//
+// Поле списка у kb-service называется `items`; `notes` понимаем для
+// совместимости со старыми ответами. Живой случай 2026-10-30: клиент читал
+// только `notes`, сервис отдавал `items` — соединение было, kbEnabled=true, а
+// карточки всегда приходили пустым списком.
 func (c *KBClient) Notes(ctx context.Context, tagID int64) ([]KBNoteSummary, error) {
 	q := url.Values{}
 	q.Set("tag_id", fmt.Sprintf("%d", tagID))
@@ -236,10 +241,14 @@ func (c *KBClient) Notes(ctx context.Context, tagID int64) ([]KBNoteSummary, err
 	// появится пагинация, но сейчас лишний круг запросов дороже.
 	q.Set("size", "200")
 	var out struct {
+		Items []KBNoteSummary `json:"items"`
 		Notes []KBNoteSummary `json:"notes"`
 	}
 	if err := c.get(ctx, "/api/kb/notes", q, &out); err != nil {
 		return nil, err
+	}
+	if len(out.Items) > 0 {
+		return out.Items, nil
 	}
 	return out.Notes, nil
 }

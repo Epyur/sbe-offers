@@ -28,6 +28,30 @@ const server = http.createServer((req, res) => {
     return send(200, { ok: true });
   }
 
+  // Межсервисный токен (2026-10-30): по нему offers-service ходит в kb-service.
+  // Без него карточки систем не читаются даже при заданном KB_SERVICE_URL, и
+  // стенд молча показывал бы «база знаний не настроена».
+  if (req.method === 'POST' && req.url === '/internal/service-token') {
+    if (req.headers['x-service-secret'] !== SECRET) {
+      return send(403, { error: 'forbidden' });
+    }
+    let raw = '';
+    req.on('data', (c) => {
+      raw += c;
+    });
+    req.on('end', () => {
+      let target = '';
+      try {
+        target = String(JSON.parse(raw || '{}').target_app_id ?? '');
+      } catch {
+        return send(400, { error: 'invalid json' });
+      }
+      // Токен — не настоящий JWT: kb-stub его только принимает, а не проверяет.
+      send(200, { jwt: `stub-token-for-${target || 'unknown'}`, expiresAt: '' });
+    });
+    return undefined;
+  }
+
   const permsMatch = req.url?.match(/^\/internal\/apps\/([^/]+)\/permissions$/);
   if (permsMatch && req.method === 'GET') {
     if (req.headers['x-service-secret'] !== SECRET) {
