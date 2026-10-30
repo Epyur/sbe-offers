@@ -431,3 +431,72 @@ Planned shape when taken on: `handleText` → guard → ensureAuthed → command
 `handleCallback` → answer → ensureAuthed → prefix table; the ten buttons become small
 functions in `callbacks.ts`, texts in `flow.ts`. Order: tests on current behaviour
 first, then the move, then `crapper`/`dryer`.
+
+## Brief dialog, skill-driven copy, KB system cards - 2026-10-29 (structural cycle)
+
+User request: from "the bot builds a list of positions" to a **brainstorming
+conversation** about the object, then model-written section copy agreed with the
+manager, with the four marketing skills adapted to a text document (not slides).
+Then the customer card moved into the Knowledge Base instead of a form field.
+
+**Architecture added**
+
+- `offers-service/model/` - domain types (`Offer`, `BriefPayload`,
+  `ProductContext`). A separate package because `main` cannot be imported:
+  prompts and checklists could not be tested otherwise.
+- `offers-service/skills/` - writing rules adapted from
+  `coreyhaines31/marketingskills` (MIT): `sales-enablement` 2.4.0,
+  `copywriting` 2.3.2, `copy-editing` 2.2.1, `product-marketing` 2.2.0.
+  Deviations recorded in `skills/README.md`. Own additions:
+  `CheckClaimNumbers` (model may only use numbers that exist in the offer) and
+  `[НУЖНО: ...]` instead of invented facts.
+- `offers-service/skills/systemcard.go` - parses a KB note into a system card.
+- `offers-service/kbclient.go` - KB client; inter-service JWT from
+  `auth-service` (`/internal/service-token`, `target_app_id=kb`), same path as
+  `lab-service` -> `ekn-service`.
+- Bot dispatchers split: `routes.ts` + `callbacks.ts`; `poller.ts` is now
+  transport only (debt from the previous cycle closed).
+
+**Three defects the tests found before the rules were written**
+
+1. `\b` in Go does not treat Cyrillic as word characters: `\bне\s+...` silently
+   matched nothing. Both AI-tell regexes were rewritten without `\b`.
+2. `\u00a0` is not a valid Go regexp escape - panic at package init.
+3. JSON answer of a "skipped" topic is indistinguishable from "model forgot the
+   field": both leave the value empty. Added explicit `skipped_topics` in the
+   brief and `skip` in the model answer.
+
+**DOCX was "broken" - and the template was not the cause.** `standard.docx` in
+`sbe-offers` and `sbe-lims` is byte-identical (sha256 `1FE4F368...`).
+`buildDocx` was replacing `word/styles.xml` (5 styles instead of 58) and
+`word/numbering.xml` (2 lists instead of 12). Page numbers in the footer are
+`PAGE`/`SECTIONPAGES` fields inside text boxes and depend on brand styles - they
+were pushed out. Fixed the same way as LIMS: both parts taken from the template
+untouched, our markup moved to brand styles (`Normal` = `a0`, `heading 1` = `1`,
+bullet list = `numId 6`). A second, cheaper-to-fix-now issue: `wp:docPr` ids are
+computed across all package parts (header/footer take 1..25) instead of a
+constant `1000`; media written as `offerimgN.*` so `image1/image2` of the brand
+are not overwritten.
+
+**Customer context lives in the Knowledge Base.** A note tagged
+`commercial_propose` with `system_sku`, `## Состав системы`,
+`## Описание системы`, `## Свойства и преимущества`. Standard:
+`docs/sbe-offers-system-card-standard.md`; template note
+`_Шаблон карточки системы.md` in the systems folder. `offers_context` became a
+cache (mode `system_cards`), not a place to type text. A KB failure does not
+clear the cache: previous cards are returned with `error`.
+
+**Checks.** Go coverage 23.4% -> 38.1%, `go test ./...` green in three packages
+(`main`, `model` 71.6%, `skills` 89.8%), plugin `tsc --noEmit` EXIT=0, local
+stand E2E 77/77, `check_offers_openapi.mjs` 42 routes and schema match.
+
+**Committed** (branch `backend`, no push): `ed7486b` llm client, `e640205`
+brief + skills + copy, `54fb992` DOCX fix + KB cards, `8765790` plugin
+"Контекст КП". In `sbe-core`: `78352e8` (LLM wiring), `66263ec` (KB wiring) -
+only own lines were staged there, other uncommitted work left untouched.
+
+**Open.** Task 7d (card text/photo into DOCX), 7e (md/xlsx attachments in the
+bot), 7f (file upload route), 9 (bot states for brief/copy), 11 (form blocks,
+version 0.2.0, docs). Version not bumped yet: the plugin code changed, so
+`0.1.5 -> 0.2.0` belongs to the release task, with the ЦУП news text rewritten
+for this release.

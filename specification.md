@@ -190,3 +190,94 @@ docker compose -f docker-compose.local.yml down -v
 
 **S3 необязателен.** Без S3_ENDPOINT сервис стартует и отдаёт DOCX байтами;
 ручки ссылок отвечают 503 «хранилище не настроено».
+## Бриф КП (2026-10-29)
+
+Бот ведёт с менеджером разговор о объекте и задачах заказчика, потом пишет
+текст секций предложения. Модель — общий `llm-service`
+(`POST /internal/llm/complete`, `X-Service-Secret`): своего ключа у offers нет.
+
+### Бриф
+
+`offers_brief` (одна строка на предложение) + `offers_brief_turn` (журнал
+реплик). Поля брифа: `object_name`, `customer_pains`, `customer_goals`,
+`project_risks`, `objections` (возражение + ответ), `budget_signal`,
+`decision_maker`, `timeline`, `why_us`, `notes`, `skipped_topics`.
+
+Темы задаются манифестом (`skills.BriefTopics`), порядок стабилен. Тема
+закрыта, когда поле заполнено ИЛИ она в `skipped_topics` («не знаю»).
+
+### Ручки брифа (бот, `X-Service-Secret`)
+
+| Ручка | Тело | Ответ |
+|---|---|---|
+| `POST /bot/offers/{id}/brief/start?chat_id=` | - | `{brief, reply, done, owner}` |
+| `POST /bot/offers/{id}/brief/step?chat_id=` | `{chat_id, text}` | `{brief, reply, done, nextTopic, retry, unavailable, skipped}` |
+
+Ответ модели — JSON `{payload, reply, skip}`. Разбор терпимый
+(`jsonrepair.go`): fenced-блок, текст вокруг, обрезанный ответ достраивается.
+`reply` необязателен — реплику собираем по манифесту. Модель недоступна —
+`unavailable: true`, бриф не меняется.
+
+### Текст секций
+
+| Ручка | Тело | Ответ |
+|---|---|---|
+| `POST /bot/offers/{id}/copy/{key}` | `{chat_id, action, text?, systemIndex?}` | `{key, text, warnings, label}` / `{accepted}` |
+
+`key` = `intro` \| `system` \| `advantages` \| `conditions`;
+`action` = `write` \| `edit` \| `accept`.
+
+Согласованный текст живёт ТОЛЬКО в `form_values["copy.<ключ>"]`:
+`copy.intro`, `copy.system.<N>`, `copy.advantages`, `copy.conditions`.
+Пустая секция = «пропустить» (ключ удаляется).
+
+Деградация: модель недоступна → `write` отдаёт пустой текст, `edit` —
+текст менеджера. КП собирается с текстом формы.
+
+### Чек-листы текста
+
+`skills.CheckAiTells`, `CheckSectionStructure`, `CheckClaimNumbers` —
+только СООБЩАЮТ о проблемах, текст не переписывают. Числа в тексте
+разрешены лишь те, что есть в предложении.
+
+## Контекст КП: карточки систем из Базы знаний (2026-10-29)
+
+Источник текста системы — **заметка в Базе знаний** с тегом
+`commercial_propose`. Цены, артикулы и количества — в каталоге.
+Стандарт карточки: `docs/sbe-offers-system-card-standard.md`.
+
+Чтение через `kb-service`: `GET /api/kb/tags`, `/api/kb/notes?tag_id=`,
+`/api/kb/notes/{id}`, `/api/kb/notes/{id}/attachments`, `/api/kb/file-link`.
+Авторизация — межсервисный JWT от `auth-service`
+(`/internal/service-token`, `target_app_id=kb`), кеш токена 50 минут.
+
+| Ручка | Права | Ответ |
+|---|---|---|
+| `GET /context/cards` | viewer | `{cards: SystemCard[], kbEnabled}` — из кеша |
+| `POST /context/refresh` | admin | `{cards, count, kbEnabled, error?}` — перечитать базу знаний |
+
+`offers_context` работает как **кеш** (mode = `system_cards`). Ошибка базы
+знаний не стирает кеш: возвращаются прежние карточки и `error`.
+
+```jsonc
+SystemCard = { noteId, path, sku, title, description, composition: string[],
+               specifications?: string[][], imageName?, catalogId,
+               updatedAt, hasDescription, hasComposition, empty }
+```
+
+`catalogId = 0` — карточка не связана с каталогом (нет `system_sku` или кода
+нет в каталоге). Связь только по коду, не по названию.
+
+## DOCX: правила бланка (2026-10-29)
+
+- `word/styles.xml` и `word/numbering.xml` берутся из шаблона **как есть**.
+  Подмена своими ломала вёрстку: пропадала нумерация страниц в нижнем
+  колонтитуле (поля `PAGE`/`SECTIONPAGES` опираются на стили бланка).
+- Разметка использует ТОЛЬКО стили бланка: `Normal` = `a0`,
+  `heading 1` = `1`, маркированный список = `numId 6`.
+- id изображений (`wp:docPr`) вычисляются по всем частям пакета
+  (document/header/footer/сноски): у бланка заняты 1–25, дубль ломает
+  вёрстку молча. Media пишутся как `offerimgN.*` — `image1/image2` заняты
+  логотипом и знаком подписи.
+- Согласованный текст секций идёт после блоков формы, перед составом.
+  Преимущества рисуются списком бланка.
