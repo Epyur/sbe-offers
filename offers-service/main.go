@@ -306,6 +306,63 @@ func (s *Server) migrate(ctx context.Context) error {
 		// ключ S3. Пустая строка — «фото нет», отдельного признака не нужно.
 		`ALTER TABLE offers_catalog ADD COLUMN IF NOT EXISTS photo_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS brief_id BIGINT NULL`,
+
+		// Материалы отдельной сущностью (2026-10-30). Почему не kind в
+		// offers_catalog: у материала есть ЕКН, авто-SKU и вилка цен, у системы
+		// нет ничего этого, а её правда живёт в Базе знаний. Одна таблица с kind
+		// заставляла бы держать половину колонок пустыми и допускала бы систему
+		// с ценой.
+		//
+		// Цены НЕТ намеренно: она приходит из таблицы менеджера для конкретного
+		// КП. price_min/price_max — вилка из загруженных таблиц, для аналитики.
+		`CREATE TABLE IF NOT EXISTS offers_material (
+			id            BIGSERIAL PRIMARY KEY,
+			sku           TEXT NOT NULL,
+			kind          TEXT NOT NULL DEFAULT 'material',
+			name          TEXT NOT NULL,
+			unit          TEXT NOT NULL DEFAULT 'шт',
+			description   TEXT NOT NULL DEFAULT '',
+			price_min     NUMERIC(14,2) NULL,
+			price_max     NUMERIC(14,2) NULL,
+			price_seen_at TIMESTAMPTZ NULL,
+			photo_key     TEXT NOT NULL DEFAULT '',
+			sort_order    INTEGER NOT NULL DEFAULT 0,
+			archived      BOOLEAN NOT NULL DEFAULT false,
+			created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS offers_material_sku ON offers_material (sku)`,
+
+		// Вариации материала: один SKU — много ЕКН (толщина, цвет, размер).
+		// Уникальность по паре, а не по одному ЕКН: один и тот же материал
+		// может встретиться в двух таблицах, и это не дубль.
+		`CREATE TABLE IF NOT EXISTS offers_material_ekn (
+			id            BIGSERIAL PRIMARY KEY,
+			material_id   BIGINT NOT NULL REFERENCES offers_material(id) ON DELETE CASCADE,
+			ekn           TEXT NOT NULL,
+			variant       TEXT NOT NULL DEFAULT '',
+			source        TEXT NOT NULL DEFAULT 'excel',
+			first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			UNIQUE (material_id, ekn)
+		)`,
+		`CREATE INDEX IF NOT EXISTS offers_material_ekn_ekn ON offers_material_ekn (ekn)`,
+
+		// Перенос материалов из старого каталога. Идемпотентно: переносим только
+		// те карточки, которых ещё нет в новой таблице (по name+unit).
+		// Системы из каталога НЕ трогаем — они уже не используются, но на них
+		// могут ссылаться старые предложения.
+		`INSERT INTO offers_material (sku, kind, name, unit, description, sort_order)
+		 SELECT 'MAT-ПРОЧ-ОБЩ-' || lpad(nextval('offers_material_id_seq')::text, 4, '0'),
+		        'material', c.name, c.unit, c.description, c.sort_order
+		 FROM offers_catalog c
+		 WHERE c.kind = 'material'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM offers_material m WHERE m.name = c.name AND m.unit = c.unit
+		   )`,
+		// Системы из старого каталога архивируются: у них больше нет места в
+		// списке материалов, но строка нужна старым предложениям.
+		`UPDATE offers_catalog SET archived = true WHERE kind = 'system' AND NOT archived`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {
