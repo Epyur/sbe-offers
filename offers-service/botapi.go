@@ -416,6 +416,27 @@ func (s *Server) handleBotBriefStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleBotBriefGet отдаёт бриф предложения.
+//
+// Нужен боту для сводки: сессия хранит только «на какой теме стоим», а сами
+// ответы лежат в брифе. Второй копии в боте нет.
+func (s *Server) handleBotBriefGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	if _, _, ok := s.botOfferForChat(w, r, id); !ok {
+		return
+	}
+	brief, err := s.loadBrief(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "брифа ещё нет"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"brief": brief})
+}
+
 func (s *Server) handleBotBriefStep(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
@@ -427,7 +448,7 @@ func (s *Server) handleBotBriefStep(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	_, _, ok := s.botOfferForChat(w, r, id)
+	_, _, ok := s.botOfferForChatQ(w, r, id, req.ChatID)
 	if !ok {
 		return
 	}

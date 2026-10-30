@@ -1,4 +1,4 @@
-/**
+﻿/**
  * В боте НЕТ ролей (решение пользователя 2026-10-29).
  *
  * Живая жалоба: в плагине ставили «Менеджер», а бот продолжал отвечать
@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applyLogin, newSession } from './session.ts';
-import { AUTH_OK } from './flow.ts';
+import { AUTH_OK } from './flow/build.ts';
 
 const REAL_ENV = { ...process.env };
 

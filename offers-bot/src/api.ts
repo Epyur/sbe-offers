@@ -244,3 +244,119 @@ export async function applyAttach(
     spec: payload.spec,
   });
 }
+
+// --- Бриф и тексты секций (Task 9, 2026-10-29) --------------------------
+
+export interface BriefPayload {
+  object_name?: string;
+  customer_goals?: string[];
+  customer_pains?: string[];
+  project_risks?: string[];
+  objections?: Array<{ claim: string; response: string }>;
+  budget_signal?: string;
+  decision_maker?: string;
+  timeline?: string;
+  why_us?: string[];
+  notes?: string;
+  skipped_topics?: string[];
+}
+
+export interface Brief {
+  id: number;
+  offerId: number;
+  payload: BriefPayload;
+  /** open | ready | agreed */
+  status: string;
+  chatId: string;
+  lastTopic: string;
+  updatedAt: string;
+}
+
+export interface BriefStartReply {
+  brief: Brief;
+  reply: string;
+  done: boolean;
+  owner: string;
+}
+
+export interface BriefStepReply {
+  brief: Brief;
+  reply: string;
+  done: boolean;
+  nextTopic?: string;
+  retry?: boolean;
+  unavailable?: boolean;
+  skipped?: string[];
+}
+
+/** Начать бриф по созданному предложению. */
+export async function startBrief(id: number, chatId: string): Promise<BriefStartReply> {
+  return call('POST', `/bot/offers/${id}/brief/start?chat_id=${encodeURIComponent(chatId)}`);
+}
+
+/** Один ответ менеджера в диалоге брифа. */
+export async function stepBrief(id: number, chatId: string, text: string): Promise<BriefStepReply> {
+  return call('POST', `/bot/offers/${id}/brief/step`, { chat_id: chatId, text });
+}
+
+export interface SectionReply {
+  key: string;
+  text: string;
+  warnings?: string[];
+  label: string;
+}
+
+/** Написать секцию заново (модель). */
+export async function writeCopy(
+  id: number,
+  chatId: string,
+  kind: string,
+  systemIndex = 0,
+): Promise<SectionReply> {
+  return call('POST', `/bot/offers/${id}/copy/${kind}`, {
+    chat_id: chatId,
+    action: 'write',
+    systemIndex,
+  });
+}
+
+/** Вычитать текст менеджера. */
+export async function editCopy(
+  id: number,
+  chatId: string,
+  kind: string,
+  text: string,
+  systemIndex = 0,
+): Promise<SectionReply> {
+  return call('POST', `/bot/offers/${id}/copy/${kind}`, {
+    chat_id: chatId,
+    action: 'edit',
+    text,
+    systemIndex,
+  });
+}
+
+/** Принять текст в предложение. Пустой текст означает «пропустить». */
+export async function acceptCopy(
+  id: number,
+  chatId: string,
+  kind: string,
+  text: string,
+  systemIndex = 0,
+): Promise<{ key: string; accepted: boolean }> {
+  return call('POST', `/bot/offers/${id}/copy/${kind}`, {
+    chat_id: chatId,
+    action: 'accept',
+    text,
+    systemIndex,
+  });
+}
+
+/** Прочитать бриф предложения (для сводки). */
+export async function getBrief(id: number, chatId: string): Promise<Brief> {
+  const res = await call<{ brief: Brief }>(
+    'GET',
+    `/bot/offers/${id}/brief?chat_id=${encodeURIComponent(chatId)}`,
+  );
+  return res.brief;
+}

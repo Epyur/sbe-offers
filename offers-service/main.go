@@ -111,6 +111,11 @@ func main() {
 	mux.HandleFunc("DELETE /api/offers/offers/{id}", s.requirePerm("editor")(s.handleDeleteOffer))
 	mux.HandleFunc("POST /api/offers/offers/{id}/export", s.requirePerm("viewer")(s.handleExportDocx))
 	mux.HandleFunc("POST /api/offers/offers/{id}/link", s.requirePerm("viewer")(s.handleOfferLink))
+	// Бриф в плагине (Task 10, 2026-10-30): чтение с историей разговора и
+	// правка ответов. Правит владелец предложения или admin — проверка прав
+	// внутри ручки, потому что роль editor не даёт правки чужого КП.
+	mux.HandleFunc("GET /api/offers/offers/{id}/brief", s.requirePerm("viewer")(s.handleGetBrief))
+	mux.HandleFunc("PUT /api/offers/offers/{id}/brief", s.requirePerm("editor")(s.handleSaveBrief))
 
 	mux.HandleFunc("GET /api/offers/access/list", s.requirePerm("admin")(s.handleListAccess))
 	mux.HandleFunc("POST /api/offers/access/role", s.requirePerm("admin")(s.handleSetAccessRole))
@@ -138,6 +143,7 @@ func main() {
 	// Бриф-диалог (2026-10-29): вопросы менеджеру и текст секций пишет
 	// llm-service. Ручки под service-token, чужие предложения не отдаются.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/brief/start", s.requireServiceSecret(s.handleBotBriefStart))
+	mux.HandleFunc("GET /api/offers/bot/offers/{id}/brief", s.requireServiceSecret(s.handleBotBriefGet))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/brief/step", s.requireServiceSecret(s.handleBotBriefStep))
 	// Текст секций (2026-10-29): написать, поправить, принять.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/copy/{key}", s.requireServiceSecret(s.handleBotCopySection))

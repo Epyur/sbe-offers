@@ -93,6 +93,11 @@ type specRowView struct {
 // X-File-Name. Так обе стороны не зависят от разбора multipart, а лимит размера
 // проверяется до чтения всего тела в память потоком.
 func (s *Server) handleBotAttach(w http.ResponseWriter, r *http.Request) {
+	// Тело — файл. Любой ранний отказ (плохой id, не ваш чат) приходит ДО его
+	// чтения, и тогда клиент продолжает слать мегабайты в уже отвеченный
+	// запрос и висит до таймаута. Поэтому тело дочитывается в defer при любом
+	// исходе (поймано живьём 2026-10-30).
+	defer drainBody(r.Body)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
@@ -120,6 +125,19 @@ func (s *Server) handleBotAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// drainBody дочитывает остаток тела, чтобы клиент мог завершить отправку.
+//
+// Нужен там, где ответ даётся раньше, чем тело прочитано (отказ по доступу,
+// плохой идентификатор): без этого отправляющая сторона ждёт, пока не отдаст
+// всё, и запрос выглядит зависшим. Читаем ограниченно: гигантское тело нам
+// всё равно не нужно, а соединение после отказа закрывается.
+func drainBody(r io.Reader) {
+	if r == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(r, maxAttachmentBytes+1))
 }
 
 // readAttachedFile разбирает файл по типу и собирает ответ «что я понял».

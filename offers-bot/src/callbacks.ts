@@ -18,7 +18,7 @@ import {
   newDraft,
   parseManualItem,
   removeItem,
-} from './flow.ts';
+} from './flow/build.ts';
 import * as api from './api.ts';
 import type { BotDeps } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
@@ -30,6 +30,17 @@ import {
   type AttachPending,
   type AttachSession,
 } from './attach.ts';
+import {
+  beginBrief,
+  handleBriefText,
+  handleCopyText,
+  onBriefMore,
+  onBriefNext,
+  onBriefSkip,
+  onCopyAccept,
+  onCopyEdit,
+  onCopySkip,
+} from './flow/writer.ts';
 
 const PAGE_SIZE = 8;
 
@@ -148,10 +159,12 @@ export async function finishDraft(ctx: CallbackCtx): Promise<void> {
       items: draft.items,
       formValues: draft.formValues,
     });
-    const done = { ...draft, offerId: offer.id, step: 'done' as const };
+    const done = { ...draft, offerId: offer.id, number: offer.number, step: 'done' as const };
     apply(ctx, { ...ctx.session, draft: done });
     await ctx.deps.send(ctx.chatId, `Предложение № ${offer.number}.\n\n${draftSummary(done)}`);
-    await sendDocx(ctx, offer.id);
+    // КП создано — дальше бриф: из ответов менеджера модель напишет вводный
+    // текст и описания. Пропустить можно в один клик (2026-10-29).
+    await beginBrief(ctx, offer.id);
   } catch (e) {
     await ctx.deps.send(
       ctx.chatId,
@@ -162,6 +175,11 @@ export async function finishDraft(ctx: CallbackCtx): Promise<void> {
 }
 
 export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<boolean> {
+  // Бриф и правка секции перехватывают текст раньше черновика: пока человек
+  // отвечает на вопрос, «Монтаж | 12 | 850» — это ответ, а не позиция.
+  if (await handleCopyText(ctx, text)) return true;
+  if (await handleBriefText(ctx, text)) return true;
+
   const draft = ctx.session.draft;
   if (!draft) return false;
 
@@ -348,6 +366,12 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   manual: onManual,
   undo: onUndo,
   done: onDone,
+  'brief:more': onBriefMore,
+  'brief:next': onBriefNext,
+  'brief:skip': onBriefSkip,
+  'copy:accept': onCopyAccept,
+  'copy:edit': onCopyEdit,
+  'copy:skip': onCopySkip,
 };
 
 export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promise<void>> = {
@@ -357,3 +381,4 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
 };
 
 export { answerCallback, editMessage };
+

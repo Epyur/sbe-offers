@@ -6,6 +6,8 @@ import type {
   AccessEntry,
   BotConfigInfo,
   BotStatusInfo,
+  BriefPayload,
+  BriefResponse,
   CatalogItem,
   Offer,
   OfferForm,
@@ -151,6 +153,16 @@ export class OffersService {
   /** Ссылка на DOCX (presigned S3, ~2 суток). */
   async offerLink(id: number): Promise<{ url: string; expiresAt: string }> {
     return this.request<{ url: string; expiresAt: string }>('POST', `/offers/${id}/link`);
+  }
+
+  /** Бриф предложения вместе с историей разговора в боте. */
+  async getBrief(id: number): Promise<BriefResponse> {
+    return this.request<BriefResponse>('GET', `/offers/${id}/brief`);
+  }
+
+  /** Правка ответов брифа руками (владелец предложения или admin). */
+  async saveBrief(id: number, payload: BriefPayload, status?: string): Promise<BriefResponse> {
+    return this.request<BriefResponse>('PUT', `/offers/${id}/brief`, { payload, status });
   }
 
   /** Скачивание DOCX байтами: сервер отдаёт файл, а не JSON. */

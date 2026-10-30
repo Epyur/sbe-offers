@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -216,4 +217,51 @@ func containsStr(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Одно поле неверного типа не должно обнулять весь бриф.
+//
+// Живой случай (2026-10-30): модель вернула "why_us": "" вместо [], разбор
+// полезной части ответа падал, mergeBrief молча возвращал прежний (пустой)
+// бриф — и менеджер видел «ответ не записан», хотя остальные поля пришли
+// правильными. Терять весь бриф из-за одного ключа нельзя.
+func TestStepBriefToleratesWrongTypedField(t *testing.T) {
+	c := &fakeCompleter{answer: `{"payload":{"object_name":"ЖК Поэма","why_us":"","customer_goals":["сдать в срок"]},"reply":"Записал."}`}
+	res := step(t, model.EmptyBriefPayload(), "ЖК Поэма", c)
+	if res.Payload.ObjectName != "ЖК Поэма" {
+		t.Fatalf("объект потерян из-за пустого why_us: %#v", res.Payload)
+	}
+	if len(res.Payload.CustomerGoals) != 1 {
+		t.Fatalf("цели потеряны: %#v", res.Payload.CustomerGoals)
+	}
+}
+
+// Разбор терпимого payload по отдельности: строка вместо списка становится
+// списком из одного элемента, а мусор в одном поле не уносит остальные.
+func TestTolerantBriefPayload(t *testing.T) {
+	raw := json.RawMessage(`{"object_name":"ЖК Поэма","why_us":"надёжность","customer_goals":["сдать"],"objections":"не список","timeline":42}`)
+	p := tolerantBriefPayload(raw)
+	if p.ObjectName != "ЖК Поэма" {
+		t.Errorf("объект: %q", p.ObjectName)
+	}
+	if len(p.WhyUs) != 1 || p.WhyUs[0] != "надёжность" {
+		t.Errorf("строка вместо списка не стала списком: %#v", p.WhyUs)
+	}
+	if len(p.CustomerGoals) != 1 {
+		t.Errorf("цели: %#v", p.CustomerGoals)
+	}
+	if p.Timeline != "" {
+		t.Errorf("число вместо строки должно остаться пустым, получили %q", p.Timeline)
+	}
+	if p.Objections == nil {
+		t.Error("objections должны быть пустым срезом, а не nil")
+	}
+}
+
+// Совсем не JSON — пустой бриф, а не паника.
+func TestTolerantBriefPayloadGarbage(t *testing.T) {
+	p := tolerantBriefPayload(json.RawMessage(`не json`))
+	if p.ObjectName != "" || p.Skipped == nil {
+		t.Fatalf("ожидали пустой нормализованный бриф: %#v", p)
+	}
 }

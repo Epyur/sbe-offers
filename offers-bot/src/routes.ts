@@ -11,7 +11,7 @@
  * маршруты проверяются стендом без сети, а поллер остаётся тонким.
  */
 import { applyCodeRequested, applyLogin, nextStep, type ChatSession } from './session.ts';
-import { AUTH_OK, AUTH_PROMPT, HELP_TEXT, MAIN_KEYBOARD } from './flow.ts';
+import { AUTH_OK, AUTH_PROMPT, HELP_TEXT, MAIN_KEYBOARD } from './flow/build.ts';
 import * as api from './api.ts';
 import {
   BUTTONS,

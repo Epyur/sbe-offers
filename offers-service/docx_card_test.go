@@ -61,7 +61,7 @@ func TestDocxUsesCardDescription(t *testing.T) {
 // документе она, а не текст из Базы знаний.
 func TestDocxAcceptedCopyBeatsCard(t *testing.T) {
 	offer := sampleOffer()
-	offer.FormValues = map[string]string{"copy.intro": "Согласованный вводный текст."}
+	offer.FormValues = map[string]string{"copy.intro": "Согласованный вводный текст.", formFlagSectionCopy: "1"}
 	docx, err := renderOfferDocxWithCards(OfferForm{Title: "Коммерческое предложение"},
 		offer, []SystemCard{sampleCard()}, nil)
 	if err != nil {

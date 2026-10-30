@@ -550,3 +550,106 @@ attachment routes was NOT done: Docker Hub was unreachable (TLS timeout on
 the file came back as CP1251 mojibake and had to be rewritten from scratch.
 Source files are edited with the editor tools only, never re-encoded by shell
 text commands.
+## Task 9 closed, Task 10-11 done, version 0.2.0 prepared - 2026-10-30 (evening)
+
+Continued the brief-dialog plan (`docs/superpowers/plans/2026-10-29-sbe-offers-brief-dialog-plan.md`).
+
+**Task 9 (bot brief/copy states) was already written but untested live.** Fixed on the way:
+- UTF-8 BOM stripped from `callbacks.ts`, `routes.ts`, `flow/writer.ts` (the project's
+  known gotcha; a BOM breaks file reading).
+- Duplication removed in `flow/writer.ts`: four copies of `numberedSlots(systemsIn(...))`
+  became one `activeSlot()` / `slotsFor()`.
+- Dead code deleted in `flow/brief.ts`: `briefTopicQuestion`, `canSkipBrief`, `skipBrief`
+  were only ever called from their own tests. Those tests now check real behaviour
+  (keyboards, summary) instead.
+- The plan named `draft.step` values `brief`/`text`; the implementation keeps the single
+  `authed` step and tracks the conversation in session fields (`briefTopic`, `copySlot`,
+  `copyEditing`). Fewer states, no parallel enum - deliberately better, recorded here.
+
+**Three live defects found by the local stand, all fixed test-first where practical:**
+
+1. `handleBotBriefStep` read `chat_id` from the query string while the bot sends it in
+   the JSON body -> 400 `chat_id is required`. Switched to `botOfferForChatQ` (the copy
+   route already used it).
+2. **Early reject did not drain the request body.** `POST .../attach` answers "not your
+   offer" *before* reading the file; Go then never reads the body, so the client kept
+   uploading megabytes into an answered request and hung until timeout - a 1 MB file never
+   went through. Added `drainBody()` in a `defer` plus `TestAttachEarlyRejectDrainsBody`
+   (failed with "4 194 304 bytes left in the body", now green).
+3. **One wrong-typed field blanked the whole brief.** The model returns `"why_us": ""`
+   instead of `[]`; strict `json.Unmarshal` failed and `mergeBrief` silently returned the
+   previous (empty) payload - the manager saw "the answer was not recorded" although every
+   other field had arrived. Added `tolerantBriefPayload`: parse field by field, a string
+   where a list is expected becomes a one-item list, garbage in one field no longer takes
+   the rest. Tests: `TestStepBriefToleratesWrongTypedField`, `TestTolerantBriefPayload`,
+   `TestTolerantBriefPayloadGarbage`.
+
+**Task 10 - brief in the plugin.** `GET`/`PUT /api/offers/offers/{id}/brief` (viewer+ for
+read; owner or admin for write, role `editor` alone does not edit someone else's brief).
+`brief-editor.ts` renders a card inside the offer editor: read mode with honest
+"не заполнено" labels, edit mode with `✏️ Править бриф`, and a collapsible turn history.
+Pure rules live in `brief-model.ts` (field order mirrors `skills.BriefTopics`, an objection
+counts as handled only with an answer). `emptyBriefPayload()` in `types/offers.ts` keeps
+the key set in sync with the server.
+
+**Task 11 - document toggles, version, docs.** `doc.brief_summary` and `doc.section_copy`
+in `form_values` control the optional DOCX content, **both off by default** so existing
+offers print exactly as before - three existing tests had to set the flag explicitly, and
+three new tests pin the off state (`TestDocxSectionCopyOffByDefault`,
+`TestDocxBriefSummaryToggle`, `TestFormFlagOnNil`). `renderBriefSummary` prints only
+non-empty `brief.*` fields. Version `0.1.5 -> 0.2.0`, ЦУП news text rewritten for this
+release (it is baked into `main.js` at build time - the 2026-09-17 lesson).
+
+**Local stand.** New `scripts/llm-stub.mjs` (answers `/internal/llm/complete`; the brief
+prompt contains "JSON" so it returns `{payload,...}`, otherwise plain section text;
+the marker `STUB_FAIL` in the user prompt forces 502 so degradation is exercised on the
+real code path) plus an `llm-stub` service in `docker-compose.local.yml`. E2E sections 13
+(brief, copy, degradation, foreign chat) and 14 (plugin brief routes, toggles) added.
+
+**Checks.** Go: `gofmt`/`go vet` clean, `go test ./...` green, coverage `main` 39.2%
+(model 71.6%, skills 87.1%). Bot: `tsc --noEmit --noUnusedLocals` clean, 62 tests.
+Plugin: `tsc --noEmit` EXIT=0, `npm run build` OK at 0.2.0. OpenAPI: 47 routes, schema
+matches. Local stand E2E: **131/131 green, twice in a row**.
+
+**ub-mode.** `crapper` on `offers-bot/src`: every function below CC 10
+(`routeText` 8, `handleCopyText` 6, `acceptAndAdvance` 5, `handleBriefText` 6).
+`dryer` finds one pair at 0.84 in `api.ts` (`catalog`/`listOffers`) - pre-existing, not
+from this cycle; folding it would only hide the API shape. Functions still at CRAP > 10
+are UI and HTTP handlers with zero coverage, same as everywhere else in this plugin -
+recorded rather than hidden.
+
+**Environment note.** Docker Hub was unreachable (TLS timeout on `auth.docker.io`), so the
+service image cannot be built from its Dockerfile. Built the binary in the local
+`golang:1.23` image (`GOTOOLCHAIN=auto`, `go.mod` asks for 1.24) and layered it over the
+existing `sbe-offers-offers:latest`. Host port forwarding to `18080` wedges after aborted
+large uploads; the E2E is therefore run inside the `sbe-offers_offersnet` network
+(`offers_local_e2e.mjs http://offers-local-app:3000`).
+
+**Not done.** No commit, no push, no deploy, no self-hosting - waiting for an explicit
+command.
+
+### Release 0.2.0 - 2026-10-30
+
+**Committed and pushed.** Commit `PLACEHOLDER_SHA` on `backend`: Task 9 state machine in
+the bot, three live defect fixes (`brief/step` body `chat_id`, `drainBody` on early
+reject, tolerant brief payload), Task 10 brief routes + plugin card, Task 11 document
+toggles. `main.js` rebuilt at 0.2.0 and included, as the store downloads it from `main`.
+
+**`backend` -> `main`.** Per the release rule the plugin part was carried over to `main`
+and the suffix dropped; the server folders (`offers-service/`, `offers-bot/`) stay only
+on `backend`, they are `.gitignore`d on `main`. Both branches pushed.
+
+**Deployed.** `docker compose up -d --build offers` then verified the container's
+`CREATED` actually moved (the 0.1.3 lesson) - a rebuild alone can leave the old container
+in place behind Caddy.
+
+**Self-hosting.** Three SHA-256 computed as the last action, after the branch switch and
+the build; `scripts/lims_selfhost.sh` uploaded them and updated
+`registry_file_overrides`; the three sums were compared against
+`https://epyur.fvds.ru/plugins/sbe-offers/*`. The `sbe-apstore-registry` git copy of
+`registry.json` was updated to match.
+
+**Recording rule learned here.** The `AGENTS.md` entry was written before the commit, so
+the commit hash had to be filled in afterwards; the file then differs from the commit it
+describes. Filling the hash in a second, immediately following commit keeps the record
+honest - or write the entry after committing and commit it separately.

@@ -316,6 +316,73 @@ paths:
                   expiresAt:
                     type: string
 
+  /api/offers/offers/{id}/brief:
+    get:
+      summary: Бриф предложения
+      description: |
+        Бриф вместе с историей разговора в боте. Брифа нет — отдаётся пустой
+        бриф со статусом `absent`: для плагина это обычное состояние, а не ошибка.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Бриф и реплики
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+                  turns:
+                    type: array
+                    items:
+                      type: object
+        '403':
+          description: Нет доступа к предложению
+        '404':
+          description: Предложение не найдено
+    put:
+      summary: Правка брифа (владелец предложения или admin)
+      description: |
+        Заменяет ответы брифа целиком и двигает `updated_at`. Роль editor сама
+        по себе чужой бриф не правит: бриф — это разговор владельца КП.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload:
+                  type: object
+                status:
+                  type: string
+                  enum: [open, ready, agreed]
+      responses:
+        '200':
+          description: Сохранённый бриф
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+                  turns:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          description: Неверное тело запроса
+        '403':
+          description: Правит не владелец и не admin
+        '404':
+          description: Предложение не найдено
+
   /api/offers/access/list:
     get:
       summary: Кто вошёл в бота (admin)
@@ -724,6 +791,37 @@ paths:
           description: Неверное тело запроса
         '403':
           description: Предложение принадлежит другому человеку
+  /api/offers/bot/offers/{id}/brief:
+    get:
+      summary: Бриф предложения (бот)
+      description: |
+        Отдаёт бриф для сводки в чате: сессия бота хранит только текущую тему,
+        а ответы менеджера лежат в брифе и нигде больше не дублируются.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Бриф предложения
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+        '400':
+          description: Неверный идентификатор
+        '403':
+          description: Предложение принадлежит другому человеку
+        '404':
+          description: Брифа ещё нет
   /api/offers/bot/offers/{id}/copy/{key}:
     post:
       summary: Текст секции КП (бот)

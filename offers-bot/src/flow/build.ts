@@ -3,7 +3,7 @@
  * Поллер переводит нажатия и текст в вызовы этих функций, а сетевую часть
  * делает api.ts.
  */
-import type { OfferDraft, OfferItem } from './session.ts';
+import type { OfferDraft, OfferItem } from '../session.ts';
 
 export interface CatalogCard {
   id: number;

@@ -262,7 +262,7 @@ func TestSectionTextReadsFromFormValues(t *testing.T) {
 // Принятый текст секции заменяет блок формы в документе.
 func TestDocxUsesAcceptedSection(t *testing.T) {
 	offer := sampleOffer()
-	offer.FormValues = map[string]string{"copy.intro": "Предлагаем материалы для фундамента."}
+	offer.FormValues = map[string]string{"copy.intro": "Предлагаем материалы для фундамента.", formFlagSectionCopy: "1"}
 	docx, err := renderOfferDocx(OfferForm{Title: "Коммерческое предложение"}, offer)
 	if err != nil {
 		t.Fatalf("сборка: %v", err)
@@ -277,7 +277,8 @@ func TestDocxUsesAcceptedSection(t *testing.T) {
 func TestDocxAdvantagesAsList(t *testing.T) {
 	offer := sampleOffer()
 	offer.FormValues = map[string]string{
-		"copy.advantages": "• Служит 50 лет\n• Выдерживает давление грунтовых вод",
+		"copy.advantages":   "• Служит 50 лет\n• Выдерживает давление грунтовых вод",
+		formFlagSectionCopy: "1",
 	}
 	docx, err := renderOfferDocx(OfferForm{Title: "Коммерческое предложение"}, offer)
 	if err != nil {

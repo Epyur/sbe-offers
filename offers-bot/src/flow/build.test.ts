@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nextStep, newSession, applyCodeRequested, applyLogin } from './session.ts';
+import { nextStep, newSession, applyCodeRequested, applyLogin } from '../session.ts';
 import {
   addCatalogItem,
   addManualItem,
@@ -10,7 +10,7 @@ import {
   newDraft,
   parseManualItem,
   removeItem,
-} from './flow.ts';
+} from './build.ts';
 
 test('вход: e-mail приглашает к вводу и запрашивает код', () => {
   const s = newSession();

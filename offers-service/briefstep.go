@@ -160,7 +160,10 @@ func mergeBrief(prev model.BriefPayload, rawPayload json.RawMessage) model.Brief
 	}
 	var incoming model.BriefPayload
 	if err := json.Unmarshal(rawPayload, &incoming); err != nil {
-		return prev
+		// Одно поле неверного типа (модель вернула "" вместо []) не должно
+		// обнулять весь бриф: разбираем по ключам и забираем то, что годно.
+		// Живой случай 2026-10-30: "why_us": "" уносило весь ответ менеджера.
+		incoming = tolerantBriefPayload(rawPayload)
 	}
 	out := prev
 	keepStr := func(dst *string, src string) {
@@ -190,6 +193,55 @@ func mergeBrief(prev model.BriefPayload, rawPayload json.RawMessage) model.Brief
 	// закроется только на текущем шаге и вернётся после перезапуска.
 	if len(incoming.Skipped) > 0 {
 		out.Skipped = mergeSkipped(out.Skipped, incoming.Skipped)
+	}
+	out.Normalize()
+	return out
+}
+
+// tolerantBriefPayload разбирает бриф по полям, пропуская те, что пришли
+// неверного типа.
+//
+// Зачем: модель изредка отвечает строкой там, где ждём список (или наоборот).
+// Строгий разбор в таком случае отказывает целиком, и полезные поля теряются
+// вместе с одним кривым. Правильнее взять остальное: бриф — это не договор,
+// одна потерянная тема лучше потерянного разговора.
+func tolerantBriefPayload(raw json.RawMessage) model.BriefPayload {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return model.EmptyBriefPayload()
+	}
+	var out model.BriefPayload
+	readString := func(key string, dst *string) {
+		var v string
+		if err := json.Unmarshal(fields[key], &v); err == nil {
+			*dst = v
+		}
+	}
+	readList := func(key string, dst *[]string) {
+		var v []string
+		if err := json.Unmarshal(fields[key], &v); err == nil && v != nil {
+			*dst = v
+			return
+		}
+		// Строка вместо списка: одна тема, а не полная потеря.
+		var one string
+		if err := json.Unmarshal(fields[key], &one); err == nil && strings.TrimSpace(one) != "" {
+			*dst = []string{one}
+		}
+	}
+	readString("object_name", &out.ObjectName)
+	readString("budget_signal", &out.BudgetSignal)
+	readString("decision_maker", &out.DecisionMaker)
+	readString("timeline", &out.Timeline)
+	readString("notes", &out.Notes)
+	readList("customer_goals", &out.CustomerGoals)
+	readList("customer_pains", &out.CustomerPains)
+	readList("project_risks", &out.ProjectRisks)
+	readList("why_us", &out.WhyUs)
+	readList("skipped_topics", &out.Skipped)
+	var objections []model.BriefObjection
+	if err := json.Unmarshal(fields["objections"], &objections); err == nil {
+		out.Objections = objections
 	}
 	out.Normalize()
 	return out

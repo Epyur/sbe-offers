@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -128,4 +131,119 @@ FROM offers_brief_turn WHERE brief_id = $1 ORDER BY created_at ASC, id ASC LIMIT
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// --- Бриф в плагине (Task 10, 2026-10-30) -------------------------------
+
+// briefResponse — бриф вместе с журналом реплик: плагин показывает историю
+// разговора, а не только поля. Журнал отдаём только при чтении одного брифа.
+type briefResponse struct {
+	Brief Brief       `json:"brief"`
+	Turns []BriefTurn `json:"turns"`
+}
+
+// handleGetBrief читает бриф предложения. Брифа нет — пустая заготовка со
+// статусом not_found: для плагина «брифа ещё нет» это обычное состояние, а не
+// ошибка (КП могло родиться из плагина, без разговора в боте).
+func (s *Server) handleGetBrief(w http.ResponseWriter, r *http.Request) {
+	offer, ok := s.offerForReader(w, r)
+	if !ok {
+		return
+	}
+	brief, err := s.loadBrief(r.Context(), offer.ID)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusOK, briefResponse{
+			Brief: Brief{
+				OfferID: offer.ID,
+				Payload: model.EmptyBriefPayload(),
+				Status:  "absent",
+			},
+			Turns: []BriefTurn{},
+		})
+		return
+	}
+	if err != nil {
+		dbError(w, "load brief", err)
+		return
+	}
+	turns, err := s.listTurns(r.Context(), brief.ID, 200)
+	if err != nil {
+		dbError(w, "list brief turns", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, briefResponse{Brief: brief, Turns: turns})
+}
+
+// handleSaveBrief правит ответы брифа руками (owner или admin).
+//
+// Правка идёт тем же путём, что и шаг диалога: payload.replace целиком, а
+// updated_at двигается обязательно — иначе правка не выиграет слияние у того,
+// кто откроет КП позже.
+func (s *Server) handleSaveBrief(w http.ResponseWriter, r *http.Request) {
+	offer, ok := s.offerForEditor(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Payload model.BriefPayload `json:"payload"`
+		Status  string             `json:"status"`
+	}
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	req.Payload.Normalize()
+
+	brief, err := s.createBrief(r.Context(), offer.ID, "")
+	if err != nil {
+		dbError(w, "save brief", err)
+		return
+	}
+	brief.Payload = req.Payload
+	if req.Status == "ready" || req.Status == "agreed" || req.Status == "open" {
+		brief.Status = req.Status
+	}
+	if err := s.saveBriefPayload(r.Context(), brief); err != nil {
+		dbError(w, "save brief payload", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, briefResponse{Brief: brief, Turns: []BriefTurn{}})
+}
+
+// offerForReader — предложение по id с правом чтения (viewer+ и видимость).
+func (s *Server) offerForReader(w http.ResponseWriter, r *http.Request) (Offer, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return Offer{}, false
+	}
+	offer, err := s.loadOffer(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
+		return Offer{}, false
+	}
+	role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), actorEmailFromCtx(r))
+	if !canSeeOffer(role, actorEmailFromCtx(r), offer) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "нет доступа к этому предложению"})
+		return Offer{}, false
+	}
+	return offer, true
+}
+
+// offerForEditor — то же плюс право правки: владелец предложения или admin.
+//
+// Роль editor сама по себе не даёт правки чужого КП: бриф — это разговор
+// конкретного менеджера с заказчиком, и править его может только он или
+// администратор.
+func (s *Server) offerForEditor(w http.ResponseWriter, r *http.Request) (Offer, bool) {
+	offer, ok := s.offerForReader(w, r)
+	if !ok {
+		return Offer{}, false
+	}
+	role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), actorEmailFromCtx(r))
+	if !isAdminRole(role) && !strings.EqualFold(offer.OwnerEmail, actorEmailFromCtx(r)) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "бриф правит владелец предложения или администратор"})
+		return Offer{}, false
+	}
+	return offer, true
 }

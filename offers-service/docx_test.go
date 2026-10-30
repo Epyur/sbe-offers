@@ -181,3 +181,53 @@ func TestRenderOfferDocxWithoutCreatedAt(t *testing.T) {
 		t.Fatalf("пустая дата создания не должна ронять рендер: %v", err)
 	}
 }
+
+// Переключатели показа по умолчанию ВЫКЛЮЧЕНЫ: существующие предложения
+// печатаются как раньше, без секций и сводки брифа (Task 11, 2026-10-30).
+func TestDocxSectionCopyOffByDefault(t *testing.T) {
+	offer := sampleOffer()
+	offer.FormValues = map[string]string{"copy.intro": "Этот текст не должен печататься."}
+	docx, err := renderOfferDocx(OfferForm{Title: "Коммерческое предложение"}, offer)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	if strings.Contains(body, "Этот текст не должен печататься.") {
+		t.Fatal("текст секции напечатан без включённого переключателя")
+	}
+}
+
+// Сводка брифа включается своим ключом и печатает только заполненные поля.
+func TestDocxBriefSummaryToggle(t *testing.T) {
+	offer := sampleOffer()
+	offer.FormValues = map[string]string{
+		formFlagBriefSummary:   "1",
+		"brief.object_name":    "ЖК «Поэма»",
+		"brief.customer_pains": "протечки",
+		"brief.timeline":       "",
+	}
+	docx, err := renderOfferDocx(OfferForm{Title: "Коммерческое предложение"}, offer)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	if !strings.Contains(body, "ЖК «Поэма»") {
+		t.Fatal("сводка брифа не попала в документ")
+	}
+	if strings.Contains(body, "Сроки:") {
+		t.Fatal("пустое поле брифа напечатано")
+	}
+}
+
+// Пустые значения формы — никакой паники: флаг читается из nil-карты.
+func TestFormFlagOnNil(t *testing.T) {
+	if formFlagOn(nil, formFlagBriefSummary) {
+		t.Fatal("nil-карта должна давать «выключено»")
+	}
+	if !formFlagOn(map[string]string{formFlagBriefSummary: "true"}, formFlagBriefSummary) {
+		t.Fatal("true не считается включённым")
+	}
+	if formFlagOn(map[string]string{formFlagBriefSummary: "0"}, formFlagBriefSummary) {
+		t.Fatal("0 должен быть выключен")
+	}
+}

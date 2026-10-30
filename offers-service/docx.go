@@ -298,7 +298,16 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 	// Согласованный менеджером текст секций (2026-10-29). Идёт после блоков
 	// формы и перед составом: это текст «о предложении», таблица цен — факты.
 	// Пустой текст секции не рисуется вовсе: «пропущено» и «пусто» — одно.
-	renderAcceptedSections(&sb, offer)
+	// С 2026-10-30 показ управляется флагом КП и по умолчанию выключен —
+	// существующие предложения печатаются как раньше (Task 11).
+	if formFlagOn(offer.FormValues, formFlagSectionCopy) {
+		renderAcceptedSections(&sb, offer)
+	}
+	// Сводка брифа: что известно про объект. Выключена по умолчанию: это
+	// рабочая информация менеджера, а не всегда уместный текст для клиента.
+	if formFlagOn(offer.FormValues, formFlagBriefSummary) {
+		renderBriefSummary(&sb, offer.FormValues)
+	}
 
 	// Описания систем из карточек Базы знаний: только там, где менеджер не
 	// согласовал свой текст (согласованное главнее).
@@ -473,6 +482,61 @@ func renderAcceptedSections(sb *strings.Builder, offer Offer) {
 	}
 	if text := section(SectionKey(skills.SectionConditions, 0)); text != "" {
 		sb.WriteString(paragraphXML(text, ""))
+	}
+}
+
+// Флаги показа в документе (Task 11, 2026-10-30). Живут в form_values, а не в
+// схеме формы: это свойство конкретного КП, а не настройка бланка. По
+// умолчанию ВЫКЛЮЧЕНЫ — существующие предложения собираются как раньше.
+const (
+	formFlagBriefSummary = "doc.brief_summary"
+	formFlagSectionCopy  = "doc.section_copy"
+)
+
+// formFlagOn читает булев флаг из form_values. Нет ключа — выключено.
+func formFlagOn(values map[string]string, key string) bool {
+	if values == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(values[key])) {
+	case "1", "true", "yes", "да":
+		return true
+	}
+	return false
+}
+
+// renderBriefSummary печатает сводку брифа: что известно про объект.
+//
+// Источник — значения формы с префиксом `brief.` (их пишет плагин из брифа).
+// Пустые поля пропускаются: сводка не должна печатать пустые строки под
+// заголовками, о которых нечего сказать.
+func renderBriefSummary(sb *strings.Builder, values map[string]string) {
+	type line struct {
+		key   string
+		label string
+	}
+	order := []line{
+		{"brief.object_name", "Объект"},
+		{"brief.customer_goals", "Задачи клиента"},
+		{"brief.customer_pains", "Боли"},
+		{"brief.project_risks", "Риски"},
+		{"brief.decision_maker", "Кто решает"},
+		{"brief.timeline", "Сроки"},
+		{"brief.budget_signal", "Бюджет"},
+		{"brief.why_us", "Почему мы"},
+		{"brief.notes", "Прочее"},
+	}
+	printed := false
+	for _, item := range order {
+		text := strings.TrimSpace(values[item.key])
+		if text == "" {
+			continue
+		}
+		if !printed {
+			sb.WriteString(headingXML("Бриф", 2))
+			printed = true
+		}
+		sb.WriteString(paragraphXML(item.label+": "+text, ""))
 	}
 }
 
