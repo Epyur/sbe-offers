@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,16 @@ const (
 	kbTokenTTL        = 50 * time.Minute // JWT живёт час, берём с запасом
 	kbRequestTimeout  = 20 * time.Second
 	commercialPropose = "commercial_propose"
+
+	// kbPageSize — сколько заметок просим за раз. Сервис отдаёт не больше 50
+	// на запрос при любом size, поэтому просить 200 бессмысленно: получим те же
+	// 50, и если не листать дальше — потеряем остальные (живой дефект
+	// 2026-10-30: из 588 карточек видели 50).
+	kbPageSize = 50
+
+	// maxKBPages — предел страниц. Сервис, который всегда отдаёт полную
+	// страницу, не должен крутить цикл вечно.
+	maxKBPages = 40
 )
 
 // KBTag — тег заметки.
@@ -234,23 +245,48 @@ func (c *KBClient) TagID(ctx context.Context, name string) (int64, error) {
 // совместимости со старыми ответами. Живой случай 2026-10-30: клиент читал
 // только `notes`, сервис отдавал `items` — соединение было, kbEnabled=true, а
 // карточки всегда приходили пустым списком.
+//
+// Пагинация обязательна: сервис отдаёт не больше kbPageSize заметок на
+// запрос при ЛЮБОМ size, но сообщает total. Раньше клиент просил size=200,
+// получал 50 и считал, что это всё, — из 588 карточек плагин видел 50.
 func (c *KBClient) Notes(ctx context.Context, tagID int64) ([]KBNoteSummary, error) {
+	out := make([]KBNoteSummary, 0, kbPageSize)
+	for page := 1; page <= maxKBPages; page++ {
+		items, total, err := c.notesPage(ctx, tagID, page)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		// Дальше идти некуда: страница неполная или собрали всё, что обещали.
+		if len(items) < kbPageSize || (total > 0 && len(out) >= total) {
+			return out, nil
+		}
+	}
+	// Предел страниц достигнут, а сервис всё ещё отдаёт полные страницы.
+	// Молча обрезать нельзя — это значит «показали не всё», и лучше сказать
+	// это в журнал, чем притвориться, что карточек хватило.
+	log.Printf("kb: достигнут предел %d страниц, карточек собрано %d", maxKBPages, len(out))
+	return out, nil
+}
+
+// notesPage — одна страница списка заметок и заявленное всего.
+func (c *KBClient) notesPage(ctx context.Context, tagID int64, page int) ([]KBNoteSummary, int, error) {
 	q := url.Values{}
 	q.Set("tag_id", fmt.Sprintf("%d", tagID))
-	// size побольше: карточек систем десятки, а не тысячи. Если станет много —
-	// появится пагинация, но сейчас лишний круг запросов дороже.
-	q.Set("size", "200")
+	q.Set("size", fmt.Sprintf("%d", kbPageSize))
+	q.Set("page", fmt.Sprintf("%d", page))
 	var out struct {
 		Items []KBNoteSummary `json:"items"`
 		Notes []KBNoteSummary `json:"notes"`
+		Total int             `json:"total"`
 	}
 	if err := c.get(ctx, "/api/kb/notes", q, &out); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if len(out.Items) > 0 {
-		return out.Items, nil
+		return out.Items, out.Total, nil
 	}
-	return out.Notes, nil
+	return out.Notes, out.Total, nil
 }
 
 // Note — карточка с текстом.

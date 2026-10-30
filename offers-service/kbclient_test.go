@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -236,5 +237,133 @@ func TestKBClientNotesReadsLegacyNotesField(t *testing.T) {
 	}
 	if len(notes) != 1 || notes[0].Title != "Старая карточка" {
 		t.Fatalf("поле notes перестало читаться: %#v", notes)
+	}
+}
+
+// Пагинация карточек (2026-10-30). Живой дефект: kb-service отдаёт максимум
+// 50 заметок на запрос при любом size, но сообщает total. Клиент просил
+// size=200, получал 50 и считал, что это всё — из 588 карточек плагин видел 50.
+//
+// Заглушка ниже ведёт себя как настоящий сервис: страница не больше лимита,
+// и всегда есть total.
+type pagedKBStub struct {
+	t     *testing.T
+	total int
+	limit int
+	calls int
+	sizes []string
+	pages []string
+}
+
+func (s *pagedKBStub) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/service-token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"jwt": "kb-jwt"})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/kb/notes") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		s.calls++
+		q := r.URL.Query()
+		page := q.Get("page")
+		if page == "" {
+			page = "1"
+		}
+		s.sizes = append(s.sizes, q.Get("size"))
+		s.pages = append(s.pages, page)
+
+		pageNo := 0
+		_, _ = fmt.Sscanf(page, "%d", &pageNo)
+		if pageNo < 1 {
+			pageNo = 1
+		}
+		from := (pageNo - 1) * s.limit
+		to := from + s.limit
+		if from > s.total {
+			from = s.total
+		}
+		if to > s.total {
+			to = s.total
+		}
+		items := make([]map[string]any, 0, s.limit)
+		for i := from; i < to; i++ {
+			items = append(items, map[string]any{
+				"id": i + 1, "title": fmt.Sprintf("Карточка %d", i+1),
+				"path": fmt.Sprintf("Папка/Карточка %d.md", i+1),
+				"uuid": fmt.Sprintf("uuid-%d", i+1),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": items, "total": s.total, "page": pageNo, "size": s.limit,
+		})
+	})
+	return mux
+}
+
+func newPagedKBStub(t *testing.T, total, limit int) (*pagedKBStub, *KBClient) {
+	t.Helper()
+	s := &pagedKBStub{t: t, total: total, limit: limit}
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+	return s, &KBClient{baseURL: srv.URL, authURL: srv.URL, serviceKey: "k", client: srv.Client()}
+}
+
+// Сервис режет выдачу до 50 при total=130 — клиент обязан собрать все 130.
+func TestKBClientNotesPaginatesAllPages(t *testing.T) {
+	s, c := newPagedKBStub(t, 130, 50)
+	notes, err := c.Notes(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(notes) != 130 {
+		t.Fatalf("собрано %d карточек из 130 — пагинация не работает", len(notes))
+	}
+	if s.calls != 3 {
+		t.Fatalf("ожидали 3 запроса (50+50+30), сделали %d: %v", s.calls, s.pages)
+	}
+	if notes[0].ID != 1 || notes[129].ID != 130 {
+		t.Fatalf("порядок или содержимое страниц нарушены: первый %d, последний %d", notes[0].ID, notes[129].ID)
+	}
+}
+
+// Ровно одна полная страница: лишнего запроса быть не должно.
+func TestKBClientNotesStopsWhenPageNotFull(t *testing.T) {
+	s, c := newPagedKBStub(t, 50, 50)
+	notes, err := c.Notes(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(notes) != 50 || s.calls != 1 {
+		t.Fatalf("ожидали 50 карточек за один запрос, получили %d за %d", len(notes), s.calls)
+	}
+}
+
+// Сервис, который всегда отдаёт полную страницу, не должен крутить цикл вечно.
+func TestKBClientNotesHasPageCap(t *testing.T) {
+	// total заведомо больше, чем можно получить при лимите maxKBPages.
+	s, c := newPagedKBStub(t, 1000000, 50)
+	notes, err := c.Notes(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if s.calls > maxKBPages {
+		t.Fatalf("запросов %d, предел %d — цикл не ограничен", s.calls, maxKBPages)
+	}
+	if len(notes) != s.calls*50 {
+		t.Fatalf("карточек %d, а страниц %d по 50", len(notes), s.calls)
+	}
+}
+
+// Карточек меньше одной страницы — один запрос, без хвостов.
+func TestKBClientNotesSinglePartialPage(t *testing.T) {
+	s, c := newPagedKBStub(t, 12, 50)
+	notes, err := c.Notes(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(notes) != 12 || s.calls != 1 {
+		t.Fatalf("ожидали 12 карточек за один запрос, получили %d за %d", len(notes), s.calls)
 	}
 }
