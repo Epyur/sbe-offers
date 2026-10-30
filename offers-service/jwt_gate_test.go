@@ -192,3 +192,71 @@ func TestAppIDFromEnvDefault(t *testing.T) {
 	}
 	_ = context.Background()
 }
+
+// Каждый отказ по токену обязан оставить след в журнале: без него живая
+// жалоба «ключ недействителен» неразбираема (2026-10-30 — в журнале было
+// только строкой «listening», ни одного отказа).
+//
+// В журнал идёт путь и причина, но НЕ токен и не тело: там могут быть данные
+// клиента, а токен — это действующий ключ доступа.
+func TestAuthRejectionIsLoggedWithoutToken(t *testing.T) {
+	secret := []byte("test-secret")
+	jwtSecret = secret
+	t.Setenv("OFFERS_APP_ID", "offers")
+	withPermMutation(t, map[string]string{"owner@tn.ru": "superadmin"}, "", false)
+
+	s := &Server{}
+	handler := s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	badToken := makeTestJWT(t, "offers", "owner@tn.ru", []byte("other-secret"), time.Now().Add(time.Hour))
+	req := httptest.NewRequest(http.MethodGet, "/api/offers/context/cards", nil)
+	req.Header.Set("Authorization", "Bearer "+badToken)
+	rec := httptest.NewRecorder()
+
+	var logged strings.Builder
+	prev := authLogWriter
+	authLogWriter = &logged
+	defer func() { authLogWriter = prev }()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("ожидали 401, получили %d", rec.Code)
+	}
+	out := logged.String()
+	if !strings.Contains(out, "/api/offers/context/cards") {
+		t.Errorf("в журнале нет пути: %q", out)
+	}
+	if !strings.Contains(out, authCauseBadToken) {
+		t.Errorf("в журнале нет причины %q: %q", authCauseBadToken, out)
+	}
+	if strings.Contains(out, badToken) {
+		t.Error("в журнал попал сам токен — это утечка ключа доступа")
+	}
+}
+
+// Причина называется точно: нет заголовка — не путать с битой подписью.
+func TestAuthRejectionNamesMissingToken(t *testing.T) {
+	secret := []byte("test-secret")
+	jwtSecret = secret
+	t.Setenv("OFFERS_APP_ID", "offers")
+	withPermMutation(t, map[string]string{"owner@tn.ru": "superadmin"}, "", false)
+
+	s := &Server{}
+	handler := s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {})
+	req := httptest.NewRequest(http.MethodGet, "/api/offers/materials", nil)
+	rec := httptest.NewRecorder()
+
+	var logged strings.Builder
+	prev := authLogWriter
+	authLogWriter = &logged
+	defer func() { authLogWriter = prev }()
+
+	handler(rec, req)
+
+	if !strings.Contains(logged.String(), authCauseNoToken) {
+		t.Fatalf("ожидали причину %q, получили %q", authCauseNoToken, logged.String())
+	}
+}

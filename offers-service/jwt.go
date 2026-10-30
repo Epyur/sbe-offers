@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -101,6 +102,34 @@ func roleRank(role string) int {
 
 type permEmailCtx struct{}
 
+// Причины отказа по токену. Строки уходят в журнал, поэтому это константы, а
+// не свободный текст: по ним ищут в журнале, когда приходит жалоба.
+const (
+	authCauseNoToken  = "no-token"
+	authCauseBadToken = "bad-token"
+	authCauseIssuer   = "issuer"
+	authCauseAudience = "audience"
+	authCauseAppID    = "app-id"
+	authCauseRole     = "role"
+)
+
+// authLogWriter — куда пишется отказ. Переменная, а не прямой log.Printf,
+// чтобы тест мог проверить и содержимое, и отсутствие в нём токена.
+var authLogWriter io.Writer = os.Stderr
+
+// logAuthRejection оставляет след об отказе: метод, путь, причину.
+//
+// Токена и тела здесь нет намеренно: токен — действующий ключ доступа, а в
+// теле бывают данные заказчика. Без такой записи живая жалоба «ключ
+// недействителен» неразбираема (2026-10-30: в журнале было только «listening»).
+func logAuthRejection(r *http.Request, cause string) {
+	if r == nil {
+		return
+	}
+	path := r.URL.Path
+	_, _ = fmt.Fprintf(authLogWriter, "auth reject: %s %s %s\n", r.Method, path, cause)
+}
+
 // effectiveRole — роль пользователя в приложении: персональная, иначе общий
 // доступ приложения (источник правды — auth-service, см. authperms.go).
 func (s *Server) effectiveRole(ctx context.Context, appID, email string) (string, error) {
@@ -108,45 +137,62 @@ func (s *Server) effectiveRole(ctx context.Context, appID, email string) (string
 	return roleFromSnapshot(s.permissionsSnapshot(ctx), email, ""), nil
 }
 
+// reject отвечает отказом и пишет причину в журнал — одна точка на все ветки,
+// чтобы новая ветка не забыла запись.
+func reject(w http.ResponseWriter, r *http.Request, status int, cause, errText string) {
+	logAuthRejection(r, cause)
+	writeJSON(w, status, map[string]any{"error": errText})
+}
+
+// authorize проверяет токен и права. Возвращает email и код отказа; пустая
+// строка кода значит «пропущен». Вместо шести почти одинаковых writeJSON в
+// замыкании: гейт читается сверху вниз, причины названы в одном месте.
+func (s *Server) authorize(r *http.Request, minRole string) (string, int, string, string) {
+	appID := appIDFromEnv()
+
+	tokenStr := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+	if tokenStr == "" {
+		return "", http.StatusUnauthorized, authCauseNoToken, "unauthorized"
+	}
+	claims, err := parseJWT(tokenStr)
+	if err != nil {
+		return "", http.StatusUnauthorized, authCauseBadToken, "unauthorized"
+	}
+	if claims.AppID != appID {
+		return "", http.StatusForbidden, authCauseAppID, "forbidden"
+	}
+	if claims.Issuer != "" && claims.Issuer != "auth-service" {
+		return "", http.StatusUnauthorized, authCauseIssuer, "unauthorized"
+	}
+	if len(claims.Audience) > 0 && !claimStringsContains(claims.Audience, appID) {
+		return "", http.StatusUnauthorized, authCauseAudience, "unauthorized"
+	}
+
+	role, err := s.effectiveRole(r.Context(), claims.AppID, claims.Email)
+	if err != nil {
+		return "", http.StatusInternalServerError, "", "db error"
+	}
+	if roleRank(role) < roleRank(minRole) {
+		return "", http.StatusForbidden, authCauseRole, "forbidden: insufficient role"
+	}
+	return claims.Email, 0, "", ""
+}
+
 func (s *Server) requirePerm(minRole string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			auth := r.Header.Get("Authorization")
-			tokenStr := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer"))
-			if tokenStr == "" {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			email, status, cause, errText := s.authorize(r, minRole)
+			if status != 0 {
+				if cause == "" {
+					// Сбой БД: писать его как отказ по токену нельзя — это
+					// другая причина, и она уже попадёт в журнал через dbError.
+					writeJSON(w, status, map[string]any{"error": errText})
+					return
+				}
+				reject(w, r, status, cause, errText)
 				return
 			}
-
-			claims, err := parseJWT(tokenStr)
-			if err != nil {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-				return
-			}
-			if claims.AppID != appIDFromEnv() {
-				writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-				return
-			}
-			if claims.Issuer != "" && claims.Issuer != "auth-service" {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-				return
-			}
-			if len(claims.Audience) > 0 && !claimStringsContains(claims.Audience, appIDFromEnv()) {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-				return
-			}
-
-			role, err := s.effectiveRole(r.Context(), claims.AppID, claims.Email)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "db error"})
-				return
-			}
-			if roleRank(role) < roleRank(minRole) {
-				writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: insufficient role"})
-				return
-			}
-
-			ctx := context.WithValue(r.Context(), permEmailCtx{}, claims.Email)
+			ctx := context.WithValue(r.Context(), permEmailCtx{}, email)
 			next(w, r.WithContext(ctx))
 		}
 	}
