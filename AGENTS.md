@@ -630,7 +630,7 @@ command.
 
 ### Release 0.2.0 - 2026-10-30
 
-**Committed and pushed.** Commit `PLACEHOLDER_SHA` on `backend`: Task 9 state machine in
+**Committed and pushed.** Commit `f7a056f` on `backend`: Task 9 state machine in
 the bot, three live defect fixes (`brief/step` body `chat_id`, `drainBody` on early
 reject, tolerant brief payload), Task 10 brief routes + plugin card, Task 11 document
 toggles. `main.js` rebuilt at 0.2.0 and included, as the store downloads it from `main`.
