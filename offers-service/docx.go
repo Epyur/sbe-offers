@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -242,7 +243,20 @@ func renderBlockContent(block Block, values map[string]string) (string, error) {
 // renderOfferDocx собирает предложение в DOCX. Порядок: заголовок формы, блоки
 // формы (только клиентские), таблица позиций, итог, подпись менеджера. Файл
 // строится на корпоративном бланке (шапка/футер/тема остаются как есть).
+// renderOfferDocx — сборка без карточек систем: тот же путь, что и раньше.
 func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
+	return renderOfferDocxWithCards(form, offer, nil, nil)
+}
+
+// renderOfferDocxWithCards — сборка с описаниями и фото из Базы знаний.
+//
+// Порядок источников: согласованный текст секции (form_values["copy.*"])
+// главнее карточки; карточка главнее пустоты. Из карточки берётся только
+// описание: состав и цены — из каталога, чтобы в КП не было двух правд.
+//
+// images может быть nil, карточки могут отсутствовать — документ собирается в
+// любом случае. Картинка необязательна: нет файла — нет картинки.
+func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, images ImageSource) ([]byte, error) {
 	if len(offer.Items) == 0 {
 		return nil, fmt.Errorf("в предложении нет позиций")
 	}
@@ -286,6 +300,10 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 	// Пустой текст секции не рисуется вовсе: «пропущено» и «пусто» — одно.
 	renderAcceptedSections(&sb, offer)
 
+	// Описания систем из карточек Базы знаний: только там, где менеджер не
+	// согласовал свой текст (согласованное главнее).
+	cardMedia := renderCardSections(&sb, offer, cards, images)
+
 	sb.WriteString(headingXML("Состав предложения", 2))
 	rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
 	for i, item := range offer.Items {
@@ -305,7 +323,7 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 	sb.WriteString(paragraphXML("", ""))
 	sb.WriteString(paragraphXML("Менеджер: "+manager, ""))
 
-	return buildDocx(sb.String())
+	return buildDocxWithMedia(sb.String(), cardMedia)
 }
 
 // buildDocx вставляет тело в корпоративный бланк; при его отсутствии собирает
@@ -462,3 +480,102 @@ func renderAcceptedSections(sb *strings.Builder, offer Offer) {
 // единицы; без предела документ с подменённым form_values мог бы крутиться
 // бесконечно долго.
 const maxSystemSections = 50
+
+// ImageSource — откуда берутся байты картинки. Интерфейс, а не *S3Store:
+// тесты подставляют свою реализацию и не ходят в хранилище.
+type ImageSource interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+}
+
+// renderCardSections рисует описания систем из карточек Базы знаний.
+//
+// Что попадает в документ:
+//   - описание системы — если менеджер не согласовал свой текст для этой
+//     системы (согласованное главнее);
+//   - картинка продукта — если есть ключ вложения и хранилище отдало файл.
+//
+// Состав и цены из карточки НЕ берутся: они в каталоге, и второй копии в КП
+// быть не должно. Возвращает сборщик изображений, чтобы картинки доехали до
+// пакета.
+func renderCardSections(sb *strings.Builder, offer Offer, cards []SystemCard, images ImageSource) *docxMedia {
+	if len(cards) == 0 {
+		return nil
+	}
+	bySKU := make(map[string]SystemCard, len(cards))
+	for _, c := range cards {
+		if c.SKU != "" {
+			bySKU[strings.ToUpper(c.SKU)] = c
+		}
+	}
+	if len(bySKU) == 0 {
+		return nil
+	}
+
+	// Список систем предложения в порядке строк состава: catalogId → SKU.
+	// Без каталога под рукой его нет, поэтому идём по карточкам, у которых есть
+	// описание, и не дублируем те, что уже согласованы менеджером.
+	// Занятые id визуальных элементов берём из бланка: в колонтитулах свои
+	// фигуры (1..25), и сборщик без карты падает на первой же картинке.
+	media := newTemplateMedia()
+	for i, c := range cards {
+		if strings.TrimSpace(c.Description) == "" {
+			continue
+		}
+		// Согласованный текст системы главнее карточки.
+		if strings.TrimSpace(offer.FormValues[SectionKey(skills.SectionSystem, i+1)]) != "" {
+			continue
+		}
+		sb.WriteString(headingXML("Система: "+c.Title, 3))
+		sb.WriteString(paragraphXML(c.Description, ""))
+
+		if c.ImageKey == "" || images == nil {
+			continue
+		}
+		data, err := images.Get(context.Background(), c.ImageKey)
+		if err != nil || len(data) == 0 {
+			// Картинка необязательна: документ важнее.
+			continue
+		}
+		ext, contentType := imageExt(c.ImageName)
+		drawing := media.add(data, ext, contentType, cardImageWidth, cardImageHeight)
+		if drawing != "" {
+			sb.WriteString(`<w:p><w:pPr><w:jc w:val="center"/></w:pPr>` + drawing + `</w:p>`)
+		}
+	}
+	if len(media.images) == 0 && !hasCardDescriptions(cards) {
+		return nil
+	}
+	return media
+}
+
+// hasCardDescriptions — есть ли в карточках хоть одно описание.
+func hasCardDescriptions(cards []SystemCard) bool {
+	for _, c := range cards {
+		if strings.TrimSpace(c.Description) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Размер картинки продукта в документе: 12 см по ширине (в EMU, 1 см =
+// 360000). Высота пропорционально не считается: у нас нет декодера картинок,
+// а фиксированный размер не ломает вёрстку.
+const (
+	cardImageWidth  = 12 * 360000
+	cardImageHeight = 9 * 360000
+)
+
+// imageExt — расширение и тип по имени файла. По умолчанию jpeg: большинство
+// фото продуктов в базе знаний — jpg.
+func imageExt(name string) (string, string) {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".png"):
+		return "png", "image/png"
+	case strings.HasSuffix(lower, ".gif"):
+		return "gif", "image/gif"
+	default:
+		return "jpeg", "image/jpeg"
+	}
+}

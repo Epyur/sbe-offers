@@ -106,7 +106,20 @@ func nextDrawingIDs(used map[int]bool, count int) []int {
 	return out
 }
 
-// docxImagePart — изображение, добавленное в пакет.
+// newTemplateMedia — сборщик изображений с уже занятыми id бланка.
+//
+// Отдельный конструктор, потому что `docxMedia{}` без used-карты падает на
+// первой же выдаче id («assignment to entry in nil map»), а чтение ключей
+// шаблона нужно везде, где в документ добавляются картинки.
+func newTemplateMedia() *docxMedia {
+	files, _, err := readZipEntries(standardTemplateDocx)
+	if err != nil {
+		// Шаблон битый — начнём с пустого набора: лучше возможный дубль id,
+		// чем падение сборки документа.
+		return &docxMedia{used: map[int]bool{}}
+	}
+	return newDocxMedia(files)
+} // docxImagePart — изображение, добавленное в пакет.
 type docxImagePart struct {
 	relID       string
 	mediaName   string

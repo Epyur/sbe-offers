@@ -74,6 +74,9 @@ type SystemCard struct {
 	Specifications [][]string `json:"specifications,omitempty"`
 	// ImageName — имя файла картинки в заметке.
 	ImageName string `json:"imageName,omitempty"`
+	// ImageKey — ключ вложения в хранилище Базы знаний. По нему картинка
+	// читается для вставки в DOCX (FileLink отдаёт ссылку, а нам нужны байты).
+	ImageKey string `json:"imageKey,omitempty"`
 	// CatalogID — система каталога, с которой связана карточка. 0 — не связана.
 	CatalogID int64 `json:"catalogId"`
 	// UpdatedAt — когда заметку правили.
