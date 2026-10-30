@@ -12,9 +12,13 @@ import (
 
 // CatalogItem — карточка системы/материала/работы в каталоге.
 type CatalogItem struct {
-	ID          int64   `json:"id"`
-	Kind        string  `json:"kind"`
-	Name        string  `json:"name"`
+	ID   int64  `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	// SKU — код системы. По нему карточка Базы знаний связывается с
+	// каталогом (поле system_sku в заметке, см. стандарт карточки).
+	// Пустой код означает «связи по коду быть не может».
+	SKU         string  `json:"sku"`
 	Unit        string  `json:"unit"`
 	BasePrice   float64 `json:"basePrice"`
 	Description string  `json:"description"`

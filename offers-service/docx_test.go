@@ -116,7 +116,11 @@ func TestRenderBlockContentAllNodeTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("разбор блока упал: %v", err)
 	}
-	for _, want := range []string{`w:val="Heading1"`, "Заголовок", `w:jc w:val="center"`, `numId w:val="1"`, "<w:tr>"} {
+	// Стиль и нумерация — бланка: "1" это styleId «heading 1», а numId 6 —
+	// маркированный список шаблона. До 2026-10-29 здесь стояли Heading1 и
+	// numId=1: таких стилей в бланке нет, и Word показывал текст дефолтным
+	// шрифтом (в этом и была «битая вёрстка»).
+	for _, want := range []string{`w:val="1"`, "Заголовок", `w:jc w:val="center"`, `numId w:val="6"`, "<w:tr>"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в выводе блока нет %q", want)
 		}

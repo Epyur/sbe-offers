@@ -8,6 +8,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"mailers/offers/skills"
 )
 
 // stylesXML — стандартное оформление Word (Times New Roman 14pt, полуторный
@@ -48,6 +50,27 @@ const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   </w:style>
 </w:styles>`
 
+// --- Стили и нумерация БЛАНКА (2026-10-29) -----------------------------
+//
+// Имена взяты из шаблона standard.docx, а не выдуманы: styles.xml и
+// numbering.xml теперь берутся из бланка как есть, поэтому ссылаться можно
+// только на то, что там есть. Раньше здесь стояли "Normal"/"Title"/"Heading1"
+// и своя нумерация — таких стилей в бланке нет (Normal называется a0,
+// заголовок — "1"), поэтому Word показывал текст дефолтным шрифтом.
+//
+// Если шаблон поменяют — упадёт TestDocxOnlyKnownStyles с точным именем
+// недостающего стиля, а не «поехавшая вёрстка» у заказчика.
+
+const (
+	// styleNormal — «Normal» бланка (w:styleId="a0").
+	styleNormal = "a0"
+	// styleHeading1 — «heading 1» бланка (w:styleId="1"). Уровней глубже в
+	// бланке нет: headingXML рисует размер шрифта сам.
+	styleHeading1 = "1"
+	// styleListBullet — маркированный список бланка. abstractNum 1 — bullet,
+	// numId 6 на него ссылается (нумерации 1..12 заняты бланком).
+	styleListBullet = "6"
+)
 const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:abstractNum w:abstractNumId="0">
@@ -80,7 +103,7 @@ func jcVal(align string) string {
 
 func paragraphXML(text, align string) string {
 	var pPr strings.Builder
-	pPr.WriteString(`<w:pStyle w:val="Normal"/>`)
+	pPr.WriteString(`<w:pStyle w:val="` + styleNormal + `"/>`)
 	if j := jcVal(align); j != "" {
 		pPr.WriteString(`<w:jc w:val="` + j + `"/>`)
 	}
@@ -89,23 +112,25 @@ func paragraphXML(text, align string) string {
 }
 
 func listItemXML(text string) string {
-	return `<w:p><w:pPr><w:pStyle w:val="Normal"/><w:ind w:firstLine="0"/>` +
-		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>` +
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
+		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
 		`<w:r><w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
 }
 
 func headingXML(text string, level int) string {
-	// level 2 → Heading1, 3 → Heading2, 4 → Heading3 (в styles.xml заведены
-	// Heading1..3).
-	styleNum := 1
+	// В бланке есть только «heading 1» (styleId "1"). Уровни 3 и 4 отличаются
+	// размером шрифта, а не стилем: своих Heading2/Heading3 в бланке нет, и
+	// ссылаться на несуществующий стиль нельзя — Word покажет дефолтный шрифт.
+	size := "28" // 14pt
 	switch level {
 	case 3:
-		styleNum = 2
+		size = "26" // 13pt
 	case 4:
-		styleNum = 3
+		size = "24" // 12pt
 	}
-	return `<w:p><w:pPr><w:pStyle w:val="Heading` + strconv.Itoa(styleNum) + `"/></w:pPr>` +
-		`<w:r><w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/></w:pPr>` +
+		`<w:r><w:rPr><w:b/><w:sz w:val="` + size + `"/><w:szCs w:val="` + size + `"/></w:rPr>` +
+		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
 }
 
 func tableCellXML(text string, header bool) string {
@@ -167,28 +192,9 @@ func resolvePlaceholders(text string, values map[string]string) string {
 	return text
 }
 
-// formatMoney — сумма в русском формате: «1 234,56».
-func formatMoney(v float64) string {
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	cents := int64(roundMoney(v)*100 + 0.5)
-	whole := cents / 100
-	frac := cents % 100
-	digits := strconv.FormatInt(whole, 10)
-	var parts []string
-	for len(digits) > 3 {
-		parts = append([]string{digits[len(digits)-3:]}, parts...)
-		digits = digits[:len(digits)-3]
-	}
-	parts = append([]string{digits}, parts...)
-	out := strings.Join(parts, " ") + "," + fmt.Sprintf("%02d", frac)
-	if neg {
-		return "-" + out
-	}
-	return out
-}
+// formatMoney переехал в skills.FormatMoney: один экземпляр на весь сервис.
+// Раньше копии были здесь и в боте, и они разошлись (1.005 печаталось как 1,00).
+func formatMoney(v float64) string { return skills.FormatMoney(v) }
 
 // blockNode — один узел содержимого блока формы.
 type blockNode struct {
@@ -246,7 +252,7 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 	if title == "" {
 		title = "Коммерческое предложение"
 	}
-	sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t xml:space="preserve">`)
+	sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr><w:t xml:space="preserve">`)
 	sb.WriteString(escapeXML(title))
 	sb.WriteString(`</w:t></w:r></w:p>`)
 
@@ -275,6 +281,11 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 		sb.WriteString(content)
 	}
 
+	// Согласованный менеджером текст секций (2026-10-29). Идёт после блоков
+	// формы и перед составом: это текст «о предложении», таблица цен — факты.
+	// Пустой текст секции не рисуется вовсе: «пропущено» и «пусто» — одно.
+	renderAcceptedSections(&sb, offer)
+
 	sb.WriteString(headingXML("Состав предложения", 2))
 	rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
 	for i, item := range offer.Items {
@@ -300,6 +311,15 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 // buildDocx вставляет тело в корпоративный бланк; при его отсутствии собирает
 // минимальный документ с тем же оформлением текста.
 func buildDocx(bodyXML string) ([]byte, error) {
+	return buildDocxWithMedia(bodyXML, nil)
+}
+
+// buildDocxWithMedia — сборка с изображениями (2026-10-29).
+//
+// media может быть nil: документ без картинок. id визуальных элементов
+// вычисляются по ключам шаблона (docx_media.go), а не по константе: у бланка
+// свои фигуры в колонтитулах, и дубль id ломает вёрстку молча.
+func buildDocxWithMedia(bodyXML string, media *docxMedia) ([]byte, error) {
 	tr, err := zip.NewReader(bytes.NewReader(standardTemplateDocx), int64(len(standardTemplateDocx)))
 	if err != nil {
 		return nil, fmt.Errorf("открыть шаблон: %w", err)
@@ -329,21 +349,51 @@ func buildDocx(bodyXML string) ([]byte, error) {
 		return nil, err
 	}
 	files["word/document.xml"] = []byte(prefix + bodyXML + suffix)
-	files["word/styles.xml"] = []byte(stylesXML)
-	files["word/numbering.xml"] = []byte(numberingXML)
+	// styles.xml и numbering.xml из шаблона НЕ трогаем (2026-10-29).
+	//
+	// Раньше они подменялись своими короткими версиями — 5 стилей вместо 58 и
+	// 2 нумерации вместо 12. Из-за этого в собранном файле пропадала нумерация
+	// страниц в нижнем колонтитуле: поля PAGE/SECTIONPAGES живут в текстовых
+	// блоках и опираются на стили бланка, а без них Word пересчитывает
+	// разметку и вытесняет нумерацию. Таблицы теряли TableParagraph, шапка и
+	// футер — свои стили. У ЛИМС та же грабля была и починена так же: менять
+	// только word/document.xml.
+	//
+	// Следствие: разметка обязана пользоваться ТОЛЬКО стилями и нумерациями
+	// бланка. За этим следят TestDocxOnlyKnownStyles и TestDocxOnlyKnownNumIds.
+
+	// Изображения и связи дописываем ПОСЛЕ тела: сборщик читает занятые id
+	// визуальных элементов по всем частям пакета, включая только что
+	// вставленное тело.
+	if media != nil {
+		if err := applyMedia(files, media); err != nil {
+			return nil, err
+		}
+	}
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	// Новые части (word/media/*) в names отсутствуют — пишем их следом.
+	written := make(map[string]bool, len(names))
 	for _, name := range names {
 		w, err := zw.Create(name)
 		if err != nil {
 			return nil, err
 		}
-		content := files[name]
-		if name == "word/document.xml" || name == "word/styles.xml" || name == "word/numbering.xml" {
-			content = files[name]
+		written[name] = true
+		if _, err := w.Write(files[name]); err != nil {
+			return nil, err
 		}
-		if _, err := w.Write(content); err != nil {
+	}
+	for name, data := range files {
+		if written[name] {
+			continue
+		}
+		w, err := zw.Create(name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write(data); err != nil {
 			return nil, err
 		}
 	}
@@ -365,3 +415,50 @@ func splitTemplateBody(docXML string) (prefix, suffix string, err error) {
 	}
 	return docXML[:bodyContentStart], docXML[sectPr:], nil
 }
+
+// renderAcceptedSections рисует согласованный текст секций КП (2026-10-29).
+//
+// Ключи — copy.<kind> и copy.system.<N> (copystep.go). Порядок: вводный текст,
+// описания систем, преимущества, условия. Пустой текст = секция пропущена:
+// менеджер мог её не писать, и «пустой абзац» в документе не нужен.
+//
+// Преимущества — список бланка (styleListBullet), а не абзац с переносами:
+// иначе в документе получается текст, а не список.
+func renderAcceptedSections(sb *strings.Builder, offer Offer) {
+	if offer.FormValues == nil {
+		return
+	}
+	section := func(key string) string {
+		return strings.TrimSpace(offer.FormValues[key])
+	}
+	if text := section(SectionKey(skills.SectionIntro, 0)); text != "" {
+		sb.WriteString(paragraphXML(text, ""))
+	}
+	// Системы: идём по порядку, пока ключи есть. Количество систем сервер не
+	// хранит отдельно — оно живёт в составе предложения и в тексте формы.
+	for i := 1; i <= maxSystemSections; i++ {
+		text := section(SectionKey(skills.SectionSystem, i))
+		if text == "" {
+			continue
+		}
+		sb.WriteString(headingXML("Система "+strconv.Itoa(i), 3))
+		sb.WriteString(paragraphXML(text, ""))
+	}
+	if text := section(SectionKey(skills.SectionAdvantages, 0)); text != "" {
+		for _, line := range strings.Split(text, "\n") {
+			item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "•"))
+			if item == "" {
+				continue
+			}
+			sb.WriteString(listItemXML(item))
+		}
+	}
+	if text := section(SectionKey(skills.SectionConditions, 0)); text != "" {
+		sb.WriteString(paragraphXML(text, ""))
+	}
+}
+
+// maxSystemSections — предел обхода ключей copy.system.N. Систем в КП
+// единицы; без предела документ с подменённым form_values мог бы крутиться
+// бесконечно долго.
+const maxSystemSections = 50
