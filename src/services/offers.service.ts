@@ -6,10 +6,14 @@ import type {
   AccessEntry,
   BotConfigInfo,
   BotStatusInfo,
+  BriefPayload,
+  BriefResponse,
   CatalogItem,
   Offer,
   OfferForm,
+  RefreshSystemCardsResponse,
   Role,
+  SystemCardsResponse,
 } from '../types/offers';
 
 const TIMEOUT_MS = 20000;
@@ -151,6 +155,16 @@ export class OffersService {
     return this.request<{ url: string; expiresAt: string }>('POST', `/offers/${id}/link`);
   }
 
+  /** Бриф предложения вместе с историей разговора в боте. */
+  async getBrief(id: number): Promise<BriefResponse> {
+    return this.request<BriefResponse>('GET', `/offers/${id}/brief`);
+  }
+
+  /** Правка ответов брифа руками (владелец предложения или admin). */
+  async saveBrief(id: number, payload: BriefPayload, status?: string): Promise<BriefResponse> {
+    return this.request<BriefResponse>('PUT', `/offers/${id}/brief`, { payload, status });
+  }
+
   /** Скачивание DOCX байтами: сервер отдаёт файл, а не JSON. */
   async exportDocx(id: number): Promise<Uint8Array> {
     const token = await this.getToken();
@@ -179,6 +193,16 @@ export class OffersService {
     return this.request<{ code: string; expiresAt: string }>('POST', '/access/codes', { email });
   }
 
+
+  /** Карточки систем из Базы знаний (из кеша). */
+  async getSystemCards(): Promise<SystemCardsResponse> {
+    return this.request<SystemCardsResponse>('GET', '/context/cards');
+  }
+
+  /** Перечитать карточки из Базы знаний (admin). */
+  async refreshSystemCards(): Promise<RefreshSystemCardsResponse> {
+    return this.request<RefreshSystemCardsResponse>('POST', '/context/refresh');
+  }
   /** Настройки Telegram-бота: задан ли токен и чей это бот. */
   async getBotConfig(): Promise<BotConfigInfo> {
     return this.request<BotConfigInfo>('GET', '/bot/config');

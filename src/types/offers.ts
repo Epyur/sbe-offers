@@ -125,3 +125,109 @@ export function isAdminRole(role: string): boolean {
 export function canEditOffers(role: string): boolean {
   return role === 'editor' || role === 'admin' || role === 'superadmin';
 }
+
+/**
+ * Карточка системы из Базы знаний (2026-10-29).
+ *
+ * Источник текста для КП: название, описание, состав, картинка. Цены и
+ * артикулы здесь НЕ хранятся — они в каталоге. Связь с каталогом по `sku`.
+ */
+export interface SystemCard {
+  noteId: number;
+  path: string;
+  sku: string;
+  title: string;
+  description: string;
+  composition: string[];
+  specifications?: string[][];
+  imageName?: string;
+  /** 0 — карточка не связана с каталогом. */
+  catalogId: number;
+  updatedAt: string;
+  hasDescription: boolean;
+  hasComposition: boolean;
+  empty: boolean;
+}
+
+/** Ответ списка карточек: вместе с ними — настроена ли База знаний. */
+export interface SystemCardsResponse {
+  cards: SystemCard[];
+  kbEnabled: boolean;
+}
+
+/** Ответ перечитывания карточек: если база знаний упала, придёт `error`. */
+export interface RefreshSystemCardsResponse extends SystemCardsResponse {
+  count: number;
+  error?: string;
+}
+
+/** Возражение клиента и согласованный ответ на него. */
+export interface BriefObjection {
+  claim: string;
+  response: string;
+}
+
+/**
+ * Бриф КП — то, что бот выяснил у менеджера про объект.
+ *
+ * Поля повторяют `model.BriefPayload` на сервере один в один: это контракт
+ * JSON, а не удобный для UI вид. Пустое значение значит «не спрашивали» —
+ * показывать его надо как «не заполнено», а не как пустую строку.
+ */
+export interface BriefPayload {
+  object_name: string;
+  customer_pains: string[];
+  customer_goals: string[];
+  project_risks: string[];
+  objections: BriefObjection[];
+  budget_signal: string;
+  decision_maker: string;
+  timeline: string;
+  why_us: string[];
+  notes: string;
+  skipped_topics: string[];
+}
+
+/** Бриф в хранилище: `absent` — брифа нет (КП собрано без диалога в боте). */
+export interface Brief {
+  id: number;
+  offerId: number;
+  payload: BriefPayload;
+  status: 'open' | 'ready' | 'agreed' | 'absent';
+  chatId: string;
+  lastTopic: string;
+  updatedAt: string;
+}
+
+/** Одна реплика разговора в боте. */
+export interface BriefTurn {
+  id: number;
+  briefId: number;
+  role: 'bot' | 'manager';
+  text: string;
+  topic: string;
+  createdAt: string;
+}
+
+/** Ответ сервера: бриф вместе с журналом реплик. */
+export interface BriefResponse {
+  brief: Brief;
+  turns: BriefTurn[];
+}
+
+/** Пустой бриф для нового КП — те же ключи, что у сервера. */
+export function emptyBriefPayload(): BriefPayload {
+  return {
+    object_name: '',
+    customer_pains: [],
+    customer_goals: [],
+    project_risks: [],
+    objections: [],
+    budget_signal: '',
+    decision_maker: '',
+    timeline: '',
+    why_us: [],
+    notes: '',
+    skipped_topics: [],
+  };
+}

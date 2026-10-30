@@ -303,3 +303,125 @@
 .tn-offers-card .is-hidden {
   display: none;
 }
+
+/* Контекст КП: карточки систем из Базы знаний (2026-10-29) */
+.tn-offers-context-hint {
+  margin-bottom: 12px;
+  line-height: 1.45;
+}
+
+.tn-offers-context-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tn-offers-context-actions {
+  white-space: nowrap;
+}
+
+.tn-offers-ok {
+  color: var(--text-success);
+  font-weight: 500;
+}
+
+.tn-offers-warn {
+  color: var(--text-warning);
+  font-weight: 500;
+}
+/* --- Бриф КП (Task 10, 2026-10-30) --------------------------------------- */
+
+.tn-offers-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tn-offers-brief-title {
+  font-weight: 600;
+  font-size: var(--font-ui-medium);
+}
+
+.tn-offers-brief-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tn-offers-brief-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tn-offers-brief-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.tn-offers-brief-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tn-offers-brief-value {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: pre-wrap;
+}
+
+.tn-offers-brief-empty {
+  font-style: italic;
+}
+
+.tn-offers-brief-area {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.tn-offers-brief-turns {
+  margin-top: 4px;
+}
+
+.tn-offers-brief-turns summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.tn-offers-brief-turn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.tn-offers-brief-who {
+  font-weight: 500;
+  font-size: var(--font-ui-smaller);
+}
+
+.tn-offers-brief-who.is-manager {
+  color: var(--text-accent);
+}
+
+.tn-offers-brief-turn-text {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+}
+.tn-offers-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}

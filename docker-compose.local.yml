@@ -26,6 +26,38 @@ services:
       - ./scripts:/app:ro
     networks: [offersnet]
 
+  # Заглушка offers-bot: проверка токена без сети и без Telegram. Настоящий бот
+  # здесь не нужен — стенд проверяет поведение сервиса, а не Telegram.
+  bot-stub:
+    image: node:22-alpine
+    container_name: offers-local-bot-stub
+    working_dir: /app
+    command: node bot-stub.mjs
+    environment:
+      OFFERS_BOT_SECRET: test-bot-secret
+      VERIFY_PORT: "3000"
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
+  # Заглушка llm-service (2026-10-30): отвечает на /internal/llm/complete так,
+  # как ответил бы настоящий сервис, но без провайдера. Без неё нельзя проверить
+  # ни бриф-диалог, ни тексты секций, ни деградацию при недоступной модели.
+  llm-stub:
+    image: node:22-alpine
+    container_name: offers-local-llm-stub
+    working_dir: /app
+    command: node llm-stub.mjs
+    environment:
+      LLM_SERVICE_SECRET: test-llm-secret
+      LLM_PORT: "3000"
+      # Логировать, что именно пришло от сервиса: без этого не понять, почему
+      # стенд ответил «не тем» текстом.
+      LLM_STUB_LOG: "1"
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
   offers:
     build: ./offers-service
     container_name: offers-local-app
@@ -37,6 +69,11 @@ services:
       OFFERS_BOT_SECRET: test-bot-secret
       OFFERS_OWNER_EMAIL: owner@tn.ru
       AUTH_SERVICE_URL: http://auth-stub:13001
+      # Проверка токена бота идёт через бота, у него есть путь в Telegram.
+      OFFERS_BOT_URL: http://bot-stub:3000
+      # Тексты пишет llm-service; на стенде его роль играет llm-stub.
+      LLM_SERVICE_URL: http://llm-stub:3000
+      LLM_SERVICE_SECRET: test-llm-secret
       # Локальный стенд без S3: экспорт DOCX идёт байтами и хранилище не нужно.
       S3_ENDPOINT: ""
       S3_ACCESS_KEY: x
@@ -47,6 +84,8 @@ services:
       db:
         condition: service_healthy
       auth-stub:
+        condition: service_started
+      llm-stub:
         condition: service_started
     ports:
       - "18080:3000"

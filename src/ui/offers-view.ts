@@ -9,9 +9,10 @@ import { renderOffersList } from './offers-list';
 import { renderCatalogEditor } from './catalog-editor';
 import { renderFormEditor } from './form-editor';
 import { renderAccessEditor } from './access-editor';
+import { renderContextEditor } from './context-editor';
 import { isAdminRole, type Role } from '../types/offers';
 
-export type NavKey = 'offers' | 'catalog' | 'form' | 'access';
+export type NavKey = 'offers' | 'catalog' | 'context' | 'form' | 'access';
 
 export class OffersView extends ItemView {
   plugin: SbeOffersPlugin;
@@ -127,6 +128,7 @@ export class OffersView extends ItemView {
     const items: Array<{ key: NavKey; icon: string; label: string }> = [
       { key: 'offers', icon: '🧾', label: 'КП' },
       { key: 'catalog', icon: '🗂', label: 'Каталог' },
+      { key: 'context', icon: '📚', label: 'Контекст КП' },
     ];
     if (this.isAdmin) {
       items.push({ key: 'form', icon: '⚙️', label: 'Форма КП' });
@@ -151,6 +153,7 @@ export class OffersView extends ItemView {
     const titles: Record<NavKey, string> = {
       offers: 'Коммерческие предложения',
       catalog: 'Каталог систем и материалов',
+      context: 'Контекст КП',
       form: 'Форма КП',
       access: 'Бот и доступ',
     };
@@ -163,6 +166,10 @@ export class OffersView extends ItemView {
       case 'catalog':
         this.pageSubEl.setText('Карточки, из которых собираются предложения.');
         renderCatalogEditor(this, this.bodyEl);
+        break;
+      case 'context':
+        this.pageSubEl.setText('Карточки систем из Базы знаний: текст, состав и картинка для КП.');
+        renderContextEditor(this, this.bodyEl);
         break;
       case 'form':
         this.pageSubEl.setText('Поля и блоки документа — что увидит клиент.');

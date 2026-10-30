@@ -20,3 +20,6 @@ offers-bot/dist/
 # Серверные папки живут только на ветке backend: main — чистый релизный срез плагина.
 offers-service/
 offers-bot/
+
+# Отчёты инструментов ub-mode (crapper/dryer): локальные, в репозиторий не нужны.
+.metrics/

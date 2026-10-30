@@ -3,6 +3,8 @@ import type { OffersView } from './offers-view';
 import { canEditOffers, type CatalogItem, type Offer, type OfferItem } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { formatMoney, itemsTotal } from '../utils/money';
+import { renderBriefCard } from './brief-editor';
+import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
 export function renderOffersList(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка предложений…' });
@@ -201,8 +203,7 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   redrawItems();
 
   const formCard = container.createDiv({ cls: 'tn-offers-card' });
-  formCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы' });
-  const formValues: Record<string, string> = { ...(current.formValues ?? {}) };
+  formCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы' });  const formValues: Record<string, string> = { ...(current.formValues ?? {}) };
   try {
     const form = await view.plugin.offersService.getForm('client');
     for (const p of form.placeholders) {
@@ -218,6 +219,31 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   } catch (e: unknown) {
     formCard.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить форму: ${errorMessage(e)}` });
   }
+
+  // Бриф — только у сохранённого предложения: у нового ещё нет номера, а бриф
+  // привязан к строке в базе.
+  if (current.id) {
+    await renderBriefCard(view, container, current.id);
+  }
+
+  // Что попадает в документ сверх формы (Task 11, 2026-10-30). Оба
+  // переключателя по умолчанию выключены: у старых КП файл не меняется.
+  const docCard = container.createDiv({ cls: 'tn-offers-card' });
+  docCard.createDiv({ cls: 'tn-offers-muted', text: 'Дополнительно в документе' });
+  const summaryBox = docCard.createEl('label', { cls: 'tn-offers-check' });
+  const summaryInput = summaryBox.createEl('input', { attr: { type: 'checkbox' } });
+  summaryInput.checked = formValues[FORM_FLAG_BRIEF_SUMMARY] === '1';
+  summaryBox.createSpan({ text: ' Сводка брифа (что известно про объект)' });
+  summaryInput.addEventListener('change', () => {
+    formValues[FORM_FLAG_BRIEF_SUMMARY] = summaryInput.checked ? '1' : '';
+  });
+  const copyBox = docCard.createEl('label', { cls: 'tn-offers-check' });
+  const copyInput = copyBox.createEl('input', { attr: { type: 'checkbox' } });
+  copyInput.checked = formValues[FORM_FLAG_SECTION_COPY] === '1';
+  copyBox.createSpan({ text: ' Тексты секций, согласованные в боте' });
+  copyInput.addEventListener('change', () => {
+    formValues[FORM_FLAG_SECTION_COPY] = copyInput.checked ? '1' : '';
+  });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
   const saveBtn = actions.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
