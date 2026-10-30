@@ -14,10 +14,13 @@ import (
 type Server struct {
 	pool *pgxpool.Pool
 	s3   *S3Store
+	// kb — карточки систем из Базы знаний (2026-10-29). Может быть выключен:
+	// пустой KB_SERVICE_URL означает «работаем без карточек».
+	kb *KBClient
 }
 
-func newServer(pool *pgxpool.Pool, s3 *S3Store) *Server {
-	return &Server{pool: pool, s3: s3}
+func newServer(pool *pgxpool.Pool, s3 *S3Store, kb *KBClient) *Server {
+	return &Server{pool: pool, s3: s3, kb: kb}
 }
 
 func main() {
@@ -55,13 +58,23 @@ func main() {
 		s3Store = nil
 	}
 
-	s := newServer(pool, s3Store)
+	kb := NewKBClient()
+	if kb.configured() {
+		log.Printf("База знаний: карточки систем читаются с %s", kb.baseURL)
+	} else {
+		log.Printf("KB_SERVICE_URL не задан: системы работают без карточек")
+	}
+
+	s := newServer(pool, s3Store, kb)
 
 	if err := s.migrate(ctx); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
 	if err := s.seedForms(ctx); err != nil {
 		log.Fatalf("seedForms: %v", err)
+	}
+	if err := s.seedContext(ctx); err != nil {
+		log.Fatalf("seedContext: %v", err)
 	}
 
 	regCtx, regCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -85,6 +98,10 @@ func main() {
 	mux.HandleFunc("DELETE /api/offers/catalog/{id}", s.requirePerm("admin")(s.handleDeleteCatalog))
 
 	mux.HandleFunc("GET /api/offers/form", s.requirePerm("viewer")(s.handleGetForm))
+	// Контекст КП (2026-10-29): карточки систем из Базы знаний. Список из кеша
+	// читает любой, кто видит КП; перечитывает базу знаний — администратор.
+	mux.HandleFunc("GET /api/offers/context/cards", s.requirePerm("viewer")(s.handleGetSystemCards))
+	mux.HandleFunc("POST /api/offers/context/refresh", s.requirePerm("admin")(s.handleRefreshSystemCards))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
@@ -118,6 +135,12 @@ func main() {
 	mux.HandleFunc("PATCH /api/offers/bot/offers/{id}", s.requireServiceSecret(s.handleBotPatchOffer))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/docx", s.requireServiceSecret(s.handleBotDocx))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/link", s.requireServiceSecret(s.handleBotOfferLink))
+	// Бриф-диалог (2026-10-29): вопросы менеджеру и текст секций пишет
+	// llm-service. Ручки под service-token, чужие предложения не отдаются.
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/brief/start", s.requireServiceSecret(s.handleBotBriefStart))
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/brief/step", s.requireServiceSecret(s.handleBotBriefStep))
+	// Текст секций (2026-10-29): написать, поправить, принять.
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/copy/{key}", s.requireServiceSecret(s.handleBotCopySection))
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -235,6 +258,44 @@ func (s *Server) migrate(ctx context.Context) error {
 			bot_last_seen_at TIMESTAMPTZ,
 			bot_last_error  TEXT NOT NULL DEFAULT ''
 		)`,
+		// Бриф КП (2026-10-29): что бот выяснил в разговоре с менеджером.
+		// Одна строка на предложение — UNIQUE(offer_id); «Начать КП» можно
+		// нажать дважды, и это не должно обнулять набранное.
+		`CREATE TABLE IF NOT EXISTS offers_brief (
+			id         BIGSERIAL PRIMARY KEY,
+			offer_id   BIGINT NOT NULL UNIQUE REFERENCES offers_offer(id) ON DELETE CASCADE,
+			payload    JSONB NOT NULL DEFAULT '{}',
+			status     TEXT NOT NULL DEFAULT 'open',
+			chat_id    TEXT NOT NULL DEFAULT '',
+			last_topic TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS offers_brief_offer_idx ON offers_brief (offer_id)`,
+		// Журнал реплик: после перезапуска бота (или по жалобе «мне не то
+		// ответили») видно, что именно было сказано.
+		`CREATE TABLE IF NOT EXISTS offers_brief_turn (
+			id         BIGSERIAL PRIMARY KEY,
+			brief_id   BIGINT NOT NULL REFERENCES offers_brief(id) ON DELETE CASCADE,
+			role       TEXT NOT NULL,
+			text       TEXT NOT NULL,
+			topic      TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS offers_brief_turn_brief_idx ON offers_brief_turn (brief_id, created_at)`,
+		// Контекст продукта для скилов: короткий набор разделов + журнал
+		// выводов. Одна строка на режим формы.
+		`CREATE TABLE IF NOT EXISTS offers_context (
+			id         BIGSERIAL PRIMARY KEY,
+			mode       TEXT NOT NULL UNIQUE DEFAULT 'client',
+			sections   JSONB NOT NULL DEFAULT '{}',
+			learnings  JSONB NOT NULL DEFAULT '[]',
+			updated_by TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		// Фото системы в карточке каталога (2026-10-29): одно на карточку,
+		// ключ S3. Пустая строка — «фото нет», отдельного признака не нужно.
+		`ALTER TABLE offers_catalog ADD COLUMN IF NOT EXISTS photo_key TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS brief_id BIGINT NULL`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {

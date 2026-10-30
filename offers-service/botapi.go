@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"mailers/offers/model"
+	"mailers/offers/skills"
 )
 
 // botOfferRequest — тело создания предложения из бота.
@@ -350,4 +355,257 @@ func (s *Server) handleBotOfferLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.offerLink(w, r, offer)
+}
+
+// --- Бриф в боте (Task 5, 2026-10-29) ---------------------------------
+
+// botBriefRequest — тело шага брифа.
+type botBriefRequest struct {
+	ChatID string `json:"chat_id"`
+	Text   string `json:"text"`
+}
+
+// botOfferForChat — общая проверка «это КП этого чата». Повторяет то же
+// правило, что DOCX и ссылка: без chat_id нельзя понять, чьё это, и ручка
+// стала бы выдачей любого предложения держателю секрета.
+func (s *Server) botOfferForChat(w http.ResponseWriter, r *http.Request, id int64) (Offer, string, bool) {
+	email, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id"))
+	if !ok {
+		return Offer{}, "", false
+	}
+	offer, err := s.loadOffer(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
+		return Offer{}, "", false
+	}
+	if !strings.EqualFold(offer.OwnerEmail, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
+		return Offer{}, "", false
+	}
+	return offer, email, true
+}
+
+func (s *Server) handleBotBriefStart(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	_, email, ok := s.botOfferForChat(w, r, id)
+	if !ok {
+		return
+	}
+	brief, err := s.createBrief(r.Context(), id, r.URL.Query().Get("chat_id"))
+	if err != nil {
+		dbError(w, "brief start", err)
+		return
+	}
+	topic, open := nextOpenTopic(brief.Payload)
+	reply := "Расскажите про объект: для какого объекта делаем предложение?"
+	topicKey := ""
+	if open {
+		reply = topic.Question
+		topicKey = topic.Key
+	}
+	_ = s.appendTurn(r.Context(), brief.ID, "bot", reply, topicKey)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"brief": brief,
+		"reply": reply,
+		"done":  !open,
+		"owner": email,
+	})
+}
+
+func (s *Server) handleBotBriefStep(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	var req botBriefRequest
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	_, _, ok := s.botOfferForChat(w, r, id)
+	if !ok {
+		return
+	}
+	brief, err := s.createBrief(r.Context(), id, req.ChatID)
+	if err != nil {
+		dbError(w, "brief step", err)
+		return
+	}
+	_ = s.appendTurn(r.Context(), brief.ID, "manager", req.Text, brief.LastTopic)
+
+	result, err := StepBrief(r.Context(), brief.Payload, req.Text, llmCompleter{})
+	if err != nil {
+		dbError(w, "brief step", err)
+		return
+	}
+	// В бриф пишем только при удачном шаге: ошибка модели не должна ни
+	// стирать набранное, ни сдвигать тему.
+	if !result.Retry && !result.Unavailable {
+		brief.Payload = result.Payload
+		if result.Done {
+			brief.Status = "ready"
+		}
+		brief.LastTopic = result.NextTopic
+		if err := s.saveBriefPayload(r.Context(), brief); err != nil {
+			dbError(w, "brief save", err)
+			return
+		}
+	}
+	_ = s.appendTurn(r.Context(), brief.ID, "bot", result.Reply, result.NextTopic)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"brief":       brief,
+		"reply":       result.Reply,
+		"done":        result.Done,
+		"nextTopic":   result.NextTopic,
+		"retry":       result.Retry,
+		"unavailable": result.Unavailable,
+		"skipped":     result.Skipped,
+	})
+}
+
+// --- Текст секций в боте (Task 6, 2026-10-29) -------------------------
+
+// botCopyRequest — тело запроса секции.
+type botCopyRequest struct {
+	ChatID      string `json:"chat_id"`
+	Action      string `json:"action"`      // write | edit | accept
+	Text        string `json:"text"`        // правка менеджера или принятый текст
+	SystemIndex int    `json:"systemIndex"` // для секций систем, с 1
+}
+
+// sectionKindFromPath — kind из пути; неизвестный отдаёт пусто.
+func sectionKindFromPath(r *http.Request) skills.SectionKind {
+	kind := skills.SectionKind(r.PathValue("key"))
+	for _, k := range skills.AllSections() {
+		if k == kind {
+			return kind
+		}
+	}
+	return ""
+}
+
+// handleBotCopySection — написать, поправить или принять секцию.
+//
+// Ручка одна на три действия: у них общий путь проверки «это ваше КП» и общий
+// формат ответа. Разводить три ручки значило бы трижды повторить контроль
+// доступа.
+func (s *Server) handleBotCopySection(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	kind := sectionKindFromPath(r)
+	if kind == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "неизвестная секция"})
+		return
+	}
+	var req botCopyRequest
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	offer, _, ok := s.botOfferForChatQ(w, r, id, req.ChatID)
+	if !ok {
+		return
+	}
+
+	switch req.Action {
+	case "write":
+		brief := model.EmptyBriefPayload()
+		if b, err := s.loadBrief(r.Context(), id); err == nil {
+			brief = b.Payload
+		}
+		pc, _ := s.loadContext(r.Context(), "client")
+		res, err := WriteSectionChecked(r.Context(), kind, brief, offer, pc, llmCompleter{})
+		if err != nil {
+			dbError(w, "copy write", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"key":      SectionKey(kind, req.SystemIndex),
+			"text":     res.Text,
+			"warnings": res.Warnings,
+			"label":    sectionLabel(kind, req.SystemIndex),
+		})
+	case "edit":
+		pc, _ := s.loadContext(r.Context(), "client")
+		text, err := EditSection(r.Context(), kind, req.Text, pc, llmCompleter{})
+		if err != nil {
+			dbError(w, "copy edit", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"key":  SectionKey(kind, req.SystemIndex),
+			"text": text,
+		})
+	case "accept":
+		offer = AcceptSection(offer, kind, req.SystemIndex, req.Text)
+		if err := s.persistOfferFormValues(r.Context(), offer); err != nil {
+			dbError(w, "copy accept", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"key":      SectionKey(kind, req.SystemIndex),
+			"accepted": strings.TrimSpace(req.Text) != "",
+		})
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "action: write|edit|accept"})
+	}
+}
+
+// sectionLabel — как секция называется в чате.
+func sectionLabel(kind skills.SectionKind, systemIndex int) string {
+	switch kind {
+	case skills.SectionIntro:
+		return "Вводный текст"
+	case skills.SectionSystem:
+		return fmt.Sprintf("Описание системы %d", systemIndex)
+	case skills.SectionAdvantages:
+		return "Преимущества"
+	case skills.SectionConditions:
+		return "Условия"
+	}
+	return string(kind)
+}
+
+// botOfferForChatQ — как botOfferForChat, но chat_id берётся из тела запроса,
+// а не из строки запроса: секции приходят POST-ом с JSON.
+func (s *Server) botOfferForChatQ(w http.ResponseWriter, r *http.Request, id int64, chatID string) (Offer, string, bool) {
+	email, ok := s.emailForChat(w, r, chatID)
+	if !ok {
+		return Offer{}, "", false
+	}
+	offer, err := s.loadOffer(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
+		return Offer{}, "", false
+	}
+	if !strings.EqualFold(offer.OwnerEmail, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
+		return Offer{}, "", false
+	}
+	return offer, email, true
+}
+
+// persistOfferFormValues пишет только form_values и двигает updated_at.
+//
+// Отдельно от handleSaveOffer: там правится всё предложение, а здесь — одна
+// секция. Гонять полный validateOffer на каждое «принять секцию» значило бы
+// отказать в приёме текста, если в составе что-то не так по мнению валидатора,
+// хотя состав менеджер не трогал.
+func (s *Server) persistOfferFormValues(ctx context.Context, offer Offer) error {
+	values, err := json.Marshal(offer.FormValues)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+UPDATE offers_offer SET form_values = $2, updated_at = now() WHERE id = $1`,
+		offer.ID, values)
+	return err
 }

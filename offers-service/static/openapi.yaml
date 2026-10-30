@@ -172,6 +172,56 @@ paths:
         '200':
           description: Сохранённая форма
 
+  /api/offers/context/cards:
+    get:
+      summary: Карточки систем из Базы знаний
+      description: |
+        Список карточек с тегом `commercial_propose` из кеша. Источник правды —
+        заметки в Базе знаний; кеш нужен, чтобы экран открывался без похода в
+        базу. Обновление — отдельной ручкой.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Карточки и признак «база знаний настроена»
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kbEnabled:
+                    type: boolean
+                  cards:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemCard'
+  /api/offers/context/refresh:
+    post:
+      summary: Перечитать карточки из Базы знаний
+      description: |
+        Читает заметки с тегом `commercial_propose` и обновляет кеш. При ошибке
+        Базы знаний возвращает прежние карточки и поле `error` — раздел не
+        становится пустым из-за временного сбоя.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Обновлённый список (возможно, с полем error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kbEnabled:
+                    type: boolean
+                  count:
+                    type: integer
+                  error:
+                    type: string
+                  cards:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemCard'
   /api/offers/offers:
     get:
       summary: Список предложений (видны свои; admin — все)
@@ -589,6 +639,153 @@ paths:
                     type: string
                   file_name:
                     type: string
+  /api/offers/bot/offers/{id}/brief/start:
+    post:
+      summary: Начать бриф-диалог (бот)
+      description: |
+        Создаёт бриф предложения (идемпотентно) и возвращает первый вопрос.
+        Вопросы задаёт llm-service; ручка только оркестрация.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Бриф и первый вопрос
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+                  reply:
+                    type: string
+                  done:
+                    type: boolean
+                  owner:
+                    type: string
+        '403':
+          description: Предложение принадлежит другому человеку
+        '404':
+          description: Предложение не найдено
+  /api/offers/bot/offers/{id}/brief/step:
+    post:
+      summary: Шаг бриф-диалога (бот)
+      description: |
+        Отправляет реплику менеджера модели, сохраняет обновлённый бриф и
+        возвращает следующий вопрос. При недоступности модели бриф не меняется.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, text]
+              properties:
+                chat_id:
+                  type: string
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Обновлённый бриф и ответ менеджеру
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+                  reply:
+                    type: string
+                  done:
+                    type: boolean
+                  nextTopic:
+                    type: string
+                  retry:
+                    type: boolean
+                  unavailable:
+                    type: boolean
+                  skipped:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Неверное тело запроса
+        '403':
+          description: Предложение принадлежит другому человеку
+  /api/offers/bot/offers/{id}/copy/{key}:
+    post:
+      summary: Текст секции КП (бот)
+      description: |
+        Одно действие на три: `write` — модель пишет секцию, `edit` —
+        вычитывает присланный менеджером текст, `accept` — сохраняет
+        согласованный текст в предложении. При недоступности модели `write`
+        возвращает пустой текст, `edit` — текст менеджера: КП собирается без
+        написанной секции, но с правкой человека.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: key
+          in: path
+          required: true
+          description: intro | system | advantages | conditions
+          schema:
+            type: string
+            enum: [intro, system, advantages, conditions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, action]
+              properties:
+                chat_id:
+                  type: string
+                action:
+                  type: string
+                  enum: [write, edit, accept]
+                text:
+                  type: string
+                systemIndex:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Текст секции или подтверждение принятия
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    type: string
+                  text:
+                    type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                  label:
+                    type: string
+                  accepted:
+                    type: boolean
+        '400':
+          description: Неизвестная секция или неверное действие
+        '403':
+          description: Предложение принадлежит другому человеку
   /api/offers/bot/offers/{id}/link:
     post:
       summary: Временная ссылка на DOCX для бота
@@ -622,6 +819,46 @@ components:
         type: integer
         format: int64
   schemas:
+    SystemCard:
+      type: object
+      description: Карточка системы из Базы знаний (заметка с тегом commercial_propose).
+      properties:
+        noteId:
+          type: integer
+          format: int64
+        path:
+          type: string
+        sku:
+          type: string
+          description: Код системы из system_sku; по нему связь с каталогом.
+        title:
+          type: string
+        description:
+          type: string
+        composition:
+          type: array
+          items:
+            type: string
+        specifications:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        imageName:
+          type: string
+        catalogId:
+          type: integer
+          format: int64
+          description: 0 — карточка не связана с каталогом.
+        updatedAt:
+          type: string
+        hasDescription:
+          type: boolean
+        hasComposition:
+          type: boolean
+        empty:
+          type: boolean
     CatalogItem:
       type: object
       properties:

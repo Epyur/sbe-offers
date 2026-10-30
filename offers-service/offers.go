@@ -9,40 +9,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mailers/offers/model"
 )
 
-// OfferItem — позиция предложения. Это СНИМОК: цена и сумма фиксируются в
-// момент добавления карточки, поэтому последующая правка каталога на старые
-// предложения не влияет.
-type OfferItem struct {
-	CatalogID *int64  `json:"catalogId,omitempty"`
-	Name      string  `json:"name"`
-	Unit      string  `json:"unit"`
-	Qty       float64 `json:"qty"`
-	Price     float64 `json:"price"`
-	Sum       float64 `json:"sum"`
-}
-
-// OfferClient — данные клиента в предложении.
-type OfferClient struct {
-	Name    string `json:"name"`
-	Contact string `json:"contact"`
-}
-
-// Offer — коммерческое предложение.
-type Offer struct {
-	ID         int64             `json:"id"`
-	Number     string            `json:"number"`
-	OwnerEmail string            `json:"ownerEmail"`
-	Client     OfferClient       `json:"client"`
-	Items      []OfferItem       `json:"items"`
-	FormValues map[string]string `json:"formValues"`
-	Total      float64           `json:"total"`
-	Status     string            `json:"status"`
-	DocxKey    string            `json:"docxKey"`
-	CreatedAt  string            `json:"createdAt"`
-	UpdatedAt  string            `json:"updatedAt"`
-}
+// OfferItem, OfferClient и Offer живут в пакете model: их видят и скилы, и
+// чистые модули, а main импортировать нельзя.
+type Offer = model.Offer
+type OfferItem = model.OfferItem
+type OfferClient = model.OfferClient
 
 // roundMoney округляет до копеек без двоичных хвостов (0.1+0.2). Множитель
 // 1000 снимает артефакт представления: 1.005 * 100 = 100.49999999999999,

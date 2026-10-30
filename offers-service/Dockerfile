@@ -2,6 +2,12 @@ FROM golang:1.24-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY *.go ./
+# Внутренние пакеты (2026-10-29): model - данные предметной области,
+# skills - промпты и чек-листы. Docker копирует перечисленные пути, а не весь
+# каталог: без этих строк сборка падает «package mailers/offers/model is not
+# in std» - та же грабля, что была со static/template.
+COPY model ./model
+COPY skills ./skills
 # Swagger UI и схема вшиваются в бинарь через //go:embed (static.go), бланк
 # DOCX — через //go:embed (template.go). Без этих строк сборка падает на
 # `pattern static/...: no matching files found`: в контекст копируются только
