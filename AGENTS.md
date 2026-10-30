@@ -495,8 +495,58 @@ brief + skills + copy, `54fb992` DOCX fix + KB cards, `8765790` plugin
 "Контекст КП". In `sbe-core`: `78352e8` (LLM wiring), `66263ec` (KB wiring) -
 only own lines were staged there, other uncommitted work left untouched.
 
-**Open.** Task 7d (card text/photo into DOCX), 7e (md/xlsx attachments in the
-bot), 7f (file upload route), 9 (bot states for brief/copy), 11 (form blocks,
-version 0.2.0, docs). Version not bumped yet: the plugin code changed, so
-`0.1.5 -> 0.2.0` belongs to the release task, with the ЦУП news text rewritten
-for this release.
+**Open.** Task 9 (bot states for brief/copy), 10 (plugin "Бриф" section), 11
+(form blocks, version 0.2.0, docs). Version not bumped yet: the plugin code
+changed, so `0.1.5 -> 0.2.0` belongs to the release task, with the ЦУП news text
+rewritten for this release.
+
+## Card text in DOCX, file attachments in the bot - 2026-10-30
+
+Closes the three open items of the previous cycle. Committed (branch `backend`,
+no push): `f847c47`, `7e23bf1`, and the attachment round.
+
+**Task 7d - card text and photo reach the document.** `renderCardSections`
+builds its image collector with `newTemplateMedia()`, not `&docxMedia{}`: the
+bare struct has no used-id map and panics with "assignment to entry in nil map"
+on the first picture, because the brand template already occupies ids 1..25 in
+its headers and footers. A manager-approved section text still wins over the
+card: the card only fills what nobody wrote by hand.
+
+**Task 7e - `skills/attachments.go`: reading files from the chat.** The type is
+taken from the signature, never from the name: a zip with `xl/workbook.xml` is
+xlsx, one with `word/document.xml` is docx, an OLE header is the old `.xls`
+(explicit refusal: "resave as .xlsx"), `%PDF` is pdf, anything without control
+bytes is markdown. `.md` is laid out by brief keys - "Ключ: значение" is a
+field, the list right under it belongs to that field, everything else becomes
+notes; an unknown field keeps its label and lands in notes instead of being
+dropped. `.xlsx` reads `sharedStrings.xml` plus `sheetN.xml` (both cell kinds),
+looks for a header row within the first 20 rows, and recognises a specification
+by the "наименование" + "количество" columns; `сумма ≠ количество × цена`
+becomes a warning rather than silent correction. Covered by 10 tests,
+`skills` coverage 87%.
+
+**Task 7f - two-step file upload.** `POST .../attach` parses and shows "what I
+understood", `POST .../attach/apply` writes only what the manager confirmed.
+The split exists because a customer's file is a draft: silently applying its
+prices would put stale numbers in the offer. Applying a specification takes
+prices from the CATALOG for rows matched by name; the file's price is used only
+for positions the catalog does not have. Applying a brief merges - it never
+overwrites what the manager said in the chat, lists are joined without
+duplicates, and an objection without an answer stays out of the brief. The bot
+gets raw bytes with the name in `file_name` (no multipart parsing on either
+side), 10 MB cap answers 413, ownership is checked like every other bot route.
+Bot side: `attach.ts` shows the preview with confirm buttons, `poller.ts`
+downloads the document through the same SOCKS proxy as `getUpdates`.
+
+**Checks.** `gofmt`/`go vet` clean, `go test ./...` green (main 38.6%, model
+71.6%, skills 87.1%), bot `tsc --noEmit` + build OK and 44 tests (9 new),
+`check_offers_openapi.mjs` 44 routes and schema match. Live HTTP run of the
+attachment routes was NOT done: Docker Hub was unreachable (TLS timeout on
+`auth.docker.io`), so the local stand could not be rebuilt; the plan's section
+11 for `offers_local_e2e.mjs` is still to be written.
+
+**Lesson.** Rewriting a Go file through a PowerShell pipeline
+(`Get-Content -Raw | Set-Content -Encoding UTF8`) destroyed `attachments.go`:
+the file came back as CP1251 mojibake and had to be rewritten from scratch.
+Source files are edited with the editor tools only, never re-encoded by shell
+text commands.

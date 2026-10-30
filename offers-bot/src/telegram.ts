@@ -75,6 +75,16 @@ export interface TelegramMessage {
   message_id: number;
   chat: { id: number };
   text?: string;
+  caption?: string;
+  document?: TelegramDocument;
+}
+
+/** Присланный файл. file_id — по нему файл скачивается. */
+export interface TelegramDocument {
+  file_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
 }
 
 export interface TelegramCallbackQuery {
@@ -278,4 +288,43 @@ export async function getUpdates(offset: number, timeoutSec = 25): Promise<Teleg
   );
   if (!res.ok) throw new Error(res.description || 'Telegram getUpdates не удался');
   return res.result ?? [];
+}
+
+/**
+ * Скачать присланный файл. getFile отдаёт путь, сам файл лежит на отдельном
+ * хосте и тоже доступен только через SOCKS — поэтому качаем здесь, а не в
+ * вызывающем коде: путь и прокси должны быть в одном месте.
+ */
+export async function downloadDocument(fileId: string): Promise<Buffer> {
+  const token = await resolveBotToken();
+  const meta = await telegramRequest<{ file_path?: string; file_size?: number }>('getFile', {
+    file_id: fileId,
+  });
+  if (!meta.ok || !meta.result?.file_path) {
+    throw new Error(meta.description || 'Telegram не отдал файл');
+  }
+  if (typeof meta.result.file_size === 'number' && meta.result.file_size > MAX_DOCUMENT_BYTES) {
+    throw new Error('файл больше 20 МБ');
+  }
+  const filePath = meta.result.file_path;
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      `${TELEGRAM_API_BASE}/file/bot${token}/${filePath}`,
+      { method: 'GET', agent: socksAgent },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`Telegram не отдал файл: ${res.statusCode}`));
+            return;
+          }
+          resolve(Buffer.concat(chunks));
+        });
+      },
+    );
+    req.setTimeout(60000, () => req.destroy(new Error('скачивание файла не уложилось в минуту')));
+    req.on('error', reject);
+    req.end();
+  });
 }

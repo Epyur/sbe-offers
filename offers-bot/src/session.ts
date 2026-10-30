@@ -11,6 +11,44 @@ export interface ChatSession {
   email: string;
   /** Черновик предложения — живёт в памяти процесса. */
   draft?: OfferDraft;
+  /**
+   * Принятый, но ещё не подтверждённый разбор файла (2026-10-29). Живёт в
+   * сессии, а не в сервисе: подтверждение относится к конкретному разговору,
+   * и после перезапуска бота старый разбор не должен примениться к другому КП.
+   */
+  attach?: AttachPending;
+}
+
+/** Что бот ждёт от человека после показа разбора файла. */
+export type AttachPending =
+  | { kind: 'brief'; brief: BriefFromFile }
+  | { kind: 'spec'; spec: SpecFromFile };
+
+/** Разобранный файл: повторяет ответ offers-service (см. api.ts). */
+export interface BriefFromFile {
+  fields: Record<string, string[]>;
+  notes?: string;
+  summary: string[];
+}
+
+export interface SpecRowFromFile {
+  name: string;
+  unit: string;
+  qty: number;
+  price: number;
+  sum: number;
+  catalogId?: number;
+  hasCatalog: boolean;
+  priceDiff: boolean;
+}
+
+export interface SpecFromFile {
+  rows: SpecRowFromFile[];
+  matched: number;
+  new: number;
+  priceDiffs: number;
+  warnings?: string[];
+  summary: string;
 }
 
 export interface OfferItem {

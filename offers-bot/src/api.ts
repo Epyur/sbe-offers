@@ -150,3 +150,97 @@ export async function listOffers(chatId: string): Promise<OfferPayload[]> {
 export async function heartbeat(lastError: string): Promise<void> {
   await call('POST', '/bot/heartbeat', { last_error: lastError });
 }
+
+// --- Файлы из чата (2026-10-29) ----------------------------------------
+
+/** Что бот понял из присланного файла. Формат повторяет offers-service. */
+export interface BriefFromFile {
+  fields: Record<string, string[]>;
+  notes?: string;
+  summary: string[];
+}
+
+export interface SpecRowFromFile {
+  name: string;
+  unit: string;
+  qty: number;
+  price: number;
+  sum: number;
+  catalogId?: number;
+  hasCatalog: boolean;
+  priceDiff: boolean;
+}
+
+export interface SpecFromFile {
+  rows: SpecRowFromFile[];
+  matched: number;
+  new: number;
+  priceDiffs: number;
+  warnings?: string[];
+  summary: string;
+}
+
+export interface AttachResult {
+  kind: string;
+  name: string;
+  key?: string;
+  brief?: BriefFromFile;
+  spec?: SpecFromFile;
+  context?: string[];
+  reply: string;
+  needsConfirm: boolean;
+}
+
+/**
+ * Разбор файла. Тело — сами байты, имя — в запросе: так не нужен разбор
+ * multipart, а лимит размера проверяется до чтения тела целиком.
+ */
+export async function attachFile(
+  id: number,
+  chatId: string,
+  fileName: string,
+  data: Buffer,
+): Promise<AttachResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const url =
+      `${API_URL}/api/offers/bot/offers/${id}/attach` +
+      `?chat_id=${encodeURIComponent(chatId)}&file_name=${encodeURIComponent(fileName)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Service-Secret': BOT_SECRET },
+      body: new Uint8Array(data),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let message = `Не удалось принять файл (${res.status})`;
+      try {
+        const parsed = JSON.parse(text) as { error?: string };
+        if (parsed.error) message = parsed.error;
+      } catch {
+        // не JSON
+      }
+      throw new ApiError(message, res.status);
+    }
+    return JSON.parse(text) as AttachResult;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Применить подтверждённый разбор: в бриф или в состав. */
+export async function applyAttach(
+  id: number,
+  chatId: string,
+  mode: 'brief' | 'spec',
+  payload: { brief?: BriefFromFile; spec?: SpecFromFile },
+): Promise<{ reply: string }> {
+  return call('POST', `/bot/offers/${id}/attach/apply`, {
+    chat_id: chatId,
+    mode,
+    brief: payload.brief,
+    spec: payload.spec,
+  });
+}

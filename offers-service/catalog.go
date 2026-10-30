@@ -107,6 +107,20 @@ func (s *Server) listCatalogItems(ctx context.Context, includeArchived bool) ([]
 	return items, rows.Err()
 }
 
+// loadCatalogItem — одна карточка каталога по id. Нужна, когда по таблице
+// менеджера надо взять актуальную цену: данные в списке могут быть прочитаны
+// раньше, а цена — то, что нельзя напечатать устаревшим.
+func (s *Server) loadCatalogItem(ctx context.Context, id int64) (CatalogItem, error) {
+	var it CatalogItem
+	err := s.pool.QueryRow(ctx, `SELECT id, kind, name, unit, base_price, description, sort_order, archived,
+		to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+		to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+		FROM offers_catalog WHERE id = $1`, id).
+		Scan(&it.ID, &it.Kind, &it.Name, &it.Unit, &it.BasePrice,
+			&it.Description, &it.SortOrder, &it.Archived, &it.CreatedAt, &it.UpdatedAt)
+	return it, err
+}
+
 func (s *Server) handleListCatalog(w http.ResponseWriter, r *http.Request) {
 	includeArchived := r.URL.Query().Get("archived") == "1"
 	items, err := s.listCatalogItems(r.Context(), includeArchived)

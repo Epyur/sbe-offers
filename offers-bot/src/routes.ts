@@ -16,10 +16,18 @@ import * as api from './api.ts';
 import {
   BUTTONS,
   ID_BUTTONS,
+  applyAttachConfirm,
   handleDraftText,
   startDraft,
   type CallbackCtx,
 } from './callbacks.ts';
+import {
+  NO_OFFER_FOR_FILE,
+  attachMessage,
+  rememberAttach,
+  type AttachResult,
+  type AttachSession,
+} from './attach.ts';
 
 const RATE_LIMIT_PER_MIN = Number(process.env.OFFERS_BOT_RATE_LIMIT ?? 30);
 const DUPLICATE_WINDOW_MS = 10_000;
@@ -226,6 +234,47 @@ export function parseCallbackData(data: string): { prefix: string; id: number } 
   return { prefix: data.slice(0, colon), id };
 }
 
+// --- Файлы из чата (2026-10-29) ---------------------------------------
+
+/** Куда приложить файл: к уже созданному КП. Черновик сюда не годится —
+ *  у него ещё нет номера и владельца. */
+function offerIdForFile(session: ChatSession): number {
+  return session.draft?.offerId ?? 0;
+}
+
+/**
+ * Обработать присланный файл: разобрать, показать «что понял» и запомнить до
+ * подтверждения. Применяется только по кнопке «✓ Применить».
+ */
+export async function routeDocument(
+  deps: BotDeps,
+  chatId: string,
+  fileName: string,
+  data: Buffer,
+  state: RouterState = sharedState,
+): Promise<void> {
+  const session = await deps.session(chatId) as AttachSession;
+  if (session.step !== 'authed') {
+    await deps.send(chatId, AUTH_PROMPT);
+    return;
+  }
+  const offerId = offerIdForFile(session);
+  if (!offerId) {
+    await deps.send(chatId, NO_OFFER_FOR_FILE, MAIN_KEYBOARD);
+    return;
+  }
+  let result: AttachResult;
+  try {
+    result = await api.attachFile(offerId, chatId, fileName, data);
+  } catch (e) {
+    await deps.send(chatId, (e as Error).message, MAIN_KEYBOARD);
+    return;
+  }
+  const message = attachMessage(result);
+  saveSession(state, chatId, rememberAttach(session, result));
+  await deps.send(chatId, message.text, message.keyboard ?? MAIN_KEYBOARD);
+}
+
 export async function routeCallback(
   deps: BotDeps,
   chatId: string,
@@ -251,6 +300,13 @@ export async function routeCallback(
   const exact = BUTTONS[data];
   if (exact) {
     await exact(ctx);
+    return;
+  }
+
+  // Подтверждение разбора файла: `att:yes` / `att:no`. Обработчик живёт в
+  // callbacks.ts, чтобы не было кольца импортов routes → callbacks → routes.
+  if (data === 'att:yes' || data === 'att:no') {
+    await applyAttachConfirm(ctx, data === 'att:yes');
     return;
   }
 

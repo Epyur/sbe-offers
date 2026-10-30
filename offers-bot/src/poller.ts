@@ -6,9 +6,9 @@
  * (Task 1 плана 2026-10-29): раньше здесь были две функции-диспетчера по
  * CC 23-24, и правку входа приходилось делать в двух местах.
  */
-import { answerCallback, getUpdates, type TelegramUpdate } from './telegram.ts';
+import { answerCallback, downloadDocument, getUpdates, type TelegramUpdate } from './telegram.ts';
 import { restoreSession, type ChatSession } from './session.ts';
-import { routeCallback, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
+import { routeCallback, routeDocument, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
 import { sendMessage } from './telegram.ts';
 import * as api from './api.ts';
 
@@ -61,8 +61,24 @@ function makeDeps(state: RouterState): BotDeps {
 }
 
 async function handleUpdate(deps: BotDeps, state: RouterState, update: TelegramUpdate): Promise<void> {
-  if (update.message?.text && update.message.chat) {
-    await routeText(deps, String(update.message.chat.id), update.message.text, state);
+  const message = update.message;
+  if (message?.chat && message.document) {
+    // Файл: скачиваем через тот же SOCKS, что и getUpdates, и отдаём в
+    // маршруты. Скачивание здесь, потому что путь файла и прокси должны
+    // жить в одном месте (telegram.ts).
+    const chatId = String(message.chat.id);
+    let data: Buffer;
+    try {
+      data = await downloadDocument(message.document.file_id);
+    } catch (e) {
+      await deps.send(chatId, `Не удалось забрать файл: ${(e as Error).message}`);
+      return;
+    }
+    await routeDocument(deps, chatId, message.document.file_name ?? 'файл', data, state);
+    return;
+  }
+  if (message?.text && message.chat) {
+    await routeText(deps, String(message.chat.id), message.text, state);
     return;
   }
   const cb = update.callback_query;

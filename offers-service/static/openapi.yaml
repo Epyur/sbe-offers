@@ -786,6 +786,173 @@ paths:
           description: Неизвестная секция или неверное действие
         '403':
           description: Предложение принадлежит другому человеку
+  /api/offers/bot/offers/{id}/attach:
+    post:
+      summary: Принять файл к КП (бот)
+      description: |
+        Разбирает присланный в чат файл и возвращает «что понял». Ничего не
+        применяется: подтверждение — отдельной ручкой `attach/apply`.
+
+        Тип определяется по сигнатуре, а не по имени файла: `.md` и `.xlsx`
+        принимаются, `.docx` и старый `.xls` — с понятным отказом. Тело
+        запроса — сами байты файла, имя — в `file_name` или заголовке
+        `X-File-Name`. Предел размера — 10 МБ.
+
+        `.md` раскладывается по полям брифа; `.xlsx` распознаётся как
+        спецификация, если в нём есть колонки «наименование» и «количество»,
+        и сверяется с каталогом по наименованию.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: file_name
+          in: query
+          description: Имя файла, как его видел человек
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Что бот понял из файла
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    enum: [md, xlsx, docx, xls, pdf, '']
+                  name:
+                    type: string
+                  key:
+                    type: string
+                    description: Ключ вложения в хранилище (пусто, если хранилище не настроено)
+                  reply:
+                    type: string
+                  needsConfirm:
+                    type: boolean
+                  brief:
+                    type: object
+                    description: Разбор текстового файла
+                    properties:
+                      fields:
+                        type: object
+                        additionalProperties:
+                          type: array
+                          items:
+                            type: string
+                      notes:
+                        type: string
+                      summary:
+                        type: array
+                        items:
+                          type: string
+                  spec:
+                    type: object
+                    description: Разобранная таблица спецификации
+                    properties:
+                      rows:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            unit:
+                              type: string
+                            qty:
+                              type: number
+                            price:
+                              type: number
+                            sum:
+                              type: number
+                            catalogId:
+                              type: integer
+                            hasCatalog:
+                              type: boolean
+                            priceDiff:
+                              type: boolean
+                      matched:
+                        type: integer
+                      new:
+                        type: integer
+                      priceDiffs:
+                        type: integer
+                      warnings:
+                        type: array
+                        items:
+                          type: string
+                      summary:
+                        type: string
+                  context:
+                    type: array
+                    description: Строки таблицы, когда это контекст, а не состав
+                    items:
+                      type: string
+        '400':
+          description: Формат не принят (docx, xls, pdf, незнакомый файл)
+        '403':
+          description: Предложение принадлежит другому человеку
+        '413':
+          description: Файл больше 10 МБ
+  /api/offers/bot/offers/{id}/attach/apply:
+    post:
+      summary: Применить подтверждённый разбор файла (бот)
+      description: |
+        `brief` дописывает поля в бриф (пустое не затирает известное, списки
+        объединяются без повторов), `spec` заменяет состав предложения.
+        Цены для позиций, найденных в каталоге, берутся из каталога: файл от
+        заказчика — черновик, и печатать в КП его цены нельзя.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, mode]
+              properties:
+                chat_id:
+                  type: string
+                mode:
+                  type: string
+                  enum: [brief, spec]
+                brief:
+                  type: object
+                  description: Разбор файла из ответа attach
+                spec:
+                  type: object
+                  description: Разбор таблицы из ответа attach
+      responses:
+        '200':
+          description: Что применилось
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reply:
+                    type: string
+                  applied:
+                    type: boolean
+        '400':
+          description: Нет разбора или в таблице нет позиций
+        '403':
+          description: Предложение принадлежит другому человеку
   /api/offers/bot/offers/{id}/link:
     post:
       summary: Временная ссылка на DOCX для бота

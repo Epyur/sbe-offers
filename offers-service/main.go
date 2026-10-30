@@ -141,6 +141,10 @@ func main() {
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/brief/step", s.requireServiceSecret(s.handleBotBriefStep))
 	// Текст секций (2026-10-29): написать, поправить, принять.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/copy/{key}", s.requireServiceSecret(s.handleBotCopySection))
+	// Файлы в чат (2026-10-29): .md и .xlsx. attach разбирает и показывает
+	// «что понял», attach/apply пишет только подтверждённое.
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/attach", s.requireServiceSecret(s.handleBotAttach))
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/attach/apply", s.requireServiceSecret(s.handleBotAttachApply))
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

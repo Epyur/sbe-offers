@@ -22,6 +22,14 @@ import {
 import * as api from './api.ts';
 import type { BotDeps } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
+import {
+  NO_OFFER_FOR_FILE,
+  applyPending,
+  cancelMessage,
+  forgetAttach,
+  type AttachPending,
+  type AttachSession,
+} from './attach.ts';
 
 const PAGE_SIZE = 8;
 
@@ -285,6 +293,49 @@ export async function onLink(ctx: CallbackCtx, id: number): Promise<void> {
     await ctx.deps.send(ctx.chatId, `Ссылка действует 48 часов:\n${link.url}`);
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось получить ссылку: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Подтверждение разбора файла (2026-10-29): `att:yes` применяет, `att:no`
+ * забывает.
+ *
+ * Живёт здесь, а не в routes.ts, чтобы не было кольца импортов:
+ * routes импортирует таблицы кнопок отсюда.
+ */
+export async function applyAttachConfirm(ctx: CallbackCtx, yes: boolean): Promise<void> {
+  const session = ctx.session as AttachSession;
+  const pending = session.attach as AttachPending | undefined;
+  if (!pending) {
+    await ctx.deps.send(
+      ctx.chatId,
+      'Разбор файла уже неактуален. Пришлите файл ещё раз.',
+      MAIN_KEYBOARD,
+    );
+    return;
+  }
+  const offerId = session.draft?.offerId ?? 0;
+  if (!yes) {
+    apply(ctx, forgetAttach(session));
+    await ctx.deps.send(ctx.chatId, cancelMessage(pending), MAIN_KEYBOARD);
+    return;
+  }
+  if (!offerId) {
+    apply(ctx, forgetAttach(session));
+    await ctx.deps.send(ctx.chatId, NO_OFFER_FOR_FILE, MAIN_KEYBOARD);
+    return;
+  }
+  try {
+    const reply = await applyPending(pending, async (mode, payload) =>
+      api.applyAttach(offerId, ctx.chatId, mode, {
+        brief: payload.kind === 'brief' ? payload.brief : undefined,
+        spec: payload.kind === 'spec' ? payload.spec : undefined,
+      }),
+    );
+    apply(ctx, forgetAttach(session));
+    await ctx.deps.send(ctx.chatId, reply, MAIN_KEYBOARD);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось применить: ${(e as Error).message}`, MAIN_KEYBOARD);
   }
 }
 
