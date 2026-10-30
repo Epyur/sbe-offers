@@ -9,7 +9,9 @@ import type {
   CatalogItem,
   Offer,
   OfferForm,
+  RefreshSystemCardsResponse,
   Role,
+  SystemCardsResponse,
 } from '../types/offers';
 
 const TIMEOUT_MS = 20000;
@@ -179,6 +181,16 @@ export class OffersService {
     return this.request<{ code: string; expiresAt: string }>('POST', '/access/codes', { email });
   }
 
+
+  /** Карточки систем из Базы знаний (из кеша). */
+  async getSystemCards(): Promise<SystemCardsResponse> {
+    return this.request<SystemCardsResponse>('GET', '/context/cards');
+  }
+
+  /** Перечитать карточки из Базы знаний (admin). */
+  async refreshSystemCards(): Promise<RefreshSystemCardsResponse> {
+    return this.request<RefreshSystemCardsResponse>('POST', '/context/refresh');
+  }
   /** Настройки Telegram-бота: задан ли токен и чей это бот. */
   async getBotConfig(): Promise<BotConfigInfo> {
     return this.request<BotConfigInfo>('GET', '/bot/config');

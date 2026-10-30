@@ -125,3 +125,38 @@ export function isAdminRole(role: string): boolean {
 export function canEditOffers(role: string): boolean {
   return role === 'editor' || role === 'admin' || role === 'superadmin';
 }
+
+/**
+ * Карточка системы из Базы знаний (2026-10-29).
+ *
+ * Источник текста для КП: название, описание, состав, картинка. Цены и
+ * артикулы здесь НЕ хранятся — они в каталоге. Связь с каталогом по `sku`.
+ */
+export interface SystemCard {
+  noteId: number;
+  path: string;
+  sku: string;
+  title: string;
+  description: string;
+  composition: string[];
+  specifications?: string[][];
+  imageName?: string;
+  /** 0 — карточка не связана с каталогом. */
+  catalogId: number;
+  updatedAt: string;
+  hasDescription: boolean;
+  hasComposition: boolean;
+  empty: boolean;
+}
+
+/** Ответ списка карточек: вместе с ними — настроена ли База знаний. */
+export interface SystemCardsResponse {
+  cards: SystemCard[];
+  kbEnabled: boolean;
+}
+
+/** Ответ перечитывания карточек: если база знаний упала, придёт `error`. */
+export interface RefreshSystemCardsResponse extends SystemCardsResponse {
+  count: number;
+  error?: string;
+}

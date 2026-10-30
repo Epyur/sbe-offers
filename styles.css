@@ -848,3 +848,30 @@
 .tn-offers-card .is-hidden {
   display: none;
 }
+
+/* Контекст КП: карточки систем из Базы знаний (2026-10-29) */
+.tn-offers-context-hint {
+  margin-bottom: 12px;
+  line-height: 1.45;
+}
+
+.tn-offers-context-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tn-offers-context-actions {
+  white-space: nowrap;
+}
+
+.tn-offers-ok {
+  color: var(--text-success);
+  font-weight: 500;
+}
+
+.tn-offers-warn {
+  color: var(--text-warning);
+  font-weight: 500;
+}
