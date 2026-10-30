@@ -289,6 +289,16 @@ turns: []}`: для плагина это обычное состояние (К�
 | `GET /context/cards` | viewer | `{cards: SystemCard[], kbEnabled}` — из кеша |
 | `POST /context/refresh` | admin | `{cards, count, kbEnabled, error?}` — перечитать базу знаний |
 
+**`kbEnabled: false` значит только одно: сервису не задан `KB_SERVICE_URL`.**
+Это не ошибка конфигурации Базы знаний на диске и не про права — контейнер
+просто не знает, куда идти. Та же пара нужна и для секрета:
+`KB_SERVICE_URL` + `KB_SERVICE_SECRET` (межсервисный JWT берётся у
+`auth-service` через `/internal/service-token`). Без секрета карточки не
+прочитаются даже при верном URL.
+
+`GET` отдаёт **кеш**, а не живой поход в базу знаний: на свежей базе он пуст,
+и это нормально — наполняется `POST /context/refresh`.
+
 `offers_context` работает как **кеш** (mode = `system_cards`). Ошибка базы
 знаний не стирает кеш: возвращаются прежние карточки и `error`.
 

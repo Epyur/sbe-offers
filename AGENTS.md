@@ -653,3 +653,64 @@ the build; `scripts/lims_selfhost.sh` uploaded them and updated
 the commit hash had to be filled in afterwards; the file then differs from the commit it
 describes. Filling the hash in a second, immediately following commit keeps the record
 honest - or write the entry after committing and commit it separately.
+## "База знаний не настроена" while it is configured - 2026-10-30
+
+User report: the plugin's «Контекст КП» says «База знаний не настроена», although
+the Knowledge Base is set up.
+
+**The KB was fine; the container was not wired to it.** In the server
+`docker-compose.yml` the `offers` service block had no `KB_SERVICE_URL`,
+`KB_SERVICE_SECRET`, `LLM_SERVICE_URL` or `LLM_SERVICE_SECRET`, although the secrets
+are present in `.env` and both `kb` and `llm` live on the same `internal` network.
+So `NewKBClient()` got an empty base URL, `main.go` logged «KB_SERVICE_URL не задан»,
+`s.kb` stayed nil, `GET /context/cards` answered `kbEnabled: false`, and
+`context-editor.ts` showed the «не настроена» text. The same missing `LLM_*` pair
+means the brief and section copy degrade on the server as well.
+
+**Why the stand did not catch it (my miss).** The plan's Task 7 step 1 says "KB
+config in compose", but I never added KB to `docker-compose.local.yml`; every E2E run
+up to now had the Knowledge Base absent, so nothing checked that cards reach the
+plugin. The message looked like a normal "not configured" state.
+
+**Fixed in the stand first, then on the server.**
+- `scripts/kb-stub.mjs` - serves `tags`, `notes`, `notes/{id}`,
+  `notes/{id}/attachments`, `file-link`, requires a Bearer token like the real
+  service. Two system cards in the standard markup.
+- `scripts/auth-stub.mjs` gained `POST /internal/service-token`: without it the
+  inter-service JWT is missing and cards cannot be read even with the URL set.
+- `docker-compose.local.yml`: `kb-stub` service plus `KB_SERVICE_URL` /
+  `KB_SERVICE_SECRET` on `offers`.
+- `offers_local_e2e.mjs` section 15: `kbEnabled === true` with a hint naming both
+  variables, then `POST /context/refresh` and the card contents. Verified red without
+  KB (exactly 2 failures, both naming the cause) and green with it.
+
+**Two more defects found while writing that section:**
+1. It checked `GET /context/cards` before `refresh`, but that route serves the
+   **cache**, which is empty on a fresh database - the check was wrong, not the code.
+   Order fixed: refresh first, then read.
+2. The stub card put the description before the first `##`; the parser reads it under
+   `## Описание системы`. The stub was wrong, not the parser - fixed to follow
+   `docs/sbe-offers-system-card-standard.md`.
+
+**Result.** Stand E2E 140/140 green. Server `docker-compose.yml` updated (backup
+`docker-compose.yml.bak-kb-20261030`), `offers` recreated, `kbEnabled` and the brief
+checked live.
+
+**Third defect, found only on the live server: the list field name.** After the wiring
+fix `kbEnabled` became `true` but `count` stayed `0`. `kb-service` returns the list in
+**`items`**, while `KBClient.Notes` read **`notes`** - and my unit test fed it a
+made-up `notes` body, so the test agreed with the bug. `Notes` now reads `items` and
+falls back to `notes`; `kb-stub` serves `items` like the real service; two tests pin
+both shapes (`TestKBClientNotesReadsItemsField`, `TestKBClientNotesReadsLegacyNotesField`).
+Live check after redeploy: 2 cards, both with description and composition.
+
+**Lesson that is worth more than the fix:** a stub I write myself is a claim about
+someone else's contract. The card list was "checked" in tests that encoded my guess,
+not the service's answer. Contracts with foreign services are pinned by a recorded
+real response (see `testdata/` in `skills/`), not by an invented fixture.
+
+**Rule for the next service on central permissions.** A plugin-service that talks to
+another service needs BOTH values in its compose block - the URL and the secret - and
+the stand needs a stub for that service. An empty URL is not an error: the service
+starts, reports "not configured" and looks healthy. Add the stub and an E2E check in
+the same commit as the client code, not later.
