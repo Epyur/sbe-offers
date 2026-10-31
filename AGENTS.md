@@ -1329,3 +1329,38 @@ they asserted the old code-based contract and had to follow the decision.
 matter must exist as KB cards with the `material` tag - then the links resolve
 by themselves. Nothing can be done in code about a card that has no material
 note behind it: it stays in `problems` on purpose.
+
+### Deployed and measured on live data - 2026-10-31 20:13
+
+Deployed with the same discipline as the previous release: files through
+`tar`/`scp`, MD5 of `systemcards.go`, `systems_links.go`, `material_notes.go`,
+`material.go` compared before the rebuild, backup `offers-service.bak-wikilinks`,
+`docker compose up -d --build offers`, `CREATED` moved, log shows
+`offers-service listening on :3000`.
+
+**The numbers now, against the same database as the measurement before:**
+
+| | before | after |
+|---|---|---|
+| materials in the catalogue | 1 | **1165** (all from KB cards, all with `note_title`) |
+| composition lines | 3387 | 3387 |
+| lines with a wiki link | — | 2103 |
+| **lines resolved** | **0** | **2103** |
+| unresolved lines | 3387 | 1284 - every one of them has no link at all |
+
+So **every single wiki link resolves**. The remaining 1284 lines are plain
+text: "Первый материал или слой", "Асфальтобетон", the template placeholder
+rows of unfinished cards. That is exactly what `problems` is for - they are
+named to the person instead of being dropped, and no code change can guess what
+they mean.
+
+Only **5 cards** have a composition where every line has a link; the rest mix
+linked and plain-text lines. This is a data situation, not a defect: a
+technologist's work remains, and the section now shows precisely where.
+
+**One more thing the live check proved.** The sync turned 1165 notes into
+materials in a single read, with SKUs assigned (`MAT-ПРОЧ-ОБЩ-0002` and up).
+Note the type code: the sync passes no type/series hints, so everything lands in
+`ПРОЧ`/`ОБЩ`. If type codes in SKUs matter for anything, that is the next
+decision to make - the plans had them typed by hand, and the automatic ones are
+not meaningful.
