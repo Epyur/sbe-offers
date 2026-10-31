@@ -1120,4 +1120,35 @@ no systems, `hasPrice` present, `bot/systems` answers, the bot appends a system,
 a foreign chat gets 404).
 
 **Not done.** Version 0.3.0, release notes, deploy and self-hosting (Task 9).
-Nothing was committed for this task yet when this entry was written.
+Committed and pushed as `534a8ef`.
+
+## Task 9: version 0.3.0 and documentation - 2026-10-31
+
+The plugin part of the release is ready; the deployment part is not started
+because it needs a word from the user.
+
+- `manifest.json` / `package.json`: `0.2.1 -> 0.3.0`. The step is the larger one
+  (+0.1 to a `0.x.0`) because the catalogue stopped being one thing and became
+  two, which is an architectural change, not an increment. Written with
+  `UTF8Encoding($false)`, first bytes checked `7B 0A 20` - no BOM.
+- ЦУП news text rewritten for this release (the 2026-09-17 lesson: the text is
+  baked into `main.js` at build time and is not refreshed on its own). It talks
+  about "Каталог разделён на два", the ЕКН, the sheet upload and the bot
+  command, in plain Russian and without file or function names.
+- `src/main.ts` also corrected: the version check compares
+  `lastAnnouncedVersion`, so nothing else was needed there.
+- `specification.md` gained two sections - the database tables (materials, ЕКН,
+  bot config; `offers_catalog` kept for old offers) and a full description of
+  materials, the two-step sheet upload, systems and the bot's two new routes.
+- The plan `docs/superpowers/plans/2026-10-30-sbe-offers-materials-systems-plan.md`
+  has its steps ticked and a status note at the end naming what was added beyond
+  the plan (three server routes) and that Task 10 is untouched.
+
+**Checks.** `npm run build` OK at 0.3.0, `tsc --noEmit` EXIT=0, no `0.2.1`
+left in the bundle. Go and bot suites unchanged from Task 8 (`go test` green,
+72 bot tests), OpenAPI 59 operations.
+
+**Not done (Task 10), needs the user's word.** Deploy (`docker compose up -d
+--build offers offers-bot` plus the `CREATED` check), the live catalogue
+migration check, `backend` -> `main`, the three SHA-256 as the last action,
+self-hosting and the https comparison. Nothing was deployed or self-hosted.
