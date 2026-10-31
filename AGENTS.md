@@ -1219,3 +1219,49 @@ notes have not been brought to the standard described in
 `docs/sbe-offers-system-card-standard.md`. Until a technologist puts SKU links
 into the systems that matter, the systems section is informational only.
 Recorded here so the first complaint about it is answered with a fact.
+
+## Styles.css shipped mojibake - 2026-10-31 (same evening)
+
+User report: the "Материалы" tab shows broken characters. **The tab was not the
+cause** - the whole plugin's stylesheet carried garbage, and so did every other
+SBE plugin built from the same base.
+
+**Root cause.** `sbe-core/src/design/components.css` had one comment (the
+section header for the sources module, lines 300-302) written as CP1251 bytes
+and read as UTF-8. The esbuild hook concatenates `tokens.css` +
+`components.css` + the plugin's own `src/styles.css` into `styles.css` on every
+build, so the damage was copied into each plugin's stylesheet. It was there
+since the sources module landed (2026-10-06, `6da1de7`) and reached production
+with every release since - including 0.3.0 earlier this evening.
+
+**How it was found.** `styles.css` contained **121** `U+FFFD` characters: the
+bytes were still CP1251 inside the UTF-8 file, so a straight decode with the
+`latin1`/CP1251 table from the git blob recovered the text verbatim -
+`Пользовательские источники (sbe-core/src/sources/)`. Restoring the comment in
+`components.css` and rebuilding removed every `U+FFFD`.
+
+**A false alarm worth writing down.** The first scan claimed **148 tracked files
+on `backend` were UTF-16LE**. That was wrong twice: PowerShell's
+`git cat-file -p ... > file` writes UTF-16 by default, and the first bytes then
+look like a BOM. The same scan through Node (`execFileSync('git', ['cat-file',
+'-p', ...])` gets raw bytes) found **exactly one** damaged file - `styles.css`.
+Lesson: the tool that reports a problem must be proven not to create it; here
+the reporting shell produced the very pattern it reported.
+
+**Fixed in three places.**
+
+- `sbe-core/src/design/components.css` - the comment restored (commit
+  `0914fb6`, branch `backend`).
+- `sbe-offers` `styles.css` rebuilt and released: commit `0689361` on `backend`,
+  `9865073` on `main`, self-hosted with the new sum `46f4c880…83d0`, checked
+  over https (0 `U+FFFD`). `manifest.json` and `main.js` are byte-identical to
+  the previous release, so the version stays 0.3.0 - a patch release would have
+  meant bumping the number for a stylesheet only, and the store compares hashes,
+  not versions, to decide there is something new.
+- `sbe-apstore-registry` `registry.json` - the styles hash (commit `26d1c12`).
+
+**Still broken elsewhere, not fixed here.** Other SBE plugins bundle the same
+`components.css`, so any build of them before this fix carries the same
+mojibake. They need a rebuild to pick it up - the base file is now clean, so the
+next build of each plugin fixes it for free. That belongs to those plugins'
+cycles, not this one.
