@@ -630,3 +630,20 @@ UPDATE offers_offer SET form_values = $2, updated_at = now() WHERE id = $1`,
 		offer.ID, values)
 	return err
 }
+
+// persistOfferItems пишет состав и итог предложения, двигая updated_at.
+//
+// Отдельно от handleSaveOffer: таблица менеджера меняет СОСТАВ и цены, а не
+// клиента и не текст формы. Гонять полную валидацию здесь значило бы отказать
+// в применении таблицы из-за поля, которого таблица не касается.
+func (s *Server) persistOfferItems(ctx context.Context, offer Offer) error {
+	items, err := json.Marshal(offer.Items)
+	if err != nil {
+		return err
+	}
+	offer.Total = recalcOfferTotal(offer.Items)
+	_, err = s.pool.Exec(ctx, `
+UPDATE offers_offer SET items = $2, total = $3, updated_at = now() WHERE id = $1`,
+		offer.ID, items, offer.Total)
+	return err
+}

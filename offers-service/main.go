@@ -107,6 +107,12 @@ func main() {
 	mux.HandleFunc("POST /api/offers/materials/{id}/ekn", s.requirePerm("admin")(s.handleAddMaterialEkn))
 	mux.HandleFunc("DELETE /api/offers/materials/{id}/ekn/{eknId}", s.requirePerm("admin")(s.handleDeleteMaterialEkn))
 
+	// Таблица менеджера (2026-10-30), двумя шагами. Первый шаг НИЧЕГО не
+	// пишет: файл от заказчика бывает черновиком со старыми ценами, и молча
+	// применять его нельзя. Второй пишет только подтверждённое.
+	mux.HandleFunc("POST /api/offers/offers/{id}/sheet", s.requirePerm("editor")(s.handleSheetPreview))
+	mux.HandleFunc("POST /api/offers/offers/{id}/sheet/apply", s.requirePerm("editor")(s.handleSheetApply))
+
 	mux.HandleFunc("GET /api/offers/form", s.requirePerm("viewer")(s.handleGetForm))
 	// Контекст КП (2026-10-29): карточки систем из Базы знаний. Список из кеша
 	// читает любой, кто видит КП; перечитывает базу знаний — администратор.

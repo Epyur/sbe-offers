@@ -435,6 +435,84 @@ paths:
                   expiresAt:
                     type: string
 
+  /api/offers/offers/{id}/sheet:
+    post:
+      summary: Разобрать таблицу менеджера (ничего не пишет)
+      description: |
+        Тело — сам файл xlsx, имя в `X-File-Name`. Колонки ищутся по
+        заголовку: Наименование (обязательна), ЕКН, Ед., Кол-во, Цена
+        (обязательна), Сумма. Строки сопоставляются точным ЕКН, затем точным
+        названием, затем моделью; догадка модели помечается `needsConfirm`.
+
+        Ручка НИЧЕГО не записывает: файл от заказчика бывает черновиком, и
+        применять его без подтверждения нельзя.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: file_name
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Что понято из таблицы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SheetPreview'
+        '400':
+          description: Таблица не разобрана (нет колонки цены или наименования)
+        '413':
+          description: Файл больше 10 МБ
+  /api/offers/offers/{id}/sheet/apply:
+    post:
+      summary: Применить подтверждённые строки таблицы
+      description: |
+        Записывает позиции с ценой из таблицы (каталог цены не знает),
+        дописывает новые ЕКН и расширяет вилку цен материала. Вилка
+        расширяется, но не сужается.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows:
+                  type: array
+                  items:
+                    type: object
+                    required: [materialId, price]
+                    properties:
+                      line:
+                        type: integer
+                      materialId:
+                        type: integer
+                        format: int64
+                      ekn:
+                        type: string
+                      variant:
+                        type: string
+                      qty:
+                        type: number
+                      price:
+                        type: number
+                addMissingEkn:
+                  type: boolean
+      responses:
+        '200':
+          description: Применённые позиции и обновлённое предложение
+        '400':
+          description: Нет строк или материал не найден
   /api/offers/offers/{id}/brief:
     get:
       summary: Бриф предложения
@@ -1243,6 +1321,49 @@ components:
           type: boolean
         empty:
           type: boolean
+    SheetPreview:
+      type: object
+      properties:
+        fileName:
+          type: string
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              row:
+                type: object
+              materialId:
+                type: integer
+                format: int64
+              sku:
+                type: string
+              name:
+                type: string
+              method:
+                type: string
+                enum: [ekn, name, ai, none]
+              reason:
+                type: string
+              needsConfirm:
+                type: boolean
+        counts:
+          type: object
+          properties:
+            total:
+              type: integer
+            byEkn:
+              type: integer
+            byName:
+              type: integer
+            byAi:
+              type: integer
+            none:
+              type: integer
+        problems:
+          type: array
+          items:
+            type: string
     MaterialEkn:
       type: object
       description: |
