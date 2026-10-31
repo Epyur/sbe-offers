@@ -97,6 +97,16 @@ func main() {
 	mux.HandleFunc("PUT /api/offers/catalog/{id}", s.requirePerm("admin")(s.handleSaveCatalog))
 	mux.HandleFunc("DELETE /api/offers/catalog/{id}", s.requirePerm("admin")(s.handleDeleteCatalog))
 
+	// Материалы (2026-10-30). Отдельная сущность с собственным SKU и
+	// вариациями ЕКН; системы живут в карточках Базы знаний и сюда не попадают.
+	// SKU назначает только сервер — клиентское значение не принимается.
+	mux.HandleFunc("GET /api/offers/materials", s.requirePerm("viewer")(s.handleListMaterials))
+	mux.HandleFunc("POST /api/offers/materials", s.requirePerm("admin")(s.handleSaveMaterial))
+	mux.HandleFunc("PUT /api/offers/materials/{id}", s.requirePerm("admin")(s.handleSaveMaterial))
+	mux.HandleFunc("DELETE /api/offers/materials/{id}", s.requirePerm("admin")(s.handleDeleteMaterial))
+	mux.HandleFunc("POST /api/offers/materials/{id}/ekn", s.requirePerm("admin")(s.handleAddMaterialEkn))
+	mux.HandleFunc("DELETE /api/offers/materials/{id}/ekn/{eknId}", s.requirePerm("admin")(s.handleDeleteMaterialEkn))
+
 	mux.HandleFunc("GET /api/offers/form", s.requirePerm("viewer")(s.handleGetForm))
 	// Контекст КП (2026-10-29): карточки систем из Базы знаний. Список из кеша
 	// читает любой, кто видит КП; перечитывает базу знаний — администратор.

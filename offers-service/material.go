@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Материалы и ЕКН (2026-10-30).
@@ -280,4 +285,260 @@ RETURNING `+materialColumns,
 	}
 	saved.Ekn, err = s.listMaterialEkn(ctx, saved.ID)
 	return saved, err
+}
+
+// --- Правила входа -----------------------------------------------------
+
+// normalizeMaterial приводит карточку к рабочему виду: обрезает поля и
+// подставляет умолчания. Отдельной функцией, потому что эти же умолчания
+// нужны и при создании, и при правке.
+func normalizeMaterial(m Material) Material {
+	m.Name = strings.TrimSpace(m.Name)
+	m.Unit = strings.TrimSpace(m.Unit)
+	m.Description = strings.TrimSpace(m.Description)
+	m.Kind = strings.TrimSpace(m.Kind)
+	if m.Unit == "" {
+		m.Unit = "шт"
+	}
+	if m.Kind == "" {
+		m.Kind = "material"
+	}
+	return m
+}
+
+// validateMaterial проверяет карточку; пустая строка — карточка годна.
+func validateMaterial(m Material) string {
+	if strings.TrimSpace(m.Name) == "" {
+		return "не заполнено название материала"
+	}
+	kind := m.Kind
+	if kind == "" {
+		kind = "material"
+	}
+	if !materialKindAllowed(kind) {
+		// Система — не материал: у неё нет SKU и ЕКН, её правда в Базе знаний.
+		return "вид должен быть material или work; системы живут в карточках Базы знаний"
+	}
+	return ""
+}
+
+// widenPriceRange расширяет вилку цен новой ценой из таблицы менеджера.
+//
+// Расширяем, а не заменяем: вилка нужна для аналитики, и одна дешёвая
+// поставка не должна затереть историю дорогих. Возвращает новые границы и
+// признак «что-то изменилось» — по нему решается, двигать ли price_seen_at.
+func widenPriceRange(low, high *float64, price float64) (*float64, *float64, bool) {
+	changed := false
+	if low == nil || price < *low {
+		v := price
+		low = &v
+		changed = true
+	}
+	if high == nil || price > *high {
+		v := price
+		high = &v
+		changed = true
+	}
+	return low, high, changed
+}
+
+// --- Ручки -------------------------------------------------------------
+
+func (s *Server) handleListMaterials(w http.ResponseWriter, r *http.Request) {
+	includeArchived := r.URL.Query().Get("archived") == "1"
+	items, err := s.listMaterials(r.Context(), includeArchived)
+	if err != nil {
+		dbError(w, "list materials", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleSaveMaterial(w http.ResponseWriter, r *http.Request) {
+	var req materialRequest
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	item := normalizeMaterial(req.Material)
+	if msg := validateMaterial(item); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
+		return
+	}
+
+	idFromPath, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+
+	if idFromPath > 0 {
+		item.ID = idFromPath
+		saved, err := s.updateMaterial(r.Context(), item)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "материал не найден"})
+			return
+		}
+		if err != nil {
+			dbError(w, "save material", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+
+	saved, err := s.insertMaterial(r.Context(), item, req.TypeCode, req.Series)
+	if err != nil {
+		dbError(w, "create material", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleDeleteMaterial архивирует материал. Удалять нельзя: на карточку
+// ссылаются старые предложения, и дырка в справочнике дороже архива.
+func (s *Server) handleDeleteMaterial(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok || id <= 0 {
+		return
+	}
+	row := s.pool.QueryRow(r.Context(), `
+UPDATE offers_material SET archived = true, updated_at = now() WHERE id = $1
+RETURNING `+materialColumns, id)
+	saved, err := scanMaterial(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "материал не найден"})
+		return
+	}
+	if err != nil {
+		dbError(w, "archive material", err)
+		return
+	}
+	saved.Ekn, _ = s.listMaterialEkn(r.Context(), saved.ID)
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// materialRequest — тело ручки: карточка и подсказки для SKU.
+//
+// TypeCode и Series — только для генерации SKU у нового материала; у правки
+// они игнорируются, потому что SKU не меняется никогда.
+type materialRequest struct {
+	Material
+	TypeCode string `json:"typeCode"`
+	Series   string `json:"series"`
+}
+
+// pathID читает id из пути. Отвечает 400 и возвращает false при мусоре.
+func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := r.PathValue("id")
+	if raw == "" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return 0, false
+	}
+	return parsed, true
+}
+
+// handleAddMaterialEkn добавляет вариацию ЕКН к материалу.
+//
+// Повторное добавление того же номера ничего не меняет и не падает: таблица
+// менеджера может прийти дважды, и это нормальный ход работы, а не ошибка.
+func (s *Server) handleAddMaterialEkn(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Ekn     string `json:"ekn"`
+		Variant string `json:"variant"`
+		Source  string `json:"source"`
+	}
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	ekn := strings.TrimSpace(req.Ekn)
+	if ekn == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "не указан ЕКН"})
+		return
+	}
+	source := strings.TrimSpace(req.Source)
+	if source == "" {
+		source = "manual"
+	}
+	if source != "manual" && source != "excel" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "source должен быть manual или excel"})
+		return
+	}
+
+	// Материал должен существовать: иначе ЕКН повиснет в никуда.
+	if _, err := s.loadMaterial(r.Context(), id); errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "материал не найден"})
+		return
+	} else if err != nil {
+		dbError(w, "load material for ekn", err)
+		return
+	}
+
+	_, err := s.pool.Exec(r.Context(), `
+INSERT INTO offers_material_ekn (material_id, ekn, variant, source)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (material_id, ekn) DO UPDATE
+	SET variant = CASE WHEN EXCLUDED.variant <> '' THEN EXCLUDED.variant ELSE offers_material_ekn.variant END,
+	    last_seen_at = now()`,
+		id, ekn, strings.TrimSpace(req.Variant), source)
+	if err != nil {
+		dbError(w, "add ekn", err)
+		return
+	}
+	// updated_at материала двигаем: состав вариаций — часть карточки, и без
+	// этого правка не выиграет слияние у того, кто откроет её позже.
+	if _, err := s.pool.Exec(r.Context(),
+		`UPDATE offers_material SET updated_at = now() WHERE id = $1`, id); err != nil {
+		dbError(w, "touch material", err)
+		return
+	}
+	saved, err := s.loadMaterial(r.Context(), id)
+	if err != nil {
+		dbError(w, "reload material", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleDeleteMaterialEkn убирает вариацию.
+func (s *Server) handleDeleteMaterialEkn(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	eknRaw := r.PathValue("eknId")
+	eknID, err := strconv.ParseInt(eknRaw, 10, 64)
+	if err != nil || eknID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid ekn id"})
+		return
+	}
+	tag, err := s.pool.Exec(r.Context(),
+		`DELETE FROM offers_material_ekn WHERE id = $1 AND material_id = $2`, eknID, id)
+	if err != nil {
+		dbError(w, "delete ekn", err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "вариация не найдена"})
+		return
+	}
+	if _, err := s.pool.Exec(r.Context(),
+		`UPDATE offers_material SET updated_at = now() WHERE id = $1`, id); err != nil {
+		dbError(w, "touch material", err)
+		return
+	}
+	saved, err := s.loadMaterial(r.Context(), id)
+	if err != nil {
+		dbError(w, "reload material", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }

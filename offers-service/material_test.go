@@ -57,3 +57,70 @@ func TestSkuSanitizesSeries(t *testing.T) {
 		t.Fatalf("серия не очищена: %q", got)
 	}
 }
+
+// --- Ручки материалов (Task 3) -----------------------------------------
+//
+// Правила проверяются отдельно от HTTP и БД: это чистые функции входа,
+// и именно на них держится «в справочнике не бывает материала без имени
+// или с чужим видом».
+
+func TestValidateMaterialRequiresName(t *testing.T) {
+	if msg := validateMaterial(Material{Name: "  ", Unit: "м2"}); msg == "" {
+		t.Fatal("материал без названия должен отклоняться")
+	}
+	if msg := validateMaterial(Material{Name: "Мембрана", Unit: "м2"}); msg != "" {
+		t.Fatalf("годный материал отклонён: %q", msg)
+	}
+}
+
+// Система материалом не является: попытка завести kind='system' в справочнике
+// материалов должна отклоняться. Иначе сущности снова смешаются.
+func TestValidateMaterialRejectsSystemKind(t *testing.T) {
+	if msg := validateMaterial(Material{Name: "ТН-Кровля", Kind: "system"}); msg == "" {
+		t.Fatal("system не должен проходить в справочник материалов")
+	}
+	if msg := validateMaterial(Material{Name: "Монтаж", Kind: "work"}); msg != "" {
+		t.Fatalf("работа должна проходить: %q", msg)
+	}
+}
+
+// Пустая единица — это «шт», как и в каталоге: поле необязательное.
+func TestNormalizeMaterialDefaults(t *testing.T) {
+	m := normalizeMaterial(Material{Name: "  Мембрана  ", Unit: ""})
+	if m.Name != "Мембрана" {
+		t.Errorf("имя не обрезано: %q", m.Name)
+	}
+	if m.Unit != "шт" {
+		t.Errorf("единица по умолчанию не подставлена: %q", m.Unit)
+	}
+	if m.Kind != "material" {
+		t.Errorf("вид по умолчанию не подставлен: %q", m.Kind)
+	}
+}
+
+// Вилка цен: расширяемся, но никогда не сужаемся — иначе одна дешёвая
+// поставка затрёт историю дорогих.
+func TestWidenPriceRange(t *testing.T) {
+	low, high := 100.0, 200.0
+	lo, hi, changed := widenPriceRange(&low, &high, 150)
+	if changed || *lo != 100 || *hi != 200 {
+		t.Fatalf("цена внутри вилки не должна её менять: %v %v %v", *lo, *hi, changed)
+	}
+	lo, hi, changed = widenPriceRange(&low, &high, 50)
+	if !changed || *lo != 50 || *hi != 200 {
+		t.Fatalf("нижняя граница не расширена: %v %v %v", *lo, *hi, changed)
+	}
+	lo, hi, changed = widenPriceRange(&low, &high, 500)
+	if !changed || *lo != 100 || *hi != 500 {
+		t.Fatalf("верхняя граница не расширена: %v %v %v", *lo, *hi, changed)
+	}
+}
+
+// Первая увиденная цена задаёт обе границы, а не «0 до цены».
+func TestWidenPriceRangeFirstValue(t *testing.T) {
+	var lo, hi *float64
+	lo, hi, changed := widenPriceRange(lo, hi, 320.5)
+	if !changed || lo == nil || hi == nil || *lo != 320.5 || *hi != 320.5 {
+		t.Fatalf("первая цена должна задать обе границы: %v %v %v", lo, hi, changed)
+	}
+}

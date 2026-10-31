@@ -144,6 +144,125 @@ paths:
         '200':
           description: Карточка в архиве
 
+  /api/offers/materials:
+    get:
+      summary: Список материалов
+      description: |
+        Справочник материалов и работ. Системы сюда не входят — они живут
+        карточками Базы знаний.
+      parameters:
+        - name: archived
+          in: query
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: Материалы с вариациями ЕКН
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Material'
+    post:
+      summary: Создать материал (admin)
+      description: |
+        SKU назначает сервер: клиентское значение игнорируется. `typeCode` и
+        `series` задают смысловые части кода.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaterialInput'
+      responses:
+        '200':
+          description: Созданный материал
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material'
+        '400':
+          description: Не заполнено название или вид не material/work
+
+  /api/offers/materials/{id}:
+    put:
+      summary: Изменить материал (admin)
+      description: SKU не меняется никогда — это идентичность.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaterialInput'
+      responses:
+        '200':
+          description: Обновлённый материал
+        '404':
+          description: Материал не найден
+    delete:
+      summary: Убрать материал в архив (admin)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Материал в архиве
+        '404':
+          description: Материал не найден
+
+  /api/offers/materials/{id}/ekn:
+    post:
+      summary: Добавить вариацию ЕКН (admin)
+      description: |
+        Повторное добавление того же номера не падает и не плодит дублей:
+        таблица менеджера может прийти дважды.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ekn]
+              properties:
+                ekn:
+                  type: string
+                variant:
+                  type: string
+                source:
+                  type: string
+                  enum: [manual, excel]
+      responses:
+        '200':
+          description: Материал с обновлённым списком вариаций
+        '400':
+          description: Не указан ЕКН или неверный источник
+        '404':
+          description: Материал не найден
+
+  /api/offers/materials/{id}/ekn/{eknId}:
+    delete:
+      summary: Удалить вариацию ЕКН (admin)
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: eknId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Материал с обновлённым списком вариаций
+        '404':
+          description: Вариация не найдена
+
   /api/offers/form:
     get:
       summary: Форма КП
@@ -1124,6 +1243,100 @@ components:
           type: boolean
         empty:
           type: boolean
+    MaterialEkn:
+      type: object
+      description: |
+        Вариация материала: номер ЕКН и как называется исполнение. Один
+        материал может иметь много вариаций (толщина, цвет, размер).
+      properties:
+        id:
+          type: integer
+          format: int64
+        materialId:
+          type: integer
+          format: int64
+        ekn:
+          type: string
+        variant:
+          type: string
+          description: Как исполнение названо в таблице менеджера
+        source:
+          type: string
+          enum: [excel, manual]
+        firstSeenAt:
+          type: string
+        lastSeenAt:
+          type: string
+    Material:
+      type: object
+      description: |
+        Материал или работа. Цены здесь нет: она приходит из таблицы менеджера
+        для конкретного предложения. priceMin/priceMax — вилка из загруженных
+        таблиц, только для аналитики.
+      properties:
+        id:
+          type: integer
+          format: int64
+        sku:
+          type: string
+          description: Назначает сервер; не меняется никогда
+          readOnly: true
+        kind:
+          type: string
+          enum: [material, work]
+        name:
+          type: string
+        unit:
+          type: string
+        description:
+          type: string
+        priceMin:
+          type: number
+          nullable: true
+        priceMax:
+          type: number
+          nullable: true
+        priceSeenAt:
+          type: string
+        photoKey:
+          type: string
+        sortOrder:
+          type: integer
+        archived:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        ekn:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterialEkn'
+    MaterialInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [material, work]
+        unit:
+          type: string
+        description:
+          type: string
+        photoKey:
+          type: string
+        sortOrder:
+          type: integer
+        archived:
+          type: boolean
+        typeCode:
+          type: string
+          description: Часть SKU «тип», только при создании (напр. МЕМБ, УТЕПЛ)
+        series:
+          type: string
+          description: Часть SKU «серия», только при создании (напр. ПВХ, ПИР)
     CatalogItem:
       type: object
       properties:
