@@ -9,8 +9,27 @@ export interface CatalogItem {
   kind: string;
   name: string;
   unit: string;
+  /** Нижняя граница вилки цен; осмысленна только при `hasPrice`. */
   basePrice: number;
-  description: string;
+  /** Была ли вилка вообще: ноль без признака значит «цену не загружали». */
+  hasPrice?: boolean;
+  /** Код материала: по нему менеджер ищет то, что видит на бумаге. */
+  sku?: string;
+  description?: string;
+}
+
+/** Система для выбора в боте: без цены, только код, название и состав. */
+export interface SystemItem {
+  sku: string;
+  title: string;
+  problems?: string[];
+}
+
+/** Ответ «состав системы дописан». */
+export interface SystemAddResponse {
+  added: number;
+  missingPrice?: string[];
+  problems?: string[];
 }
 
 export interface OfferItemPayload {
@@ -96,6 +115,30 @@ export async function catalog(query: string): Promise<CatalogItem[]> {
   const q = query ? `?q=${encodeURIComponent(query)}` : '';
   const res = await call<{ items: CatalogItem[] }>('GET', `/bot/catalog${q}`);
   return res.items ?? [];
+}
+
+/**
+ * Системы из Базы знаний — для команды «система <название>».
+ *
+ * Каталог бота их не содержит: у системы нет цены. Здесь только код, название
+ * и проблемы состава — больше боту ничего не нужно.
+ */
+export async function systems(): Promise<{ systems: SystemItem[]; kbEnabled: boolean; error?: string }> {
+  return call('GET', '/bot/systems');
+}
+
+/**
+ * Дописать состав системы в предложение.
+ *
+ * Собирает состав СЕРВЕР: цены позиций известны только ему (вилка из таблиц
+ * менеджера), а состав — из Базы знаний. Бот только называет код системы.
+ */
+export async function addSystem(
+  offerId: number,
+  chatId: string,
+  sku: string,
+): Promise<SystemAddResponse> {
+  return call('POST', `/bot/offers/${offerId}/system`, { chat_id: chatId, sku });
 }
 
 export async function createOffer(payload: {

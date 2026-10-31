@@ -427,6 +427,20 @@ console.log('\n8. Ручки бота защищены секретом');
 
   const catalog = await call('GET', '/bot/catalog', { headers: { 'X-Service-Secret': BOT_SECRET } });
   ok('бот видит каталог', catalog.status === 200 && (catalog.json?.items ?? []).length > 0);
+  // Каталог бота — только материалы (2026-10-31): система с ценой в чате
+  // была бы ошибкой, у неё цены нет вовсе.
+  ok('в каталоге бота нет систем',
+    (catalog.json?.items ?? []).every((i) => i.kind !== 'system'),
+    JSON.stringify((catalog.json?.items ?? []).map((i) => i.kind)));
+  ok('в каталоге бота есть признак «цена известна»',
+    (catalog.json?.items ?? []).every((i) => typeof i.hasPrice === 'boolean'),
+    JSON.stringify((catalog.json?.items ?? [])[0]));
+
+  const botSystems = await call('GET', '/bot/systems', { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('бот видит системы', botSystems.status === 200, `получили ${botSystems.status}`);
+  ok('системы пришли списком', (botSystems.json?.systems ?? []).length > 0,
+    JSON.stringify(botSystems.json?.systems?.length));
+  ok('у системы для бота нет цены', (botSystems.json?.systems ?? []).every((s) => s.price === undefined));
 }
 
 console.log('\n9. Коды входа (без почты: проверяем отказы)');
@@ -1083,6 +1097,25 @@ console.log('\n18. Таблица менеджера и системы в КП (
 
   const noToken = await call('POST', `/offers/${offerId}/system`, { body: { sku: 'TN-ROOF-CLASSIC' } });
   ok('добавление системы без токена → 401', noToken.status === 401, `получили ${noToken.status}`);
+
+  // --- Бот: та же система, другой способ входа ----------------------------
+  // У бота секрет сервиса и chat_id вместо JWT; правило состава одно, поэтому
+  // проверяем, что ручка даёт тот же результат. Чат владельца привязан в
+  // разделе 11 — берём его, а не придуманный.
+  const botComposed = await call('POST', `/bot/offers/${offerId}/system`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: String(linkedChatId), sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('бот дописывает систему → 200', botComposed.status === 200,
+    `получили ${botComposed.status} ${botComposed.text?.slice(0, 160)}`);
+  ok('бот дописал хотя бы одну позицию', (botComposed.json?.added ?? 0) >= 1,
+    JSON.stringify(botComposed.json?.added));
+
+  const foreign = await call('POST', `/bot/offers/${offerId}/system`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: '999999', sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('чужой чат систему не добавляет', foreign.status === 404, `получили ${foreign.status}`);
 }
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);

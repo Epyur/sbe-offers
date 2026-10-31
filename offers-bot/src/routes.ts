@@ -13,6 +13,7 @@
 import { applyCodeRequested, applyLogin, nextStep, type ChatSession } from './session.ts';
 import { AUTH_OK, AUTH_PROMPT, HELP_TEXT, MAIN_KEYBOARD } from './flow/build.ts';
 import * as api from './api.ts';
+import type { SystemItem } from './api.ts';
 import {
   BUTTONS,
   ID_BUTTONS,
@@ -52,6 +53,12 @@ export interface RouterState {
   lastMessage: Map<string, { text: string; at: number }>;
   pages: Map<string, { query: string; offset: number }>;
   sessions: Map<string, ChatSession>;
+  /**
+   * Системы, показанные кнопками выбора (2026-10-31). Кнопка несёт индекс, а
+   * не код: callback_data ограничен 64 байтами и кириллический код системы в
+   * него не влезет.
+   */
+  foundSystems: Map<string, SystemItem[]>;
 }
 
 export function newRouterState(): RouterState {
@@ -60,6 +67,7 @@ export function newRouterState(): RouterState {
     lastMessage: new Map(),
     pages: new Map(),
     sessions: new Map(),
+    foundSystems: new Map(),
   };
 }
 
@@ -217,6 +225,8 @@ export async function routeText(
     session,
     save: (next) => saveSession(state, chatId, next),
     pages: state.pages,
+    foundSystems: state.foundSystems.get(chatId) ?? [],
+    rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
@@ -295,6 +305,8 @@ export async function routeCallback(
     session,
     save: (next) => saveSession(state, chatId, next),
     pages: state.pages,
+    foundSystems: state.foundSystems.get(chatId) ?? [],
+    rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
   };
 
   const exact = BUTTONS[data];

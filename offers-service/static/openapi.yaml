@@ -908,7 +908,14 @@ paths:
           description: chat_id не привязан
   /api/offers/bot/catalog:
     get:
-      summary: Каталог для бота
+      summary: Каталог для бота — только материалы
+      description: |
+        Список позиций для «Добавить из каталога» в боте. Системы сюда НЕ
+        попадают: у системы нет своей цены, а её состав берётся из Базы знаний
+        (ручка бота `POST /bot/offers/{id}/system`).
+
+        `basePrice` — нижняя граница вилки цен, `hasPrice` говорит, была ли она
+        вообще: без признака ноль выглядел бы как «бесплатно».
       security:
         - serviceSecret: []
       parameters:
@@ -918,7 +925,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Карточки
+          description: Материалы и работы
   /api/offers/bot/offers:
     get:
       summary: Предложения привязанного к чату человека
@@ -970,6 +977,47 @@ paths:
       responses:
         '200':
           description: Обновлённый черновик
+  /api/offers/bot/systems:
+    get:
+      summary: Системы для команды «система <название>» в боте
+      description: |
+        Каталог бота содержит только материалы, поэтому системы отдаются
+        отдельно: код, название и проблемы состава. Полный текст карточки и
+        картинки боту не нужны.
+      security:
+        - serviceSecret: []
+      responses:
+        '200':
+          description: Системы, либо пустой список с `error`, если База знаний недоступна
+  /api/offers/bot/offers/{id}/system:
+    post:
+      summary: Дописать состав системы в КП из бота
+      description: |
+        Команда «система <название>» в чате. Состав ищется по коду или
+        названию системы в живой ленте Базы знаний и ДОПИСЫВАЕТСЯ к КП
+        позициями, как в плагине: цена — нижняя граница вилки, материалы без
+        вилки называются в `missingPrice`, строки без материала — в `problems`.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, sku]
+              properties:
+                chat_id:
+                  type: string
+                sku:
+                  type: string
+      responses:
+        '200':
+          description: Состав дописан
+        '404':
+          description: КП не принадлежит чату или система не найдена
   /api/offers/bot/offers/{id}/docx:
     post:
       summary: Получить DOCX (base64) для отправки в чат

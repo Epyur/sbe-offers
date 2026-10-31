@@ -9,7 +9,28 @@ export interface CatalogCard {
   id: number;
   name: string;
   unit: string;
+  /** Нижняя граница вилки цен; осмысленна только при `hasPrice`. */
   basePrice: number;
+  /**
+   * Была ли вилка вообще. Без признака ноль читался бы как «бесплатно», а на
+   * деле значит «цену ещё не загружали таблицей» (2026-10-31).
+   */
+  hasPrice?: boolean;
+}
+
+/** Система в списке для выбора: код, название и проблемы состава. */
+export interface SystemOption {
+  sku: string;
+  title: string;
+  /** Проблемы состава; пусто, если сервер их не прислал. */
+  problems?: string[];
+}
+
+/** Что ответил сервер, когда состав системы дописан в КП. */
+export interface SystemAddResult {
+  added: number;
+  missingPrice?: string[];
+  problems?: string[];
 }
 
 export function newDraft(): OfferDraft {
@@ -59,8 +80,81 @@ export function catalogMessage(items: CatalogCard[], query: string): string {
     }
     return 'Каталог пуст — обратитесь к администратору, чтобы он добавил системы и материалы.';
   }
-  const lines = items.map((it) => `• ${it.name} — ${formatMoney(it.basePrice)} / ${it.unit}`);
+  const lines = items.map((it) => {
+    // Цены нет — так и пишем. Ноль в чате читается как «бесплатно», и
+    // менеджер уедет с этим в КП.
+    const price = it.hasPrice === false ? 'цена не загружалась' : `${formatMoney(it.basePrice)}`;
+    return `• ${it.name} — ${price} / ${it.unit}`;
+  });
   return `Выберите позицию (нажмите кнопку ниже):\n\n${lines.join('\n')}`;
+}
+
+// --- Системы в боте (Task 8, 2026-10-31) -------------------------------
+//
+// В каталоге бота только материалы: система позицией не является, у неё нет
+// цены. Но собрать КП «из системы» менеджеру нужно, поэтому есть команда
+// «система <название>» — бот находит карточку в Базе знаний и просит сервер
+// дописать её состав.
+
+/** Нормализация для сравнения: регистр, ё и лишние пробелы. */
+function normalizeSystemText(raw: string): string {
+  return raw.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Разбор команды «система <название>».
+ *
+ * Возвращает название или null. Слово обязано стоять первым: иначе «Монтаж
+ * системы вентиляции | 1 | 500» — свободная позиция, а не команда.
+ */
+export function parseSystemCommand(text: string): string | null {
+  const match = text.trim().match(/^(?:система|\/system)\s+(.+)$/i);
+  if (!match) return null;
+  const query = match[1].trim();
+  return query === '' ? null : query;
+}
+
+/**
+ * Поиск систем по запросу.
+ *
+ * Сначала точное совпадение названия или кода — оно выигрывает у похожих.
+ * Иначе по началу названия (менеджер пишет «кровля», а не полное имя) и по
+ * вхождению кода. Порядок ответа сохраняется: так список читается сверху вниз.
+ */
+export function pickSystem(systems: SystemOption[], query: string): SystemOption[] {
+  const q = normalizeSystemText(query);
+  if (!q) return [];
+  const exact = systems.filter(
+    (s) => normalizeSystemText(s.title) === q || normalizeSystemText(s.sku) === q,
+  );
+  if (exact.length > 0) return exact;
+  return systems.filter((s) => {
+    const title = normalizeSystemText(s.title);
+    const sku = normalizeSystemText(s.sku);
+    return title.startsWith(q) || title.includes(q) || sku.includes(q);
+  });
+}
+
+/**
+ * Текст ответа после добавления системы.
+ *
+ * Число добавленных позиций, материалы без цены и несвязанные строки
+ * называются всегда, если они есть: молча добавить неполный состав хуже, чем
+ * сказать, чего не хватает.
+ */
+export function systemAddedMessage(result: SystemAddResult): string {
+  const parts = [`Система добавлена: позиций — ${result.added}.`];
+  if ((result.missingPrice ?? []).length > 0) {
+    parts.push(
+      `Без цены (загрузите таблицу ценой): ${(result.missingPrice ?? []).join(', ')}.`,
+    );
+  }
+  if ((result.problems ?? []).length > 0) {
+    parts.push(
+      `В составе не нашлось материала: ${(result.problems ?? []).join('; ')}.`,
+    );
+  }
+  return parts.join('\n');
 }
 
 export function addCatalogItem(draft: OfferDraft, card: CatalogCard, qty: number): OfferDraft {
@@ -139,6 +233,8 @@ export const HELP_TEXT =
   '🧾 Собрать КП — выбрать позиции из каталога или вписать свои, затем заполнить поля клиента. ' +
   'Готовое предложение приходит файлом Word прямо в чат.\n\n' +
   '📂 Мои КП — последние предложения и ссылки на них.\n\n' +
+  'Добавить готовую систему целиком: система <название>.\n' +
+  'Например: система кровля\n\n' +
   'Свою позицию вводите строкой: Название | количество | цена.\n' +
   'Например: Монтаж водостока | 12 | 850';
 

@@ -1061,3 +1061,63 @@ unknown system 404, no token 401), run twice.
 **Not done.** Marked as Task 7 complete in the plan. Bot (Task 8), version 0.3.0
 with the release notes, deploy and self-hosting (Task 9) remain; nothing was
 deployed or self-hosted for this change.
+
+## Task 8: the bot learned materials and systems - 2026-10-31
+
+Closes the split for the Telegram bot. The plan asks for two things: the bot
+catalogue must never contain a system, and a system must expand into positions.
+Both are done, and the second one needed a server route the plan did not name.
+
+**Catalogue is materials only.**
+
+- `handleBotCatalog` now reads `offers_material`, not `offers_catalog`. The
+  response shape is unchanged on purpose (`id, name, unit, basePrice`) so the
+  bot keeps working, and gained two fields: `sku` and `hasPrice`.
+- `hasPrice` exists because `basePrice` alone lies: with no price range seen it
+  is 0, and a manager reads 0 as "free". The bot prints "цена не загружалась"
+  when `hasPrice` is false.
+- The rule lives in `botcatalog.go` as pure functions (`materialsForBot`,
+  `filterMaterialsForBot`) and is covered by tests: a system never reaches the
+  list even if it somehow lands in the table, and the search finds a material by
+  name, SKU or ЕКН number.
+- Search by ЕКН matters: a manager reads the number off the spec sheet, not the
+  catalogue name.
+
+**A defect the first test run caught.** `materialKindAllowed("")` was false, so
+a row saved before the `kind` column existed would silently disappear from the
+bot catalogue - `validateMaterial` already treated an empty kind as a material,
+the filter did not. Fixed in `materialKindAllowed`, so one rule now covers both
+the write path and the listing.
+
+**Systems in the bot.**
+
+- `GET /api/offers/bot/systems` (service secret) returns `{sku, title, problems}`
+  per system, plus `kbEnabled` and `error` when the KB is down. No card text, no
+  images: the chat does not render them.
+- `POST /api/offers/bot/offers/{id}/system` appends a system's composition to
+  the chat author's offer. It is a separate route from the plugin one because
+  the entry is different (service secret plus `chat_id` instead of a user JWT);
+  the composition logic itself is shared - `appendComposition`, `SystemsFromKB`,
+  `FindSystem`.
+- Bot side: `система <название>` (or `/system <название>`). `parseSystemCommand`
+  requires the word first, so "Монтаж системы вентиляции | 1 | 500" stays a
+  free-form position. `pickSystem` prefers an exact title or code match, then
+  prefix/substring on the normalised title (case, ё/е).
+- One match adds the system straight away; several show a keyboard
+  (`sys:<index>`) and the chosen one is added on the tap.
+- `callback_data` is limited to 64 bytes and system codes are Cyrillic, so the
+  button carries an index into a per-chat list kept next to the catalogue pages
+  (`RouterState.foundSystems`), not the code.
+- The reply names what happened: positions added, materials without a price
+  range, composition lines with no matching material.
+
+**Checks.** `gofmt`/`go vet` clean, `go test ./...` green (`main` 40.2%,
+`model` 71.6%, `skills` 84.2%); `materialsForBot` and `filterMaterialsForBot`
+100%. Bot: `tsc --noEmit` clean, build OK, **72 tests** (10 new in
+`src/flow/system.test.ts`). Plugin `tsc --noEmit` EXIT=0. OpenAPI: 59 operations,
+47 paths, schema matches. Local stand E2E **197/197**, run twice (catalogue has
+no systems, `hasPrice` present, `bot/systems` answers, the bot appends a system,
+a foreign chat gets 404).
+
+**Not done.** Version 0.3.0, release notes, deploy and self-hosting (Task 9).
+Nothing was committed for this task yet when this entry was written.

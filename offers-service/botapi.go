@@ -38,13 +38,79 @@ func (s *Server) emailForChat(w http.ResponseWriter, r *http.Request, chatID str
 	return email, true
 }
 
+// handleBotCatalog — «Добавить из каталога» в боте: ТОЛЬКО материалы.
+//
+// Система в боте позицией не является (2026-10-31): у неё нет цены, а состав
+// берётся из Базы знаний. Раньше список приходил из offers_catalog вместе с
+// базовой ценой, и менеджер в чате видел систему как строку с ценой.
+//
+// Форма ответа прежняя (id, name, unit, basePrice): контракт с ботом не ломаем,
+// в basePrice кладём нижнюю границу вилки, а `hasPrice` говорит, была ли она
+// вообще — без этого ноль выглядел бы как «бесплатно».
 func (s *Server) handleBotCatalog(w http.ResponseWriter, r *http.Request) {
-	items, err := s.listCatalogItems(r.Context(), false)
+	materials, err := s.listMaterials(r.Context(), false)
 	if err != nil {
 		dbError(w, "bot catalog", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": filterCatalogItems(items, r.URL.Query().Get("q"))})
+	query := r.URL.Query().Get("q")
+	kept := filterMaterialsForBot(materials, query)
+	items := make([]map[string]any, 0, len(kept))
+	for _, m := range kept {
+		price := 0.0
+		hasPrice := m.PriceMin != nil
+		if hasPrice {
+			price = *m.PriceMin
+		}
+		items = append(items, map[string]any{
+			"id":        m.ID,
+			"kind":      "material",
+			"name":      m.Name,
+			"unit":      m.Unit,
+			"sku":       m.SKU,
+			"basePrice": price,
+			"hasPrice":  hasPrice,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// handleBotSystems — системы для команды «система <название>» в боте.
+//
+// Отдаёт только то, что нужно чату: код, название и проблемы состава. Полного
+// текста карточки и картинок боту не требуется, а лишние поля тянули бы
+// байты в каждом ответе.
+func (s *Server) handleBotSystems(w http.ResponseWriter, r *http.Request) {
+	materials, err := s.listMaterials(r.Context(), true)
+	if err != nil {
+		dbError(w, "bot systems: materials", err)
+		return
+	}
+	if s.kb == nil || !s.kb.configured() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"systems":   []any{},
+			"kbEnabled": false,
+			"error":     "База знаний не настроена",
+		})
+		return
+	}
+	cards, err := SystemsFromKB(r.Context(), s.kb, materials)
+	resp := map[string]any{"kbEnabled": true, "systems": []any{}}
+	if err != nil {
+		resp["error"] = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	items := make([]map[string]any, 0, len(cards))
+	for _, c := range cards {
+		items = append(items, map[string]any{
+			"sku":      c.SKU,
+			"title":    c.Title,
+			"problems": c.Problems,
+		})
+	}
+	resp["systems"] = items
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleBotListOffers — «Мои КП» в боте: только предложения привязанного email.
@@ -612,6 +678,68 @@ func (s *Server) botOfferForChatQ(w http.ResponseWriter, r *http.Request, id int
 		return Offer{}, "", false
 	}
 	return offer, email, true
+}
+
+// handleBotAddSystem — «система <название>» в боте: состав дописывается в КП.
+//
+// Повторяет ручку плагина намеренно: у бота другой способ входа (секрет
+// сервиса и chat_id), и сводить их в одну значило бы либо отдать боту
+// пользовательский JWT, либо пустить плагин по сервисному секрету. Логика
+// состава при этом ОДНА — appendComposition и SystemsFromKB.
+func (s *Server) handleBotAddSystem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ChatID string `json:"chat_id"`
+		SKU    string `json:"sku"`
+	}
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	offer, _, ok := s.botOfferForChatQ(w, r, id, req.ChatID)
+	if !ok {
+		return
+	}
+
+	materials, err := s.listMaterials(r.Context(), false)
+	if err != nil {
+		dbError(w, "bot add system: materials", err)
+		return
+	}
+	systems, err := SystemsFromKB(r.Context(), s.kb, materials)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": "База знаний недоступна: " + err.Error(),
+		})
+		return
+	}
+	card, found := FindSystem(systems, req.SKU)
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "система не найдена"})
+		return
+	}
+
+	byID := make(map[int64]Material, len(materials))
+	for _, m := range materials {
+		byID[m.ID] = m
+	}
+	resp := ComposeSystemResponse{Problems: []string{}}
+	offer.Items, resp.Added = appendComposition(offer.Items, card.CompositionLinks, byID, &resp)
+	if resp.Added == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "в составе системы нет ни одного материала из справочника",
+		})
+		return
+	}
+	if err := s.persistOfferItems(r.Context(), offer); err != nil {
+		dbError(w, "bot add system: save offer", err)
+		return
+	}
+	resp.Offer = offer
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // persistOfferFormValues пишет только form_values и двигает updated_at.

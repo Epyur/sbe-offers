@@ -17,7 +17,10 @@ import {
   formatMoney,
   newDraft,
   parseManualItem,
+  parseSystemCommand,
+  pickSystem,
   removeItem,
+  systemAddedMessage,
 } from './flow/build.ts';
 import * as api from './api.ts';
 import type { BotDeps } from './routes.ts';
@@ -59,6 +62,16 @@ export interface CallbackCtx {
   save(next: ChatSession): void;
   /** Страница каталога: запрос и смещение, живёт в памяти поллера. */
   pages: Map<string, { query: string; offset: number }>;
+  /**
+   * Системы, показанные кнопками, — те же, что человек видит сейчас.
+   *
+   * Кнопка несёт индекс, а не код: callback_data ограничен 64 байтами, и
+   * длинный код системы туда не влезет. Список хранится рядом с контекстом,
+   * как страницы каталога.
+   */
+  foundSystems?: api.SystemItem[];
+  /** Запомнить показанный список систем, чтобы `sys:<индекс>` его нашёл. */
+  rememberSystems?: (systems: api.SystemItem[]) => void;
 }
 
 /**
@@ -180,6 +193,14 @@ export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<b
   if (await handleCopyText(ctx, text)) return true;
   if (await handleBriefText(ctx, text)) return true;
 
+  // «система <название>» (2026-10-31) проверяется раньше свободной позиции и
+  // количества: команда не похожа на них ни форматом, ни смыслом.
+  const systemQuery = parseSystemCommand(text);
+  if (systemQuery !== null) {
+    await handleSystemCommand(ctx, systemQuery);
+    return true;
+  }
+
   const draft = ctx.session.draft;
   if (!draft) return false;
 
@@ -223,6 +244,96 @@ export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<b
   }
 
   return false;
+}
+
+// --- Системы в боте (Task 8, 2026-10-31) -------------------------------
+
+/**
+ * «система <название>»: найти карточку в Базе знаний и дописать её состав.
+ *
+ * Каталог бота систем не содержит — у системы нет цены. Поэтому выбор
+ * отдельным шагом: если название подошло к нескольким системам, бот показывает
+ * их списком и просит уточнить, а дописывает по одному нажатию.
+ */
+async function handleSystemCommand(ctx: CallbackCtx, query: string): Promise<void> {
+  const draft = ctx.session.draft;
+  if (!draft || !draft.offerId) {
+    await ctx.deps.send(
+      ctx.chatId,
+      'Систему можно добавить к сохранённому КП. Сначала соберите позиции и нажмите «Готово».',
+      MAIN_KEYBOARD,
+    );
+    return;
+  }
+  let systems: api.SystemItem[] = [];
+  try {
+    const res = await api.systems();
+    systems = res.systems ?? [];
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить системы: ${(e as Error).message}`);
+    return;
+  }
+  const found = pickSystem(systems, query);
+  if (found.length === 0) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Системы «${query}» не нашлось. Системы живут в Базе знаний — уточните название или откройте /catalog для материалов.`,
+    );
+    return;
+  }
+  if (found.length === 1) {
+    await addSystemBySku(ctx, found[0]);
+    return;
+  }
+  // Показанный список сохраняем рядом с контекстом: кнопка несёт индекс, и
+  // без этого карта «индекс → система» потерялась бы между сообщениями.
+  ctx.foundSystems = found.slice(0, PAGE_SIZE);
+  ctx.rememberSystems?.(ctx.foundSystems);
+  const keyboard = systemPickerKeyboard(ctx.foundSystems);
+  await ctx.deps.send(
+    ctx.chatId,
+    `Нашлось несколько систем по «${query}». Выберите нужную:`,
+    keyboard,
+  );
+}
+
+/** Клавиатура выбора системы: `sys:<индекс>`, индекс — в списке страницы. */
+function systemPickerKeyboard(systems: api.SystemItem[]): Record<string, unknown> {
+  const rows = systems.map((s, index) => [
+    {
+      text: s.problems && s.problems.length > 0 ? `${s.title} (есть проблемы)` : s.title,
+      callback_data: `sys:${index}`,
+    },
+  ]);
+  rows.push([{ text: '< Назад', callback_data: 'back' }]);
+  return { inline_keyboard: rows };
+}
+
+export async function onSystemPick(ctx: CallbackCtx, index: number): Promise<void> {
+  // Список приехал из памяти поллера вместе с контекстом: кнопка несёт индекс,
+  // а не код (callback_data ограничен 64 байтами).
+  const systems = ctx.foundSystems ?? [];
+  const system = systems[index];
+  if (!system) {
+    await ctx.deps.send(ctx.chatId, 'Список устарел — пришлите название системы ещё раз.');
+    return;
+  }
+  await addSystemBySku(ctx, system);
+}
+
+/** Дописать состав и показать, что вошло, а что осталось без цены. */
+async function addSystemBySku(ctx: CallbackCtx, system: api.SystemItem): Promise<void> {
+  const draft = ctx.session.draft;
+  if (!draft || !draft.offerId) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  try {
+    const res = await api.addSystem(draft.offerId, ctx.chatId, system.sku);
+    await ctx.deps.send(ctx.chatId, systemAddedMessage(res), MAIN_KEYBOARD);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось добавить систему: ${(e as Error).message}`);
+  }
 }
 
 // --- Кнопки ------------------------------------------------------------
@@ -378,6 +489,9 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   pick: onPick,
   doc: onDoc,
   link: onLink,
+  // Выбор системы из списка: `sys:<индекс>`. Индекс, а не код: callback_data
+  // ограничен 64 байтами, а код системы с кириллицей туда не влезет.
+  sys: onSystemPick,
 };
 
 export { answerCallback, editMessage };

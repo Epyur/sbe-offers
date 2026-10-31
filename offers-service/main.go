@@ -158,9 +158,15 @@ func main() {
 	mux.HandleFunc("POST /api/offers/bot/verify-code", s.requireServiceSecret(s.handleBotVerifyCode))
 	mux.HandleFunc("GET /api/offers/bot/identity", s.requireServiceSecret(s.handleBotIdentity))
 	mux.HandleFunc("GET /api/offers/bot/catalog", s.requireServiceSecret(s.handleBotCatalog))
+	// Системы для команды «система <название>» (2026-10-31): в каталоге бота их
+	// нет, но выбрать состав нужно.
+	mux.HandleFunc("GET /api/offers/bot/systems", s.requireServiceSecret(s.handleBotSystems))
 	mux.HandleFunc("GET /api/offers/bot/offers", s.requireServiceSecret(s.handleBotListOffers))
 	mux.HandleFunc("POST /api/offers/bot/offers", s.requireServiceSecret(s.handleBotCreateOffer))
 	mux.HandleFunc("PATCH /api/offers/bot/offers/{id}", s.requireServiceSecret(s.handleBotPatchOffer))
+	// «система <название>» в боте (2026-10-31): состав из Базы знаний
+	// дописывается позициями. Правило состава то же, что у плагина.
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/system", s.requireServiceSecret(s.handleBotAddSystem))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/docx", s.requireServiceSecret(s.handleBotDocx))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/link", s.requireServiceSecret(s.handleBotOfferLink))
 	// Бриф-диалог (2026-10-29): вопросы менеджеру и текст секций пишет

@@ -45,6 +45,7 @@ function makeDeps(initial?: ChatSession): {
     lastMessage: new Map(),
     pages: new Map(),
     sessions: new Map(),
+    foundSystems: new Map(),
   };
   const current = initial ?? newSession();
   const deps: BotDeps = {
