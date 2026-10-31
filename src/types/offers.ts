@@ -169,6 +169,13 @@ export interface Material {
   priceMin?: number | null;
   priceMax?: number | null;
   priceSeenAt?: string;
+  /**
+   * Заметка Базы знаний, из которой материал заведён (2026-10-31). По этому
+   * заголовку состав системы находит материал по вики-ссылке `[[Название]]`.
+   * Пусто у материала, заведённого руками в плагине.
+   */
+  noteTitle?: string;
+  noteId?: number;
   photoKey: string;
   sortOrder: number;
   archived: boolean;

@@ -6,18 +6,22 @@ import { formatMoney } from '../utils/money';
 import { formatShortDate } from '../utils/date';
 
 /**
- * В«РњР°С‚РµСЂРёР°Р»С‹В» вЂ” С‚Рѕ, С‡С‚Рѕ РїСЂРѕРґР°С‘С‚СЃСЏ (2026-10-31).
+ * «Материалы» — то, что продаётся (2026-10-31).
  *
- * РџСЂРµР¶РЅРёР№ В«РљР°С‚Р°Р»РѕРіВ» СЃРјРµС€РёРІР°Р» СЃРёСЃС‚РµРјС‹, РјР°С‚РµСЂРёР°Р»С‹ Рё СЂР°Р±РѕС‚С‹, Р° Сѓ РєР°Р¶РґРѕР№ СЃС‚СЂРѕРєРё Р±С‹Р»Р°
- * Р±Р°Р·РѕРІР°СЏ С†РµРЅР°. РўРµРїРµСЂСЊ РјР°С‚РµСЂРёР°Р»Р°Рј СЃРІРѕСЏ С‚Р°Р±Р»РёС†Р°, Сѓ РєР°Р¶РґРѕРіРѕ СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ SKU,
- * РєРѕС‚РѕСЂС‹Р№ РЅР°Р·РЅР°С‡Р°РµС‚ СЃРµСЂРІРµСЂ, Рё РІР°СЂРёР°С†РёРё Р•РљРќ. **РљРѕР»РѕРЅРєРё С†РµРЅС‹ РЅРµС‚**: С†РµРЅР° РїСЂРёС…РѕРґРёС‚
- * РёР· С‚Р°Р±Р»РёС†С‹ РјРµРЅРµРґР¶РµСЂР° РґР»СЏ РєРѕРЅРєСЂРµС‚РЅРѕРіРѕ РљРџ, Р·РґРµСЃСЊ вЂ” С‚РѕР»СЊРєРѕ РІРёР»РєР° РґР»СЏ Р°РЅР°Р»РёС‚РёРєРё.
+ * Прежний «Каталог» смешивал системы, материалы и работы, а у каждой строки
+ * была базовая цена. Теперь материалам своя таблица, у каждого собственный SKU,
+ * который назначает сервер, и вариации ЕКН. **Колонки цены нет**: цена приходит
+ * из таблицы менеджера для конкретного КП, здесь — только вилка для аналитики.
  *
- * РЎРёСЃС‚РµРјС‹ СЃСЋРґР° РЅРµ РїРѕРїР°РґР°СЋС‚ РїРѕ РїРѕСЃС‚СЂРѕРµРЅРёСЋ: РѕРЅРё Р¶РёРІСѓС‚ РєР°СЂС‚РѕС‡РєР°РјРё Р‘Р°Р·С‹ Р·РЅР°РЅРёР№,
- * СЂР°Р·РґРµР» В«РЎРёСЃС‚РµРјС‹В».
+ * Материалы заводятся из карточек Базы знаний с тегом material: сервер делает
+ * это при чтении списка, и тогда вики-ссылка из состава системы находит нужный
+ * материал. Поэтому в списке есть пометка «из карточки».
+ *
+ * Системы сюда не попадают по построению: они живут карточками Базы знаний,
+ * раздел «Системы».
  */
 export function renderMaterialEditor(view: OffersView, container: HTMLElement): void {
-  container.createDiv({ cls: 'tn-offers-muted', text: 'Р—Р°РіСЂСѓР·РєР° РјР°С‚РµСЂРёР°Р»РѕРІвЂ¦' });
+  container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка материалов…' });
   void load(view, container, { query: '', archived: false });
 }
 
@@ -31,7 +35,7 @@ async function load(view: OffersView, container: HTMLElement, filter: MaterialFi
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
   const search = actions.createEl('input', {
     cls: 'tn-offers-input tn-offers-grow',
-    attr: { placeholder: 'РџРѕРёСЃРє РїРѕ РЅР°Р·РІР°РЅРёСЋ, SKU Рё Р•РљРќ' },
+    attr: { placeholder: 'Поиск по названию, SKU и ЕКН' },
   });
   search.value = filter.query;
   let timer: number | null = null;
@@ -46,14 +50,16 @@ async function load(view: OffersView, container: HTMLElement, filter: MaterialFi
   const archiveBox = actions.createEl('label', { cls: 'tn-offers-check' });
   const archiveInput = archiveBox.createEl('input', { attr: { type: 'checkbox' } });
   archiveInput.checked = filter.archived;
-  archiveBox.createSpan({ text: ' РџРѕРєР°Р·Р°С‚СЊ Р°СЂС…РёРІ' });
+  archiveBox.createSpan({ text: ' Показать архив' });
   archiveInput.addEventListener('change', () => {
     filter = { ...filter, archived: archiveInput.checked };
     void load(view, container, filter);
   });
 
+  // Ручное заведение осталось: работа без карточки (монтаж, доставка) и
+  // материал, которого в Базе знаний нет, — законные случаи.
   if (view.admin) {
-    const add = actions.createEl('button', { text: 'вћ• РњР°С‚РµСЂРёР°Р»', cls: 'tn-btn tn-btn-primary' });
+    const add = actions.createEl('button', { text: '➕ Материал', cls: 'tn-btn tn-btn-primary' });
     add.addEventListener('click', () => {
       new MaterialModal(view, null, () => void load(view, container, filter)).open();
     });
@@ -63,7 +69,7 @@ async function load(view: OffersView, container: HTMLElement, filter: MaterialFi
   try {
     items = await view.plugin.offersService.listMaterials(filter.archived);
   } catch (e: unknown) {
-    container.createDiv({ cls: 'tn-offers-error', text: `РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РјР°С‚РµСЂРёР°Р»С‹: ${errorMessage(e)}` });
+    container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить материалы: ${errorMessage(e)}` });
     return;
   }
   const shown = filterByQuery(items, filter.query);
@@ -71,15 +77,15 @@ async function load(view: OffersView, container: HTMLElement, filter: MaterialFi
     container.createDiv({
       cls: 'tn-offers-empty',
       text: filter.query
-        ? 'РџРѕ Р·Р°РїСЂРѕСЃСѓ РЅРёС‡РµРіРѕ РЅРµ РЅР°С€Р»РѕСЃСЊ.'
-        : 'РњР°С‚РµСЂРёР°Р»РѕРІ РїРѕРєР° РЅРµС‚. РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РµС‰С‘ РЅРµ Р·Р°РІС‘Р» РЅРё РѕРґРЅРѕРіРѕ.',
+        ? 'По запросу ничего не нашлось.'
+        : 'Материалов пока нет. Заведите карточку с тегом material в Базе знаний или добавьте материал вручную.',
     });
     return;
   }
 
   const table = container.createEl('table', { cls: 'tn-offers-table' });
   const head = table.createEl('thead').createEl('tr');
-  for (const title of ['РќР°Р·РІР°РЅРёРµ Рё РєРѕРґ', 'Р•Рґ.', 'Р’РёР»РєР° С†РµРЅ', 'Р•РљРќ', '']) {
+  for (const title of ['Название и код', 'Ед.', 'Вилка цен', 'ЕКН', '']) {
     head.createEl('th', { text: title });
   }
   const body = table.createEl('tbody');
@@ -89,43 +95,47 @@ async function load(view: OffersView, container: HTMLElement, filter: MaterialFi
 
     const nameCell = row.createEl('td');
     nameCell.createDiv({ text: item.name });
-    nameCell.createDiv({ cls: 'tn-offers-muted tn-offers-mono', text: item.sku });
+    const codeLine = nameCell.createDiv({ cls: 'tn-offers-muted tn-offers-mono' });
+    codeLine.createSpan({ text: item.sku });
+    if (item.noteTitle) {
+      codeLine.createSpan({ cls: 'tn-offers-chip', text: 'из карточки' });
+    }
 
     row.createEl('td', { text: item.unit });
     row.createEl('td', { cls: 'tn-offers-num', text: priceRangeText(item) });
     row.createEl('td', { cls: 'tn-offers-num', text: String(item.ekn.length) });
 
     const cell = row.createEl('td');
-    const open = cell.createEl('button', { text: 'РљР°СЂС‚РѕС‡РєР°', cls: 'tn-btn tn-btn-ghost' });
+    const open = cell.createEl('button', { text: 'Карточка', cls: 'tn-btn tn-btn-ghost' });
     open.addEventListener('click', () => {
       new MaterialModal(view, item, () => void load(view, container, filter)).open();
     });
   }
 }
 
-/** Р’РёР»РєР° С†РµРЅ СЃР»РѕРІР°РјРё. РџСѓСЃС‚Р°СЏ РІРёР»РєР° вЂ” В«С†РµРЅР° РЅРµ Р·Р°РіСЂСѓР¶Р°Р»Р°СЃСЊВ», Р° РЅРµ РЅРѕР»СЊ. */
+/** Вилка цен словами. Пустая вилка — «цена не загружалась», а не ноль. */
 export function priceRangeText(item: Material): string {
   const min = item.priceMin ?? null;
   const max = item.priceMax ?? null;
-  if (min === null && max === null) return 'С†РµРЅР° РЅРµ Р·Р°РіСЂСѓР¶Р°Р»Р°СЃСЊ';
+  if (min === null && max === null) return 'цена не загружалась';
   if (min !== null && max !== null && min !== max) {
-    return `${formatMoney(min)} вЂ“ ${formatMoney(max)} в‚Ѕ`;
+    return `${formatMoney(min)} – ${formatMoney(max)} ₽`;
   }
-  return `${formatMoney(min ?? max ?? 0)} в‚Ѕ`;
+  return `${formatMoney(min ?? max ?? 0)} ₽`;
 }
 
 /**
- * РћС‚Р±РѕСЂ РґР»СЏ РїРѕРёСЃРєР°.
+ * Отбор для поиска.
  *
- * РС‰РµРј РїРѕ РЅР°Р·РІР°РЅРёСЋ, РєРѕРґСѓ Рё РЅРѕРјРµСЂР°Рј Р•РљРќ: РјРµРЅРµРґР¶РµСЂ РёС‰РµС‚ РјР°С‚РµСЂРёР°Р» РїРѕ Р±СѓРјР°РіРµ, РіРґРµ
- * РЅР°РїРёСЃР°РЅ Р•РљРќ, Р° РЅРµ РїРѕ РЅР°Р·РІР°РЅРёСЋ РІ СЃРїСЂР°РІРѕС‡РЅРёРєРµ. Р РµРіРёСЃС‚СЂ Рё Р»РёС€РЅРёРµ РїСЂРѕР±РµР»С‹ РЅРµ
- * РІР°Р¶РЅС‹ вЂ” СЌС‚Рѕ С‚Рѕ, С‡С‚Рѕ С‡РµР»РѕРІРµРє РЅР°Р±РёСЂР°РµС‚ СЂСѓРєР°РјРё.
+ * Ищем по названию, коду и номерам ЕКН: менеджер ищет материал по бумаге, где
+ * написан ЕКН, а не по названию в справочнике. Регистр и лишние пробелы не
+ * важны — это то, что человек набирает руками.
  */
 export function filterByQuery(items: Material[], query: string): Material[] {
   const q = query.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!q) return items;
   return items.filter((item) => {
-    const haystack = [item.name, item.sku, ...item.ekn.map((e) => e.ekn)]
+    const haystack = [item.name, item.sku, item.noteTitle ?? '', ...item.ekn.map((e) => e.ekn)]
       .join(' ')
       .toLowerCase()
       .replace(/\s+/g, ' ');
@@ -133,9 +143,11 @@ export function filterByQuery(items: Material[], query: string): Material[] {
   });
 }
 
-/** РљР°СЂС‚РѕС‡РєР° РјР°С‚РµСЂРёР°Р»Р°: РїРѕР»СЏ СЃРїСЂР°РІРѕС‡РЅРёРєР° Рё С‚Р°Р±Р»РёС†Р° РІР°СЂРёР°С†РёР№ Р•РљРќ. */
+/** Карточка материала: поля справочника и таблица вариаций ЕКН. */
 class MaterialModal extends Modal {
   private draft: Material;
+  private typeCode = '';
+  private series = '';
 
   constructor(
     private view: OffersView,
@@ -150,7 +162,7 @@ class MaterialModal extends Modal {
           sku: '',
           kind: 'material',
           name: '',
-          unit: 'С€С‚',
+          unit: 'шт',
           description: '',
           priceMin: null,
           priceMax: null,
@@ -170,36 +182,42 @@ class MaterialModal extends Modal {
   private render(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl('h3', { text: this.draft.id ? 'РњР°С‚РµСЂРёР°Р»' : 'РќРѕРІС‹Р№ РјР°С‚РµСЂРёР°Р»' });
+    contentEl.createEl('h3', { text: this.draft.id ? 'Материал' : 'Новый материал' });
 
-    // SKU РїРѕРєР°Р·С‹РІР°РµС‚СЃСЏ, РЅРѕ РЅРµ СЂРµРґР°РєС‚РёСЂСѓРµС‚СЃСЏ: СЌС‚Рѕ Р»РёС‡РЅРѕСЃС‚СЊ РјР°С‚РµСЂРёР°Р»Р°, Р° РЅРµ
-    // СЏСЂР»С‹Рє. РЎРµСЂРІРµСЂ РЅР°Р·РЅР°С‡РёС‚ РєРѕРґ РїСЂРё РїРµСЂРІРѕРј СЃРѕС…СЂР°РЅРµРЅРёРё.
+    // SKU показывается, но не редактируется: это личность материала, а не
+    // ярлык. Сервер назначит код при первом сохранении.
     contentEl.createDiv({
       cls: 'tn-offers-muted tn-offers-mono',
-      text: this.draft.sku ? `РљРѕРґ: ${this.draft.sku}` : 'РљРѕРґ РјР°С‚РµСЂРёР°Р»Р° РЅР°Р·РЅР°С‡РёС‚ СЃРµСЂРІРµСЂ РїСЂРё СЃРѕС…СЂР°РЅРµРЅРёРё',
+      text: this.draft.sku ? `Код: ${this.draft.sku}` : 'Код материала назначит сервер при сохранении',
     });
+    if (this.draft.noteTitle) {
+      contentEl.createDiv({
+        cls: 'tn-offers-muted',
+        text: `Из карточки Базы знаний: ${this.draft.noteTitle}`,
+      });
+    }
 
-    new Setting(contentEl).setName('РќР°Р·РІР°РЅРёРµ').addText((text) => {
+    new Setting(contentEl).setName('Название').addText((text) => {
       text.setValue(this.draft.name).onChange((v) => {
         this.draft.name = v;
       });
     });
     new Setting(contentEl)
-      .setName('Р’РёРґ')
-      .setDesc('Р Р°Р±РѕС‚Р° РїСЂРѕРґР°С‘С‚СЃСЏ С‚Р°Рє Р¶Рµ, РЅРѕ РІР°СЂРёР°С†РёР№ Р•РљРќ Сѓ РЅРµС‘ РЅРµ Р±С‹РІР°РµС‚.')
+      .setName('Вид')
+      .setDesc('Работа продаётся так же, но вариаций ЕКН у неё не бывает.')
       .addDropdown((dd) => {
-        dd.addOption('material', 'РњР°С‚РµСЂРёР°Р»');
-        dd.addOption('work', 'Р Р°Р±РѕС‚Р°');
+        dd.addOption('material', 'Материал');
+        dd.addOption('work', 'Работа');
         dd.setValue(this.draft.kind).onChange((v) => {
           this.draft.kind = v === 'work' ? 'work' : 'material';
         });
       });
-    new Setting(contentEl).setName('Р•РґРёРЅРёС†Р°').addText((text) => {
+    new Setting(contentEl).setName('Единица').addText((text) => {
       text.setValue(this.draft.unit).onChange((v) => {
         this.draft.unit = v;
       });
     });
-    new Setting(contentEl).setName('РћРїРёСЃР°РЅРёРµ').addTextArea((area) => {
+    new Setting(contentEl).setName('Описание').addTextArea((area) => {
       area.setValue(this.draft.description).onChange((v) => {
         this.draft.description = v;
       });
@@ -207,21 +225,18 @@ class MaterialModal extends Modal {
     });
 
     if (!this.draft.id) {
-      contentEl.createDiv({
-        cls: 'tn-offers-muted',
-        text: 'РР· РєР°РєРёС… Р±СѓРєРІ СЃРѕР±СЂР°С‚СЊ РєРѕРґ:',
-      });
+      contentEl.createDiv({ cls: 'tn-offers-muted', text: 'Из каких букв собрать код:' });
       new Setting(contentEl)
-        .setName('РўРёРї')
-        .setDesc('РљРѕСЂРѕС‚РєРѕРµ СЃР»РѕРІРѕ: РњР•РњР‘, РЈРўР•РџР›, РљР Р•Рџ, Р“Р РЈРќРў, РџР›РРў.')
+        .setName('Тип')
+        .setDesc('Короткое слово: МЕМБ, УТЕПЛ, КРЕП, ГРУНТ, ПЛИТ.')
         .addText((text) => {
           text.setValue(this.typeCode).onChange((v) => {
             this.typeCode = v;
           });
         });
       new Setting(contentEl)
-        .setName('РЎРµСЂРёСЏ')
-        .setDesc('РџР’РҐ, РџРР , Р­РџРџ вЂ” РїРµСЂРІС‹Рµ С‚СЂРё Р·РЅР°РєР° РїРѕРїР°РґСѓС‚ РІ РєРѕРґ.')
+        .setName('Серия')
+        .setDesc('ПВХ, ПИР, ЭПП — первые три знака попадут в код.')
         .addText((text) => {
           text.setValue(this.series).onChange((v) => {
             this.series = v;
@@ -229,20 +244,17 @@ class MaterialModal extends Modal {
         });
     }
 
-    contentEl.createEl('h4', { text: 'Р’Р°СЂРёР°С†РёРё (Р•РљРќ)' });
+    contentEl.createEl('h4', { text: 'Вариации (ЕКН)' });
     this.renderEkn(contentEl);
 
     new Setting(contentEl)
       .addButton((btn) =>
-        btn
-          .setButtonText('РЎРѕС…СЂР°РЅРёС‚СЊ')
-          .setCta()
-          .onClick(() => {
-            void this.save();
-          }),
+        btn.setButtonText('Сохранить').setCta().onClick(() => {
+          void this.save();
+        }),
       )
       .addButton((btn) =>
-        btn.setButtonText('Р—Р°РєСЂС‹С‚СЊ').onClick(() => {
+        btn.setButtonText('Закрыть').onClick(() => {
           this.close();
           this.after();
         }),
@@ -250,46 +262,40 @@ class MaterialModal extends Modal {
 
     if (this.draft.id && !this.draft.archived) {
       new Setting(contentEl)
-        .setName('РђСЂС…РёРІ')
-        .setDesc('РЈРґР°Р»РµРЅРёРµ РЅРµ СЃС‚РёСЂР°РµС‚ РјР°С‚РµСЂРёР°Р»: РЅР° РЅРµРіРѕ СЃСЃС‹Р»Р°СЋС‚СЃСЏ СЃС‚Р°СЂС‹Рµ РїСЂРµРґР»РѕР¶РµРЅРёСЏ.')
+        .setName('Архив')
+        .setDesc('Удаление не стирает материал: на него ссылаются старые предложения.')
         .addButton((btn) =>
-          btn
-            .setButtonText('рџ—„ РЈР±СЂР°С‚СЊ РІ Р°СЂС…РёРІ')
-            .setWarning()
-            .onClick(() => {
-              void this.archive();
-            }),
+          btn.setButtonText('🗄 Убрать в архив').setWarning().onClick(() => {
+            void this.archive();
+          }),
         );
     }
   }
-
-  private typeCode = '';
-  private series = '';
 
   private renderEkn(container: HTMLElement): void {
     if (!this.draft.id) {
       container.createDiv({
         cls: 'tn-offers-muted',
-        text: 'Р’Р°СЂРёР°С†РёРё РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РїРѕСЃР»Рµ СЃРѕС…СЂР°РЅРµРЅРёСЏ РјР°С‚РµСЂРёР°Р»Р° Рё РїСЂРё Р·Р°РіСЂСѓР·РєРµ С‚Р°Р±Р»РёС†С‹ РјРµРЅРµРґР¶РµСЂР°.',
+        text: 'Вариации добавляются после сохранения материала и при загрузке таблицы менеджера.',
       });
       return;
     }
     if (this.draft.ekn.length === 0) {
-      container.createDiv({ cls: 'tn-offers-muted', text: 'Р’Р°СЂРёР°С†РёР№ РїРѕРєР° РЅРµС‚.' });
+      container.createDiv({ cls: 'tn-offers-muted', text: 'Вариаций пока нет.' });
     } else {
       const table = container.createEl('table', { cls: 'tn-offers-table' });
       const head = table.createEl('thead').createEl('tr');
-      for (const title of ['Р•РљРќ', 'Р’Р°СЂРёР°РЅС‚', 'РћС‚РєСѓРґР°', 'РљРѕРіРґР° РІРёРґРµР»Рё', '']) {
+      for (const title of ['ЕКН', 'Вариант', 'Откуда', 'Когда видели', '']) {
         head.createEl('th', { text: title });
       }
       const body = table.createEl('tbody');
       for (const ekn of this.draft.ekn) {
         const row = body.createEl('tr');
         row.createEl('td', { cls: 'tn-offers-mono', text: ekn.ekn });
-        row.createEl('td', { text: ekn.variant || 'вЂ”' });
-        row.createEl('td', { text: ekn.source === 'excel' ? 'С‚Р°Р±Р»РёС†Р°' : 'РІСЂСѓС‡РЅСѓСЋ' });
+        row.createEl('td', { text: ekn.variant || '—' });
+        row.createEl('td', { text: ekn.source === 'excel' ? 'таблица' : 'вручную' });
         row.createEl('td', { text: formatShortDate(ekn.lastSeenAt) });
-        const del = row.createEl('td').createEl('button', { text: 'вњ–', cls: 'tn-btn tn-btn-ghost' });
+        const del = row.createEl('td').createEl('button', { text: '✖', cls: 'tn-btn tn-btn-ghost' });
         del.addEventListener('click', () => {
           void this.removeEkn(ekn);
         });
@@ -298,13 +304,13 @@ class MaterialModal extends Modal {
     const addRow = container.createDiv({ cls: 'tn-offers-row tn-offers-ekn-add' });
     const eknInput = addRow.createEl('input', {
       cls: 'tn-offers-input tn-offers-ekn-code',
-      attr: { placeholder: 'Р•РљРќ' },
+      attr: { placeholder: 'ЕКН' },
     });
     const variantInput = addRow.createEl('input', {
       cls: 'tn-offers-input tn-offers-grow',
-      attr: { placeholder: 'Р’Р°СЂРёР°РЅС‚: 1,5 РјРј, СЃРµСЂС‹Р№' },
+      attr: { placeholder: 'Вариант: 1,5 мм, серый' },
     });
-    const add = addRow.createEl('button', { text: 'вћ• Р”РѕР±Р°РІРёС‚СЊ', cls: 'tn-btn tn-btn-ghost' });
+    const add = addRow.createEl('button', { text: '➕ Добавить', cls: 'tn-btn tn-btn-ghost' });
     add.addEventListener('click', () => {
       void this.addEkn(eknInput, variantInput);
     });
@@ -312,7 +318,7 @@ class MaterialModal extends Modal {
 
   private async save(): Promise<void> {
     if (!this.draft.name.trim()) {
-      new Notice('РќРµ Р·Р°РїРѕР»РЅРµРЅРѕ РЅР°Р·РІР°РЅРёРµ РјР°С‚РµСЂРёР°Р»Р°');
+      new Notice('Не заполнено название материала');
       return;
     }
     try {
@@ -322,22 +328,22 @@ class MaterialModal extends Modal {
         series: this.series,
       });
       this.draft = { ...saved, ekn: saved.ekn ?? [] };
-      new Notice(this.item ? 'РњР°С‚РµСЂРёР°Р» СЃРѕС…СЂР°РЅС‘РЅ' : `РњР°С‚РµСЂРёР°Р» Р·Р°РІРµРґС‘РЅ: ${saved.sku}`);
+      new Notice(this.item ? 'Материал сохранён' : `Материал заведён: ${saved.sku}`);
       this.after();
       this.render();
     } catch (e: unknown) {
-      new Notice(`РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ: ${errorMessage(e)}`);
+      new Notice(`Не удалось сохранить: ${errorMessage(e)}`);
     }
   }
 
   private async addEkn(codeInput: HTMLInputElement, variantInput: HTMLInputElement): Promise<void> {
     const code = codeInput.value.trim();
     if (!code) {
-      new Notice('РќРµ СѓРєР°Р·Р°РЅ Р•РљРќ');
+      new Notice('Не указан ЕКН');
       return;
     }
-    // Р—РЅР°С‡РµРЅРёСЏ Р·Р°Р±РёСЂР°РµРј Р”Рћ СЃР±СЂРѕСЃР°: input.value вЂ” Р¶РёРІРѕРµ РїРѕР»Рµ, Рё РѕС‡РёСЃС‚РєР° РЅРёР¶Рµ
-    // РёРЅР°С‡Рµ РѕР±РЅСѓР»РёР»Р° Р±С‹ С‚Рѕ, С‡С‚Рѕ РµС‰С‘ РЅРµ СѓС€Р»Рѕ РЅР° СЃРµСЂРІРµСЂ.
+    // Значения забираем ДО сброса: input.value — живое поле, и очистка ниже
+    // иначе обнулила бы то, что ещё не ушло на сервер.
     const variant = variantInput.value.trim();
     try {
       const saved = await this.view.plugin.offersService.addMaterialEkn(this.draft.id, code, variant);
@@ -345,7 +351,7 @@ class MaterialModal extends Modal {
       this.after();
       this.render();
     } catch (e: unknown) {
-      new Notice(`РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ Р•РљРќ: ${errorMessage(e)}`);
+      new Notice(`Не удалось добавить ЕКН: ${errorMessage(e)}`);
     }
   }
 
@@ -356,18 +362,18 @@ class MaterialModal extends Modal {
       this.after();
       this.render();
     } catch (e: unknown) {
-      new Notice(`РќРµ СѓРґР°Р»РѕСЃСЊ СѓР±СЂР°С‚СЊ Р•РљРќ: ${errorMessage(e)}`);
+      new Notice(`Не удалось убрать ЕКН: ${errorMessage(e)}`);
     }
   }
 
   private async archive(): Promise<void> {
     try {
       await this.view.plugin.offersService.archiveMaterial(this.draft.id);
-      new Notice(`РњР°С‚РµСЂРёР°Р» В«${this.draft.name}В» РІ Р°СЂС…РёРІРµ`);
+      new Notice(`Материал «${this.draft.name}» в архиве`);
       this.close();
       this.after();
     } catch (e: unknown) {
-      new Notice(`РќРµ СѓРґР°Р»РѕСЃСЊ СѓР±СЂР°С‚СЊ РІ Р°СЂС…РёРІ: ${errorMessage(e)}`);
+      new Notice(`Не удалось убрать в архив: ${errorMessage(e)}`);
     }
   }
 
@@ -375,5 +381,3 @@ class MaterialModal extends Modal {
     this.contentEl.empty();
   }
 }
-
-
