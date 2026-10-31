@@ -1265,3 +1265,102 @@ the reporting shell produced the very pattern it reported.
 mojibake. They need a rebuild to pick it up - the base file is now clean, so the
 next build of each plugin fixes it for free. That belongs to those plugins'
 cycles, not this one.
+
+## Composition links by wiki-reference, materials from KB cards - 2026-10-31
+
+User decision, after the release showed the systems section could not resolve
+anything: **SKU stays as a property of the material card, but the link between
+a system and its materials is the wiki-reference.** Measured on live data
+before writing code:
+
+- 3387 composition lines, **0** of them carry a `MAT-…`/`РАБ-…` code;
+- 2479 wiki links, **2103** of them point at a note carrying the `material` tag.
+
+So the old rule ("resolve by code") could not work by construction, and the
+standard document never asked for a code at all - the `- Мембрана
+(MAT-МЕМБ-ПВХ-0007)` example was mine, invented in the plan, and it went
+unnoticed until the release.
+
+**Resolution order now** (`resolveComposition`): wiki link first, code second.
+The link wins when a line has both - a person put the link there by hand.
+
+- `systems_links.go`: `wikiTarget` parses `[[Name]]`, `[[Name|alias]]`,
+  `[[Name#anchor]]`; alias and anchor dropped; matching is case-insensitive and
+  trimmed, like Obsidian. The regex is non-greedy and has no `\b` (that gotcha
+  has bitten three times now).
+- A link to a note that is **not** a material (a GOST, a protocol) is not a
+  material: it stays unresolved and is named in `problems`. Nothing is guessed.
+- `CompositionItem` gained `wiki`, so the UI can show what the line points at
+  even when it did not resolve.
+
+**Materials now come from Knowledge Base cards** (`material_notes.go`).
+
+- Notes tagged `material` are turned into materials on every read of the list
+  (`syncMaterialsFromNotes` inside `listMaterials`). It is a read-time sync, not
+  a migration: no "what if the note was renamed" question - the name follows
+  the note.
+- The material remembers its origin: `note_title` and `note_id` (two idempotent
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`).
+- **SKU is assigned once** and never touched by this sync; an existing material
+  is never rewritten - a human's edit in the plugin outranks the note's title.
+- A note deleted in the KB does **not** archive the material: archiving is a
+  person's decision in the plugin, not a side effect of cleaning up notes.
+
+**Duplication removed before it could spread.** `handleAddSystem` and
+`handleBotAddSystem` were 85% identical; both now call `assembleSystem`, which
+returns a typed `composeError` and lets the caller pick the HTTP status. `dryer`
+no longer reports that pair.
+
+**A stub lied, and the stand caught it.** `kb-stub.mjs` answered *every* note for
+`tag_id=7` and *nothing* for `tag_id=8`, so on the stand no material was ever
+created from a card, while on the server all 1165 tagged notes are there. The
+stub now filters by the requested tag, exactly as `kb-service` does. This is the
+same class of mistake as 2026-10-30 ("a stub I write myself is a claim about
+someone else's contract"), and it is worth repeating: a stub simpler than the
+contract it imitates produces green tests and broken features.
+
+**Checks.** `gofmt`/`go vet` clean; `go test ./...` green (`main` 40.7%,
+`model` 71.6%, `skills` 84.2%); `resolveComposition` 92.3% covered, the new
+pure functions are pinned by 15 tests. OpenAPI: 59 operations, 47 paths, schema
+matches. Stand E2E **198/198**, twice. 4 checks in section 17 were rewritten:
+they asserted the old code-based contract and had to follow the decision.
+
+**Still to do by the user, not by code.** The materials for the systems that
+matter must exist as KB cards with the `material` tag - then the links resolve
+by themselves. Nothing can be done in code about a card that has no material
+note behind it: it stays in `problems` on purpose.
+
+### Deployed and measured on live data - 2026-10-31 20:13
+
+Deployed with the same discipline as the previous release: files through
+`tar`/`scp`, MD5 of `systemcards.go`, `systems_links.go`, `material_notes.go`,
+`material.go` compared before the rebuild, backup `offers-service.bak-wikilinks`,
+`docker compose up -d --build offers`, `CREATED` moved, log shows
+`offers-service listening on :3000`.
+
+**The numbers now, against the same database as the measurement before:**
+
+| | before | after |
+|---|---|---|
+| materials in the catalogue | 1 | **1165** (all from KB cards, all with `note_title`) |
+| composition lines | 3387 | 3387 |
+| lines with a wiki link | — | 2103 |
+| **lines resolved** | **0** | **2103** |
+| unresolved lines | 3387 | 1284 - every one of them has no link at all |
+
+So **every single wiki link resolves**. The remaining 1284 lines are plain
+text: "Первый материал или слой", "Асфальтобетон", the template placeholder
+rows of unfinished cards. That is exactly what `problems` is for - they are
+named to the person instead of being dropped, and no code change can guess what
+they mean.
+
+Only **5 cards** have a composition where every line has a link; the rest mix
+linked and plain-text lines. This is a data situation, not a defect: a
+technologist's work remains, and the section now shows precisely where.
+
+**One more thing the live check proved.** The sync turned 1165 notes into
+materials in a single read, with SKUs assigned (`MAT-ПРОЧ-ОБЩ-0002` and up).
+Note the type code: the sync passes no type/series hints, so everything lands in
+`ПРОЧ`/`ОБЩ`. If type codes in SKUs matter for anything, that is the next
+decision to make - the plans had them typed by hand, and the automatic ones are
+not meaningful.
