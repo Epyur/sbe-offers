@@ -886,3 +886,73 @@ CRAP 100–300, хотя реальное покрытие 96–100%.
 ```bash
 go test -coverprofile=/tmp/c.out ./... && go tool cover -func=/tmp/c.out | grep -E 'функция|total:'
 ```
+
+## Task 6 closed: systems from the Knowledge Base - 2026-10-31 (not committed)
+
+Continues the plan `docs/superpowers/plans/2026-10-30-sbe-offers-materials-systems-plan.md`
+after the cycle stop. This finishes Task 6 only; Tasks 7-9 (plugin UI, bot,
+release) are untouched.
+
+**What the task was.** The split between the two entities was decided by tags in
+`matcher.go` (`splitCardsByTags`, commit `2f2d3c8`), but nothing read that rule:
+there was no route, the composition was a list of plain strings with no link to
+the material catalogue, and a line pointing at a material that does not exist
+disappeared into the same string list with no trace.
+
+**Server.**
+
+- `skills/systemcard.go`: `SystemCard` gains `Links []CompositionLink{Raw, SKU}`,
+  filled by `linksFromComposition` in `ParseSystemCard`. `Composition []string`
+  stays exactly as it was - it feeds the model prompt and the document, and
+  changing its type would ripple into DOCX and the brief. `ExtractSku` is exported
+  so the service can derive the code from a card read out of the old cache. The
+  regex has no `\b` and accepts four digit numbers; a `РАБ-` code is found (test
+  `TestCompositionLinksWorkSku`), which is the third catch of that gotcha.
+- `systemcards.go`: `CompositionItem{Raw, SKU, MaterialID, Name, Unit, Ekn, Found}`
+  and `resolveComposition(card, materials)`. Every line ends up in the result;
+  `Found=false` lines are named in `Problems` with the reason: no code, unknown
+  code, or "material removed from the catalogue" (an archived material is found
+  in the map but reported separately - "not found" would be a lie). An empty
+  composition is one problem, not silently fine.
+  `systemCardFromParsed` is now the single place that builds a card from a parsed
+  note - `SystemCardsFromKB` and `SystemsFromKB` both use it.
+- `SystemsFromKB` reads `commercial_propose`, splits by tag, keeps systems only.
+- Route `GET /api/offers/systems` (`viewer`), handler `handleListSystems` answers
+  `{systems, kbEnabled, count, error?}`. It reads the **Knowledge Base live**, not
+  the card cache: the composition has to resolve against the *current* material
+  catalogue, while the cache serves names to the offer context. A KB failure
+  answers 200 with an empty list and `error`, as the refresh route does.
+- `sbe-offers-service.PromptText` now delegates to `skills.SystemCard.PromptText`.
+  The two were byte-identical (`dryer` 0.88-1.00 duplicate), and a prompt format
+  kept in two places drifts silently.
+
+**Stand.**
+
+- `scripts/kb-stub.mjs`: a third note with tags `commercial_propose` + `material`
+  (so the tag split is checked against the same feed), and the classic-roof card
+  now has `- 1 Мембрана ПВХ Эксперт (MAT-МЕМБ-ПВХ-0001)` in its composition.
+- `scripts/offers_local_e2e.mjs` section 17: tag split, composition resolved
+  against the material created in section 16 (name, id, `found`), a code-less
+  line staying visible and named in `problems`, 401 without a token.
+
+**Checks.** `gofmt`/`go vet` clean; `go test ./...` green with `main` 40.7%,
+`model` 71.6%, `skills` 84.2%. Coverage of the new code (`go tool cover -func`):
+`resolveComposition` 90.6, `SystemsFromKB` 84.2, `systemCardFromParsed` 100,
+`splitCardsByTags`/`noteHasTag` 100. `check_offers_openapi.mjs`: 56 routes, 44
+paths, schema matches. Local stand E2E **171/171**, run twice. 15 tests added in
+`skills/systemcard_links_test.go` and `systems_split_test.go`.
+
+**Not done, by the plan's own boundary.** Plugin UI (Task 7), bot (Task 8),
+version/docs/0.3.0 (Task 9), no commit, no deploy, no self-hosting.
+
+**Stand lesson (cost an hour).** The local service could not be rebuilt from its
+Dockerfile (same Docker Hub reachability as 2026-10-30), so the binary was built
+in a `golang:1.24` image. A CGO-enabled Go binary copied over the running
+container's `/mailers-offers` fails with `exec /mailers-offers: no such file or
+directory` - the kernel needs `ld-linux-x86-64.so.2` and musl has only
+`ld-musl-x86_64.so.1`, so the "file is not found" message is about the
+*interpreter*, not the file. Build with `CGO_ENABLED=0` for the stand; the
+container image itself is fine because it builds the binary on its own base.
+Also: `docker cp` into a container whose binary is running replaces the file but
+leaves that container's binary unmappable until it is restarted - restart after
+cp, then check `docker ps` says `Up`, not `Exited (255)`.

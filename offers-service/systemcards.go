@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -56,6 +57,30 @@ func (s *Server) handleRefreshSystemCards(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleListSystems — системы из Базы знаний с составом (раздел «Системы»).
+//
+// Читает БАЗУ ЗНАНИЙ напрямую, а не кеш карточек: состав нужно разрешать против
+// ТЕКУЩЕГО справочника материалов, а кеш держит имена карточек для «Контекста
+// КП». Ошибка базы знаний — не пустой экран: отдаём пустой список и `error`,
+// чтобы плагин написал, что именно не так.
+func (s *Server) handleListSystems(w http.ResponseWriter, r *http.Request) {
+	materials, err := s.listMaterials(r.Context(), false)
+	if err != nil {
+		dbError(w, "list systems: materials", err)
+		return
+	}
+	cards, err := SystemsFromKB(r.Context(), s.kb, materials)
+	resp := map[string]any{
+		"systems":   cards,
+		"kbEnabled": s.kb != nil && s.kb.configured(),
+		"count":     len(cards),
+	}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // SystemCard — карточка системы, как её видит offers-service.
 type SystemCard struct {
 	// NoteID — заметка в базе знаний. По ней открывается карточка в плагине.
@@ -70,6 +95,13 @@ type SystemCard struct {
 	Description string `json:"description"`
 	// Composition — состав (позиции без цен: цены в каталоге).
 	Composition []string `json:"composition"`
+	// CompositionLinks — тот же состав, разрешённый против справочника
+	// материалов: строка, код из неё, найденный материал. Строка, которой нет
+	// в справочнике, остаётся с Found=false и попадает в Problems.
+	CompositionLinks []CompositionItem `json:"compositionLinks,omitempty"`
+	// Problems — что не так с составом. Показывается человеку явно: молча
+	// терять строку состава нельзя.
+	Problems []string `json:"problems,omitempty"`
 	// Specifications — таблица характеристик.
 	Specifications [][]string `json:"specifications,omitempty"`
 	// ImageName — имя файла картинки в заметке.
@@ -86,6 +118,148 @@ type SystemCard struct {
 	HasComposition bool `json:"hasComposition"`
 	// Empty — карточка без содержания.
 	Empty bool `json:"empty"`
+}
+
+// CompositionItem — строка состава с разрешённым материалом.
+//
+// Raw — строка, как её написал человек. SKU — код из строки (пусто, если
+// ссылку не проставили). Found — материал нашёлся в справочнике; тогда
+// заполнены MaterialID, Name, Unit и Ekn. Ekn нужен, чтобы плагин мог собрать
+// позицию по конкретному варианту, не делая ещё один запрос.
+type CompositionItem struct {
+	Raw        string   `json:"raw"`
+	SKU        string   `json:"sku,omitempty"`
+	MaterialID int64    `json:"materialId"`
+	Name       string   `json:"name,omitempty"`
+	Unit       string   `json:"unit,omitempty"`
+	Ekn        []string `json:"ekn,omitempty"`
+	Found      bool     `json:"found"`
+}
+
+// resolveComposition разрешает строки состава против справочника материалов.
+//
+// Проблема — не ошибка: система без единого материала тоже законна (работы
+// без кода), но человек должен знать, что именно в ней не связано. Поэтому
+// каждая несвязанная строка называется отдельно, а пустой состав — одно
+// общее замечание.
+func resolveComposition(card skills.SystemCard, materials []Material) ([]CompositionItem, []string) {
+	links := card.Links
+	// Старый кеш карточки мог не нести Links: тогда разбираем строки сами.
+	if len(links) == 0 && len(card.Composition) > 0 {
+		links = make([]skills.CompositionLink, 0, len(card.Composition))
+		for _, raw := range card.Composition {
+			links = append(links, skills.CompositionLink{Raw: raw, SKU: skills.ExtractSku(raw)})
+		}
+	}
+	if len(links) == 0 {
+		return []CompositionItem{}, []string{"состав системы не заполнен"}
+	}
+
+	// Архивные материалы тоже в карте: ссылка на снятый с продажи код —
+	// отдельная причина, и она понятнее, чем «не найден».
+	bySku := make(map[string]Material, len(materials))
+	for _, m := range materials {
+		bySku[strings.ToUpper(strings.TrimSpace(m.SKU))] = m
+	}
+
+	items := make([]CompositionItem, 0, len(links))
+	problems := make([]string, 0)
+	for _, link := range links {
+		item := CompositionItem{Raw: link.Raw, SKU: link.SKU}
+		sku := strings.ToUpper(strings.TrimSpace(link.SKU))
+		if sku == "" {
+			items = append(items, item)
+			problems = append(problems, fmt.Sprintf("%q: не указан код материала", shortenRaw(link.Raw)))
+			continue
+		}
+		m, ok := bySku[sku]
+		if !ok {
+			items = append(items, item)
+			problems = append(problems, fmt.Sprintf("%s: материал не найден в справочнике", sku))
+			continue
+		}
+		if m.Archived {
+			items = append(items, item)
+			problems = append(problems, fmt.Sprintf("%s: материал удалён из справочника", sku))
+			continue
+		}
+		item.MaterialID, item.Name, item.Unit, item.Found = m.ID, m.Name, m.Unit, true
+		item.Ekn = materialEknNumbers(m)
+		items = append(items, item)
+	}
+	return items, problems
+}
+
+// materialEknNumbers — номера ЕКН материала в порядке справочника.
+func materialEknNumbers(m Material) []string {
+	if len(m.Ekn) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m.Ekn))
+	for _, e := range m.Ekn {
+		out = append(out, e.Ekn)
+	}
+	return out
+}
+
+// shortenRaw обрезает длинную строку состава для текста проблемы: человеку
+// нужен узнаваемый кусок, а не вся строка в списке замечаний.
+func shortenRaw(raw string) string {
+	runes := []rune(strings.TrimSpace(raw))
+	if len(runes) <= 60 {
+		return string(runes)
+	}
+	return string(runes[:60]) + "…"
+}
+
+// SystemsFromKB — системы из Базы знаний с составом, разрешённым против
+// материалов. Материальные карточки в список не попадают: у них свой раздел.
+//
+// kb == nil — «база знаний не настроена»: пустой список без ошибки.
+func SystemsFromKB(ctx context.Context, kb KBReader, materials []Material) ([]SystemCard, error) {
+	if kb == nil {
+		return []SystemCard{}, nil
+	}
+	tagID, err := kb.TagID(ctx, commercialPropose)
+	if err != nil {
+		return []SystemCard{}, err
+	}
+	notes, err := kb.Notes(ctx, tagID)
+	if err != nil {
+		return []SystemCard{}, err
+	}
+	systems, _ := splitCardsByTags(notes)
+	cards := make([]SystemCard, 0, len(systems))
+	for _, summary := range systems {
+		note, err := kb.Note(ctx, summary.ID)
+		// Одна сломанная карточка не скрывает остальные.
+		if err != nil {
+			continue
+		}
+		parsed := skills.ParseSystemCard(note.ContentMD)
+		card := systemCardFromParsed(summary, note, parsed)
+		card.CompositionLinks, card.Problems = resolveComposition(parsed, materials)
+		cards = append(cards, card)
+	}
+	return cards, nil
+}
+
+// systemCardFromParsed собирает карточку для плагина из разобранной заметки.
+func systemCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.SystemCard) SystemCard {
+	return SystemCard{
+		NoteID:         summary.ID,
+		Path:           note.Path,
+		SKU:            parsed.SKU,
+		Title:          parsed.Title,
+		Description:    parsed.Description,
+		Composition:    parsed.Composition,
+		Specifications: parsed.Specifications,
+		ImageName:      parsed.ImageName,
+		UpdatedAt:      note.UpdatedAt,
+		HasDescription: strings.TrimSpace(parsed.Description) != "",
+		HasComposition: len(parsed.Composition) > 0,
+		Empty:          parsed.Empty(),
+	}
 }
 
 // KBReader — то, что нужно от базы знаний. Интерфейс, а не *KBClient: тесты
@@ -123,20 +297,7 @@ func SystemCardsFromKB(ctx context.Context, kb KBReader, catalog []CatalogItem) 
 			continue
 		}
 		parsed := skills.ParseSystemCard(note.ContentMD)
-		card := SystemCard{
-			NoteID:         summary.ID,
-			Path:           note.Path,
-			SKU:            parsed.SKU,
-			Title:          parsed.Title,
-			Description:    parsed.Description,
-			Composition:    parsed.Composition,
-			Specifications: parsed.Specifications,
-			ImageName:      parsed.ImageName,
-			UpdatedAt:      note.UpdatedAt,
-			HasDescription: strings.TrimSpace(parsed.Description) != "",
-			HasComposition: len(parsed.Composition) > 0,
-			Empty:          parsed.Empty(),
-		}
+		card := systemCardFromParsed(summary, note, parsed)
 		card.CatalogID = linkCatalogID(card.SKU, catalog)
 		cards = append(cards, card)
 	}
@@ -221,21 +382,16 @@ func (s *Server) refreshSystemCards(ctx context.Context, updatedBy string) ([]Sy
 
 // PromptText — текст карточки для промпта модели: название, описание, состав.
 // Таблица характеристик сюда не идёт: модели нужно то, о чём писать.
+//
+// Формат текста живёт в skills — там же, где разбор карточки. Сервисная копия
+// дублировала его символ в символ: правка в одном месте молча оставляла бы
+// вторую старую, и промпт собирался бы из двух разных шаблонов.
 func (c SystemCard) PromptText() string {
-	var b strings.Builder
-	if c.Title != "" {
-		b.WriteString("Система: " + c.Title + "\n")
-	}
-	if c.Description != "" {
-		b.WriteString("\nОписание:\n" + c.Description + "\n")
-	}
-	if len(c.Composition) > 0 {
-		b.WriteString("\nСостав:\n")
-		for _, item := range c.Composition {
-			b.WriteString("- " + item + "\n")
-		}
-	}
-	return strings.TrimSpace(b.String())
+	return skills.SystemCard{
+		Title:       c.Title,
+		Description: c.Description,
+		Composition: c.Composition,
+	}.PromptText()
 }
 
 // marshalSystemCards — кеш в JSONB.

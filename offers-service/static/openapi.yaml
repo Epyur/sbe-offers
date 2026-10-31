@@ -341,6 +341,42 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SystemCard'
+  /api/offers/systems:
+    get:
+      summary: Системы из Базы знаний с составом
+      description: |
+        Карточки с тегом `commercial_propose` БЕЗ тега `material` — это
+        системы. Карточки с обоими тегами — материалы и сюда не попадают: у
+        них свой раздел и своя таблица.
+
+        Состав каждой системы разрешается против справочника материалов:
+        строка со ссылкой на код получает название, единицу и ЕКН. Строка без
+        кода, с незнакомым кодом или с кодом удалённого материала остаётся в
+        ответе с `found: false` и попадает в `problems` — молча терять её
+        нельзя, человек должен видеть, чего в системе не хватает.
+
+        Своей цены у системы нет: стоимость складывается из материалов.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Системы с составом
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kbEnabled:
+                    type: boolean
+                  count:
+                    type: integer
+                  error:
+                    type: string
+                    description: Ошибка Базы знаний; список при этом пустой
+                  systems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemCard'
   /api/offers/offers:
     get:
       summary: Список предложений (видны свои; admin — все)
@@ -1299,6 +1335,21 @@ components:
           type: string
         composition:
           type: array
+          description: Состав строками, как написан в карточке.
+          items:
+            type: string
+        compositionLinks:
+          type: array
+          description: |
+            Тот же состав, разрешённый против справочника материалов (ручка
+            GET /api/offers/systems). Заполняется только там.
+          items:
+            $ref: '#/components/schemas/CompositionItem'
+        problems:
+          type: array
+          description: |
+            Что не так с составом: строка без кода, незнакомый код, удалённый
+            материал, пустой состав. Заполняется только ручкой систем.
           items:
             type: string
         specifications:
@@ -1321,6 +1372,31 @@ components:
           type: boolean
         empty:
           type: boolean
+    CompositionItem:
+      type: object
+      description: Строка состава системы с разрешённым материалом.
+      properties:
+        raw:
+          type: string
+          description: Строка, как написана в карточке.
+        sku:
+          type: string
+          description: Код материала из строки; пусто, если ссылку не проставили.
+        materialId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        unit:
+          type: string
+        ekn:
+          type: array
+          description: Номера ЕКН материала в порядке справочника.
+          items:
+            type: string
+        found:
+          type: boolean
+          description: Материал найден в справочнике; false — строка в problems.
     SheetPreview:
       type: object
       properties:

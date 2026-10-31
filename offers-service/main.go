@@ -118,6 +118,10 @@ func main() {
 	// читает любой, кто видит КП; перечитывает базу знаний — администратор.
 	mux.HandleFunc("GET /api/offers/context/cards", s.requirePerm("viewer")(s.handleGetSystemCards))
 	mux.HandleFunc("POST /api/offers/context/refresh", s.requirePerm("admin")(s.handleRefreshSystemCards))
+	// Системы (Task 6, 2026-10-31): карточки Базы знаний без тега material,
+	// с составом, разрешённым против справочника материалов. Своей цены у
+	// системы нет — она показывает, ИЗ ЧЕГО складывается стоимость.
+	mux.HandleFunc("GET /api/offers/systems", s.requirePerm("viewer")(s.handleListSystems))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))

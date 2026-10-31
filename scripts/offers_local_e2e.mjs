@@ -941,5 +941,52 @@ console.log('\n16. Материалы и ЕКН (2026-10-30)');
   ok('с archived=1 архивный виден', (withArchived.json?.items ?? []).some((m) => m.id === secondId));
 }
 
+console.log('\n17. Системы из Базы знаний (2026-10-31)');
+{
+  // Разделение двух сущностей проверяется на живом списке карточек: в
+  // заглушке три заметки — две системы и один материал с тегом material.
+  const systems = await call('GET', '/systems', { token: ownerToken });
+  ok('системы отдаются → 200', systems.status === 200, `получили ${systems.status} ${systems.text?.slice(0, 160)}`);
+  ok('ошибки Базы знаний нет', !systems.json?.error, JSON.stringify(systems.json?.error));
+
+  const list = systems.json?.systems ?? [];
+  ok('системы пришли', list.length > 0, `систем ${list.length}`);
+  ok('карточка с тегом material системой не считается',
+    !list.some((s) => (s.title ?? '').includes('Мембрана')),
+    JSON.stringify(list.map((s) => s.title)));
+
+  // Берём систему, в составе которой есть ссылка на материал, заведённый в
+  // разделе 16 (MAT-МЕМБ-ПВХ-0001). Порядок разделов важен: материальный
+  // справочник уже наполнен.
+  const materials = await call('GET', '/materials', { token: ownerToken });
+  const sku = (materials.json?.items ?? []).find((m) => (m.sku ?? '').startsWith('MAT-МЕМБ-ПВХ-'))
+    ?.sku;
+  ok('в справочнике есть материал для состава', Boolean(sku), JSON.stringify(sku));
+
+  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.sku === sku)) ?? list[0] ?? {};
+  const links = card.compositionLinks ?? [];
+  ok('у системы есть состав ссылками', links.length > 0, JSON.stringify(links));
+  ok('каждая строка состава отдаёт текст', links.every((c) => (c.raw ?? '').length > 0));
+
+  const found = links.find((c) => c.sku === sku);
+  ok('ссылка на реальный материал разрешилась', Boolean(found?.found), JSON.stringify(found));
+  ok('в разрешённой строке есть название материала', (found?.name ?? '').length > 0, JSON.stringify(found?.name));
+  ok('в разрешённой строке есть id, единица и found',
+    found?.materialId > 0 && found?.found === true, JSON.stringify(found));
+
+// Строка без кода остаётся видимой и называется в problems: молча терять
+  // её нельзя, иначе человек не узнает, чего в системе не хватает.
+  const withoutSku = links.filter((c) => !c.sku);
+  ok('строка без кода осталась в составе', withoutSku.length > 0, JSON.stringify(withoutSku));
+  ok('строка без кода названа в проблемах',
+    withoutSku.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
+    JSON.stringify(card.problems));
+  ok('проблемы перечисляются отдельно от состава', Array.isArray(card.problems), JSON.stringify(card.problems));
+  ok('незнакомый код не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
+
+  const anon = await call('GET', '/systems');
+  ok('без токена → 401', anon.status === 401, `получили ${anon.status}`);
+}
+
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);

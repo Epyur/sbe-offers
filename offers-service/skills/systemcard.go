@@ -47,10 +47,60 @@ type SystemCard struct {
 	Description string
 	// Composition — состав: позиции списка из блока «Состав системы».
 	Composition []string
+	// Links — тот же состав со ссылками на материалы. Строка на позицию,
+	// SKU может быть пустым («ссылка не проставлена»). Composition остаётся
+	// текстом: он уходит в промпт модели и в описание, а Links нужен, чтобы
+	// показать состав позициями и назвать незаполненные строки.
+	Links []CompositionLink
 	// ImageName — имя файла картинки из `![[…]]` (без размера).
 	ImageName string
 	// Specifications — таблица характеристик: строки ячеек.
 	Specifications [][]string
+}
+
+// CompositionLink — строка состава и код материала в ней.
+//
+// Raw — строка, как её написал человек (очищенная от разметки): по ней
+// показывается состав, когда материала нет в справочнике. SKU — то, что
+// удалось найти в строке; пустое значение значит «ссылка не проставлена», и
+// это отдельный повод сказать человеку, а не молча пропустить позицию.
+type CompositionLink struct {
+	Raw string
+	SKU string
+}
+
+// reCompositionSku — SKU в строке состава: MAT-МЕМБ-ПВХ-0007 или
+// РАБ-МОНТ-ОБЩ-0001.
+//
+// Без \b: в Go кириллица не считается «словом» для границы слова, и шаблон с
+// \b не находил бы код, начинающийся с РАБ-. Грабля ловилась дважды
+// (2026-10-29 в skills, 2026-10-31 в matcher.go).
+var reCompositionSku = regexp.MustCompile(`(?:MAT|РАБ)-[А-ЯЁA-Z0-9]{1,8}-[А-ЯЁA-Z0-9]{1,8}-[0-9]{4}`)
+
+// linksFromComposition превращает строки состава в ссылки на материалы.
+func linksFromComposition(items []string) []CompositionLink {
+	if len(items) == 0 {
+		return nil
+	}
+	links := make([]CompositionLink, 0, len(items))
+	for _, item := range items {
+		links = append(links, CompositionLink{
+			Raw: strings.TrimSpace(item),
+			SKU: extractSku(item),
+		})
+	}
+	return links
+}
+
+// extractSku достаёт код материала из строки, где бы он ни стоял.
+func extractSku(line string) string {
+	return reCompositionSku.FindString(strings.ToUpper(line))
+}
+
+// ExtractSku — то же для вызывающего кода: сервису нужен код из строки
+// состава, прочитанной из старого кеша, где структурных ссылок ещё нет.
+func ExtractSku(line string) string {
+	return extractSku(line)
 }
 
 // Названия блоков карточки. Сверяются по вхождению без учёта регистра:
@@ -120,6 +170,7 @@ func ParseSystemCard(markdown string) SystemCard {
 	if card.Title == "" {
 		card.Title = firstNonEmptyHeading(blocks)
 	}
+	card.Links = linksFromComposition(card.Composition)
 	return card
 }
 
