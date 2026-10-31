@@ -122,6 +122,9 @@ func main() {
 	// с составом, разрешённым против справочника материалов. Своей цены у
 	// системы нет — она показывает, ИЗ ЧЕГО складывается стоимость.
 	mux.HandleFunc("GET /api/offers/systems", s.requirePerm("viewer")(s.handleListSystems))
+	// «Добавить систему» в редакторе: состав собирает сервер, потому что цену
+	// позиции знает только он (вилка из таблиц менеджера), а не клиент.
+	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))

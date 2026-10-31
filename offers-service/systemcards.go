@@ -319,18 +319,11 @@ func linkCatalogID(sku string, catalog []CatalogItem) int64 {
 	return 0
 }
 
-// FindSystemCard — карточка по коду системы (для сборки документа).
+// FindSystemCard — карточка по коду системы (для сборки документа и добавления
+// состава в КП). Тонкая обёртка: правило сравнения кодов живёт в одном месте,
+// иначе поиск в документе и поиск в редакторе разошлись бы в мелочах.
 func FindSystemCard(cards []SystemCard, sku string) (SystemCard, bool) {
-	sku = strings.TrimSpace(sku)
-	if sku == "" {
-		return SystemCard{}, false
-	}
-	for _, c := range cards {
-		if strings.EqualFold(strings.TrimSpace(c.SKU), sku) {
-			return c, true
-		}
-	}
-	return SystemCard{}, false
+	return FindSystem(cards, sku)
 }
 
 // --- Кеш карточек в offers_context -------------------------------------

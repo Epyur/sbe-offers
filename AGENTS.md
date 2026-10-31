@@ -943,7 +943,9 @@ paths, schema matches. Local stand E2E **171/171**, run twice. 15 tests added in
 `skills/systemcard_links_test.go` and `systems_split_test.go`.
 
 **Not done, by the plan's own boundary.** Plugin UI (Task 7), bot (Task 8),
-version/docs/0.3.0 (Task 9), no commit, no deploy, no self-hosting.
+version/docs/0.3.0 (Task 9). Committed and pushed later the same day as `6b1fc45`
+(the entry was written before the commit, so the hash is named here rather than
+in the commit it describes - the 2026-10-30 lesson).
 
 **Stand lesson (cost an hour).** The local service could not be rebuilt from its
 Dockerfile (same Docker Hub reachability as 2026-10-30), so the binary was built
@@ -956,3 +958,106 @@ container image itself is fine because it builds the binary on its own base.
 Also: `docker cp` into a container whose binary is running replaces the file but
 leaves that container's binary unmappable until it is restarted - restart after
 cp, then check `docker ps` says `Up`, not `Exited (255)`.
+
+## Task 7: the plugin caught up with the two entities - 2026-10-31
+
+The plugin still had one section called "Каталог" with every card carrying a
+price, while the server had already split materials (with SKU and ЕКН) from
+systems (KB cards, no price). This closes that gap; the bot (Task 8) and the
+release with 0.3.0 (Task 9) are still open.
+
+**Navigation.** "Каталог" is gone, replaced by two sections. `catalog-editor.ts`
+became `material-editor.ts` and `catalog-editor.ts` was deleted. The legacy
+`/catalog` routes and the `offers_catalog` table stay on the server untouched:
+old offers still point at those rows, and removing the routes would break them
+for no gain.
+
+**Materials (`ui/material-editor.ts`).**
+
+- List: name with the SKU underneath in monospace, unit, price range, ЕКН count.
+  No price column - a material has no single price, and a column would silently
+  become "the" price the way `offers_catalog.base_price` once did.
+- Search covers name, SKU and ЕКН numbers together: managers look a material up
+  by the number printed on the spec sheet, not by the catalogue name.
+- "Показать архив" is a checkbox, off by default; archived rows are dimmed.
+- Card: name, kind (material/work), unit, description. SKU is shown and never
+  editable - it is an identity, assigned once by the server.
+- New material: two extra fields, "Тип" and "Серия", which only feed the SKU
+  generator (`MAT-{TYPE}-{SERIES}-{NNNN}`). They are hidden when editing,
+  because a rename never changes the code.
+- ЕКН table with number, variant, source (excel/manual) and the last seen date;
+  add and delete inside the same modal.
+- `priceRangeText` prints "цена не загружалась" when both ends are `null`. Zero
+  is a legitimate price and a different thing.
+
+**Systems (`ui/systems-editor.ts`).**
+
+- One card per system: title, code, and either "состав распознан" or "есть
+  ошибки в составе". Problems are listed as text - a line without a code, a code
+  that is not in the catalogue, a deleted material.
+- The composition table shows each line's material, unit and ЕКН, so a manager
+  can see what the system is made of without opening the note.
+- "Открыть заметку" reuses `openNote` from the context editor (exported, not
+  copied): the KB path is logical and the file lives elsewhere in the vault; the
+  resolution rule lives in `utils/note-path.ts` and must not have a second copy.
+- `formatShortDate` moved to `utils/date.ts` for the same reason - it was about to
+  become a third copy.
+
+**Sheet upload (`ui/sheet-upload.ts`).**
+
+- Only for a saved offer: the sheet writes positions into a specific offer and
+  moves its `updated_at`.
+- File input, then "what I understood": counts per matching method, the problems
+  the server found, and a table with a checkbox per row.
+- **Rows matched by the model are NOT checked by default.** That is the whole
+  point of the two-step flow: a guess needs a human click. Exact ЕКН and exact
+  name hits are checked.
+- Quantity defaults to 1 only when the column is absent (`hasQty`), never
+  silently for a file that says 0.
+- The file is read before `input.value` is cleared - the live `FileList` gotcha
+  from sbe-mailer 2026-09-18.
+- `.xlsx` only; `.xls` gets a message asking to resave.
+
+**"Добавить систему" in the offer editor.**
+
+- This needed a server route: `POST /api/offers/offers/{id}/system` (editor).
+  The price of a position is known only on the server (the range seen in the
+  manager's sheets), so client-side assembly would have to invent numbers.
+- The composition is **appended** to the existing items, not a replacement: a
+  system is a set the manager wanted to add.
+- Price = the *lower* bound of the range. No range means price 0 and the material
+  is named in `missingPrice`, which the UI shows in the notice - the manager has
+  to load a sheet for it.
+- Lines that resolve to no material are returned in `problems` and never reach
+  the offer silently.
+- The system is looked up in the live KB feed (the same call the "Системы"
+  section makes), not in the card cache, so what the manager saw on screen is
+  what gets added.
+- `FindSystemCard` became a thin wrapper over the new `FindSystem` - one rule for
+  comparing codes instead of two.
+
+**Defects found by the stand, not by unit tests.**
+
+1. An empty offer cannot be created (the server refuses offers without
+   positions), so the E2E had to start from a one-line "Заглушка" offer. That is
+   correct server behaviour, the test was wrong.
+2. The E2E sheet named ЕКН `068863`, which section 16 deletes at the end of its
+   run. The preview showed `byEkn: 0` and the row fell through to the model. The
+   test now uses what the catalogue actually holds at that point (`068864`,
+   "Мембрана ПВХ Эксперт 2") - a fixture that drifts from real state is a bug in
+   the fixture.
+3. `handleAddSystem` came out at CC 13 with zero coverage. The loop was moved to
+   `appendComposition` (now 100% covered) and `handleAddSystem` dropped to 8.
+
+**Checks.** `gofmt`/`go vet` clean. `go test ./...` green: `main` 40.6%,
+`model` 71.6%, `skills` 84.2%; new code - `appendComposition` 100,
+`itemForMaterial` 100, `FindSystem` 100, `handleAddSystem` 0 (HTTP, covered by
+the stand like every other route in this plugin). `tsc --noEmit` EXIT=0,
+`npm run build` OK. `check_offers_openapi.mjs`: 57 routes, 45 paths, schema
+matches. Local stand E2E **189/189** (section 18: sheet preview writes nothing,
+apply takes the price from the sheet, system appends rather than replaces,
+unknown system 404, no token 401), run twice.
+
+**Not done.** Marked as Task 7 complete in the plan. Bot (Task 8), version 0.3.0
+with the release notes, deploy and self-hosting (Task 9) remain; nothing was
+deployed or self-hosted for this change.

@@ -263,6 +263,60 @@ paths:
         '404':
           description: Вариация не найдена
 
+  /api/offers/offers/{id}/system:
+    post:
+      summary: Дописать состав системы в предложение
+      description: |
+        «Добавить систему» в редакторе КП. Состав системы из Базы знаний
+        разворачивается в позиции и ДОПИСЫВАЕТСЯ к уже собранному КП: система
+        — набор, который человек захотел добавить, а не замена состава.
+
+        Цену позиции знает только сервер (вилка из таблиц менеджера), поэтому
+        склейка серверная. Цена берётся нижней границей вилки; если вилки нет,
+        позиция идёт с нулём и материал называется в `missingPrice` — цену
+        загружают таблицей.
+
+        Строки состава, которые не удалось сопоставить со справочником,
+        возвращаются в `problems` и в КП не попадают.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku]
+              properties:
+                sku:
+                  type: string
+                  description: Код системы из карточки Базы знаний.
+      responses:
+        '200':
+          description: Состав дописан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer:
+                    $ref: '#/components/schemas/Offer'
+                  added:
+                    type: integer
+                  missingPrice:
+                    type: array
+                    description: Материалы без цены в вилке — позиция с нулём.
+                    items:
+                      type: string
+                  problems:
+                    type: array
+                    description: Строки состава без материала в справочнике.
+                    items:
+                      type: string
+        '404':
+          description: Система с таким кодом не найдена
+        '400':
+          description: В составе нет ни одного материала из справочника
   /api/offers/form:
     get:
       summary: Форма КП

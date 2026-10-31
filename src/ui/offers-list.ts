@@ -4,6 +4,7 @@ import { canEditOffers, type CatalogItem, type Offer, type OfferItem } from '../
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { formatMoney, itemsTotal } from '../utils/money';
 import { renderBriefCard } from './brief-editor';
+import { renderSheetUpload } from './sheet-upload';
 import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
 export function renderOffersList(view: OffersView, container: HTMLElement): void {
@@ -201,6 +202,71 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
     redrawItems();
   });
   redrawItems();
+
+  // «Добавить систему» (Task 7, 2026-10-31) работает с сохранённым КП: сервер
+  // сам собирает состав и знает цены. У нового КП нет ни номера, ни id.
+  if (current.id) {
+    const systemsCard = itemsCard.createDiv({ cls: 'tn-offers-row tn-offers-system-add' });
+    systemsCard.createSpan({ cls: 'tn-offers-muted', text: 'Добавить систему:' });
+    const systemsSelect = systemsCard.createEl('select', { cls: 'tn-offers-input tn-offers-grow' });
+    systemsSelect.createEl('option', { value: '', text: '— выбрать систему —' });
+    void view.plugin.offersService
+      .listSystems()
+      .then((res) => {
+        if (!res.kbEnabled) {
+          systemsCard.createSpan({ cls: 'tn-offers-warn', text: ' База знаний не настроена' });
+          return;
+        }
+        for (const system of res.systems) {
+          const broken = (system.problems ?? []).length > 0;
+          systemsSelect.createEl('option', {
+            value: system.sku || '',
+            text: `${system.title}${broken ? ' (есть ошибки в составе)' : ''}`,
+          });
+        }
+      })
+      .catch((e: unknown) => {
+        systemsCard.createSpan({ cls: 'tn-offers-warn', text: ` Список систем: ${errorMessage(e)}` });
+      });
+    const addSystemBtn = systemsCard.createEl('button', { text: '➕ Добавить', cls: 'tn-btn tn-btn-ghost' });
+    addSystemBtn.addEventListener('click', () => {
+      void addSystemPicked();
+    });
+
+    async function addSystemPicked(): Promise<void> {
+      const sku = systemsSelect.value;
+      if (!sku) {
+        new Notice('Выберите систему');
+        return;
+      }
+      addSystemBtn.setAttr('disabled', 'true');
+      try {
+        const res = await view.plugin.offersService.addSystem(current.id, sku);
+        items.splice(0, items.length, ...res.offer.items.map((i) => ({ ...i })));
+        redrawItems();
+        const notes: string[] = [`Добавлено позиций: ${res.added}`];
+        if ((res.missingPrice ?? []).length > 0) {
+          notes.push(`без цены (загрузите таблицу): ${(res.missingPrice ?? []).join(', ')}`);
+        }
+        if ((res.problems ?? []).length > 0) {
+          notes.push(`строки состава без материала: ${(res.problems ?? []).join('; ')}`);
+        }
+        new Notice(notes.join('. '));
+      } catch (e: unknown) {
+        new Notice(`Не удалось добавить систему: ${errorMessage(e)}`);
+      } finally {
+        addSystemBtn.removeAttribute('disabled');
+      }
+    }
+  }
+
+  // Таблица менеджера — тоже только у сохранённого КП: она дописывает позиции
+  // в конкретное предложение и двигает его updated_at.
+  if (current.id) {
+    renderSheetUpload(view, container, current.id, current.number, () => {
+      void openEditor(view, container, current);
+    });
+  }
 
   const formCard = container.createDiv({ cls: 'tn-offers-card' });
   formCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы' });  const formValues: Record<string, string> = { ...(current.formValues ?? {}) };

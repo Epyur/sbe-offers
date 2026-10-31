@@ -9,11 +9,16 @@ import type {
   BriefPayload,
   BriefResponse,
   CatalogItem,
+  ComposeSystemResponse,
+  Material,
   Offer,
   OfferForm,
   RefreshSystemCardsResponse,
   Role,
+  SheetApplyRow,
+  SheetPreview,
   SystemCardsResponse,
+  SystemsResponse,
 } from '../types/offers';
 
 const TIMEOUT_MS = 20000;
@@ -269,6 +274,104 @@ export class OffersService {
   /** Карточки систем из Базы знаний (из кеша). */
   async getSystemCards(): Promise<SystemCardsResponse> {
     return this.request<SystemCardsResponse>('GET', '/context/cards');
+  }
+
+  // --- Материалы и ЕКН (2026-10-31) -------------------------------------
+
+  /** Справочник материалов. Систем сюда не попадает: у них свой раздел. */
+  async listMaterials(includeArchived = false): Promise<Material[]> {
+    const query = includeArchived ? '?archived=1' : '';
+    const res = await this.request<{ items: Material[] | null }>('GET', `/materials${query}`);
+    return res.items || [];
+  }
+
+  /**
+   * Создать или сохранить материал.
+   *
+   * `typeCode` и `series` — только подсказки для SKU нового материала: сервер
+   * собирает из них код сам, а у правки их игнорирует (SKU не меняется).
+   */
+  async saveMaterial(item: Partial<Material> & { typeCode?: string; series?: string }): Promise<Material> {
+    if (item.id) {
+      return this.request<Material>('PUT', `/materials/${item.id}`, item);
+    }
+    return this.request<Material>('POST', '/materials', item);
+  }
+
+  /** Убрать материал в архив (не удалить: на него ссылаются старые КП). */
+  async archiveMaterial(id: number): Promise<Material> {
+    return this.request<Material>('DELETE', `/materials/${id}`);
+  }
+
+  /** Дописать вариацию ЕКН. Повтор того же номера ничего не меняет. */
+  async addMaterialEkn(id: number, ekn: string, variant: string): Promise<Material> {
+    return this.request<Material>('POST', `/materials/${id}/ekn`, { ekn, variant });
+  }
+
+  async deleteMaterialEkn(id: number, eknId: number): Promise<Material> {
+    return this.request<Material>('DELETE', `/materials/${id}/ekn/${eknId}`);
+  }
+
+  // --- Таблица менеджера (2026-10-31) -----------------------------------
+
+  /**
+   * Первый шаг загрузки: разобрать и сопоставить, НИЧЕГО не записав.
+   *
+   * Тело — сам файл xlsx, имя в заголовке: multipart не нужен, а на стороне
+   * сервиса байты читаются так же, как файлы из чата бота.
+   */
+  async previewSheet(offerId: number, fileName: string, data: ArrayBuffer): Promise<SheetPreview> {
+    return this.withTokenRetry(async (token) => {
+      const url = `${this.base()}/api/offers/offers/${offerId}/sheet`;
+      const res = await requestUrl({
+        url,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          // Имя как есть: заголовки ходят UTF-8, а сервер уже разкодирует
+          // то, что пришло из query-строки бота. Двойное кодирование здесь
+          // дало бы «%D0%9C…» в имени файла у человека.
+          'X-File-Name': fileName,
+          Authorization: `Bearer ${token}`,
+        },
+        body: data,
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return JSON.parse(res.text) as SheetPreview;
+    });
+  }
+
+  /**
+   * Второй шаг: записать только то, что менеджер подтвердил.
+   *
+   * Сервер отвечает `{applied, offer}` — не самим предложением: сколько строк
+   * прошло, тоже надо показать человеку, иначе «применено» без числа.
+   */
+  async applySheet(
+    offerId: number,
+    rows: SheetApplyRow[],
+    addMissingEkn: boolean,
+  ): Promise<{ applied: number; offer: Offer }> {
+    return this.request<{ applied: number; offer: Offer }>('POST', `/offers/${offerId}/sheet/apply`, {
+      rows,
+      addMissingEkn,
+    });
+  }
+
+  /** Дописать состав системы в предложение. */
+  async addSystem(offerId: number, sku: string): Promise<ComposeSystemResponse> {
+    return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, { sku });
+  }
+
+  // --- Системы (2026-10-31) ---------------------------------------------
+
+  /** Системы из Базы знаний с составом, разрешённым против материалов. */
+  async listSystems(): Promise<SystemsResponse> {
+    return this.request<SystemsResponse>('GET', '/systems');
   }
 
   /** Перечитать карточки из Базы знаний (admin). */

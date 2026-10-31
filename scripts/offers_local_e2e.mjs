@@ -988,5 +988,102 @@ console.log('\n17. Системы из Базы знаний (2026-10-31)');
   ok('без токена → 401', anon.status === 401, `получили ${anon.status}`);
 }
 
+console.log('\n18. Таблица менеджера и системы в КП (2026-10-31)');
+{
+  // Предложение, в которое дописываются позиции: сначала пустое, потом
+  // таблица, потом система. Каждый шаг виден по сумме и составу.
+  // Пустое предложение создать нельзя (правило сервера: без позиций оно
+  // бессмысленно), поэтому заводим с одной позицией и называем её заглушкой —
+  // таблица и система дописываются к ней, а не заменяют состав.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Табличное' },
+      items: [{ name: 'Заглушка', unit: 'шт', qty: 1, price: 1 }],
+      formValues: {},
+      status: 'draft',
+    },
+  });
+  ok('предложение для проверки создано', created.status === 200, `получили ${created.status} ${created.text?.slice(0, 160)}`);
+  const offerId = created.json?.id;
+
+  // --- Таблица: превью ничего не пишет -----------------------------------
+  const xlsx = makeXlsx([
+    ['Наименование', 'ЕКН', 'Ед.', 'Кол-во', 'Цена', 'Сумма'],
+    // ЕКН 068864 и новое имя — то, что осталось у материала после проверок
+    // раздела 16: материал переименован, а первый ЕКН там удалён. Берём
+    // то, что справочник реально содержит на этом шаге.
+    ['Мембрана ПВХ Эксперт 2', '068864', 'м2', 10, 1250, 12500],
+    ['Неизвестный материал', '', 'шт', 1, 100, 100],
+  ]);
+  const preview = await fetch(`${BASE}/api/offers/offers/${offerId}/sheet`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'X-File-Name': 'table.xlsx',
+      Authorization: `Bearer ${ownerToken}`,
+    },
+    body: xlsx,
+  });
+  const pv = await preview.json().catch(() => ({}));
+  ok('таблица разобрана → 200', preview.status === 200, `получили ${preview.status} ${JSON.stringify(pv).slice(0, 160)}`);
+  ok('строк найдено две', pv?.counts?.total === 2, JSON.stringify(pv?.counts));
+  ok('мембрана сопоставлена по ЕКН', pv?.counts?.byEkn === 1, JSON.stringify(pv?.counts));
+  ok('неизвестная строка не сопоставлена', pv?.counts?.none === 1, JSON.stringify(pv?.counts));
+  ok('проблемы названы до применения', (pv?.problems ?? []).length > 0, JSON.stringify(pv?.problems));
+
+  const untouched = await call('GET', `/offers/${offerId}`, { token: ownerToken });
+  ok('превью ничего не записало', (untouched.json?.items ?? []).length === 1,
+    JSON.stringify(untouched.json?.items));
+
+  // --- Применение: пишется цена ИЗ ТАБЛИЦЫ --------------------------------
+  const matched = (pv?.rows ?? []).find((r) => r.materialId > 0);
+  ok('в превью есть сопоставленная строка', Boolean(matched), JSON.stringify(pv?.rows));
+  const applied = await call('POST', `/offers/${offerId}/sheet/apply`, {
+    token: ownerToken,
+    body: {
+      rows: [{
+        line: matched?.row?.line ?? 2,
+        materialId: matched?.materialId ?? 0,
+        ekn: matched?.row?.ekn ?? '',
+        variant: matched?.row?.name ?? '',
+        qty: matched?.row?.qty ?? 1,
+        price: matched?.row?.price ?? 0,
+      }],
+      addMissingEkn: true,
+    },
+  });
+  ok('таблица применена → 200', applied.status === 200, `получили ${applied.status} ${applied.text?.slice(0, 200)}`);
+  ok('дописана одна позиция', applied.json?.applied === 1, JSON.stringify(applied.json?.applied));
+  const appliedItem = (applied.json?.offer?.items ?? [])[0];
+  ok('цена позиции взята из таблицы', appliedItem?.price === 1250 || appliedItem?.price === 1250.5,
+    JSON.stringify(appliedItem));
+  ok('итог пересчитан', (applied.json?.offer?.total ?? 0) > 0, JSON.stringify(applied.json?.offer?.total));
+
+  // --- Система: состав дописывается, состав со ссылкой разрешается --------
+  // Система ТН-Кровля Классик ссылается на MAT-МЕМБ-ПВХ-0001, который заведён
+  // в разделе 16 — вилка цен у него уже есть после предыдущей таблицы.
+  const beforeSystem = (applied.json?.offer?.items ?? []).length;
+  const composed = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('система добавлена → 200', composed.status === 200, `получили ${composed.status} ${composed.text?.slice(0, 200)}`);
+  ok('позиции ДОПИСАНЫ, а не заменены', (composed.json?.offer?.items ?? []).length > beforeSystem,
+    `было ${beforeSystem}, стало ${(composed.json?.offer?.items ?? []).length}`);
+  ok('добавлена хотя бы одна позиция', (composed.json?.added ?? 0) >= 1, JSON.stringify(composed.json?.added));
+  ok('строка без материала названа в problems', (composed.json?.problems ?? []).length > 0,
+    JSON.stringify(composed.json?.problems));
+
+  const unknownSystem = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { sku: 'НЕТ-ТАКОГО' },
+  });
+  ok('неизвестная система → 404', unknownSystem.status === 404, `получили ${unknownSystem.status}`);
+
+  const noToken = await call('POST', `/offers/${offerId}/system`, { body: { sku: 'TN-ROOF-CLASSIC' } });
+  ok('добавление системы без токена → 401', noToken.status === 401, `получили ${noToken.status}`);
+}
+
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);
