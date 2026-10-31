@@ -702,3 +702,44 @@ func parseXlsxSheetRows(raw []byte, shared []string) [][]string {
 	}
 	return rows
 }
+
+// XlsxSheetRows читает ПЕРВЫЙ непустой лист как есть — строка за строкой.
+//
+// Нужна загрузке таблицы менеджера (2026-10-30): там колонки ЕКН и Цена, а
+// ParseXlsxAttachment ищет только спецификацию (наименование+количество) и
+// остальное отдаёт текстом. Разбор колонок и сопоставление — в пакете main,
+// здесь только чтение книги без догадок о смысле.
+func XlsxSheetRows(data []byte) ([][]string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("открыть xlsx: %w", err)
+	}
+	parts := make(map[string][]byte, len(zr.File))
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, "xl/") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		parts[f.Name] = body
+	}
+	shared := parseXlsxSharedStrings(parts["xl/sharedStrings.xml"])
+	for i := 1; ; i++ {
+		raw, ok := parts[fmt.Sprintf("xl/worksheets/sheet%d.xml", i)]
+		if !ok {
+			break
+		}
+		rows := parseXlsxSheetRows(raw, shared)
+		if len(rows) > 0 {
+			return rows, nil
+		}
+	}
+	return nil, errXlsxNoSheets
+}
