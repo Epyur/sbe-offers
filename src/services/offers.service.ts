@@ -18,6 +18,15 @@ import type {
 
 const TIMEOUT_MS = 20000;
 
+/**
+ * Текст для 401 после повтора: это уже не «токен устарел», а проблема входа.
+ *
+ * Сказать «ключ недействителен» здесь было бы неправдой: чаще всего ключ
+ * цел, а истёк час его JWT и перезапрос не помог. Человеку нужно действие —
+ * переоткрыть ЦУП.
+ */
+const SESSION_STALE = 'Сеанс входа устарел — переоткройте ЦУП (приложение «ЦУП СБЕ ПМиПИР»).';
+
 export class OffersError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -49,45 +58,108 @@ export class OffersService {
     return apstore.auth.getToken(OFFERS_APP_ID);
   }
 
+  /**
+   * Забыть сохранённый JWT приложения (2026-10-30).
+   *
+   * Живая жалоба: «Контекст КП» отвечал «Ключ доступа недействителен», хотя
+   * ключ был рабочим. Причина — сервис отдал 401 на токен, который в кэше
+   * ЦУП ещё считался годным (пересобранный сервис, новый секрет, сдвинутые
+   * часы). Плагин при этом токен не перезапрашивал вовсе.
+   *
+   * Ключ устройства НЕ сбрасываем: он может быть исправен, и заставлять
+   * человека заново получать его по почте из-за истёкшего JWT незачем.
+   */
+  private async forgetToken(): Promise<void> {
+    try {
+      const apstore = await getService('sbe-apstore');
+      apstore.auth.forgetToken(OFFERS_APP_ID);
+    } catch (e: unknown) {
+      // ЦУП недоступен — показать старый токен всё равно нельзя, идём без сброса.
+      console.warn('КП: не удалось сбросить кэш токена:', errorMessage(e));
+    }
+  }
+
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const token = await this.getToken();
-    const url = `${this.base()}/api/offers${path}`;
-    const started = Date.now();
-    let res: Awaited<ReturnType<typeof requestUrl>>;
+    return this.withTokenRetry(async (token) => {
+      const url = `${this.base()}/api/offers${path}`;
+      const started = Date.now();
+      let res: Awaited<ReturnType<typeof requestUrl>>;
+      try {
+        res = await requestUrl({
+          url,
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          throw: false,
+        });
+      } catch (e: unknown) {
+        throw new OffersError(`Сервер недоступен: ${errorMessage(e)}`, 0);
+      }
+      const elapsed = Date.now() - started;
+      if (elapsed > TIMEOUT_MS) {
+        console.warn(`КП: долгий ответ ${method} ${path} — ${elapsed} мс`);
+      }
+      if (res.status === 401) {
+        // Пробрасываем 401 наверх как есть: решение о повторе принимает
+        // withTokenRetry, а текста здесь ещё нет.
+        throw new OffersError('unauthorized', 401);
+      }
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      if (!res.text) return undefined as T;
+      try {
+        return JSON.parse(res.text) as T;
+      } catch (e: unknown) {
+        throw new OffersError(`Сервер вернул не JSON: ${errorMessage(e)}`, res.status);
+      }
+    });
+  }
+
+  /**
+   * Выполнить запрос с токеном; при 401 — один повтор с новым токеном.
+   *
+   * Политика одна на весь плагин: первый 401 означает «этот JWT устарел»
+   * (пересобранный сервис, другой секрет, ушедшие часы), кэш токена
+   * сбрасывается и запрос повторяется ровно один раз. Второй 401 — уже
+   * настоящая проблема входа, и человеку говорится, что делать.
+   */
+  private async withTokenRetry<T>(run: (token: string) => Promise<T>): Promise<T> {
+    const first = await this.getToken();
     try {
-      res = await requestUrl({
-        url,
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        throw: false,
-      });
+      return await run(first);
     } catch (e: unknown) {
-      throw new OffersError(`Сервер недоступен: ${errorMessage(e)}`, 0);
-    }
-    const elapsed = Date.now() - started;
-    if (elapsed > TIMEOUT_MS) {
-      console.warn(`КП: долгий ответ ${method} ${path} — ${elapsed} мс`);
-    }
-    if (res.status < 200 || res.status >= 300) {
-      throw new OffersError(this.extractError(res.text, res.status), res.status);
-    }
-    if (!res.text) return undefined as T;
-    try {
-      return JSON.parse(res.text) as T;
-    } catch (e: unknown) {
-      throw new OffersError(`Сервер вернул не JSON: ${errorMessage(e)}`, res.status);
+      if (!(e instanceof OffersError) || e.status !== 401) throw e;
+      await this.forgetToken();
+      try {
+        return await run(await this.getToken());
+      } catch (retry: unknown) {
+        if (retry instanceof OffersError && retry.status === 401) {
+          throw new OffersError(SESSION_STALE, 401);
+        }
+        throw retry;
+      }
     }
   }
 
+  /**
+   * Текст ошибки по статусу.
+   *
+   * Серверные ответы 401 и 403 — короткие слова `unauthorized`/`forbidden`,
+   * и показывать их человеку бессмысленно: он не знает, что это. Поэтому для
+   * этих двух статусов текст задаёт клиент, а серверное сообщение берётся
+   * только там, где оно написано для человека (400, 404 и прочие).
+   */
   private extractError(text: string, status: number): string {
+    if (status === 401) return SESSION_STALE;
+    if (status === 403) return 'Нет прав для этого действия.';
     if (text) {
       try {
         const parsed = JSON.parse(text) as { error?: string };
@@ -96,8 +168,6 @@ export class OffersService {
         // не JSON — покажем общий текст ниже
       }
     }
-    if (status === 401) return 'Ключ недействителен — войдите заново через ЦУП.';
-    if (status === 403) return 'Нет прав для этого действия.';
     return `Ошибка сервера (${status}).`;
   }
 
@@ -167,17 +237,19 @@ export class OffersService {
 
   /** Скачивание DOCX байтами: сервер отдаёт файл, а не JSON. */
   async exportDocx(id: number): Promise<Uint8Array> {
-    const token = await this.getToken();
-    const res = await requestUrl({
-      url: `${this.base()}/api/offers/offers/${id}/export?format=docx`,
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      throw: false,
+    return this.withTokenRetry(async (token) => {
+      const res = await requestUrl({
+        url: `${this.base()}/api/offers/offers/${id}/export?format=docx`,
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return new Uint8Array(res.arrayBuffer);
     });
-    if (res.status < 200 || res.status >= 300) {
-      throw new OffersError(this.extractError(res.text, res.status), res.status);
-    }
-    return new Uint8Array(res.arrayBuffer);
   }
 
   async listAccess(): Promise<AccessEntry[]> {

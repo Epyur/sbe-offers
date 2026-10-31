@@ -861,5 +861,85 @@ console.log('\n15. База знаний: карточки систем дохо
     `карточек ${cached.json?.cards?.length}`);
 }
 
+console.log('\n16. Материалы и ЕКН (2026-10-30)');
+{
+  // Материал — не система: у него свой SKU и вариации, а цены нет вовсе.
+  const created = await call('POST', '/materials', {
+    token: ownerToken,
+    body: {
+      name: 'Мембрана ПВХ Эксперт',
+      kind: 'material',
+      unit: 'м2',
+      description: 'Проверка справочника',
+      typeCode: 'МЕМБ',
+      series: 'ПВХ',
+    },
+  });
+  ok('материал создан → 200', created.status === 200, `получили ${created.status} ${created.text?.slice(0, 160)}`);
+  const matId = created.json?.id;
+  ok('SKU назначен сервером', /^MAT-МЕМБ-ПВХ-\d{4}$/.test(created.json?.sku ?? ''), JSON.stringify(created.json?.sku));
+  ok('цены в карточке нет', created.json?.basePrice === undefined && created.json?.price === undefined,
+    JSON.stringify(Object.keys(created.json ?? {})));
+
+  // Клиентский SKU не принимается: иначе в справочнике два материала с одним кодом.
+  const withSku = await call('POST', '/materials', {
+    token: ownerToken,
+    body: { name: 'Вторая мембрана', sku: 'MAT-МЕМБ-ПВХ-0001', typeCode: 'МЕМБ', series: 'ПВХ' },
+  });
+  ok('клиентский SKU проигнорирован', withSku.json?.sku !== 'MAT-МЕМБ-ПВХ-0001', JSON.stringify(withSku.json?.sku));
+  const secondId = withSku.json?.id;
+
+  // Система материалом не является.
+  const asSystem = await call('POST', '/materials', {
+    token: ownerToken,
+    body: { name: 'ТН-Кровля', kind: 'system' },
+  });
+  ok('система в справочник материалов не проходит → 400', asSystem.status === 400, `получили ${asSystem.status}`);
+
+  const noName = await call('POST', '/materials', { token: ownerToken, body: { name: '  ' } });
+  ok('материал без названия → 400', noName.status === 400, `получили ${noName.status}`);
+
+  // Вариации: один SKU — много ЕКН.
+  const ekn1 = await call('POST', `/materials/${matId}/ekn`, {
+    token: ownerToken,
+    body: { ekn: '068863', variant: '1,5 мм, серый' },
+  });
+  ok('ЕКН добавлен → 200', ekn1.status === 200, `получили ${ekn1.status}`);
+  ok('у материала один ЕКН', (ekn1.json?.ekn ?? []).length === 1, JSON.stringify(ekn1.json?.ekn));
+
+  const eknAgain = await call('POST', `/materials/${matId}/ekn`, {
+    token: ownerToken,
+    body: { ekn: '068863', variant: '1,5 мм, серый' },
+  });
+  ok('повторный ЕКН не создаёт дубль', (eknAgain.json?.ekn ?? []).length === 1, JSON.stringify(eknAgain.json?.ekn));
+
+  const ekn2 = await call('POST', `/materials/${matId}/ekn`, {
+    token: ownerToken,
+    body: { ekn: '068864', variant: '2,0 мм, белый' },
+  });
+  ok('второй ЕКН добавлен', (ekn2.json?.ekn ?? []).length === 2, JSON.stringify(ekn2.json?.ekn));
+
+  const eknId = (ekn2.json?.ekn ?? [])[0]?.id;
+  const removed = await call('DELETE', `/materials/${matId}/ekn/${eknId}`, { token: ownerToken });
+  ok('ЕКН удалён', (removed.json?.ekn ?? []).length === 1, JSON.stringify(removed.json?.ekn));
+
+  const list = await call('GET', '/materials', { token: ownerToken });
+  ok('материалы в списке', (list.json?.items ?? []).some((m) => m.id === matId), `материалов ${list.json?.items?.length}`);
+
+  const renamed = await call('PUT', `/materials/${matId}`, {
+    token: ownerToken,
+    body: { name: 'Мембрана ПВХ Эксперт 2', kind: 'material', unit: 'м2' },
+  });
+  ok('правка не меняет SKU', renamed.json?.sku === created.json?.sku,
+    `${created.json?.sku} → ${renamed.json?.sku}`);
+
+  const archived = await call('DELETE', `/materials/${secondId}`, { token: ownerToken });
+  ok('удаление уводит в архив, а не стирает', archived.json?.archived === true, JSON.stringify(archived.json?.archived));
+  const visible = await call('GET', '/materials', { token: ownerToken });
+  ok('архивный не мешает списку', !(visible.json?.items ?? []).some((m) => m.id === secondId));
+  const withArchived = await call('GET', '/materials?archived=1', { token: ownerToken });
+  ok('с archived=1 архивный виден', (withArchived.json?.items ?? []).some((m) => m.id === secondId));
+}
+
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);

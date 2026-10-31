@@ -2,6 +2,7 @@ import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { SystemCard } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { noteNotFoundMessage, resolveNotePath } from '../utils/note-path';
 
 /**
  * «Контекст КП» — карточки систем из Базы знаний (2026-10-29).
@@ -113,18 +114,28 @@ function render(
   }
 }
 
-/** Открыть заметку в Obsidian по пути из Базы знаний. */
+/**
+ * Открыть заметку в Obsidian.
+ *
+ * Путь из карточки — ЛОГИЧЕСКИЙ путь внутри Базы знаний, а не место файла в
+ * хранилище: на бою они не совпадают (заметка лежит в «База службы/Write it»,
+ * а база знаний зовёт её «Инженерная гидроизоляция/Системы»). Поэтому файл
+ * ищется по названию среди файлов вольта — см. utils/note-path.ts.
+ */
 async function openNote(view: OffersView, path: string): Promise<void> {
   if (!path) {
     new Notice('У карточки нет пути к заметке');
     return;
   }
-  // Путь может вести в хранилище без расширения — добавляем .md, как это
-  // делает Obsidian для заметок.
-  const target = path.endsWith('.md') ? path : `${path}.md`;
+  const vaultPaths = view.app.vault.getMarkdownFiles().map((f) => f.path);
+  const target = resolveNotePath(vaultPaths, path);
+  if (!target) {
+    new Notice(noteNotFoundMessage(path));
+    return;
+  }
   const file = view.app.vault.getAbstractFileByPath(target);
   if (!file) {
-    new Notice(`Заметка не найдена: ${path}`);
+    new Notice(noteNotFoundMessage(path));
     return;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
