@@ -3,8 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// materialTagName — тег карточки Базы знаний, которая описывает материал.
+// Вместе с commercialPropose он отличает материал от системы.
+const materialTagName = "material"
 
 // Сопоставление строк таблицы с материалами (Task 4 плана 2026-10-30).
 //
@@ -195,4 +200,53 @@ func normalizeEkn(raw string) string {
 		}
 	}
 	return b.String()
+}
+
+// --- Системы и материалы по тегам (Task 6 плана 2026-10-30) -------------
+//
+// Две сущности различаются ТЕГАМИ карточки Базы знаний, а не названием:
+//   - commercial_propose + material — материал (то, что продаётся);
+//   - commercial_propose без material — система (обоснование сочетания).
+//
+// Признак «есть ТН- в названии» не годится: он есть почти у любой системы, но
+// полагаться на написание нельзя — технолог заведёт карточку без префикса, и
+// она попадёт не в тот раздел. Тег — явное решение человека.
+
+// splitCardsByTags делит карточки на системы и материалы.
+func splitCardsByTags(notes []KBNoteSummary) (systems, materials []KBNoteSummary) {
+	for _, n := range notes {
+		if noteHasTag(n, materialTagName) {
+			materials = append(materials, n)
+			continue
+		}
+		systems = append(systems, n)
+	}
+	return systems, materials
+}
+
+// noteHasTag проверяет тег по списку тегов карточки.
+func noteHasTag(n KBNoteSummary, tag string) bool {
+	for _, t := range n.Tags {
+		if strings.EqualFold(strings.TrimSpace(t.Name), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// reCompositionSku — SKU в составной строке. Код вида MAT-МЕМБ-ПВХ-0007 или
+// РАБ-МОНТ-ОБЩ-0001: буквы, три группы и номер через дефис.
+//
+// Без \b: в Go кириллица не считается «словом» для границы слова, и шаблон
+// с \b не находил бы код, начинающийся с РАБ-. Эта же грабля уже ловилась в
+// skills (2026-10-29).
+var reCompositionSku = regexp.MustCompile(`(?:MAT|РАБ)-[А-ЯЁA-Z0-9]{1,8}-[А-ЯЁA-Z0-9]{1,8}-\d{4}`)
+
+// extractCompositionSku достаёт SKU материала из строки состава.
+//
+// Строки состава пишут по-разному: «- **1** Мембрана (MAT-МЕМБ-ПВХ-0007)»,
+// «- MAT-МЕМБ-ПВХ-0007 — мембрана 1,5 мм». SKU ищется как код, а не по
+// позиции в строке: иначе порядок слов ломал бы разбор.
+func extractCompositionSku(line string) string {
+	return reCompositionSku.FindString(strings.ToUpper(line))
 }

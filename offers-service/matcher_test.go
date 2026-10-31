@@ -160,3 +160,58 @@ func TestPickMaterialByAnswer(t *testing.T) {
 		}
 	}
 }
+
+// Разделение систем и материалов по тегам (Task 6).
+//
+// Признак «есть ТН- в названии» ненадёжен: технолог заведёт карточку без
+// префикса, и она попадёт не в тот раздел. Тег — явное решение человека.
+
+func TestSplitCardsByTags(t *testing.T) {
+	notes := []KBNoteSummary{
+		{ID: 1, Title: "ТН-Стилобат", Tags: []KBTag{{ID: 1, Name: "commercial_propose"}}},
+		{ID: 2, Title: "Мембрана ПВХ", Tags: []KBTag{{ID: 1, Name: "commercial_propose"}, {ID: 2, Name: "material"}}},
+		{ID: 3, Title: "Без тега", Tags: nil},
+	}
+	systems, materials := splitCardsByTags(notes)
+	if len(systems) != 2 || len(materials) != 1 {
+		t.Fatalf("разделено неверно: систем %d, материалов %d", len(systems), len(materials))
+	}
+	if materials[0].ID != 2 {
+		t.Fatalf("материал определён неверно: %+v", materials[0])
+	}
+}
+
+// Тег сравнивается без учёта регистра и пробелов: в заметках пишут по-разному.
+func TestNoteHasTagIsCaseInsensitive(t *testing.T) {
+	n := KBNoteSummary{Tags: []KBTag{{Name: " Material "}}}
+	if !noteHasTag(n, materialTagName) {
+		t.Fatal("тег с пробелами и другим регистром не узнан")
+	}
+	if noteHasTag(n, "commercial_propose") {
+		t.Fatal("чужой тег опознан как свой")
+	}
+}
+
+// SKU ищется в строке состава как код, а не по позиции.
+func TestExtractCompositionSku(t *testing.T) {
+	cases := map[string]string{
+		"- **1** Мембрана ПВХ (MAT-МЕМБ-ПВХ-0007)": "MAT-МЕМБ-ПВХ-0007",
+		"- MAT-МЕМБ-ПВХ-0007 — мембрана 1,5 мм":    "MAT-МЕМБ-ПВХ-0007",
+		"1. Грунтовка [mat-грунт-общ-0012]":        "MAT-ГРУНТ-ОБЩ-0012",
+		"- Песок, без кода":                        "",
+		"- РАБ-МОНТ-ОБЩ-0001 монтаж":               "РАБ-МОНТ-ОБЩ-0001",
+	}
+	for line, want := range cases {
+		if got := extractCompositionSku(line); got != want {
+			t.Errorf("строка %q: получили %q, ожидали %q", line, got, want)
+		}
+	}
+}
+
+// Система без единого SKU в составе — законная: обоснование может быть
+// текстом. Разбор не должен падать и не должен выдумывать коды.
+func TestExtractCompositionSkuEmpty(t *testing.T) {
+	if got := extractCompositionSku(""); got != "" {
+		t.Fatalf("пустая строка дала %q", got)
+	}
+}

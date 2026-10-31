@@ -59,12 +59,17 @@ type KBTag struct {
 }
 
 // KBNoteSummary — карточка в списке.
+//
+// Tags заполняются, когда сервис их прислал: по ним различаются системы и
+// материалы (commercial_propose + material против одного commercial_propose).
+// Список может их не содержать, поэтому признак проверяется терпимо.
 type KBNoteSummary struct {
-	ID        int64  `json:"id"`
-	UUID      string `json:"uuid"`
-	Title     string `json:"title"`
-	Path      string `json:"path"`
-	UpdatedAt string `json:"updated_at"`
+	ID        int64   `json:"id"`
+	UUID      string  `json:"uuid"`
+	Title     string  `json:"title"`
+	Path      string  `json:"path"`
+	UpdatedAt string  `json:"updated_at"`
+	Tags      []KBTag `json:"tags"`
 }
 
 // KBNote — карточка с текстом.
