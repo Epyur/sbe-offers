@@ -427,6 +427,20 @@ console.log('\n8. Ручки бота защищены секретом');
 
   const catalog = await call('GET', '/bot/catalog', { headers: { 'X-Service-Secret': BOT_SECRET } });
   ok('бот видит каталог', catalog.status === 200 && (catalog.json?.items ?? []).length > 0);
+  // Каталог бота — только материалы (2026-10-31): система с ценой в чате
+  // была бы ошибкой, у неё цены нет вовсе.
+  ok('в каталоге бота нет систем',
+    (catalog.json?.items ?? []).every((i) => i.kind !== 'system'),
+    JSON.stringify((catalog.json?.items ?? []).map((i) => i.kind)));
+  ok('в каталоге бота есть признак «цена известна»',
+    (catalog.json?.items ?? []).every((i) => typeof i.hasPrice === 'boolean'),
+    JSON.stringify((catalog.json?.items ?? [])[0]));
+
+  const botSystems = await call('GET', '/bot/systems', { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('бот видит системы', botSystems.status === 200, `получили ${botSystems.status}`);
+  ok('системы пришли списком', (botSystems.json?.systems ?? []).length > 0,
+    JSON.stringify(botSystems.json?.systems?.length));
+  ok('у системы для бота нет цены', (botSystems.json?.systems ?? []).every((s) => s.price === undefined));
 }
 
 console.log('\n9. Коды входа (без почты: проверяем отказы)');
@@ -939,6 +953,169 @@ console.log('\n16. Материалы и ЕКН (2026-10-30)');
   ok('архивный не мешает списку', !(visible.json?.items ?? []).some((m) => m.id === secondId));
   const withArchived = await call('GET', '/materials?archived=1', { token: ownerToken });
   ok('с archived=1 архивный виден', (withArchived.json?.items ?? []).some((m) => m.id === secondId));
+}
+
+console.log('\n17. Системы из Базы знаний (2026-10-31)');
+{
+  // Разделение двух сущностей проверяется на живом списке карточек: в
+  // заглушке три заметки — две системы и один материал с тегом material.
+  const systems = await call('GET', '/systems', { token: ownerToken });
+  ok('системы отдаются → 200', systems.status === 200, `получили ${systems.status} ${systems.text?.slice(0, 160)}`);
+  ok('ошибки Базы знаний нет', !systems.json?.error, JSON.stringify(systems.json?.error));
+
+  const list = systems.json?.systems ?? [];
+  ok('системы пришли', list.length > 0, `систем ${list.length}`);
+  ok('карточка с тегом material системой не считается',
+    !list.some((s) => (s.title ?? '').includes('Мембрана')),
+    JSON.stringify(list.map((s) => s.title)));
+
+  // Берём систему, в составе которой есть ссылка на материал, заведённый в
+  // разделе 16 (MAT-МЕМБ-ПВХ-0001). Порядок разделов важен: материальный
+  // справочник уже наполнен.
+  const materials = await call('GET', '/materials', { token: ownerToken });
+  const sku = (materials.json?.items ?? []).find((m) => (m.sku ?? '').startsWith('MAT-МЕМБ-ПВХ-'))
+    ?.sku;
+  ok('в справочнике есть материал для состава', Boolean(sku), JSON.stringify(sku));
+
+  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.sku === sku)) ?? list[0] ?? {};
+  const links = card.compositionLinks ?? [];
+  ok('у системы есть состав ссылками', links.length > 0, JSON.stringify(links));
+  ok('каждая строка состава отдаёт текст', links.every((c) => (c.raw ?? '').length > 0));
+
+  const found = links.find((c) => c.sku === sku);
+  ok('ссылка на реальный материал разрешилась', Boolean(found?.found), JSON.stringify(found));
+  ok('в разрешённой строке есть название материала', (found?.name ?? '').length > 0, JSON.stringify(found?.name));
+  ok('в разрешённой строке есть id, единица и found',
+    found?.materialId > 0 && found?.found === true, JSON.stringify(found));
+
+// Строка без кода остаётся видимой и называется в problems: молча терять
+  // её нельзя, иначе человек не узнает, чего в системе не хватает.
+  const withoutSku = links.filter((c) => !c.sku);
+  ok('строка без кода осталась в составе', withoutSku.length > 0, JSON.stringify(withoutSku));
+  ok('строка без кода названа в проблемах',
+    withoutSku.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
+    JSON.stringify(card.problems));
+  ok('проблемы перечисляются отдельно от состава', Array.isArray(card.problems), JSON.stringify(card.problems));
+  ok('незнакомый код не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
+
+  const anon = await call('GET', '/systems');
+  ok('без токена → 401', anon.status === 401, `получили ${anon.status}`);
+}
+
+console.log('\n18. Таблица менеджера и системы в КП (2026-10-31)');
+{
+  // Предложение, в которое дописываются позиции: сначала пустое, потом
+  // таблица, потом система. Каждый шаг виден по сумме и составу.
+  // Пустое предложение создать нельзя (правило сервера: без позиций оно
+  // бессмысленно), поэтому заводим с одной позицией и называем её заглушкой —
+  // таблица и система дописываются к ней, а не заменяют состав.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Табличное' },
+      items: [{ name: 'Заглушка', unit: 'шт', qty: 1, price: 1 }],
+      formValues: {},
+      status: 'draft',
+    },
+  });
+  ok('предложение для проверки создано', created.status === 200, `получили ${created.status} ${created.text?.slice(0, 160)}`);
+  const offerId = created.json?.id;
+
+  // --- Таблица: превью ничего не пишет -----------------------------------
+  const xlsx = makeXlsx([
+    ['Наименование', 'ЕКН', 'Ед.', 'Кол-во', 'Цена', 'Сумма'],
+    // ЕКН 068864 и новое имя — то, что осталось у материала после проверок
+    // раздела 16: материал переименован, а первый ЕКН там удалён. Берём
+    // то, что справочник реально содержит на этом шаге.
+    ['Мембрана ПВХ Эксперт 2', '068864', 'м2', 10, 1250, 12500],
+    ['Неизвестный материал', '', 'шт', 1, 100, 100],
+  ]);
+  const preview = await fetch(`${BASE}/api/offers/offers/${offerId}/sheet`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'X-File-Name': 'table.xlsx',
+      Authorization: `Bearer ${ownerToken}`,
+    },
+    body: xlsx,
+  });
+  const pv = await preview.json().catch(() => ({}));
+  ok('таблица разобрана → 200', preview.status === 200, `получили ${preview.status} ${JSON.stringify(pv).slice(0, 160)}`);
+  ok('строк найдено две', pv?.counts?.total === 2, JSON.stringify(pv?.counts));
+  ok('мембрана сопоставлена по ЕКН', pv?.counts?.byEkn === 1, JSON.stringify(pv?.counts));
+  ok('неизвестная строка не сопоставлена', pv?.counts?.none === 1, JSON.stringify(pv?.counts));
+  ok('проблемы названы до применения', (pv?.problems ?? []).length > 0, JSON.stringify(pv?.problems));
+
+  const untouched = await call('GET', `/offers/${offerId}`, { token: ownerToken });
+  ok('превью ничего не записало', (untouched.json?.items ?? []).length === 1,
+    JSON.stringify(untouched.json?.items));
+
+  // --- Применение: пишется цена ИЗ ТАБЛИЦЫ --------------------------------
+  const matched = (pv?.rows ?? []).find((r) => r.materialId > 0);
+  ok('в превью есть сопоставленная строка', Boolean(matched), JSON.stringify(pv?.rows));
+  const applied = await call('POST', `/offers/${offerId}/sheet/apply`, {
+    token: ownerToken,
+    body: {
+      rows: [{
+        line: matched?.row?.line ?? 2,
+        materialId: matched?.materialId ?? 0,
+        ekn: matched?.row?.ekn ?? '',
+        variant: matched?.row?.name ?? '',
+        qty: matched?.row?.qty ?? 1,
+        price: matched?.row?.price ?? 0,
+      }],
+      addMissingEkn: true,
+    },
+  });
+  ok('таблица применена → 200', applied.status === 200, `получили ${applied.status} ${applied.text?.slice(0, 200)}`);
+  ok('дописана одна позиция', applied.json?.applied === 1, JSON.stringify(applied.json?.applied));
+  const appliedItem = (applied.json?.offer?.items ?? [])[0];
+  ok('цена позиции взята из таблицы', appliedItem?.price === 1250 || appliedItem?.price === 1250.5,
+    JSON.stringify(appliedItem));
+  ok('итог пересчитан', (applied.json?.offer?.total ?? 0) > 0, JSON.stringify(applied.json?.offer?.total));
+
+  // --- Система: состав дописывается, состав со ссылкой разрешается --------
+  // Система ТН-Кровля Классик ссылается на MAT-МЕМБ-ПВХ-0001, который заведён
+  // в разделе 16 — вилка цен у него уже есть после предыдущей таблицы.
+  const beforeSystem = (applied.json?.offer?.items ?? []).length;
+  const composed = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('система добавлена → 200', composed.status === 200, `получили ${composed.status} ${composed.text?.slice(0, 200)}`);
+  ok('позиции ДОПИСАНЫ, а не заменены', (composed.json?.offer?.items ?? []).length > beforeSystem,
+    `было ${beforeSystem}, стало ${(composed.json?.offer?.items ?? []).length}`);
+  ok('добавлена хотя бы одна позиция', (composed.json?.added ?? 0) >= 1, JSON.stringify(composed.json?.added));
+  ok('строка без материала названа в problems', (composed.json?.problems ?? []).length > 0,
+    JSON.stringify(composed.json?.problems));
+
+  const unknownSystem = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { sku: 'НЕТ-ТАКОГО' },
+  });
+  ok('неизвестная система → 404', unknownSystem.status === 404, `получили ${unknownSystem.status}`);
+
+  const noToken = await call('POST', `/offers/${offerId}/system`, { body: { sku: 'TN-ROOF-CLASSIC' } });
+  ok('добавление системы без токена → 401', noToken.status === 401, `получили ${noToken.status}`);
+
+  // --- Бот: та же система, другой способ входа ----------------------------
+  // У бота секрет сервиса и chat_id вместо JWT; правило состава одно, поэтому
+  // проверяем, что ручка даёт тот же результат. Чат владельца привязан в
+  // разделе 11 — берём его, а не придуманный.
+  const botComposed = await call('POST', `/bot/offers/${offerId}/system`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: String(linkedChatId), sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('бот дописывает систему → 200', botComposed.status === 200,
+    `получили ${botComposed.status} ${botComposed.text?.slice(0, 160)}`);
+  ok('бот дописал хотя бы одну позицию', (botComposed.json?.added ?? 0) >= 1,
+    JSON.stringify(botComposed.json?.added));
+
+  const foreign = await call('POST', `/bot/offers/${offerId}/system`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: '999999', sku: 'TN-ROOF-CLASSIC' },
+  });
+  ok('чужой чат систему не добавляет', foreign.status === 404, `получили ${foreign.status}`);
 }
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);

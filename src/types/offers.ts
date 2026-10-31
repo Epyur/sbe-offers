@@ -149,6 +149,152 @@ export interface SystemCard {
   empty: boolean;
 }
 
+/**
+ * Материал — то, что продаётся (2026-10-31).
+ *
+ * Отдельная сущность от системы: у него собственный SKU, который назначает
+ * только сервер, и вариации ЕКН. **Цены здесь нет намеренно**: цена одного и
+ * того же материала зависит от условий поставки и приходит из таблицы
+ * менеджера для конкретного КП. Вилка `priceMin`/`priceMax` — то, что видели
+ * в загруженных таблицах, и только для аналитики.
+ */
+export interface Material {
+  id: number;
+  sku: string;
+  kind: 'material' | 'work';
+  name: string;
+  unit: string;
+  description: string;
+  /** null — цены ещё не видели. Ноль значит «бесплатно», это разные вещи. */
+  priceMin?: number | null;
+  priceMax?: number | null;
+  priceSeenAt?: string;
+  photoKey: string;
+  sortOrder: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  ekn: MaterialEkn[];
+}
+
+/** Одна вариация материала: номер ЕКН и как она называется. */
+export interface MaterialEkn {
+  id: number;
+  materialId: number;
+  ekn: string;
+  variant: string;
+  source: 'excel' | 'manual';
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/**
+ * Строка состава системы, разрешённая против справочника материалов.
+ *
+ * `found: false` — строка осталась видимой, но материала в справочнике нет:
+ * без кода, с незнакомым кодом или с кодом удалённого материала. Такие строки
+ * сервер перечисляет в `problems` карточки.
+ */
+export interface CompositionItem {
+  raw: string;
+  sku?: string;
+  materialId: number;
+  name?: string;
+  unit?: string;
+  ekn?: string[];
+  found: boolean;
+}
+
+/** Система из Базы знаний с составом, разрешённым против материалов. */
+export interface SystemWithComposition extends SystemCard {
+  compositionLinks?: CompositionItem[];
+  problems?: string[];
+}
+
+/** Ответ «Добавить систему»: что дописалось и что осталось без цены. */
+export interface ComposeSystemResponse {
+  offer: Offer;
+  added: number;
+  /** Материалы без вилки цен: позиция вошла с нулём. */
+  missingPrice?: string[];
+  /** Строки состава без материала в справочнике — в КП не попали. */
+  problems?: string[];
+}
+
+/** Ответ раздела «Системы». */
+export interface SystemsResponse {
+  systems: SystemWithComposition[];
+  kbEnabled: boolean;
+  count: number;
+  /** Ошибка Базы знаний; список при этом пустой. */
+  error?: string;
+}
+
+/**
+ * Строка таблицы менеджера, прочитанная сервером.
+ *
+ * `has*` говорят, была ли колонка в файле: ноль цены и отсутствие колонки —
+ * разные вещи, и показывать их одинаково значит соврать человеку.
+ */
+export interface SheetRow {
+  line: number;
+  name: string;
+  ekn: string;
+  unit: string;
+  qty: number;
+  price: number;
+  sum: number;
+  hasQty: boolean;
+  hasPrice: boolean;
+  hasSum: boolean;
+  missingName?: boolean;
+}
+
+/** Чем сопоставлена строка таблицы с материалом. */
+export type MatchMethod = 'ekn' | 'name' | 'ai' | 'none';
+
+/** Решение по одной строке таблицы. */
+export interface MatchResult {
+  row: SheetRow;
+  materialId: number;
+  sku: string;
+  name: string;
+  method: MatchMethod;
+  reason?: string;
+  /** Материал предложен моделью — применять только после подтверждения. */
+  needsConfirm: boolean;
+}
+
+/** Сводка превью: сколько строк сопоставлено каждым способом. */
+export interface SheetCounts {
+  total: number;
+  byEkn: number;
+  byName: number;
+  byAi: number;
+  none: number;
+}
+
+/**
+ * «Что я понял из таблицы» — ответ первого шага загрузки. Ничего не
+ * записано: применение отдельным шагом после проверки человеком.
+ */
+export interface SheetPreview {
+  fileName: string;
+  rows: MatchResult[];
+  counts: SheetCounts;
+  problems: string[];
+}
+
+/** Строка, которую менеджер подтвердил к применению. */
+export interface SheetApplyRow {
+  line: number;
+  materialId: number;
+  ekn: string;
+  variant: string;
+  qty: number;
+  price: number;
+}
+
 /** Ответ списка карточек: вместе с ними — настроена ли База знаний. */
 export interface SystemCardsResponse {
   cards: SystemCard[];

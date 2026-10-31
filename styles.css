@@ -970,3 +970,57 @@
   cursor: pointer;
   padding: 4px 0;
 }
+/* --- Материалы, системы, таблица менеджера (2026-10-31) ----------------- */
+.tn-offers-mono {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}
+
+.tn-offers-hidden {
+  display: none;
+}
+
+.tn-offers-self-center {
+  align-self: center;
+}
+
+.tn-offers-row-archived td {
+  opacity: 0.6;
+}
+
+.tn-offers-problems {
+  margin: 8px 0;
+  padding-left: 20px;
+  font-size: 0.9em;
+}
+
+.tn-offers-problems li {
+  margin: 2px 0;
+}
+
+.tn-offers-ekn-add {
+  margin-top: 8px;
+}
+
+.tn-offers-ekn-code {
+  width: 140px;
+  flex: 0 0 auto;
+}
+
+.tn-offers-system-card {
+  margin-bottom: 12px;
+}
+
+.tn-offers-system-footer {
+  margin-top: 8px;
+  justify-content: space-between;
+}
+
+.tn-offers-system-add {
+  margin-top: 8px;
+}
+
+.tn-offers-sheet-summary {
+  margin: 8px 0;
+  font-weight: 500;
+}

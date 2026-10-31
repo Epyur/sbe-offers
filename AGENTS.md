@@ -784,7 +784,7 @@ runs 0.2.0.
 
 Работа остановлена по просьбе пользователя. Состояние на момент остановки.
 
-### Выпущено в 0.2.1b (три живых дефекта) - только в git, на сервере 0.2.0
+### Выпущено в 0.2.1 (три живых дефекта) - развёрнуто 2026-10-31
 
 1. **401 «ключ недействителен»** при рабочем ключе. Плагин не перезапрашивал
    токен, а сервис не писал отказов в журнал вовсе. Теперь: первый 401 сбрасы-
@@ -854,4 +854,301 @@ runs 0.2.0.
 `tsc --noEmit` EXIT=0, `npm run build` OK, OpenAPI 55 маршрутов совпадают,
 стенд E2E 156/156, `check_note_path.mjs` 14/14.
 
-**На сервере по-прежнему 0.2.0** - ни одно исправление не развёрнуто.
+**Развёрнуто 2026-10-31.** Сервис и бот пересобраны и пересозданы, самораздача выложена и сверена по https. Проверено на бою: context/refresh собрал **588 карточек** (было 50), kbEnabled: true, журнал отказов пишется, таблицы offers_material/offers_material_ekn созданы миграцией, 1 материал перенесён из каталога, 3 системных карточки заархивированы.
+### Грабли, стоившие работы в этом цикле
+
+Два места, о которые легко споткнуться снова. Записаны сюда, потому что в
+прошлый раз они уже подводили, а знание осталось только в комментарии кода.
+
+**1. `\b` в Go не считает кириллицу словом.** Регулярка `\b(?:MAT|РАБ)-\d{4}\b`
+не находит `РАБ-МОНТ-ОБЩ-0001`: граница слова в Go определяется по
+ASCII-буквам, и кириллическая `Р` не считается «словом» с левой стороны.
+Шаблон молча не срабатывает — ошибки нет, просто пустой результат.
+
+- Поймано дважды: 2026-10-29 в `skills` (выражения «ИИ-штампов» не ловили
+  ничего) и 2026-10-31 в `matcher.go` (`extractCompositionSku`).
+- **Правило:** в регулярках по русскому тексту `\b` не использовать. Границу
+  задавать явно — классом символов, `(?:^|[^А-ЯЁA-Z0-9])` или проверкой
+  результата. Тест на кириллицу обязателен: одна строка `РАБ-…` ловит всё.
+
+**2. `crapper` показывает 0% покрытия на Go-функциях с табличными тестами.**
+Инструмент определяет вызовы эвристикой по тексту и не узнаёт вызовы внутри
+`cases := map[...]` с `t.Run`. На функциях этого цикла он печатал `0.0%` и
+CRAP 100–300, хотя реальное покрытие 96–100%.
+
+- **Правило:** покрытие Go смотреть через `go tool cover -func`, а не через
+  `crapper`. `crapper` годится только для цикломатической сложности (CC) —
+  и то как ориентир: CC у `buildPreview` 17 и `matchRows` 16 при 100%
+  покрытии, то есть порог CRAP < 10 здесь не нарушен, а перебор веток
+  осмысленный (это чистые диспетчеры правил).
+- Команда для проверки покрытия по одной функции:
+
+```bash
+go test -coverprofile=/tmp/c.out ./... && go tool cover -func=/tmp/c.out | grep -E 'функция|total:'
+```
+
+## Task 6 closed: systems from the Knowledge Base - 2026-10-31 (not committed)
+
+Continues the plan `docs/superpowers/plans/2026-10-30-sbe-offers-materials-systems-plan.md`
+after the cycle stop. This finishes Task 6 only; Tasks 7-9 (plugin UI, bot,
+release) are untouched.
+
+**What the task was.** The split between the two entities was decided by tags in
+`matcher.go` (`splitCardsByTags`, commit `2f2d3c8`), but nothing read that rule:
+there was no route, the composition was a list of plain strings with no link to
+the material catalogue, and a line pointing at a material that does not exist
+disappeared into the same string list with no trace.
+
+**Server.**
+
+- `skills/systemcard.go`: `SystemCard` gains `Links []CompositionLink{Raw, SKU}`,
+  filled by `linksFromComposition` in `ParseSystemCard`. `Composition []string`
+  stays exactly as it was - it feeds the model prompt and the document, and
+  changing its type would ripple into DOCX and the brief. `ExtractSku` is exported
+  so the service can derive the code from a card read out of the old cache. The
+  regex has no `\b` and accepts four digit numbers; a `РАБ-` code is found (test
+  `TestCompositionLinksWorkSku`), which is the third catch of that gotcha.
+- `systemcards.go`: `CompositionItem{Raw, SKU, MaterialID, Name, Unit, Ekn, Found}`
+  and `resolveComposition(card, materials)`. Every line ends up in the result;
+  `Found=false` lines are named in `Problems` with the reason: no code, unknown
+  code, or "material removed from the catalogue" (an archived material is found
+  in the map but reported separately - "not found" would be a lie). An empty
+  composition is one problem, not silently fine.
+  `systemCardFromParsed` is now the single place that builds a card from a parsed
+  note - `SystemCardsFromKB` and `SystemsFromKB` both use it.
+- `SystemsFromKB` reads `commercial_propose`, splits by tag, keeps systems only.
+- Route `GET /api/offers/systems` (`viewer`), handler `handleListSystems` answers
+  `{systems, kbEnabled, count, error?}`. It reads the **Knowledge Base live**, not
+  the card cache: the composition has to resolve against the *current* material
+  catalogue, while the cache serves names to the offer context. A KB failure
+  answers 200 with an empty list and `error`, as the refresh route does.
+- `sbe-offers-service.PromptText` now delegates to `skills.SystemCard.PromptText`.
+  The two were byte-identical (`dryer` 0.88-1.00 duplicate), and a prompt format
+  kept in two places drifts silently.
+
+**Stand.**
+
+- `scripts/kb-stub.mjs`: a third note with tags `commercial_propose` + `material`
+  (so the tag split is checked against the same feed), and the classic-roof card
+  now has `- 1 Мембрана ПВХ Эксперт (MAT-МЕМБ-ПВХ-0001)` in its composition.
+- `scripts/offers_local_e2e.mjs` section 17: tag split, composition resolved
+  against the material created in section 16 (name, id, `found`), a code-less
+  line staying visible and named in `problems`, 401 without a token.
+
+**Checks.** `gofmt`/`go vet` clean; `go test ./...` green with `main` 40.7%,
+`model` 71.6%, `skills` 84.2%. Coverage of the new code (`go tool cover -func`):
+`resolveComposition` 90.6, `SystemsFromKB` 84.2, `systemCardFromParsed` 100,
+`splitCardsByTags`/`noteHasTag` 100. `check_offers_openapi.mjs`: 56 routes, 44
+paths, schema matches. Local stand E2E **171/171**, run twice. 15 tests added in
+`skills/systemcard_links_test.go` and `systems_split_test.go`.
+
+**Not done, by the plan's own boundary.** Plugin UI (Task 7), bot (Task 8),
+version/docs/0.3.0 (Task 9). Committed and pushed later the same day as `6b1fc45`
+(the entry was written before the commit, so the hash is named here rather than
+in the commit it describes - the 2026-10-30 lesson).
+
+**Stand lesson (cost an hour).** The local service could not be rebuilt from its
+Dockerfile (same Docker Hub reachability as 2026-10-30), so the binary was built
+in a `golang:1.24` image. A CGO-enabled Go binary copied over the running
+container's `/mailers-offers` fails with `exec /mailers-offers: no such file or
+directory` - the kernel needs `ld-linux-x86-64.so.2` and musl has only
+`ld-musl-x86_64.so.1`, so the "file is not found" message is about the
+*interpreter*, not the file. Build with `CGO_ENABLED=0` for the stand; the
+container image itself is fine because it builds the binary on its own base.
+Also: `docker cp` into a container whose binary is running replaces the file but
+leaves that container's binary unmappable until it is restarted - restart after
+cp, then check `docker ps` says `Up`, not `Exited (255)`.
+
+## Task 7: the plugin caught up with the two entities - 2026-10-31
+
+The plugin still had one section called "Каталог" with every card carrying a
+price, while the server had already split materials (with SKU and ЕКН) from
+systems (KB cards, no price). This closes that gap; the bot (Task 8) and the
+release with 0.3.0 (Task 9) are still open.
+
+**Navigation.** "Каталог" is gone, replaced by two sections. `catalog-editor.ts`
+became `material-editor.ts` and `catalog-editor.ts` was deleted. The legacy
+`/catalog` routes and the `offers_catalog` table stay on the server untouched:
+old offers still point at those rows, and removing the routes would break them
+for no gain.
+
+**Materials (`ui/material-editor.ts`).**
+
+- List: name with the SKU underneath in monospace, unit, price range, ЕКН count.
+  No price column - a material has no single price, and a column would silently
+  become "the" price the way `offers_catalog.base_price` once did.
+- Search covers name, SKU and ЕКН numbers together: managers look a material up
+  by the number printed on the spec sheet, not by the catalogue name.
+- "Показать архив" is a checkbox, off by default; archived rows are dimmed.
+- Card: name, kind (material/work), unit, description. SKU is shown and never
+  editable - it is an identity, assigned once by the server.
+- New material: two extra fields, "Тип" and "Серия", which only feed the SKU
+  generator (`MAT-{TYPE}-{SERIES}-{NNNN}`). They are hidden when editing,
+  because a rename never changes the code.
+- ЕКН table with number, variant, source (excel/manual) and the last seen date;
+  add and delete inside the same modal.
+- `priceRangeText` prints "цена не загружалась" when both ends are `null`. Zero
+  is a legitimate price and a different thing.
+
+**Systems (`ui/systems-editor.ts`).**
+
+- One card per system: title, code, and either "состав распознан" or "есть
+  ошибки в составе". Problems are listed as text - a line without a code, a code
+  that is not in the catalogue, a deleted material.
+- The composition table shows each line's material, unit and ЕКН, so a manager
+  can see what the system is made of without opening the note.
+- "Открыть заметку" reuses `openNote` from the context editor (exported, not
+  copied): the KB path is logical and the file lives elsewhere in the vault; the
+  resolution rule lives in `utils/note-path.ts` and must not have a second copy.
+- `formatShortDate` moved to `utils/date.ts` for the same reason - it was about to
+  become a third copy.
+
+**Sheet upload (`ui/sheet-upload.ts`).**
+
+- Only for a saved offer: the sheet writes positions into a specific offer and
+  moves its `updated_at`.
+- File input, then "what I understood": counts per matching method, the problems
+  the server found, and a table with a checkbox per row.
+- **Rows matched by the model are NOT checked by default.** That is the whole
+  point of the two-step flow: a guess needs a human click. Exact ЕКН and exact
+  name hits are checked.
+- Quantity defaults to 1 only when the column is absent (`hasQty`), never
+  silently for a file that says 0.
+- The file is read before `input.value` is cleared - the live `FileList` gotcha
+  from sbe-mailer 2026-09-18.
+- `.xlsx` only; `.xls` gets a message asking to resave.
+
+**"Добавить систему" in the offer editor.**
+
+- This needed a server route: `POST /api/offers/offers/{id}/system` (editor).
+  The price of a position is known only on the server (the range seen in the
+  manager's sheets), so client-side assembly would have to invent numbers.
+- The composition is **appended** to the existing items, not a replacement: a
+  system is a set the manager wanted to add.
+- Price = the *lower* bound of the range. No range means price 0 and the material
+  is named in `missingPrice`, which the UI shows in the notice - the manager has
+  to load a sheet for it.
+- Lines that resolve to no material are returned in `problems` and never reach
+  the offer silently.
+- The system is looked up in the live KB feed (the same call the "Системы"
+  section makes), not in the card cache, so what the manager saw on screen is
+  what gets added.
+- `FindSystemCard` became a thin wrapper over the new `FindSystem` - one rule for
+  comparing codes instead of two.
+
+**Defects found by the stand, not by unit tests.**
+
+1. An empty offer cannot be created (the server refuses offers without
+   positions), so the E2E had to start from a one-line "Заглушка" offer. That is
+   correct server behaviour, the test was wrong.
+2. The E2E sheet named ЕКН `068863`, which section 16 deletes at the end of its
+   run. The preview showed `byEkn: 0` and the row fell through to the model. The
+   test now uses what the catalogue actually holds at that point (`068864`,
+   "Мембрана ПВХ Эксперт 2") - a fixture that drifts from real state is a bug in
+   the fixture.
+3. `handleAddSystem` came out at CC 13 with zero coverage. The loop was moved to
+   `appendComposition` (now 100% covered) and `handleAddSystem` dropped to 8.
+
+**Checks.** `gofmt`/`go vet` clean. `go test ./...` green: `main` 40.6%,
+`model` 71.6%, `skills` 84.2%; new code - `appendComposition` 100,
+`itemForMaterial` 100, `FindSystem` 100, `handleAddSystem` 0 (HTTP, covered by
+the stand like every other route in this plugin). `tsc --noEmit` EXIT=0,
+`npm run build` OK. `check_offers_openapi.mjs`: 57 routes, 45 paths, schema
+matches. Local stand E2E **189/189** (section 18: sheet preview writes nothing,
+apply takes the price from the sheet, system appends rather than replaces,
+unknown system 404, no token 401), run twice.
+
+**Not done.** Marked as Task 7 complete in the plan. Bot (Task 8), version 0.3.0
+with the release notes, deploy and self-hosting (Task 9) remain; nothing was
+deployed or self-hosted for this change.
+
+## Task 8: the bot learned materials and systems - 2026-10-31
+
+Closes the split for the Telegram bot. The plan asks for two things: the bot
+catalogue must never contain a system, and a system must expand into positions.
+Both are done, and the second one needed a server route the plan did not name.
+
+**Catalogue is materials only.**
+
+- `handleBotCatalog` now reads `offers_material`, not `offers_catalog`. The
+  response shape is unchanged on purpose (`id, name, unit, basePrice`) so the
+  bot keeps working, and gained two fields: `sku` and `hasPrice`.
+- `hasPrice` exists because `basePrice` alone lies: with no price range seen it
+  is 0, and a manager reads 0 as "free". The bot prints "цена не загружалась"
+  when `hasPrice` is false.
+- The rule lives in `botcatalog.go` as pure functions (`materialsForBot`,
+  `filterMaterialsForBot`) and is covered by tests: a system never reaches the
+  list even if it somehow lands in the table, and the search finds a material by
+  name, SKU or ЕКН number.
+- Search by ЕКН matters: a manager reads the number off the spec sheet, not the
+  catalogue name.
+
+**A defect the first test run caught.** `materialKindAllowed("")` was false, so
+a row saved before the `kind` column existed would silently disappear from the
+bot catalogue - `validateMaterial` already treated an empty kind as a material,
+the filter did not. Fixed in `materialKindAllowed`, so one rule now covers both
+the write path and the listing.
+
+**Systems in the bot.**
+
+- `GET /api/offers/bot/systems` (service secret) returns `{sku, title, problems}`
+  per system, plus `kbEnabled` and `error` when the KB is down. No card text, no
+  images: the chat does not render them.
+- `POST /api/offers/bot/offers/{id}/system` appends a system's composition to
+  the chat author's offer. It is a separate route from the plugin one because
+  the entry is different (service secret plus `chat_id` instead of a user JWT);
+  the composition logic itself is shared - `appendComposition`, `SystemsFromKB`,
+  `FindSystem`.
+- Bot side: `система <название>` (or `/system <название>`). `parseSystemCommand`
+  requires the word first, so "Монтаж системы вентиляции | 1 | 500" stays a
+  free-form position. `pickSystem` prefers an exact title or code match, then
+  prefix/substring on the normalised title (case, ё/е).
+- One match adds the system straight away; several show a keyboard
+  (`sys:<index>`) and the chosen one is added on the tap.
+- `callback_data` is limited to 64 bytes and system codes are Cyrillic, so the
+  button carries an index into a per-chat list kept next to the catalogue pages
+  (`RouterState.foundSystems`), not the code.
+- The reply names what happened: positions added, materials without a price
+  range, composition lines with no matching material.
+
+**Checks.** `gofmt`/`go vet` clean, `go test ./...` green (`main` 40.2%,
+`model` 71.6%, `skills` 84.2%); `materialsForBot` and `filterMaterialsForBot`
+100%. Bot: `tsc --noEmit` clean, build OK, **72 tests** (10 new in
+`src/flow/system.test.ts`). Plugin `tsc --noEmit` EXIT=0. OpenAPI: 59 operations,
+47 paths, schema matches. Local stand E2E **197/197**, run twice (catalogue has
+no systems, `hasPrice` present, `bot/systems` answers, the bot appends a system,
+a foreign chat gets 404).
+
+**Not done.** Version 0.3.0, release notes, deploy and self-hosting (Task 9).
+Committed and pushed as `534a8ef`.
+
+## Task 9: version 0.3.0 and documentation - 2026-10-31
+
+The plugin part of the release is ready; the deployment part is not started
+because it needs a word from the user.
+
+- `manifest.json` / `package.json`: `0.2.1 -> 0.3.0`. The step is the larger one
+  (+0.1 to a `0.x.0`) because the catalogue stopped being one thing and became
+  two, which is an architectural change, not an increment. Written with
+  `UTF8Encoding($false)`, first bytes checked `7B 0A 20` - no BOM.
+- ЦУП news text rewritten for this release (the 2026-09-17 lesson: the text is
+  baked into `main.js` at build time and is not refreshed on its own). It talks
+  about "Каталог разделён на два", the ЕКН, the sheet upload and the bot
+  command, in plain Russian and without file or function names.
+- `src/main.ts` also corrected: the version check compares
+  `lastAnnouncedVersion`, so nothing else was needed there.
+- `specification.md` gained two sections - the database tables (materials, ЕКН,
+  bot config; `offers_catalog` kept for old offers) and a full description of
+  materials, the two-step sheet upload, systems and the bot's two new routes.
+- The plan `docs/superpowers/plans/2026-10-30-sbe-offers-materials-systems-plan.md`
+  has its steps ticked and a status note at the end naming what was added beyond
+  the plan (three server routes) and that Task 10 is untouched.
+
+**Checks.** `npm run build` OK at 0.3.0, `tsc --noEmit` EXIT=0, no `0.2.1`
+left in the bundle. Go and bot suites unchanged from Task 8 (`go test` green,
+72 bot tests), OpenAPI 59 operations.
+
+**Not done (Task 10), needs the user's word.** Deploy (`docker compose up -d
+--build offers offers-bot` plus the `CREATED` check), the live catalogue
+migration check, `backend` -> `main`, the three SHA-256 as the last action,
+self-hosting and the https comparison. Nothing was deployed or self-hosted.

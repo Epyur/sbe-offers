@@ -3,6 +3,7 @@ import type { OffersView } from './offers-view';
 import type { SystemCard } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { noteNotFoundMessage, resolveNotePath } from '../utils/note-path';
+import { formatShortDate } from '../utils/date';
 
 /**
  * «Контекст КП» — карточки систем из Базы знаний (2026-10-29).
@@ -122,7 +123,7 @@ function render(
  * а база знаний зовёт её «Инженерная гидроизоляция/Системы»). Поэтому файл
  * ищется по названию среди файлов вольта — см. utils/note-path.ts.
  */
-async function openNote(view: OffersView, path: string): Promise<void> {
+export async function openNote(view: OffersView, path: string): Promise<void> {
   if (!path) {
     new Notice('У карточки нет пути к заметке');
     return;
@@ -167,9 +168,5 @@ async function refreshCards(
 
 /** Дата в коротком виде: 29.10.2026. */
 function formatDate(raw: string): string {
-  if (!raw) return '—';
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return raw;
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+  return formatShortDate(raw);
 }

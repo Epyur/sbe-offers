@@ -6,13 +6,14 @@ import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { renderHelpButton } from '../../../sbe-core/src/ui/help-modal';
 import { OFFERS_HELP } from './help';
 import { renderOffersList } from './offers-list';
-import { renderCatalogEditor } from './catalog-editor';
+import { renderMaterialEditor } from './material-editor';
+import { renderSystemsEditor } from './systems-editor';
 import { renderFormEditor } from './form-editor';
 import { renderAccessEditor } from './access-editor';
 import { renderContextEditor } from './context-editor';
 import { isAdminRole, type Role } from '../types/offers';
 
-export type NavKey = 'offers' | 'catalog' | 'context' | 'form' | 'access';
+export type NavKey = 'offers' | 'materials' | 'systems' | 'context' | 'form' | 'access';
 
 export class OffersView extends ItemView {
   plugin: SbeOffersPlugin;
@@ -127,7 +128,11 @@ export class OffersView extends ItemView {
     this.navEl.empty();
     const items: Array<{ key: NavKey; icon: string; label: string }> = [
       { key: 'offers', icon: '🧾', label: 'КП' },
-      { key: 'catalog', icon: '🗂', label: 'Каталог' },
+      // «Каталог» разделился на две сущности (2026-10-31): материалы — то, что
+      // продаётся и имеет цену; системы — сочетание материалов из Базы знаний,
+      // у которого своей цены нет.
+      { key: 'materials', icon: '🧱', label: 'Материалы' },
+      { key: 'systems', icon: '🧩', label: 'Системы' },
       { key: 'context', icon: '📚', label: 'Контекст КП' },
     ];
     if (this.isAdmin) {
@@ -152,7 +157,8 @@ export class OffersView extends ItemView {
     this.bodyEl.empty();
     const titles: Record<NavKey, string> = {
       offers: 'Коммерческие предложения',
-      catalog: 'Каталог систем и материалов',
+      materials: 'Материалы',
+      systems: 'Системы',
       context: 'Контекст КП',
       form: 'Форма КП',
       access: 'Бот и доступ',
@@ -163,9 +169,17 @@ export class OffersView extends ItemView {
         this.pageSubEl.setText(this.myEmail ? `Вы: ${this.myEmail}` : '');
         renderOffersList(this, this.bodyEl);
         break;
-      case 'catalog':
-        this.pageSubEl.setText('Карточки, из которых собираются предложения.');
-        renderCatalogEditor(this, this.bodyEl);
+      case 'materials':
+        this.pageSubEl.setText(
+          'То, что продаётся: свой код, вариации ЕКН. Цена приходит из таблицы менеджера для конкретного КП.',
+        );
+        renderMaterialEditor(this, this.bodyEl);
+        break;
+      case 'systems':
+        this.pageSubEl.setText(
+          'Сочетания материалов из Базы знаний. Своей цены у системы нет — она объясняет, почему выбраны именно эти материалы.',
+        );
+        renderSystemsEditor(this, this.bodyEl);
         break;
       case 'context':
         this.pageSubEl.setText('Карточки систем из Базы знаний: текст, состав и картинка для КП.');
