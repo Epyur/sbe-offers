@@ -703,42 +703,13 @@ func (s *Server) handleBotAddSystem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	materials, err := s.listMaterials(r.Context(), false)
+	// Правило состава одно с плагином — assembleSystem. Разница только во
+	// входе: секрет сервиса и chat_id вместо пользовательского JWT.
+	_, resp, err := s.assembleSystem(r.Context(), offer, req.SKU)
 	if err != nil {
-		dbError(w, "bot add system: materials", err)
+		writeComposeError(w, err)
 		return
 	}
-	systems, err := SystemsFromKB(r.Context(), s.kb, materials)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": "База знаний недоступна: " + err.Error(),
-		})
-		return
-	}
-	card, found := FindSystem(systems, req.SKU)
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "система не найдена"})
-		return
-	}
-
-	byID := make(map[int64]Material, len(materials))
-	for _, m := range materials {
-		byID[m.ID] = m
-	}
-	resp := ComposeSystemResponse{Problems: []string{}}
-	offer.Items, resp.Added = appendComposition(offer.Items, card.CompositionLinks, byID, &resp)
-	if resp.Added == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "в составе системы нет ни одного материала из справочника",
-		})
-		return
-	}
-	if err := s.persistOfferItems(r.Context(), offer); err != nil {
-		dbError(w, "bot add system: save offer", err)
-		return
-	}
-	resp.Offer = offer
 	writeJSON(w, http.StatusOK, resp)
 }
 

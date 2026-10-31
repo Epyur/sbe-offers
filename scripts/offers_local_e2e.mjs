@@ -969,34 +969,37 @@ console.log('\n17. Системы из Базы знаний (2026-10-31)');
     !list.some((s) => (s.title ?? '').includes('Мембрана')),
     JSON.stringify(list.map((s) => s.title)));
 
-  // Берём систему, в составе которой есть ссылка на материал, заведённый в
-  // разделе 16 (MAT-МЕМБ-ПВХ-0001). Порядок разделов важен: материальный
-  // справочник уже наполнен.
+  // Связь системы с материалом — по ВИКИ-ССЫЛКЕ (2026-10-31). В заглушке
+  // состав «ТН-Кровля Классик» ссылается на [[Мембрана ПВХ Эксперт]], а
+  // карточка с этим названием есть в ленте с тегом material — значит материал
+  // обязан завестись сам, из карточки, без ручного справочника.
   const materials = await call('GET', '/materials', { token: ownerToken });
-  const sku = (materials.json?.items ?? []).find((m) => (m.sku ?? '').startsWith('MAT-МЕМБ-ПВХ-'))
-    ?.sku;
-  ok('в справочнике есть материал для состава', Boolean(sku), JSON.stringify(sku));
+  const items = materials.json?.items ?? [];
+  const noteMaterial = items.find((m) => (m.noteTitle ?? '').length > 0);
+  ok('материал заведён из карточки Базы знаний', Boolean(noteMaterial),
+    JSON.stringify(items.map((m) => ({ name: m.name, note: m.noteTitle }))));
 
-  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.sku === sku)) ?? list[0] ?? {};
+  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.wiki)) ?? list[0] ?? {};
   const links = card.compositionLinks ?? [];
   ok('у системы есть состав ссылками', links.length > 0, JSON.stringify(links));
   ok('каждая строка состава отдаёт текст', links.every((c) => (c.raw ?? '').length > 0));
 
-  const found = links.find((c) => c.sku === sku);
-  ok('ссылка на реальный материал разрешилась', Boolean(found?.found), JSON.stringify(found));
+  const found = links.find((c) => c.found);
+  ok('ссылка на материал разрешилась', Boolean(found), JSON.stringify(links));
   ok('в разрешённой строке есть название материала', (found?.name ?? '').length > 0, JSON.stringify(found?.name));
-  ok('в разрешённой строке есть id, единица и found',
+  ok('в разрешённой строке есть id и found',
     found?.materialId > 0 && found?.found === true, JSON.stringify(found));
+  ok('в строке видна цель ссылки', (found?.wiki ?? '').length > 0, JSON.stringify(found?.wiki));
 
-// Строка без кода остаётся видимой и называется в problems: молча терять
+  // Строка без ссылки остаётся видимой и называется в problems: молча терять
   // её нельзя, иначе человек не узнает, чего в системе не хватает.
-  const withoutSku = links.filter((c) => !c.sku);
-  ok('строка без кода осталась в составе', withoutSku.length > 0, JSON.stringify(withoutSku));
-  ok('строка без кода названа в проблемах',
-    withoutSku.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
+  const withoutRef = links.filter((c) => !c.found);
+  ok('несвязанная строка осталась в составе', withoutRef.length > 0, JSON.stringify(withoutRef));
+  ok('несвязанная строка названа в проблемах',
+    withoutRef.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
     JSON.stringify(card.problems));
   ok('проблемы перечисляются отдельно от состава', Array.isArray(card.problems), JSON.stringify(card.problems));
-  ok('незнакомый код не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
+  ok('незнакомая ссылка не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
 
   const anon = await call('GET', '/systems');
   ok('без токена → 401', anon.status === 401, `получили ${anon.status}`);

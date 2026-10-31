@@ -1,23 +1,21 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 )
 
-// Состав системы в существующее предложение (Task 7, 2026-10-31).
+// Состав системы в предложение (Task 7, 2026-10-31).
 //
-// «Добавить систему» в редакторе КП не может быть клиентской склейкой: цену
-// позиции клиент не знает (её нет ни у системы, ни у материала), а сервер
-// знает вилку, которую видел в таблицах менеджера. Поэтому состав собирает
-// сервер и дописывает его в сохранённое предложение.
+// «Добавить систему» не может быть клиентской склейкой: цену позиции клиент не
+// знает (её нет ни у системы, ни у материала), а сервер знает вилку, которую
+// видел в таблицах менеджера. Поэтому состав собирает сервер и дописывает его
+// в сохранённое предложение.
 //
-// Что НЕ делается и почему:
-//   - цена не выдумывается: берётся нижняя граница вилки; если вилки нет —
-//     ноль, и материал называется в ответе, чтобы менеджер увидел «цену надо
-//     загрузить таблицей». Подставить правдоподобное число тут хуже всего;
-//   - позиции ДОПИСЫВАЮТСЯ, а не заменяют состав: система — это набор, который
-//     человек захотел добавить к уже собранному КП.
+// Правило у плагина и у бота ОДНО — assembleSystem; разница только во входе
+// (JWT против секрета сервиса с chat_id) и в том, кто отвечает за ошибку.
 
 // ComposeSystemResponse — что добавилось и что осталось без цены.
 type ComposeSystemResponse struct {
@@ -29,6 +27,95 @@ type ComposeSystemResponse struct {
 	MissingPrice []string `json:"missingPrice,omitempty"`
 	// Problems — строки состава, которые дописать не удалось.
 	Problems []string `json:"problems,omitempty"`
+}
+
+// composeError — отказ сборки, который вызывающий превращает в HTTP-статус.
+type composeError struct {
+	status int
+	text   string
+}
+
+func (e composeError) Error() string { return e.text }
+
+// FindSystem — система по коду в списке из Базы знаний.
+//
+// Код сравнивается без учёта регистра и краевых пробелов: в карточку его пишут
+// руками, и `TN-roof-classic` с пробелом на конце — тот же код.
+func FindSystem(systems []SystemCard, sku string) (SystemCard, bool) {
+	want := strings.ToUpper(strings.TrimSpace(sku))
+	if want == "" {
+		return SystemCard{}, false
+	}
+	for _, card := range systems {
+		if strings.ToUpper(strings.TrimSpace(card.SKU)) == want {
+			return card, true
+		}
+	}
+	return SystemCard{}, false
+}
+
+// assembleSystem дописывает состав системы в предложение.
+//
+// Система ищется в живой ленте Базы знаний, а не в кеше карточек: человек
+// выбрал её из раздела «Системы», который читает базу знаний вживую, и кеш
+// мог отстать от того, что он видел на экране.
+//
+// Возвращает обновлённое предложение и сводку. Если дописать нечего —
+// composeError со статусом 400, и предложение НЕ сохраняется.
+func (s *Server) assembleSystem(ctx context.Context, offer Offer, sku string) (Offer, ComposeSystemResponse, error) {
+	materials, err := s.listMaterials(ctx, false)
+	if err != nil {
+		return offer, ComposeSystemResponse{}, composeError{
+			status: http.StatusInternalServerError, text: "не удалось прочитать материалы",
+		}
+	}
+	systems, err := SystemsFromKB(ctx, s.kb, materials)
+	if err != nil {
+		return offer, ComposeSystemResponse{}, composeError{
+			status: http.StatusBadGateway, text: "База знаний недоступна: " + err.Error(),
+		}
+	}
+	card, found := FindSystem(systems, sku)
+	if !found {
+		return offer, ComposeSystemResponse{}, composeError{
+			status: http.StatusNotFound, text: "система не найдена",
+		}
+	}
+
+	// Вилка цен по материалам: одна выборка вместо запроса на каждую строку.
+	byID := make(map[int64]Material, len(materials))
+	for _, m := range materials {
+		byID[m.ID] = m
+	}
+
+	resp := ComposeSystemResponse{Problems: []string{}}
+	offer.Items, resp.Added = appendComposition(offer.Items, card.CompositionLinks, byID, &resp)
+	if resp.Added == 0 {
+		return offer, resp, composeError{
+			status: http.StatusBadRequest,
+			text:   "в составе системы нет ни одного материала из справочника",
+		}
+	}
+	if err := s.persistOfferItems(ctx, offer); err != nil {
+		return offer, resp, composeError{
+			status: http.StatusInternalServerError, text: "не удалось сохранить предложение",
+		}
+	}
+	resp.Offer = offer
+	return offer, resp, nil
+}
+
+// writeComposeError отвечает отказом сборки: текст ошибки — для человека.
+func writeComposeError(w http.ResponseWriter, err error) {
+	if ce, ok := err.(composeError); ok {
+		if ce.status == http.StatusInternalServerError {
+			dbError(w, "add system", fmt.Errorf("%s", ce.text))
+			return
+		}
+		writeJSON(w, ce.status, map[string]any{"error": ce.text})
+		return
+	}
+	dbError(w, "add system", err)
 }
 
 // itemForMaterial — позиция КП из материала. Второе значение — «цена
@@ -82,28 +169,7 @@ func appendComposition(
 	return items, added
 }
 
-// FindSystem — система по коду в списке из Базы знаний.
-//
-// Код сравнивается без учёта регистра и краевых пробелов: в карточку его пишут
-// руками, и `TN-roof-classic` с пробелом на конце — тот же код.
-func FindSystem(systems []SystemCard, sku string) (SystemCard, bool) {
-	want := strings.ToUpper(strings.TrimSpace(sku))
-	if want == "" {
-		return SystemCard{}, false
-	}
-	for _, card := range systems {
-		if strings.ToUpper(strings.TrimSpace(card.SKU)) == want {
-			return card, true
-		}
-	}
-	return SystemCard{}, false
-}
-
-// handleAddSystem дописывает состав системы в предложение.
-//
-// Система ищется в живой ленте Базы знаний, а не в кеше карточек: человек
-// выбрал её из раздела «Системы», который читает базу знаний вживую, и кеш
-// мог отстать от того, что он видел на экране.
+// handleAddSystem — «Добавить систему» в редакторе плагина.
 func (s *Server) handleAddSystem(w http.ResponseWriter, r *http.Request) {
 	offer, ok := s.offerForEditor(w, r)
 	if !ok {
@@ -116,43 +182,10 @@ func (s *Server) handleAddSystem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-
-	materials, err := s.listMaterials(r.Context(), false)
+	_, resp, err := s.assembleSystem(r.Context(), offer, req.SKU)
 	if err != nil {
-		dbError(w, "add system: materials", err)
+		writeComposeError(w, err)
 		return
 	}
-	systems, err := SystemsFromKB(r.Context(), s.kb, materials)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": "База знаний недоступна: " + err.Error(),
-		})
-		return
-	}
-	card, found := FindSystem(systems, req.SKU)
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "система не найдена"})
-		return
-	}
-
-	// Вилка цен по материалам: одна выборка вместо запроса на каждую строку.
-	byID := make(map[int64]Material, len(materials))
-	for _, m := range materials {
-		byID[m.ID] = m
-	}
-
-	resp := ComposeSystemResponse{Problems: []string{}}
-	offer.Items, resp.Added = appendComposition(offer.Items, card.CompositionLinks, byID, &resp)
-	if resp.Added == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "в составе системы нет ни одного материала из справочника",
-		})
-		return
-	}
-	if err := s.persistOfferItems(r.Context(), offer); err != nil {
-		dbError(w, "add system: save offer", err)
-		return
-	}
-	resp.Offer = offer
 	writeJSON(w, http.StatusOK, resp)
 }

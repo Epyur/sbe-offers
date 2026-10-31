@@ -361,6 +361,12 @@ func (s *Server) migrate(ctx context.Context) error {
 			updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS offers_material_sku ON offers_material (sku)`,
+		// Связь с системой — по ссылке на заметку Базы знаний (2026-10-31):
+		// в составе пишут `[[Техноэласт К ЭКП]]`, а не код. Поэтому материал
+		// помнит, из какой заметки он заведён. Пусто — материал заведён руками,
+		// и ссылка его не найдёт; это законное состояние, не ошибка.
+		`ALTER TABLE offers_material ADD COLUMN IF NOT EXISTS note_title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE offers_material ADD COLUMN IF NOT EXISTS note_id BIGINT NOT NULL DEFAULT 0`,
 
 		// Вариации материала: один SKU — много ЕКН (толщина, цвет, размер).
 		// Уникальность по паре, а не по одному ЕКН: один и тот же материал

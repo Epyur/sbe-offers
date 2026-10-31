@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -36,11 +37,17 @@ type Material struct {
 	PriceMin    *float64 `json:"priceMin,omitempty"`
 	PriceMax    *float64 `json:"priceMax,omitempty"`
 	PriceSeenAt string   `json:"priceSeenAt,omitempty"`
-	PhotoKey    string   `json:"photoKey"`
-	SortOrder   int      `json:"sortOrder"`
-	Archived    bool     `json:"archived"`
-	CreatedAt   string   `json:"createdAt"`
-	UpdatedAt   string   `json:"updatedAt"`
+	// NoteTitle/NoteID — заметка Базы знаний, из которой материал заведён
+	// (2026-10-31). По ней состав системы находит материал по ссылке
+	// `[[Название]]`. Пусто у материала, заведённого руками.
+	NoteTitle string `json:"noteTitle,omitempty"`
+	NoteID    int64  `json:"noteId,omitempty"`
+
+	PhotoKey  string `json:"photoKey"`
+	SortOrder int    `json:"sortOrder"`
+	Archived  bool   `json:"archived"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 	// Ekn — вариации материала. Заполняется при чтении карточки.
 	Ekn []MaterialEkn `json:"ekn"`
 }
@@ -124,7 +131,7 @@ func buildSkuForKind(kind, typeCode, series string, number int64) string {
 const materialColumns = `id, sku, kind, name, unit, description,
 	price_min, price_max,
 	to_char(price_seen_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-	photo_key, sort_order, archived,
+	photo_key, sort_order, archived, note_title, note_id,
 	to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
@@ -136,7 +143,7 @@ func scanMaterial(row interface{ Scan(...any) error }) (Material, error) {
 	var seenAt *string
 	err := row.Scan(&m.ID, &m.SKU, &m.Kind, &m.Name, &m.Unit, &m.Description,
 		&minPrice, &maxPrice, &seenAt,
-		&m.PhotoKey, &m.SortOrder, &m.Archived, &m.CreatedAt, &m.UpdatedAt)
+		&m.PhotoKey, &m.SortOrder, &m.Archived, &m.NoteTitle, &m.NoteID, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return Material{}, err
 	}
@@ -153,6 +160,13 @@ func scanMaterial(row interface{ Scan(...any) error }) (Material, error) {
 // listMaterials — справочник материалов. Системы сюда не попадают: их больше
 // нет в таблице материалов по построению.
 func (s *Server) listMaterials(ctx context.Context, includeArchived bool) ([]Material, error) {
+	// Справочник следует за карточками материалов из Базы знаний (2026-10-31):
+	// без этого ссылка из состава системы не находит, из какой заметки заведён
+	// материал. Ошибка базы знаний сюда не пробрасывается — список остаётся
+	// тем, что есть; иначе одна недоступная заметка гасила бы весь справочник.
+	if err := s.syncMaterialsFromNotes(ctx); err != nil {
+		log.Printf("материалы: синхронизация с карточками не удалась: %v", err)
+	}
 	query := `SELECT ` + materialColumns + ` FROM offers_material`
 	if !includeArchived {
 		query += ` WHERE NOT archived`
@@ -260,10 +274,12 @@ func (s *Server) insertMaterial(ctx context.Context, m Material, typeCode, serie
 	sku := buildSkuForKind(kind, typeCode, series, number)
 
 	row := s.pool.QueryRow(ctx, `
-INSERT INTO offers_material (sku, kind, name, unit, description, photo_key, sort_order)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO offers_material (sku, kind, name, unit, description, photo_key, sort_order,
+	note_title, note_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING `+materialColumns,
-		sku, kind, m.Name, m.Unit, m.Description, m.PhotoKey, m.SortOrder)
+		sku, kind, m.Name, m.Unit, m.Description, m.PhotoKey, m.SortOrder,
+		m.NoteTitle, m.NoteID)
 	saved, err := scanMaterial(row)
 	if err != nil {
 		return Material{}, err

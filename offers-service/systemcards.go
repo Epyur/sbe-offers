@@ -127,7 +127,10 @@ type SystemCard struct {
 // заполнены MaterialID, Name, Unit и Ekn. Ekn нужен, чтобы плагин мог собрать
 // позицию по конкретному варианту, не делая ещё один запрос.
 type CompositionItem struct {
-	Raw        string   `json:"raw"`
+	Raw string `json:"raw"`
+	// Wiki — цель вики-ссылки из строки (`[[Название]]`), пусто, если ссылки
+	// нет. По ней ищется материал: в живых карточках кода нет, а ссылка есть.
+	Wiki       string   `json:"wiki,omitempty"`
 	SKU        string   `json:"sku,omitempty"`
 	MaterialID int64    `json:"materialId"`
 	Name       string   `json:"name,omitempty"`
@@ -155,32 +158,45 @@ func resolveComposition(card skills.SystemCard, materials []Material) ([]Composi
 		return []CompositionItem{}, []string{"состав системы не заполнен"}
 	}
 
-	// Архивные материалы тоже в карте: ссылка на снятый с продажи код —
+	// Архивные материалы тоже в картах: ссылка на снятый с продажи материал —
 	// отдельная причина, и она понятнее, чем «не найден».
 	bySku := make(map[string]Material, len(materials))
+	byNote := make(map[string]Material, len(materials))
 	for _, m := range materials {
 		bySku[strings.ToUpper(strings.TrimSpace(m.SKU))] = m
+		if key := normalizeWikiTarget(m.NoteTitle); key != "" {
+			byNote[key] = m
+		}
 	}
 
 	items := make([]CompositionItem, 0, len(links))
 	problems := make([]string, 0)
 	for _, link := range links {
 		item := CompositionItem{Raw: link.Raw, SKU: link.SKU}
-		sku := strings.ToUpper(strings.TrimSpace(link.SKU))
-		if sku == "" {
+		item.Wiki = wikiTarget(link.Raw)
+
+		// Ссылка — главный способ связи (2026-10-31): её ставил человек руками
+		// на нужную заметку. Код остаётся запасным, если ссылки нет.
+		m, resolvedBy := Material{}, ""
+		if item.Wiki != "" {
+			m, resolvedBy = byNote[item.Wiki], "ссылке"
+		}
+		if resolvedBy == "" && strings.TrimSpace(link.SKU) != "" {
+			m, resolvedBy = bySku[strings.ToUpper(strings.TrimSpace(link.SKU))], "коду"
+		}
+		if resolvedBy == "" {
 			items = append(items, item)
-			problems = append(problems, fmt.Sprintf("%q: не указан код материала", shortenRaw(link.Raw)))
+			problems = append(problems, fmt.Sprintf("%q: не указан ни код, ни ссылка на материал", shortenRaw(link.Raw)))
 			continue
 		}
-		m, ok := bySku[sku]
-		if !ok {
+		if m.ID == 0 {
 			items = append(items, item)
-			problems = append(problems, fmt.Sprintf("%s: материал не найден в справочнике", sku))
+			problems = append(problems, notFoundProblem(item, resolvedBy))
 			continue
 		}
 		if m.Archived {
 			items = append(items, item)
-			problems = append(problems, fmt.Sprintf("%s: материал удалён из справочника", sku))
+			problems = append(problems, fmt.Sprintf("%s: материал удалён из справочника", m.Name))
 			continue
 		}
 		item.MaterialID, item.Name, item.Unit, item.Found = m.ID, m.Name, m.Unit, true
@@ -188,6 +204,16 @@ func resolveComposition(card skills.SystemCard, materials []Material) ([]Composi
 		items = append(items, item)
 	}
 	return items, problems
+}
+
+// notFoundProblem — почему строка не связалась. Называет то, чем искали:
+// «не найден материал» без указания, по чему искали, отправляет человека
+// проверять не то место.
+func notFoundProblem(item CompositionItem, resolvedBy string) string {
+	if resolvedBy == "ссылке" {
+		return fmt.Sprintf("[[%s]]: по ссылке материал не найден в справочнике", shortenRaw(item.Wiki))
+	}
+	return fmt.Sprintf("%s: материал не найден в справочнике", item.SKU)
 }
 
 // materialEknNumbers — номера ЕКН материала в порядке справочника.
