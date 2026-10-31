@@ -254,13 +254,23 @@ func SystemsFromKB(ctx context.Context, kb KBReader, materials []Material) ([]Sy
 	if err != nil {
 		return []SystemCard{}, err
 	}
-	systems, _ := splitCardsByTags(notes)
-	cards := make([]SystemCard, 0, len(systems))
-	for _, summary := range systems {
+	// Деление на системы и материалы — по тегам ПОЛНОЙ заметки, а не элемента
+	// ленты (2026-10-31). Живой дефект: kb-service в списке `/api/kb/notes`
+	// тегов не отдаёт вовсе, `splitCardsByTags` видел пустой список и записывал
+	// ВСЕ 1541 карточку в системы — включая 1165 материалов. Проверено на бою:
+	// в списке ключей нет `tags`, в полной заметке `tags` есть.
+	//
+	// Цена — один запрос заметки на карточку; он всё равно нужен ради текста.
+	cards := make([]SystemCard, 0, len(notes))
+	for _, summary := range notes {
 		note, err := kb.Note(ctx, summary.ID)
 		// Одна сломанная карточка не скрывает остальные.
 		if err != nil {
 			continue
+		}
+		// Тег берём из полной заметки: в ленте его нет.
+		if noteHasTag(KBNoteSummary{Tags: note.Tags}, materialTagName) {
+			continue // это материал, а не система
 		}
 		parsed := skills.ParseSystemCard(note.ContentMD)
 		card := systemCardFromParsed(summary, note, parsed)
@@ -272,11 +282,18 @@ func SystemsFromKB(ctx context.Context, kb KBReader, materials []Material) ([]Sy
 
 // systemCardFromParsed собирает карточку для плагина из разобранной заметки.
 func systemCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.SystemCard) SystemCard {
+	title := parsed.Title
+	// Заголовок заметки — запасной источник названия: разбор карточки требует
+	// оформления по стандарту, а в живых карточках H1 часто отсутствует.
+	// Без этого все системы назывались бы «(без названия)».
+	if strings.TrimSpace(title) == "" {
+		title = summary.Title
+	}
 	return SystemCard{
 		NoteID:         summary.ID,
 		Path:           note.Path,
 		SKU:            parsed.SKU,
-		Title:          parsed.Title,
+		Title:          title,
 		Description:    parsed.Description,
 		Composition:    parsed.Composition,
 		Specifications: parsed.Specifications,

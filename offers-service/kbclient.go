@@ -75,8 +75,12 @@ type KBNoteSummary struct {
 // KBNote — карточка с текстом.
 type KBNote struct {
 	KBNoteSummary
-	ContentMD string  `json:"content_md"`
-	Tags      []KBTag `json:"tags"`
+	ContentMD string `json:"content_md"`
+	// Тегов здесь НЕТ намеренно: KBNoteSummary уже несёт Tags, а второе поле
+	// перекрывало его. Go встраивает родителя, но `json.Unmarshal` писал в
+	// ВНЕШНЕЕ поле, а встроенное оставалось пустым — и признак материала,
+	// взятый из полной заметки, терялся (живой дефект 2026-10-31: материалы
+	// попадали в раздел «Системы»).
 }
 
 // KBAttachment — вложение карточки (картинка продукта и прочее).
