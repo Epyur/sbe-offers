@@ -714,3 +714,69 @@ another service needs BOTH values in its compose block - the URL and the secret 
 the stand needs a stub for that service. An empty URL is not an error: the service
 starts, reports "not configured" and looks healthy. Add the stub and an E2E check in
 the same commit as the client code, not later.
+## Materials and systems: cycle started - 2026-10-30 (evening, release 0.2.1)
+
+User requirement: **two separate entities.** A **system** is a combination of
+materials chosen for the best result and has **no price of its own**; it exists
+to justify *why this combination*. A **material** is what is sold: its own name
+without a `ТН-` prefix, its own SKU, and several variants whose number is **ЕКН**
+(one SKU, many ЕКН). Prices never live in the catalogue: the manager uploads an
+Excel sheet with ЕКН, names and prices, and that price is the truth for this
+offer, because the same material costs differently by delivery terms.
+
+Design: `docs/superpowers/specs/2026-10-30-sbe-offers-materials-systems-design.md`
+Plan: `docs/superpowers/plans/2026-10-30-sbe-offers-materials-systems-plan.md`
+
+**Live data checked before designing:** the Knowledge Base has **587** cards
+tagged `commercial_propose` and **421** tagged `material` (tag ids `11181`,
+`11507`). Materials carry both tags; systems only `commercial_propose`. That is
+the discriminator the whole split rests on, so it was measured, not assumed.
+
+### Released in 0.2.1 (three live defects)
+
+1. **401 "ключ недействителен"** while the key worked. The plugin never
+   re-requested the token, and the service logged no rejections at all - only
+   `listening` - so the complaint could not be investigated after the fact.
+   Now: first 401 drops the token cache and retries once; a second 401 says
+   «Сеанс входа устарел»; 403 says «Нет прав». Every rejection logs
+   `auth reject: {method} {path} {cause}` - path and one of `no-token`,
+   `bad-token`, `issuer`, `audience`, `app-id`, `role`, never the token or the
+   body. The six copies of the gate became one `authorize` (84.2% covered).
+   `sbe-core` gained `forgetToken` (additive), `sbe-apstore` exposes it on the
+   bridge.
+2. **Only 50 cards of 588.** `kb-service` returns at most **50 notes per
+   request at any `size`** (measured: 50/200/500/1000 all give 50) while
+   reporting `total`. The client asked for 200, got 50 and treated it as the
+   whole list - there was no pagination at all. Now it pages until a short page
+   or `total`, capped at `maxKBPages = 40`; hitting the cap logs a line instead
+   of staying silent.
+3. **"Открыть заметку" said the note was not found.** `kb-service` returns the
+   **logical** path inside the Knowledge Base
+   (`Инженерная изоляция/Системы/ТН-СТИЛОБАТ ЭКСПЕРТ ТРОТУАР.md`), while the
+   file lives elsewhere in the vault (`База службы/Write it/…` - checked on
+   disk). The plugin now resolves the file by name with normalisation (case,
+   ё/е, quotes, spaces); several equal names means it does not guess. The error
+   text names the note instead of the misleading path.
+   Check: `scripts/check_note_path.mjs` - 14/14 (there is no test runner in the
+   plugin; the check lives as a script, same as `check_*_openapi.mjs`).
+
+### Done in code, not yet released (Task 2 of the cycle)
+
+`offers_material` (automatic SKU `MAT-{TYPE}-{SERIES}-{NNNN}`, price **range**
+`price_min`/`price_max`, **no price column**) and `offers_material_ekn` (many
+versions per material, unique on `(material_id, ekn)`). The migration moves
+`kind='material'` rows from `offers_catalog` and archives the system rows; it is
+idempotent (three restarts produced no duplicates and no changed SKUs).
+
+A test caught a real defect here: SKU cut `МЕМБ` down to `МЕМ` - type codes are
+now four characters, series three.
+
+### Where the cycle stands
+
+Done: Task 1 (401), Task 2 (schema), Task 3b (both user reports above).
+Next, in plan order: Task 3 (material/ЕКН routes), 4 (Excel parsing and
+matching), 5 (two-step sheet upload), 6 (systems by tags and SKU links),
+7 (plugin UI), 8 (bot), 9 (docs, 0.3.0, deploy).
+
+**Not deployed:** the three 0.2.1 fixes exist only in git. The live server still
+runs 0.2.0.
