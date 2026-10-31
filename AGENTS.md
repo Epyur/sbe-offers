@@ -1148,7 +1148,74 @@ because it needs a word from the user.
 left in the bundle. Go and bot suites unchanged from Task 8 (`go test` green,
 72 bot tests), OpenAPI 59 operations.
 
-**Not done (Task 10), needs the user's word.** Deploy (`docker compose up -d
---build offers offers-bot` plus the `CREATED` check), the live catalogue
-migration check, `backend` -> `main`, the three SHA-256 as the last action,
-self-hosting and the https comparison. Nothing was deployed or self-hosted.
+**Not done (Task 10 at that moment), needs the user's word.** Deploy
+(`docker compose up -d --build offers offers-bot` plus the `CREATED` check),
+the live catalogue migration check, `backend` -> `main`, the three SHA-256 as
+the last action, self-hosting and the https comparison.
+
+## Release 0.3.0: materials and systems are live - 2026-10-31
+
+Done on the user's explicit command ("фиксируй, документируй, коммить, пуш в
+майн, деплой и выкладывай на самораздачу").
+
+**`backend` -> `main`.** The plugin part was carried over with
+`git checkout backend -- src main.js styles.css manifest.json package.json
+specification.md tsconfig.json esbuild.config.mjs AGENTS.md scripts/...`, and
+`src/ui/catalog-editor.ts` deleted (it no longer exists on `backend`). The
+server folders stayed on `backend`, as the rule requires. `main.js` was then
+**rebuilt on `main`** rather than carried over: the three sums are taken from
+the branch that is actually shipped, and a bundle built on another branch has
+been the source of hash mismatches before (2026-09-12). Commit `ea39753`,
+pushed; `backend` was already up to date at `d5679e0`.
+
+That left exactly one difference between the branches outside the server
+folders: `.gitignore`, which keeps ignoring `offers-service/` and `offers-bot/`
+on `main` and does not on `backend`. That is intended.
+
+**Deploy.** The server folders are plain copies, not a git checkout, so the
+working tree was sent with `tar` (excluding `node_modules`, `.git`, binaries,
+`target`, `.metrics`) through `scp` to `/tmp/offers-deploy`, unpacked over
+`/opt/mailers/offers-service` and `/opt/mailers/offers-bot` after backups
+(`*.bak-offers030`; `docker-compose.yml` and `.env` backed up too, untouched).
+MD5 of `main.go`, `botapi.go`, `botcatalog.go`, `systems_compose.go` matched
+between the vault and the server **before** the rebuild - the 2026-10-29 lesson
+about verifying with `md5sum` rather than trusting a "successful" copy.
+
+`docker compose up -d --build offers offers-bot` recreated both containers and
+`CREATED` moved (18:29); the log says `База знаний: карточки систем читаются с
+http://kb:3000` and `offers-service listening on :3000`.
+
+**Live checks.** health `{"status":"ok"}` inside the container, `/docs/` and
+`/openapi.yaml` 200 through Caddy (47 paths), `GET /api/offers/systems` 401
+without a token and 200 with a service token, `bot/catalog` answers only
+materials with `hasPrice`, `bot/systems` answers with `kbEnabled: true`. The
+bot container logs `поллер запущен` and `проверка токена слушает :3000`.
+
+**Self-hosting.** `scripts/lims_selfhost.sh sbe-offers <three sums>`; the server
+verified each sum with `sha256sum -c` before writing
+`registry_file_overrides`, and all three were compared again against
+`https://epyur.fvds.ru/plugins/sbe-offers/*`:
+
+- `manifest 1e49dc66…42d1`
+- `main 94d547cc…a729`
+- `styles 5b3e3db3…4fb6`
+
+`registry.json` on the server reports the same three hashes and
+`selfHosted: true`. The git copy in `sbe-apstore-registry` was updated in the
+same release (commit `6c59751`, pushed).
+
+**Live data after the migration (checked in SQL).** `offers_catalog` holds 1
+archived `material` and 3 archived `system` rows; `offers_material` holds 1
+material, `offers_material_ekn` is empty. So the migration ran, the three
+system rows are archived as designed, and the material kept its SKU.
+
+**What the live data says about the next step, and it matters.** Of 1541
+system cards, **373 carry a parsed composition, and not one line has a material
+code** - the cards are written as `- [[Техноэласт К ЭКП]]` (wiki links) or as
+plain descriptions, not `- Мембрана (MAT-МЕМБ-ПВХ-0007)`. Every card therefore
+reports "есть ошибки в составе", and "Добавить систему" cannot resolve a
+single position. This is not a defect in the code: the feature works, the
+notes have not been brought to the standard described in
+`docs/sbe-offers-system-card-standard.md`. Until a technologist puts SKU links
+into the systems that matter, the systems section is informational only.
+Recorded here so the first complaint about it is answered with a fact.
