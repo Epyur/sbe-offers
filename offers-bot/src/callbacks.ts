@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Обработчики кнопок черновика (Task 1 плана 2026-10-29).
  *
  * Раньше эти десять веток жили внутри `handleCallback` в поллере, и функция
@@ -34,15 +34,19 @@ import {
   type AttachSession,
 } from './attach.ts';
 import {
+  BRIEF_FILE_KEYBOARD,
   beginBrief,
+  briefIntro,
   handleBriefText,
   handleCopyText,
+  onBriefFile,
   onBriefMore,
   onBriefNext,
   onBriefSkip,
   onCopyAccept,
   onCopyEdit,
   onCopySkip,
+  startCopy,
 } from './flow/writer.ts';
 
 const PAGE_SIZE = 8;
@@ -127,14 +131,60 @@ export async function showCatalog(ctx: CallbackCtx, query: string, offset: numbe
   await ctx.deps.send(ctx.chatId, catalogMessage(page, query), keyboard);
 }
 
+/**
+ * «🧾 Собрать КП»: сначала разговор о контексте, а не каталог (2026-11-01).
+ *
+ * Раньше здесь сразу открывалась клавиатура черновика с «Добавить из
+ * каталога» — менеджер начинал с позиций, не зная объекта, адресата и систем.
+ * Теперь КП создаётся ПУСТЫМ (номер выдаётся сразу), и начинается бриф: объект,
+ * характеристики, адресат, задачи, системы, условия. Каталог появится после —
+ * на этапе позиций.
+ *
+ * Почему создаём сразу, а не после позиций: файл с описанием объекта менеджер
+ * присылает в самом начале, а файл прикладывается к строке предложения
+ * (вложение, бриф). Без строки принять его некуда.
+ */
 export async function startDraft(ctx: CallbackCtx): Promise<void> {
-  // Роли в боте нет: кто вошёл по коду — тот и собирает КП (2026-10-29).
-  const draft = newDraft();
+  let offerId = 0;
+  let number = '';
+  try {
+    const offer = await api.createOffer({
+      chatId: ctx.chatId,
+      client: { name: '', contact: '' },
+      items: [],
+      formValues: {},
+    });
+    offerId = offer.id;
+    number = offer.number;
+  } catch (e) {
+    // Без строки в базе разговор бессмысленен: файлы и бриф привязать некуда.
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось начать предложение: ${(e as Error).message}`,
+      MAIN_KEYBOARD,
+    );
+    return;
+  }
+  const draft = { ...newDraft(), offerId, number, stage: 'context' as const };
   apply(ctx, { ...ctx.session, draft });
+  await ctx.deps.send(ctx.chatId, `Предложение № ${number}. ${briefIntro()}`);
+  await beginBrief(ctx, offerId);
+}
+
+/** Этап позиций: только теперь показывается каталог. */
+export async function startPositions(ctx: CallbackCtx): Promise<void> {
+  const draft = ctx.session.draft;
+  if (!draft) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, { ...ctx.session, draft: { ...draft, stage: 'positions', step: 'catalog' } });
   await ctx.deps.send(
     ctx.chatId,
-    'Собираем предложение.\n\nДобавьте позиции из каталога или впишите свои, затем нажмите «Готово».\n\n' +
-      draftSummary(draft),
+    'Контекст собран. Теперь позиции.\n\n' +
+      'Добавьте материалы из каталога, допишите свои строки или нажмите «✅ Готово» — ' +
+      'если позиции уже есть в присланной таблице.\n\n' +
+      draftSummary(ctx.session.draft!),
     DRAFT_KEYBOARD,
   );
 }
@@ -155,6 +205,13 @@ export async function sendDocx(ctx: CallbackCtx, offerId: number): Promise<void>
   }
 }
 
+/**
+ * Закончить черновик: дописать состав и данные клиента в НАЧАТОЕ предложение.
+ *
+ * С 2026-11-01 КП создаётся в начале разговора (номер выдаётся сразу, чтобы
+ * принять файл и бриф), поэтому новый offer здесь не создаётся — иначе на одно
+ * КП было бы два номера и две строки в «Мои КП».
+ */
 export async function finishDraft(ctx: CallbackCtx): Promise<void> {
   const draft = ctx.session.draft;
   if (!draft) {
@@ -162,22 +219,34 @@ export async function finishDraft(ctx: CallbackCtx): Promise<void> {
     return;
   }
   if (draft.items.length === 0) {
-    await ctx.deps.send(ctx.chatId, 'В предложении нет позиций. Добавьте хотя бы одну.', DRAFT_KEYBOARD);
+    await ctx.deps.send(
+      ctx.chatId,
+      'В предложении нет позиций. Добавьте материалы из каталога, свои строки или пришлите таблицу.',
+      DRAFT_KEYBOARD,
+    );
     return;
   }
   try {
-    const offer = await api.createOffer({
+    // Состав мог приехать и файлом (applyAttach пишет в КП на сервере), поэтому
+    // перечитываем предложение: локальный список в сессии — не истина.
+    const saved = await api.patchOffer(draft.offerId, {
       chatId: ctx.chatId,
       client: { name: draft.clientName, contact: draft.clientContact },
       items: draft.items,
       formValues: draft.formValues,
     });
-    const done = { ...draft, offerId: offer.id, number: offer.number, step: 'done' as const };
+    const done = {
+      ...draft,
+      offerId: saved.id,
+      number: saved.number,
+      items: saved.items.map((i) => ({ catalogId: i.catalogId, name: i.name, unit: i.unit, qty: i.qty, price: i.price })),
+      step: 'done' as const,
+    };
     apply(ctx, { ...ctx.session, draft: done });
-    await ctx.deps.send(ctx.chatId, `Предложение № ${offer.number}.\n\n${draftSummary(done)}`);
-    // КП создано — дальше бриф: из ответов менеджера модель напишет вводный
-    // текст и описания. Пропустить можно в один клик (2026-10-29).
-    await beginBrief(ctx, offer.id);
+    await ctx.deps.send(ctx.chatId, `Предложение № ${done.number}.\n\n${draftSummary(done)}`);
+    // Состав готов — дальше согласование текстов. Бриф к этому моменту уже
+    // собран (он шёл первым), и повторно его не запускаем.
+    await startCopy(ctx);
   } catch (e) {
     await ctx.deps.send(
       ctx.chatId,
@@ -203,6 +272,13 @@ export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<b
 
   const draft = ctx.session.draft;
   if (!draft) return false;
+
+  // На этапе контекста позиции не принимаются (2026-11-01): «Монтаж | 12 | 850»
+  // посреди разговора про объект — это, скорее всего, ответ на вопрос, и молча
+  // записать его строкой КП значило бы потерять ответ менеджера.
+  if (draft.stage === 'context') {
+    return false;
+  }
 
   if (draft.step === 'manual') {
     const parsed = parseManualItem(text);
@@ -382,7 +458,27 @@ export async function onDone(ctx: CallbackCtx): Promise<void> {
     await ctx.deps.send(ctx.chatId, 'Черновик не найден.', MAIN_KEYBOARD);
     return;
   }
+  // «Готово» до этапа позиций (2026-11-01) — это «пропустить остаток
+  // разговора»: человек хочет сразу к позициям, а не заполнять бриф до конца.
+  if (draft.stage !== 'positions') {
+    await startPositions(ctx);
+    return;
+  }
   if (!draft.clientName) {
+    // Имя клиента бриф уже спрашивал (адресат КП) — второй раз не спрашиваем,
+    // если оно есть в форме предложения (2026-11-01).
+    try {
+      const offer = await api.getOffer(draft.offerId, ctx.chatId);
+      const fromBrief = (offer.formValues?.client_name ?? '').trim();
+      if (fromBrief) {
+        apply(ctx, { ...ctx.session, draft: { ...draft, clientName: fromBrief } });
+        await finishDraft(ctx);
+        return;
+      }
+    } catch (e) {
+      // Не прочитали — спросим как раньше; хуже не станет.
+      console.warn('КП: не удалось прочитать адресата из брифа:', (e as Error).message);
+    }
     apply(ctx, { ...ctx.session, draft: { ...draft, step: 'fields', currentField: 'clientName' } });
     await ctx.deps.send(ctx.chatId, 'Название клиента (организация)?');
     return;
@@ -480,6 +576,7 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'brief:more': onBriefMore,
   'brief:next': onBriefNext,
   'brief:skip': onBriefSkip,
+  'brief:file': onBriefFile,
   'copy:accept': onCopyAccept,
   'copy:edit': onCopyEdit,
   'copy:skip': onCopySkip,

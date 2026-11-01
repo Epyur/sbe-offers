@@ -126,9 +126,25 @@ describe('черновик', () => {
     const { deps, state, session } = makeDeps(AUTHED);
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '🧾 Собрать КП', state);
+    // С 2026-11-01 «Собрать КП» открывает разговор о контексте, а не каталог:
+    // «Готово» до этапа позиций — это «пропустить остаток брифа».
     await route.routeCallback(deps, '42', 'done', 'cb1', state);
-    assert.equal(session().draft?.step, 'fields');
+    assert.equal(session().draft?.stage, 'positions');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'done', 'cb2', state);
     assert.match(sent[sent.length - 1].text, /клиент/i);
+  });
+
+  it('«Собрать КП» начинается с контекста, а не с каталога', async () => {
+    const { deps, state, session } = makeDeps(AUTHED);
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '🧾 Собрать КП', state);
+    assert.equal(session().draft?.stage, 'context', 'старт разговора — этап контекста');
+    assert.match(sent[0].text, /объект/i, 'первый вопрос — про объект');
+    assert.ok(
+      sent.every((m) => !/Добавьте позици/i.test(m.text)),
+      'на старте бот не просит позиции',
+    );
   });
 
   it('неизвестная кнопка не роняет обработчик', async () => {

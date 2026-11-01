@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Машина состояний диалога бота. Чистый модуль без сети: проверяется стендом
  * (src/session.test.ts), а поллер только вызывает nextStep и рассылает ответы.
  */
@@ -83,6 +83,13 @@ export interface OfferDraft {
   formValues: Record<string, string>;
   offerId: number;
   step: 'catalog' | 'qty' | 'manual' | 'fields' | 'done';
+  /**
+   * Этап разговора (2026-11-01): context — собираем объект и адресат,
+   * позиций ещё нет; positions — каталог и строки состава. Отдельное поле,
+   * а не значение step: step переключается кнопками внутри этапа, и
+   * смешивать их значило бы терять, где мы на самом деле.
+   */
+  stage?: 'context' | 'positions';
   /** Выбранная карточка каталога, для которой вводится количество. */
   pendingCatalog?: { id: number; name: string; unit: string; price: number };
   /** Поля формы, которые ещё предстоит спросить. */

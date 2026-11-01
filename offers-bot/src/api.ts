@@ -188,6 +188,16 @@ export async function listOffers(chatId: string): Promise<OfferPayload[]> {
   return res.offers ?? [];
 }
 
+/**
+ * Одно предложение этого чата (2026-11-01).
+ *
+ * Нужен, чтобы не спрашивать второй раз то, что уже известно: адресат приходит
+ * брифом в `formValues["client_name"]`, состав мог приехать файлом.
+ */
+export async function getOffer(id: number, chatId: string): Promise<OfferPayload> {
+  return call('GET', `/bot/offers/${id}?chat_id=${encodeURIComponent(chatId)}`);
+}
+
 /** Отметка «бот жив» + последняя ошибка: по ней плагин рисует состояние без
  *  обращения к контейнеру бота. */
 export async function heartbeat(lastError: string): Promise<void> {

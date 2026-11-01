@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Бриф и согласование текста в чате — обработчики кнопок и текста
  * (Task 9 плана 2026-10-29).
  *
@@ -9,10 +9,15 @@
 import * as api from '../api.ts';
 import {
   BRIEF_DONE_KEYBOARD,
+  BRIEF_FILE_KEYBOARD,
   BRIEF_KEYBOARD,
   briefSummary,
   briefTurnState,
 } from './brief.ts';
+
+// Реэкспорт того, что нужно сценарию старта: одна точка импорта для
+// callbacks.ts. Тексты и кнопки живут в flow/brief.ts, а не здесь.
+export { BRIEF_FILE_KEYBOARD, briefIntro } from './brief.ts';
 import {
   COPY_EDIT_KEYBOARD,
   COPY_KEYBOARD,
@@ -29,7 +34,7 @@ import {
 } from './copy.ts';
 import { MAIN_KEYBOARD } from './build.ts';
 import type { ChatSession } from '../session.ts';
-import { apply, sendDocx, type CallbackCtx } from '../callbacks.ts';
+import { apply, sendDocx, startPositions, type CallbackCtx } from '../callbacks.ts';
 
 /** Номер КП, с которым работаем: бриф и тексты живут только у него. */
 export function activeOfferId(session: ChatSession): number {
@@ -63,7 +68,10 @@ export async function beginBrief(ctx: CallbackCtx, offerId: number): Promise<voi
       briefDone: res.done,
       briefSkipped: false,
     });
-    await ctx.deps.send(ctx.chatId, res.reply);
+    // На каждом вопросе — возможность прислать файл (2026-11-01): описание
+    // объекта или спецификация часто есть готовым файлом, и заставлять
+    // перепечатывать его в чате незачем.
+    await ctx.deps.send(ctx.chatId, res.reply, res.done ? BRIEF_DONE_KEYBOARD : BRIEF_FILE_KEYBOARD);
   } catch (e) {
     await ctx.deps.send(
       ctx.chatId,
@@ -123,12 +131,30 @@ export async function onBriefMore(ctx: CallbackCtx): Promise<void> {
 
 export async function onBriefNext(ctx: CallbackCtx): Promise<void> {
   apply(ctx, { ...ctx.session, briefTopic: undefined, briefDone: true });
-  await startCopy(ctx);
+  // После брифа идём к ПОЗИЦИЯМ, а не к текстам (2026-11-01): предложение без
+  // состава сохранить нельзя, а тексты пишутся уже по готовому составу.
+  await startPositions(ctx);
 }
 
 export async function onBriefSkip(ctx: CallbackCtx): Promise<void> {
   apply(ctx, { ...ctx.session, briefTopic: undefined, briefDone: true, briefSkipped: true });
-  await startCopy(ctx);
+  await startPositions(ctx);
+}
+
+/**
+ * «📎 Прислать файл» — подсказка, как его прислать.
+ *
+ * Само сообщение с файлом обрабатывает routeDocument: там байты, имя и
+ * проверка «чьё это КП». Здесь только текст, чтобы кнопка не молчала.
+ */
+export async function onBriefFile(ctx: CallbackCtx): Promise<void> {
+  await ctx.deps.send(
+    ctx.chatId,
+    'Пришлите файл вложением в этот чат: .xlsx с таблицей (наименование, количество, цена) ' +
+      'или .md с описанием объекта и контактами. Я покажу, что понял, и спрошу подтверждение — ' +
+      'само ничего не запишется.\n\n' +
+      'После файла вернёмся к вопросам: чего не хватает, спрошу.',
+  );
 }
 
 // --- Согласование текста ------------------------------------------------
