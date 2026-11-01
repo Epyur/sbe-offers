@@ -376,6 +376,31 @@ Two separate things, and the first one is why this came back after 0.2.1.
   "↻ Перечитать из Базы знаний" button; `offersService.refreshSystems()` is the
   new call. `styles.css` unchanged.
 
+### Released and self-hosted as 0.4.1 (2026-11-01 15:45 MSK)
+
+| | value |
+|---|---|
+| version | **0.4.1** (`manifest.json` = `package.json`) |
+| remote `backend` | `bdbf801` |
+| remote `main` | `83a8e4c` (plugin part only; `offers-service/` stays deleted there) |
+| `sbe-apstore-registry` | `9a9f987` |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `76d189e6150ad28228db0ca5f5bdbb2dd469f3fe8993744d185b8bbd90c5a5ca` | 469 |
+| `main.js` | `4231c8f0db924a78bf8902b9eda59e5c4816fca305dc59c4e411a9c871020206` | 112989 |
+| `styles.css` | `46f4c8801248eb87cac43b6c4ac00df86af55c0d3c0ff55401224d634f1d83d0` | 31438 |
+
+`styles.css` unchanged (no CSS edits). Upload via `/opt/mailers/kb-selfhost.sh
+sbe-offers` (it takes the hashes from the files it just copied). Checked over
+https with `_t=` cache-buster: all three sums match, the served manifest says
+`0.4.1`, `registry.json` reports the same three hashes, `selfHosted: true`,
+`uploadedAt 2026-11-01T12:45:02Z`, `U+FFFD` count in the served stylesheet 0.
+The working tree is back on `backend` and its bytes equal the published ones.
+
+CUP news text was rewritten for this release (the old text still described
+0.4.0 - the rule about rewriting it every release).
+
 ### Verified live (2026-11-01, mailers-offers-1 rebuilt 15:19 MSK)
 
 | check | result |
@@ -398,6 +423,13 @@ enough. If a *systematic* rejection ever shows up, the next place to look is
 `kb-service`'s gate, not this client - it logs every refusal with a reason
 (`отказ 401: ... — токен не разобран`), and those lines are the evidence.
 
+## STATE 2026-11-01 (release 0.4.1 - supersedes the 0.4.0 block below)
+
+Current version is **0.4.1**: the "Системы" section reads a cache and refreshes
+on an explicit action (see the entry above). Everything below about 0.4.0 still
+describes the system correctly except the two lines that said `GET
+/api/offers/systems` reads the Knowledge Base live - it does not any more.
+
 ## STATE 2026-11-01 (release 0.4.0, deployed and self-hosted)
 
 One place to read what the system is right now. History and reasons live in
@@ -413,7 +445,7 @@ still missing".
 | remote `backend` | `5e8c148` (plugin part = `main`, plus the server folders) |
 | server code | `offers-service/`, `offers-bot/` - **`backend` only**, `.gitignore`d on `main` |
 | live containers | `mailers-offers-1`, `mailers-offers-bot-1` recreated 2026-11-01 14:09 MSK |
-| `sbe-core` | `eea98f6` (`backend`) - `src/utils/files.ts` added |
+| `sbe-core` | `eea98f6` (`backend`) - `src/utils/files.ts` added (unchanged in 0.4.1) |
 
 ### Self-hosting (checked over https, `_t=` cache-buster)
 
