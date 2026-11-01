@@ -224,3 +224,61 @@ func TestSystemCardSkillsBridge(t *testing.T) {
 	}
 	var _ = model.DefaultContext
 }
+
+// Раздел «Системы» отдаёт карточку с составом, разрешённым против
+// справочника материалов (2026-11-01).
+//
+// Отдельная функция от SystemCardsFromKB: в «Контексте КП» состава нет, а кеш
+// там хранит карточки другого вида. Тест держит, что состав доходит как есть и
+// что материальная карточка в раздел систем не попадает.
+func TestSystemsWithCompositionFromKB(t *testing.T) {
+	kb := &fakeKB{
+		tagID: 11181,
+		notes: []KBNoteSummary{{ID: 5, Title: "Система"}},
+		note:  sampleCardNote(),
+	}
+	materials := []Material{{ID: 3, SKU: "MAT-ТЕСТ-ОБЩ-0001", Name: "Материал", Unit: "м2"}}
+	cards, err := SystemsWithCompositionFromKB(context.Background(), kb, materials)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("ожидали одну систему, получили %d", len(cards))
+	}
+	if len(cards[0].CompositionLinks) == 0 && len(cards[0].Problems) == 0 {
+		t.Fatal("состав не разрешён и замечаний нет — карточка пустая")
+	}
+}
+
+// Материальная карточка в «Системы» не попадает: у неё свой раздел.
+func TestSystemsWithCompositionSkipsMaterials(t *testing.T) {
+	kb := &fakeKB{
+		tagID: 11181,
+		notes: []KBNoteSummary{{ID: 6, Title: "Материал"}},
+		note: KBNote{
+			KBNoteSummary: KBNoteSummary{
+				ID: 6, Title: "Материал",
+				Tags: []KBTag{{ID: 1, Name: commercialPropose}, {ID: 2, Name: materialTagName}},
+			},
+			ContentMD: "---\nsystem_sku: MAT-ТЕСТ\n---\nтекст",
+		},
+	}
+	cards, err := SystemsWithCompositionFromKB(context.Background(), kb, nil)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(cards) != 0 {
+		t.Fatalf("материал попал в системы: %+v", cards)
+	}
+}
+
+// База знаний не настроена — пустой список без ошибки, как и у карточек.
+func TestSystemsWithCompositionNotConfigured(t *testing.T) {
+	cards, err := SystemsWithCompositionFromKB(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("отсутствие базы знаний — не ошибка: %v", err)
+	}
+	if len(cards) != 0 {
+		t.Fatalf("ожидали пустой список, получили %d", len(cards))
+	}
+}

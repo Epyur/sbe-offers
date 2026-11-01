@@ -184,14 +184,44 @@ func fetchServiceToken(ctx context.Context, authURL, serviceSecret, targetAppID 
 	return out.JWT, nil
 }
 
+// forgetToken забывает закешированный токен: следующий запрос возьмёт новый.
+func (c *KBClient) forgetToken() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.token = ""
+	c.tokenAt = time.Time{}
+}
+
 // get выполняет запрос к kb-service и разбирает JSON.
 //
 // Ошибки kb-service НЕ переводятся в пустые значения: «нет прав» и «карточек
 // нет» — разные вещи, и плагин должен показывать правду.
+//
+// Первый 401 — «этот токен не подошёл», а не «нет доступа»: токен
+// сбрасывается и запрос повторяется РОВНО один раз с новым. Живой случай
+// 2026-11-01: заход по сотням карточек шёл минутами, пара запросов в середине
+// получала 401 («токен не разобран»), и этот отказ кешировался на весь заход,
+// хотя токен был годным.
 func (c *KBClient) get(ctx context.Context, path string, query url.Values, out any) error {
 	if !c.configured() {
 		return errKBNotConfigured
 	}
+	err := c.getOnce(ctx, path, query, out)
+	if !isUnauthorized(err) {
+		return err
+	}
+	log.Printf("kb: токен отклонён (%v), беру новый и повторяю запрос", err)
+	c.forgetToken()
+	return c.getOnce(ctx, path, query, out)
+}
+
+// isUnauthorized — отказ по токену (401), а не «нет прав» (403).
+func isUnauthorized(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "ответила 401")
+}
+
+// getOnce — один запрос с текущим токеном.
+func (c *KBClient) getOnce(ctx context.Context, path string, query url.Values, out any) error {
 	token, err := c.authToken(ctx)
 	if err != nil {
 		return err

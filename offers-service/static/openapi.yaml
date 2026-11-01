@@ -410,6 +410,10 @@ paths:
         нельзя, человек должен видеть, чего в системе не хватает.
 
         Своей цены у системы нет: стоимость складывается из материалов.
+
+        Список отдаётся ИЗ КЕША сервиса: в базу знаний на каждый показ раздела
+        не ходим. Кеш пуст — база знаний читается один раз и кеш заполняется.
+        Перечитать — `POST /api/offers/systems/refresh`.
       security:
         - bearerAuth: []
       responses:
@@ -427,6 +431,33 @@ paths:
                   error:
                     type: string
                     description: Ошибка Базы знаний; список при этом пустой
+                  systems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemCard'
+  /api/offers/systems/refresh:
+    post:
+      summary: Перечитать системы из Базы знаний (admin)
+      description: |
+        Осознанное обновление кеша раздела «Системы». Ошибка Базы знаний не
+        стирает прежний кеш: ответ приходит со статусом 200, прежними системами
+        и текстом ошибки в `error` — раздел не должен пустеть из-за сбоя.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Обновлённый (или прежний, при ошибке) список систем
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kbEnabled:
+                    type: boolean
+                  count:
+                    type: integer
+                  error:
+                    type: string
                   systems:
                     type: array
                     items:

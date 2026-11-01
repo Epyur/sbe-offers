@@ -121,7 +121,10 @@ func main() {
 	// Системы (Task 6, 2026-10-31): карточки Базы знаний без тега material,
 	// с составом, разрешённым против справочника материалов. Своей цены у
 	// системы нет — она показывает, ИЗ ЧЕГО складывается стоимость.
+	// Список — из кеша (2026-11-01): база знаний перечитывается отдельным
+	// действием, а не на каждый показ раздела. Перечитывает администратор.
 	mux.HandleFunc("GET /api/offers/systems", s.requirePerm("viewer")(s.handleListSystems))
+	mux.HandleFunc("POST /api/offers/systems/refresh", s.requirePerm("admin")(s.handleRefreshSystems))
 	// «Добавить систему» в редакторе: состав собирает сервер, потому что цену
 	// позиции знает только он (вилка из таблиц менеджера), а не клиент.
 	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))

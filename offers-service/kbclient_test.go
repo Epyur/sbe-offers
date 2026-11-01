@@ -367,3 +367,76 @@ func TestKBClientNotesSinglePartialPage(t *testing.T) {
 		t.Fatalf("ожидали 12 карточек за один запрос, получили %d за %d", len(notes), s.calls)
 	}
 }
+
+// authStub — auth-service и kb-service, где kb отказывает 401 на первый токен.
+//
+// Повторяет живой случай 2026-11-01: токен закеширован, запрос идёт минутами,
+// часть запросов в середине получает «токен не разобран». Проверяем, что
+// клиент сбрасывает токен и повторяет запрос, а не отдаёт отказ наверх.
+type authStub struct {
+	t           *testing.T
+	tokenCalls  int32
+	kbCalls     int32
+	body        string
+	rejectFirst bool
+	rejectAll   bool
+}
+
+func (s *authStub) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/service-token", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&s.tokenCalls, 1)
+		_ = json.NewEncoder(w).Encode(map[string]string{"jwt": fmt.Sprintf("kb-jwt-%d", n)})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&s.kbCalls, 1)
+		reject := s.rejectAll || (s.rejectFirst && n == 1)
+		// Второй токен отличается от первого: подмена видна по номеру.
+		if reject || r.Header.Get("Authorization") == "Bearer kb-jwt-1" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"ключ доступа недействителен"}`))
+			return
+		}
+		_, _ = w.Write([]byte(s.body))
+	})
+	return mux
+}
+
+func newAuthStub(t *testing.T) (*authStub, *KBClient) {
+	t.Helper()
+	s := &authStub{t: t}
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+	return s, &KBClient{baseURL: srv.URL, authURL: srv.URL, serviceKey: "k", client: srv.Client()}
+}
+
+// Отказ 401 на закешированный токен — не приговор заходу: токен сбрасывается,
+// запрос повторяется с новым и проходит.
+func TestKBClientRetriesOn401(t *testing.T) {
+	s, c := newAuthStub(t)
+	s.body = `{"tags":[{"id":7,"name":"commercial_propose"}]}`
+	s.rejectFirst = true
+	if _, err := c.TagID(context.Background(), "commercial_propose"); err != nil {
+		t.Fatalf("первый 401 должен уходить в повтор: %v", err)
+	}
+	if got := atomic.LoadInt32(&s.tokenCalls); got != 2 {
+		t.Fatalf("токен запрошен %d раз, ожидали 2 (первый и после сброса)", got)
+	}
+	if got := atomic.LoadInt32(&s.kbCalls); got != 2 {
+		t.Fatalf("запрос к базе сделан %d раз, ожидали 2", got)
+	}
+}
+
+// Второй 401 подряд — уже настоящая ошибка, и повторов больше нет: иначе
+// заход зацикливался бы на недоступном сервисе.
+func TestKBClientGivesUpAfterSecond401(t *testing.T) {
+	s, c := newAuthStub(t)
+	s.body = `{"tags":[]}`
+	s.rejectAll = true
+	if _, err := c.TagID(context.Background(), "commercial_propose"); err == nil {
+		t.Fatal("второй 401 должен быть ошибкой")
+	}
+	if got := atomic.LoadInt32(&s.kbCalls); got > 2 {
+		t.Fatalf("запросов %d — повтор не ограничен", got)
+	}
+}

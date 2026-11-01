@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -59,26 +60,54 @@ func (s *Server) handleRefreshSystemCards(w http.ResponseWriter, r *http.Request
 
 // handleListSystems — системы из Базы знаний с составом (раздел «Системы»).
 //
-// Читает БАЗУ ЗНАНИЙ напрямую, а не кеш карточек: состав нужно разрешать против
-// ТЕКУЩЕГО справочника материалов, а кеш держит имена карточек для «Контекста
-// КП». Ошибка базы знаний — не пустой экран: отдаём пустой список и `error`,
-// чтобы плагин написал, что именно не так.
+// Читает КЕШ, а не базу знаний (2026-11-01, требование пользователя: «загрузились
+// и используем то, что знаем, при обновлении обновляем данные»).
+//
+// Раньше каждый показ раздела и каждый показ списка материалов ходили в
+// kb-service вживую. Один такой заход — это сотни запросов (страницы ленты плюс
+// полная заметка на каждую карточку), а любой сбой посреди захода показывал
+// человеку «Ключ доступа недействителен» на пустом месте. Кеш от этого и
+// страхует: он переживает и недоступную базу знаний, и неудачный токен.
+//
+// Кеш пуст — читаем базу знаний один раз и заполняем его; не вышло — пустой
+// список и `error`, раздел честно скажет, что именно не так.
 func (s *Server) handleListSystems(w http.ResponseWriter, r *http.Request) {
-	materials, err := s.listMaterials(r.Context(), false)
-	if err != nil {
-		dbError(w, "list systems: materials", err)
-		return
+	cards, err := s.loadCachedSystems(r.Context())
+	if err == nil && len(cards) == 0 {
+		cards, err = s.refreshSystemsCache(r.Context(), "")
 	}
-	cards, err := SystemsFromKB(r.Context(), s.kb, materials)
-	resp := map[string]any{
+	if err != nil {
+		log.Printf("системы: кеш не прочитан: %v", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
 		"systems":   cards,
 		"kbEnabled": s.kb != nil && s.kb.configured(),
 		"count":     len(cards),
+		"error":     errorText(err),
+	})
+}
+
+// handleRefreshSystems — перечитать системы из Базы знаний (admin).
+//
+// Ошибка базы знаний возвращается полем `error`, но статус 200 и прежний кеш:
+// плагин покажет предупреждение, а раздел не станет пустым.
+func (s *Server) handleRefreshSystems(w http.ResponseWriter, r *http.Request) {
+	email := actorEmailFromCtx(r)
+	cards, err := s.refreshSystemsCache(r.Context(), email)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"systems":   cards,
+		"kbEnabled": s.kb != nil && s.kb.configured(),
+		"count":     len(cards),
+		"error":     errorText(err),
+	})
+}
+
+// errorText — текст ошибки для поля `error`; nil превращается в пустую строку.
+func errorText(err error) string {
+	if err == nil {
+		return ""
 	}
-	if err != nil {
-		resp["error"] = err.Error()
-	}
-	writeJSON(w, http.StatusOK, resp)
+	return err.Error()
 }
 
 // SystemCard — карточка системы, как её видит offers-service.
@@ -283,6 +312,54 @@ func SystemsFromKB(ctx context.Context, kb KBReader, materials []Material) ([]Sy
 	return cards, nil
 }
 
+// SystemWithComposition — карточка системы вместе с разрешённым составом.
+//
+// Отдельный тип, а не поля в SystemCard: `SystemCard` уходит в «Контекст КП»
+// и в кеш карточек, где состава нет вовсе. Общий тип заставлял бы кеш карточек
+// нести пустые поля состава и путать два раздела.
+type SystemWithComposition struct {
+	SystemCard
+	CompositionLinks []CompositionItem `json:"compositionLinks,omitempty"`
+	Problems         []string          `json:"problems,omitempty"`
+}
+
+// SystemsWithCompositionFromKB — системы из Базы знаний с составом,
+// разрешённым против справочника материалов. Материальные карточки сюда не
+// попадают: у них свой раздел.
+//
+// kb == nil — «база знаний не настроена»: пустой список без ошибки.
+func SystemsWithCompositionFromKB(ctx context.Context, kb KBReader, materials []Material) ([]SystemWithComposition, error) {
+	if kb == nil {
+		return []SystemWithComposition{}, nil
+	}
+	tagID, err := kb.TagID(ctx, commercialPropose)
+	if err != nil {
+		return []SystemWithComposition{}, err
+	}
+	notes, err := kb.Notes(ctx, tagID)
+	if err != nil {
+		return []SystemWithComposition{}, err
+	}
+	cards := make([]SystemWithComposition, 0, len(notes))
+	for _, summary := range notes {
+		note, err := kb.Note(ctx, summary.ID)
+		// Одна сломанная карточка не скрывает остальные.
+		if err != nil {
+			continue
+		}
+		// Тег берём из полной заметки: в ленте его нет. Материал в этом
+		// разделе — не система.
+		if noteHasTag(KBNoteSummary{Tags: note.Tags}, materialTagName) {
+			continue
+		}
+		parsed := skills.ParseSystemCard(note.ContentMD)
+		card := SystemWithComposition{SystemCard: systemCardFromParsed(summary, note, parsed)}
+		card.CompositionLinks, card.Problems = resolveComposition(parsed, materials)
+		cards = append(cards, card)
+	}
+	return cards, nil
+}
+
 // systemCardFromParsed собирает карточку для плагина из разобранной заметки.
 func systemCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.SystemCard) SystemCard {
 	title := parsed.Title
@@ -371,6 +448,72 @@ func linkCatalogID(sku string, catalog []CatalogItem) int64 {
 // иначе поиск в документе и поиск в редакторе разошлись бы в мелочах.
 func FindSystemCard(cards []SystemCard, sku string) (SystemCard, bool) {
 	return FindSystem(cards, sku)
+}
+
+// --- Кеш систем в offers_context ---------------------------------------
+
+// systemsCacheMode — ключ строки кеша раздела «Системы». Отдельно от
+// system_cards: там карточки для «Контекста КП» с привязкой к каталогу, здесь —
+// системы с составом, разрешённым против справочника материалов.
+const systemsCacheMode = "systems"
+
+// loadCachedSystems читает системы из кеша. Нет строки — пустой список.
+func (s *Server) loadCachedSystems(ctx context.Context) ([]SystemWithComposition, error) {
+	var raw []byte
+	if err := s.pool.QueryRow(ctx,
+		`SELECT sections FROM offers_context WHERE mode = $1`, systemsCacheMode).Scan(&raw); err != nil {
+		// Строки нет — это не авария: кеш пуст, его заполнит первый показ.
+		return []SystemWithComposition{}, nil
+	}
+	var out []SystemWithComposition
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("кеш систем повреждён: %w", err)
+	}
+	if out == nil {
+		return []SystemWithComposition{}, nil
+	}
+	return out, nil
+}
+
+// saveCachedSystems пишет системы в кеш. Строка одна: это кеш, а не набор.
+func (s *Server) saveCachedSystems(ctx context.Context, systems []SystemWithComposition, updatedBy string) error {
+	if systems == nil {
+		systems = []SystemWithComposition{}
+	}
+	raw, err := json.Marshal(systems)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+INSERT INTO offers_context (mode, sections, learnings, updated_by, updated_at)
+VALUES ($1, $2, '[]', $3, now())
+ON CONFLICT (mode) DO UPDATE SET
+	sections = EXCLUDED.sections, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		systemsCacheMode, raw, updatedBy)
+	return err
+}
+
+// refreshSystemsCache читает системы из базы знаний и обновляет кеш.
+//
+// Ошибка базы знаний НЕ стирает прежний кеш: временный сбой не должен
+// выключать раздел. Возвращается прежний кеш и ошибка — вызывающий сам решает,
+// показать предупреждение или молчать.
+func (s *Server) refreshSystemsCache(ctx context.Context, updatedBy string) ([]SystemWithComposition, error) {
+	// Справочник берём без синхронизации с карточками: она сама ходит в базу
+	// знаний, а второй заход туда же нужен только для повтора той же ошибки.
+	materials, err := s.listMaterialsOnce(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := SystemsWithCompositionFromKB(ctx, s.kb, materials)
+	if err != nil {
+		cached, _ := s.loadCachedSystems(ctx)
+		return cached, err
+	}
+	if err := s.saveCachedSystems(ctx, fresh, updatedBy); err != nil {
+		return fresh, err
+	}
+	return fresh, nil
 }
 
 // --- Кеш карточек в offers_context -------------------------------------

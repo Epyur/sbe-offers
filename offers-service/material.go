@@ -167,6 +167,14 @@ func (s *Server) listMaterials(ctx context.Context, includeArchived bool) ([]Mat
 	if err := s.syncMaterialsFromNotes(ctx); err != nil {
 		log.Printf("материалы: синхронизация с карточками не удалась: %v", err)
 	}
+	return s.listMaterialsOnce(ctx, includeArchived)
+}
+
+// listMaterialsOnce читает справочник БЕЗ синхронизации с карточками.
+//
+// Нужен там, где синхронизация уже идёт своим ходом или не нужна вовсе: два
+// захода в базу знаний подряд — это повтор той же ошибки, а не свежие данные.
+func (s *Server) listMaterialsOnce(ctx context.Context, includeArchived bool) ([]Material, error) {
 	query := `SELECT ` + materialColumns + ` FROM offers_material`
 	if !includeArchived {
 		query += ` WHERE NOT archived`
