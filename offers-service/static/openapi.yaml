@@ -968,6 +968,24 @@ paths:
         '200':
           description: Черновик создан
   /api/offers/bot/offers/{id}:
+    get:
+      summary: Одно предложение этого чата
+      description: |
+        Нужна боту, чтобы не спрашивать второй раз то, что уже известно:
+        адресат приходит брифом в `formValues.client_name`, состав мог приехать
+        файлом. Отдаётся только своё предложение — иначе 403.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/ChatId'
+      responses:
+        '200':
+          description: Предложение
+        '403':
+          description: Это не ваше предложение
+        '404':
+          description: Предложение или привязка чата не найдены
     patch:
       summary: Изменить состав черновика из бота
       security:
@@ -1460,6 +1478,23 @@ components:
             type: array
             items:
               type: string
+        refs:
+          type: array
+          description: >-
+            Ссылки из раздела «## Ссылки» карточки: страница системы или
+            материала на корпоративном сайте и техническая документация на
+            навигаторе. Печатаются в конце КП узлом links.
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              url:
+                type: string
+              kind:
+                type: string
+                enum: [page, doc]
+                description: page — страница на сайте, doc — технический документ
         imageName:
           type: string
         catalogId:
@@ -1699,13 +1734,33 @@ components:
           type: string
         content:
           type: array
-          description: Узлы (абзац, заголовок, список, таблица)
+          description: >-
+            Узлы блока. paragraph/heading/bullet_list/table — текст с
+            подстановкой {{полей}}; page_break — разрыв страницы; links —
+            ссылки из карточек систем и материалов (печатаются в конце КП);
+            prompt_text — текст, который модель пишет по подсказке
+            администратора (instruction, hint, maxWords); image — картинка с
+            обтеканием текстом (imageKey, imageName, widthCm, wrap,
+            caption). Узел image вставляется плавающим объектом, поэтому не
+            разрывает абзацы вокруг себя.
           items:
             type: object
         showInClient:
           type: boolean
         showInInternal:
           type: boolean
+        spacingBefore:
+          type: integer
+          description: Отступ до блока в пунктах, 0..200
+        spacingAfter:
+          type: integer
+          description: Отступ после блока в пунктах, 0..200
+        keepTogether:
+          type: boolean
+          description: Не разрывать абзацы блока между страницами
+        pageBreakBefore:
+          type: boolean
+          description: Начинать блок с новой страницы
     OfferForm:
       type: object
       properties:

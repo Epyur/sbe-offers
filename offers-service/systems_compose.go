@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -101,8 +102,35 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, sku string) (O
 			status: http.StatusInternalServerError, text: "не удалось сохранить предложение",
 		}
 	}
+	// Состав изменился — значит, текст блоков «по промту» про старый состав
+	// больше не годится. Кэш стираем здесь, при записи, а не при печати:
+	// между ними человек может открыть КП и увидеть старый текст (2026-11-01).
+	offer.FormValues = dropStaleBlockTexts(offer.FormValues)
+	if err := s.persistOfferFormValues(ctx, offer); err != nil {
+		log.Printf("add system: тексты блоков не сброшены у КП %s: %v", offer.Number, err)
+	}
 	resp.Offer = offer
 	return offer, resp, nil
+}
+
+// dropStaleBlockTexts убирает хеш данных из form_values: при следующей сборке
+// документа тексты блоков будут написаны заново.
+//
+// Сам текст не стирается: человек мог видеть его в плагине, и тихо удалять
+// текст, который он читал, хуже, чем переписать его при печати. Хеш — то, по
+// чему решается «этот текст ещё про это предложение».
+func dropStaleBlockTexts(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for k, v := range values {
+		if k == genKeySection {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // writeComposeError отвечает отказом сборки: текст ошибки — для человека.

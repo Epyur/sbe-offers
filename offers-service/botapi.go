@@ -148,6 +148,17 @@ func (s *Server) handleBotListOffers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"offers": offers})
 }
 
+// handleBotCreateOffer — предложение создаётся в НАЧАЛЕ разговора, а не после
+// позиций (2026-11-01).
+//
+// Зачем: менеджер сначала рассказывает про объект и присылает файлы, а файл
+// прикладывается к строке предложения (вложение, бриф, состав). Без строки
+// файл терять некуда, и бот был вынужден начинать с каталога.
+//
+// Позиций может не быть вовсе — и это ЗДЕСЬ законно. На REST-пути
+// (validateOffer) пустое предложение по-прежнему отклоняется: там клиент
+// присылает готовое КП, а не открывает разговор. Границей входа служит
+// botOfferForChat, а не валидатор состава.
 func (s *Server) handleBotCreateOffer(w http.ResponseWriter, r *http.Request) {
 	var req botOfferRequest
 	if err := decodeJSON(w, r, &req, 4<<20); err != nil {
@@ -158,24 +169,26 @@ func (s *Server) handleBotCreateOffer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	offer := Offer{
-		Client:     req.Client,
-		Items:      req.Items,
-		FormValues: req.FormValues,
-		Status:     "draft",
+	items := req.Items
+	if items == nil {
+		items = []OfferItem{}
 	}
-	if msg := validateOffer(offer); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
-		return
+	// Позиции проверяются только если они есть: имя и количество пустой строки
+	// проверить нельзя, а пустой состав — законное начало разговора.
+	if len(items) > 0 {
+		if msg := validateOffer(Offer{Items: items}); msg != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
+			return
+		}
 	}
-	offer.Total = recalcOfferTotal(offer.Items)
-	if offer.FormValues == nil {
-		offer.FormValues = map[string]string{}
+	formValues := req.FormValues
+	if formValues == nil {
+		formValues = map[string]string{}
 	}
 
-	clientJSON, _ := json.Marshal(offer.Client)
-	itemsJSON, _ := json.Marshal(offer.Items)
-	valuesJSON, _ := json.Marshal(offer.FormValues)
+	clientJSON, _ := json.Marshal(req.Client)
+	itemsJSON, _ := json.Marshal(items)
+	valuesJSON, _ := json.Marshal(formValues)
 
 	number, err := s.nextNumber(r.Context(), time.Now().Year())
 	if err != nil {
@@ -186,7 +199,7 @@ func (s *Server) handleBotCreateOffer(w http.ResponseWriter, r *http.Request) {
 	err = s.pool.QueryRow(r.Context(), `
 INSERT INTO offers_offer (number, owner_email, client, items, form_values, total, status)
 VALUES ($1, $2, $3, $4, $5, $6, 'draft') RETURNING id`,
-		number, email, clientJSON, itemsJSON, valuesJSON, offer.Total).Scan(&id)
+		number, email, clientJSON, itemsJSON, valuesJSON, recalcOfferTotal(items)).Scan(&id)
 	if err != nil {
 		dbError(w, "bot create offer", err)
 		return
@@ -197,6 +210,24 @@ VALUES ($1, $2, $3, $4, $5, $6, 'draft') RETURNING id`,
 		return
 	}
 	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleBotGetOffer — одно предложение этого чата (2026-11-01).
+//
+// Нужен боту, чтобы не спрашивать второй раз то, что уже известно: адресат
+// приходит брифом в form_values["client_name"], состав мог приехать файлом.
+// Отдаётся только своё предложение — тот же контроль, что у DOCX и ссылки.
+func (s *Server) handleBotGetOffer(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	offer, _, ok := s.botOfferForChat(w, r, id)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, offer)
 }
 
 func (s *Server) handleBotPatchOffer(w http.ResponseWriter, r *http.Request) {
@@ -266,12 +297,57 @@ func docxFileName(offer Offer) string {
 // buildOfferDocx собирает документ и кладёт его в S3, возвращая ключ.
 // renderOffer — только рендер, без внешних сервисов. Экспорт байтами не должен
 // зависеть от S3: раньше он ждал rclone до пяти минут, если хранилище лежало.
+//
+// С 2026-11-01 перед сборкой дописываются тексты блоков формы «по промту»: это
+// единственное место, где документ идёт в сеть за моделью. Не удалось — блоки
+// молчат, файл собирается как есть (форма и карточки всё равно нужны).
 func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 	form, err := s.loadForm(r.Context(), "client")
 	if err != nil {
 		return nil, err
 	}
-	return renderOfferDocx(form, offer)
+	cards, refs := s.systemCardsForOffer(r.Context(), offer)
+	offer = s.refreshBlockTexts(r.Context(), form, offer, cards, refs)
+	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
+}
+
+// systemCardsForOffer — карточки систем предложения и их ссылки.
+//
+// Из кэша карточек, а не из Базы знаний: экспорт файла не должен зависеть от
+// доступности чужого сервиса. Если карточки не прочитать — ни описаний, ни
+// ссылок в документе не будет, и это не ошибка экспорта.
+func (s *Server) systemCardsForOffer(ctx context.Context, offer Offer) ([]SystemCard, []skills.CardRef) {
+	cards, err := s.loadCachedSystemCards(ctx)
+	if err != nil || len(cards) == 0 {
+		return nil, nil
+	}
+	cards = cardsForOffer(cards, offer)
+	return cards, collectOfferRefs(cards)
+}
+
+// refreshBlockTexts дописывает тексты блоков «по промту» в предложение.
+//
+// Отдельно от рендера, потому что рендер — чистая сборка документа: генерация
+// ходит в модель и в БД, и её не должно быть в каждом тесте. Здесь же решается,
+// что печатать: свежий кэш или текст, только что написанный моделью. Запись в
+// БД — двигаем updated_at (правило проекта: правка данных двигает метку).
+func (s *Server) refreshBlockTexts(ctx context.Context, form OfferForm, offer Offer,
+	cards []SystemCard, refs []skills.CardRef) Offer {
+	if len(collectPromptNodes(form)) == 0 {
+		return offer
+	}
+	values, reused, written := generateBlockTexts(ctx, form, offer, llmCompleter{}, cards, refs)
+	if written == 0 && reused == 0 {
+		return offer
+	}
+	offer.FormValues = values
+	if written > 0 {
+		if err := s.persistOfferFormValues(ctx, offer); err != nil {
+			// Документ важнее записи: файл соберём с текстом в памяти.
+			log.Printf("block texts: не записано в КП %s: %v", offer.Number, err)
+		}
+	}
+	return offer
 }
 
 func (s *Server) buildOfferDocx(r *http.Request, offer Offer) ([]byte, string, error) {

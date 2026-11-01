@@ -163,6 +163,7 @@ func main() {
 	mux.HandleFunc("GET /api/offers/bot/systems", s.requireServiceSecret(s.handleBotSystems))
 	mux.HandleFunc("GET /api/offers/bot/offers", s.requireServiceSecret(s.handleBotListOffers))
 	mux.HandleFunc("POST /api/offers/bot/offers", s.requireServiceSecret(s.handleBotCreateOffer))
+	mux.HandleFunc("GET /api/offers/bot/offers/{id}", s.requireServiceSecret(s.handleBotGetOffer))
 	mux.HandleFunc("PATCH /api/offers/bot/offers/{id}", s.requireServiceSecret(s.handleBotPatchOffer))
 	// «система <название>» в боте (2026-10-31): состав из Базы знаний
 	// дописывается позициями. Правило состава то же, что у плагина.
