@@ -1436,3 +1436,82 @@ two weeks and is the place to start, not this file.
 **Still open for the user.** The 1284 composition lines that resolve to nothing
 have no link at all - plain text in the cards. And the automatic SKUs are all
 `MAT-ПРОЧ-ОБЩ-...` because the sync passes no type/series hints.
+
+## 0.4.0 - 2026-11-01: context first in the bot, and a form that composes
+
+Two user requests in one cycle: the bot must not jump from the menu to
+positions, and the offer form must be composable from standard, free-text,
+generated and image blocks. Design and plan:
+`docs/superpowers/specs/2026-11-01-sbe-offers-context-first-and-form-blocks-design.md`,
+`docs/superpowers/plans/2026-11-01-sbe-offers-context-first-and-form-blocks-plan.md`.
+
+### 1. The bot starts with context
+
+`startDraft` used to open the catalogue keyboard immediately. Now it creates the
+offer **empty** (`handleBotCreateOffer` accepts `items: []` on the bot path only;
+the REST path still answers 400) and starts the brief: object, purpose, area,
+addressee, deal, planned systems, terms - and positions only after that.
+
+- `model.BriefPayload` gained `object_purpose`, `object_area`,
+  `customer_address`, `planned_systems[]`; 10 -> 14 fields.
+- `skills.Topic` gained `Stage`; four stages (`object`, `deal`, `offer`,
+  `terms`), `Stages()`, `StageOf()`, `CurrentStage()`.
+- The offer is created up front because a file attaches to an offer row
+  (attachment, brief); the whole `attach` pipeline then works unchanged at any
+  point of the conversation.
+- `routeDocument`'s "no offer" refusal is gone from the normal path: the row
+  always exists.
+- New `GET /bot/offers/{id}?chat_id=` so the bot can read the addressee the
+  brief already collected instead of asking for the client name again.
+- `finishDraft` now PATCHes the existing offer instead of creating a second
+  one - otherwise one КП would get two numbers.
+- At the context stage free-form "name | qty | price" text is not taken as a
+  position: during a conversation it is an answer, not a line item.
+
+### 2. The form composes
+
+- `Block` gained `spacingBefore`/`spacingAfter` (points, 0..200),
+  `keepTogether`, `pageBreakBefore`. Absolute positioning was rejected: text
+  boxes do not survive a human editing the paragraph.
+- New nodes: `page_break`, `links`, `prompt_text`, `image`.
+- `image` renders `wp:anchor` + `wp:wrapSquare` (text flows beside the picture,
+  the line is not broken) instead of `wp:inline`. This is the user's explicit
+  request: "images must not create breaks".
+- `links` prints the `## Ссылки` section of the system/material cards, grouped,
+  deduplicated, capped at 60 with an honest sentence. In Word they are real
+  external hyperlink relationships.
+- `prompt_text` asks the model for one paragraph, grounded in the offer facts;
+  the result is cached in `form_values` under `gen.section` (hash of the offer
+  data) + `gen.<blockId>.<node>` and rewritten when the offer changed. Adding a
+  system drops the hash (`dropStaleBlockTexts`). Model down - the block is
+  silent, the document still builds.
+- Default form: cover, page break, supplier/recipient/object table, generated
+  description of the system, links. Saved forms are untouched.
+
+### Defects the stand and the checks found
+
+1. **`crapper`/`dryer` on the new code.** `flagXML` replaced two identical
+   "if enabled return markup" pairs; the `StageLabel`/`StageOf` loops stay
+   separate on purpose (different slices, and a generic would read worse).
+   `KBImageSource.Get` (CC 11) is network glue with no unit coverage, recorded
+   not hidden.
+2. **E2E section 13 compared brief JSON by string**, so adding fields made it
+   fail on key ORDER, not content. Now `sameJson` (order-insensitive).
+3. **My own bundle check was wrong twice** - searched lowercase `\uXXXX` and
+   then had shell-doubled backslashes. Uppercase hex, single backslash, in
+   `scripts/check_bundle_strings.mjs`; it now pins the editor's Russian labels.
+
+### Checks
+
+`gofmt`/`go vet` clean; `go test ./...` green (`main` 44.0%); bot 78 tests,
+`tsc --noEmit` clean, build OK; plugin `tsc --noEmit` EXIT=0, `npm run build`
+OK at 0.4.0; `check_offers_openapi.mjs` 60 operations, schema matches; stand E2E
+**213/213, twice** (new section 19: empty draft, addressee route, brief starts
+with the object, card refs, form with new blocks, negative spacing, REST still
+400). A real DOCX was built and inspected: page break, anchored image with wrap,
+clickable links, no leftover placeholders, all parts well-formed XML.
+
+### Not done
+
+Release steps (commit, push, `backend` -> `main`, deploy, self-hosting) need the
+user's explicit command. `specification.md` and the in-app help are updated.
