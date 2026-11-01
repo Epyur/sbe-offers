@@ -1364,3 +1364,70 @@ Note the type code: the sync passes no type/series hints, so everything lands in
 `ПРОЧ`/`ОБЩ`. If type codes in SKUs matter for anything, that is the next
 decision to make - the plans had them typed by hand, and the automatic ones are
 not meaningful.
+
+## Materials leaked into "Системы", and the "Материалы" tab was mojibake - 2026-10-31 (evening)
+
+Two user reports, two different causes. Both fixed, deployed and self-hosted;
+commits `b22b6e1` (backend), `8657756` (main), registry `9de88c2`.
+
+### 1. Materials appeared in the systems section
+
+**Not** a bug in the tag split - that function was right both times. The
+knowledge base does not send tags in the note **list**: `GET /api/kb/notes`
+returns `id, title, path, updated_at` and **no `tags` key at all** (checked on
+the live service). `splitCardsByTags` therefore saw an empty tag list and put
+**all 1541** `commercial_propose` cards into systems, including the 1165 that
+also carry `material`. The full note (`GET /api/kb/notes/{id}`) does return
+`tags`, and that call was already being made for the text.
+
+Second, hidden defect on the same path: `KBNote` declared **its own** `Tags`
+field next to the embedded `KBNoteSummary.Tags`. `json.Unmarshal` filled the
+outer field, the embedded one stayed empty, so a check reading through the
+embedding saw nothing. The extra field is gone - one field, no shadowing.
+
+Now the tag is read from the full note, and the note's title is the fallback for
+a card that has no heading in the standard format - otherwise live cards, which
+mostly have no H1, would all be called "(без названия)".
+
+**Measured on the live server after deploy:** 1541 -> **376 systems**;
+materials 1165; composition lines 3387, resolved 2103; 5 cards with the whole
+composition linked. Test `systems_split_tags_test.go` reproduces the original
+failure (it feeds a list without tags, exactly like the real service) and fails
+on the old code with "в системах оказалась не та карточка".
+
+### 2. The "Материалы" tab showed broken characters
+
+The stylesheet had already been fixed earlier the same evening (the sbe-core
+comment). This was a **second, independent break**: the source file
+`src/ui/material-editor.ts` itself was committed with mangled Russian text - on
+`backend` and on `main`, from its very first commit (`1381215`), which is why
+every visible label in that one tab was garbage while the rest of the plugin was
+fine.
+
+Recovery by transformation was not possible: CP1251->UTF-8, UTF-16, and double
+passes were all tried and none reproduced the original without `U+FFFD`. The
+file was rewritten by hand. The check that matters: every Russian label
+("Новый материал", "Показать архив", "Вариации (ЕКН)", "из карточки", "Убрать в
+архив", "Поиск по названию, SKU и ЕКН") is present in the built `main.js`
+(esbuild escapes Cyrillic, so the check looks for the `\uXXXX` form).
+
+**Lesson recorded, not just fixed.** Two encoding incidents in one day is a
+pattern. An investigation plan is written:
+`docs/superpowers/plans/2026-10-31-encoding-breakage-investigation-plan.md`
+(what writes files, why no check catches it before commit, one guard instead of
+four, and the recovery decision tree). It lists all four incidents of the last
+two weeks and is the place to start, not this file.
+
+### State after this evening
+
+- `backend` = `main` = `b22b6e1` / `8657756`, both pushed.
+- Server deployed, MD5 of the changed files compared before the rebuild.
+- Self-hosted: `main.js 4a8fdef1...97ca`, `styles 46f4c880...4fb6`,
+  `manifest 1e49dc66...42d1`; verified over https; registry updated.
+- Version stays **0.3.0**: `manifest.json` did not change, and the store decides
+  "there is an update" by hashes.
+- `go test` green, `tsc` EXIT=0, build OK, stand E2E 198/198.
+
+**Still open for the user.** The 1284 composition lines that resolve to nothing
+have no link at all - plain text in the cards. And the automatic SKUs are all
+`MAT-ПРОЧ-ОБЩ-...` because the sync passes no type/series hints.
