@@ -32,17 +32,25 @@ renamed accordingly.
   `material`. A system has no price of its own; it justifies why this
   combination of materials was chosen. Its composition links to materials by
   wiki reference (`[[Название]]`); a `MAT-…` code is the fallback.
-- **Offer form** (`offers_form`) - placeholders + document blocks (paragraph,
-  heading, list, table) + required fields. The editor is a block editor built
-  after the LIMS protocol configurator.
+- **Offer form** (`offers_form`) - placeholders + document blocks + required
+  fields. The editor is a block editor built after the LIMS protocol
+  configurator. Since 2026-11-01 a block is more than text: `paragraph`,
+  `heading`, `bullet_list`, `table`, `page_break`, `links`, `prompt_text` and
+  `image`, plus placement (`spacingBefore`/`spacingAfter` in points,
+  `keepTogether`, `pageBreakBefore`). The default form is cover -> page break ->
+  supplier/recipient/object -> generated description -> positions -> links.
 - **Offer** (`offers_offer`) - a snapshot: positions with the price at the
   moment they were added, form values, total, `draft`/`final` status, number
   `{NNN}/{yyyy}` continuous through the year. Visibility: admin sees all,
-  everyone else sees their own.
+  everyone else sees their own. Since 2026-11-01 the row is created at the
+  **start** of the bot conversation with `items: []` (the REST path still
+  refuses an empty offer).
 - **Telegram bot** - sign-in by e-mail and code (self-request by mail or a code
-  from the administrator), offer assembly from the catalogue and free-form
-  lines, the `система <название>` command expanding a system into positions,
-  DOCX as a file in the chat or as a link on a button.
+  from the administrator). "Собрать КП" now **starts with context**: object,
+  purpose, area, addressee, the deal, planned systems, terms - and only then
+  positions. A file can be sent at any step. The `система <название>` command
+  expands a system into positions; DOCX arrives as a file in the chat or as a
+  link on a button.
 - **Entry point** - the store: "Installed → Open" (`publishService('sbe-offers', {open})`).
 - **Legacy** `offers_catalog` remains for old offers only: materials were
   migrated out, the `system` rows are archived, and nothing writes to it.
@@ -130,12 +138,33 @@ token lives in `offers_bot_config` and is entered from the plugin's "Бот и
 
 ```
 npx tsc --noEmit && npm run build          # plugin
+node scripts/check_bundle_strings.mjs      # русские строки в бандле (экранированы!)
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
 node ../../scripts/check_offers_openapi.mjs
 docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
+
+**После `npm run build` проверять строки через `scripts/check_bundle_strings.mjs`,
+а не глазами.** esbuild с `minify` не трогает кириллицу по-человечески: она уходит
+в `\uXXXX` **верхним** регистром hex. Поиск строчными (`\u0430`) даёт ложное
+«строки нет», и я на этом ошибся дважды за один цикл (2026-11-01), плюс
+PowerShell дважды задвоил бэкслеш в самодельной команде. Скрипт делает это
+правильно и падает с ненулевым кодом.
+
+**Стенд обновлять после правок сервиса.** Бинарь на стенде подменяется так
+(Docker Hub на этой машине недоступен, поэтому сборка в `golang:1.24`):
+
+```
+docker run --rm -v "$PWD/offers-service:/src" -w /src -e CGO_ENABLED=0 golang:1.24 \
+  sh -c "go build -o /src/offers-stand . "
+docker cp offers-service/offers-stand offers-local-app:/mailers-offers
+docker restart offers-local-app
+```
+
+`CGO_ENABLED=0` обязателен: CGO-бинарь не запустится в alpine-образе
+(«no such file or directory» — про интерпретатор, а не про файл).
 
 ## Rules
 
@@ -1515,3 +1544,102 @@ clickable links, no leftover placeholders, all parts well-formed XML.
 
 Release steps (commit, push, `backend` -> `main`, deploy, self-hosting) need the
 user's explicit command. `specification.md` and the in-app help are updated.
+
+## STATE 2026-11-01 (release 0.4.0, deployed and self-hosted)
+
+One place to read what the system is right now. History and reasons live in
+the entries above; this section answers "what is live, what works, what is
+still missing".
+
+### Versions and branches
+
+| | value |
+|---|---|
+| plugin | **0.4.0** (`manifest.json` = `package.json`) |
+| remote `main` | `a3dab26` |
+| remote `backend` | `5e8c148` (plugin part = `main`, plus the server folders) |
+| server code | `offers-service/`, `offers-bot/` - **`backend` only**, `.gitignore`d on `main` |
+| live containers | `mailers-offers-1`, `mailers-offers-bot-1` recreated 2026-11-01 14:09 MSK |
+| `sbe-core` | `eea98f6` (`backend`) - `src/utils/files.ts` added |
+
+### Self-hosting (checked over https, `_t=` cache-buster)
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `a46eff000b3ec366d675b0e929b32a61fe96e58fda5dec05f942a48a0d1a527a` | 469 |
+| `main.js` | `bd42d5a1943aa092f210c2f5a9f2e70b597a8a97a1908a6b25e2f171e143a2b1` | 113242 |
+| `styles.css` | `46f4c8801248eb87cac43b6c4ac00df86af55c0d3c0ff55401224d634f1d83d0` | 31438 |
+
+`styles.css` did not change in this release (no CSS edits) - the same sum as
+0.3.0. All three were compared byte-for-byte against
+`https://epyur.fvds.ru/plugins/sbe-offers/*`; `U+FFFD` count in the delivered
+stylesheet is 0. `registry.json` on the server reports the same three hashes
+and `selfHosted: true`, `uploadedAt 2026-11-01T11:11:10Z`. The git copy in
+`sbe-apstore-registry` is commit `dcbe363`.
+
+### What works (verified, not assumed)
+
+- **Bot**: "Собрать КП" creates an empty offer with a number, then walks the
+  brief by stages (object/addressee -> deal -> systems -> terms), file button
+  on every question, positions afterwards, then section copy, then DOCX.
+  Verified live: `GET /bot/offers/{id}` answers 200 for the owning chat, 404
+  for a chat that is not linked, 401 without the service secret.
+- **Links**: `skills.ParseCardRefs` run against the **real vault**: 120 system
+  cards -> 919 links (120 page + 799 docs), 1166 material cards -> 2353 links
+  (1165 page + 1188 docs). Every link had a label and a URL. One material card
+  of 1166 has no `## Ссылки` section - that is in the data, not the code.
+- **Document**: a real DOCX was built and unpacked - page break, anchored image
+  with `wrapSquare`, caption, clickable hyperlink relationships, no leftover
+  `{{placeholders}}`, all parts well-formed XML, image and hyperlink relations
+  coexist.
+- **Form**: a saved form is NOT replaced by the new default. Live check: the
+  server keeps the form saved on 2026-10-27 (`intro`, 2 blocks, 4 fields).
+  The new default applies only when no row exists.
+- **Schema**: `/api/offers/openapi.yaml` live contains `bot/offers/{id}`,
+  `page_break`, `prompt_text`, `spacingBefore`.
+
+### Checks at the moment of release
+
+`gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green (`main` 44.0%,
+`model` 70.1%, `skills` 84%), bot `tsc --noEmit` clean and **78 tests**,
+plugin `tsc --noEmit` EXIT=0 and `npm run build` OK at 0.4.0,
+`check_bundle_strings.mjs` 0 missing, `check_offers_openapi.mjs`
+**60 operations / 47 paths, schema matches**, local stand E2E **213/213 twice**.
+`crapper`: every new function under CRAP 10 except `KBImageSource.Get` (CC 11,
+network glue with no unit coverage - recorded, not hidden). `dryer`: the two
+# remaining duplicate pairs are pre-existing (`offer_boundary.go`/`offers.go`
+and `botapi.go`/`offers.go`, both present before this cycle).
+
+### What is still missing (honest list)
+
+1. **The systems' composition links.** 1284 composition lines have no
+   `[[link]]` at all - plain text ("Первый материал или слой", the template
+   placeholders of unfinished cards). A technologist's work; no code can guess
+   them. This is the same number as before the release.
+2. **Automatic SKUs are meaningless** - everything synced from KB cards lands
+   in `MAT-ПРОЧ-ОБЩ-NNNN`, because the sync passes no type/series hints. If the
+   type code matters, that is a decision to make.
+3. **Prompt text is not agreed with a human.** Blocks written by the model are
+   cached and reprinted, but nobody signs them off - unlike section copy, which
+   the manager approves in the chat. If the administrator wants approval, that
+   is the next step.
+4. **The form editor has no live preview** of page breaks and image wrapping.
+   The admin sees the result only in the built DOCX.
+5. **Images live in KB attachments** (`POST /api/kb/attachments`), so a broken
+   KB means no new pictures in blocks. Existing documents keep working: the
+   image key is stored in the block.
+6. **`sbe-kb` still has its own `services/hash.ts`** - a second copy of what is
+   now `sbe-core/src/utils/files.ts`. Merge at that plugin's next change.
+7. **The bot conversation was not walked end-to-end by a human in Telegram**
+   after this release. The unit tests and the stand cover the state machine;
+   the live checks covered the routes, not a real dialogue.
+
+### Where to look first when something breaks
+
+| symptom | start here |
+|---|---|
+| bot asks positions immediately | `callbacks.ts` `startDraft` must create the offer and call `beginBrief`; `draft.stage` must be `context` |
+| «в предложении нет позиций» on save | `finishDraft` PATCHes the existing offer; an empty `items` from the sheet means `attach/apply` did not run |
+| a block is missing from the DOCX | model down (`prompt_text` is silent by design), image key not in the store, or `showInClient` off |
+| links absent in the document | the card has no `## Ссылки` section, or `cardsForOffer` did not match the system to the composition |
+| old prompt text in a new document | `form_values["gen.section"]` hash matched; adding a system drops it, editing an item directly does not |
