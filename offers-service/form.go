@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -13,13 +14,28 @@ type Placeholder struct {
 	Label string `json:"label"`
 }
 
-// Block — блок документа формы (абзацы/заголовки/списки/таблицы).
+// Block — блок документа формы (абзацы/заголовки/списки/таблицы, разрывы
+// страниц, ссылки и текст по промту).
+//
+// Размещение на странице (2026-11-01): отступы в пунктах (Word меряет абзацный
+// интервал в twips, 1 пт = 20; в JSON пишем пункты — админу понятнее),
+// «не разрывать между страницами» и «начинать с новой страницы». Абсолютного
+// позиционирования нет намеренно: текстовые поля и якоря не переживают правку
+// абзаца человеком, а для письма нужны именно отступы, выравнивание и разрыв.
 type Block struct {
 	ID             string          `json:"id"`
 	Title          string          `json:"title"`
 	Content        json.RawMessage `json:"content"`
 	ShowInClient   bool            `json:"showInClient"`
 	ShowInInternal bool            `json:"showInInternal"`
+	// SpacingBefore / SpacingAfter — отступ до и после блока в пунктах.
+	// 0 — как в стиле бланка; отрицательные не допускаются.
+	SpacingBefore int `json:"spacingBefore,omitempty"`
+	SpacingAfter  int `json:"spacingAfter,omitempty"`
+	// KeepTogether — не разрывать абзацы блока между страницами.
+	KeepTogether bool `json:"keepTogether,omitempty"`
+	// PageBreakBefore — начинать блок с новой страницы.
+	PageBreakBefore bool `json:"pageBreakBefore,omitempty"`
 }
 
 // OfferForm — конфигурация формы КП.
@@ -32,6 +48,10 @@ type OfferForm struct {
 	RequiredFields []string      `json:"requiredFields"`
 	UpdatedAt      string        `json:"updatedAt"`
 }
+
+// maxBlockSpacing — предел отступа блока в пунктах. Свыше 200 пт блок
+// уезжает с страницы целиком, и это ошибка админа, а не оформление.
+const maxBlockSpacing = 200
 
 // validateForm проверяет форму перед сохранением; пустая строка — форма корректна.
 func validateForm(f OfferForm) string {
@@ -47,6 +67,12 @@ func validateForm(f OfferForm) string {
 			return "повторяющийся идентификатор блока"
 		}
 		seenBlocks[block.ID] = true
+		if block.SpacingBefore < 0 || block.SpacingAfter < 0 {
+			return "отступ блока «" + block.Title + "» не может быть отрицательным"
+		}
+		if block.SpacingBefore > maxBlockSpacing || block.SpacingAfter > maxBlockSpacing {
+			return "отступ блока «" + block.Title + "» больше " + strconv.Itoa(maxBlockSpacing) + " пт"
+		}
 	}
 	seenFields := make(map[string]bool, len(f.Placeholders))
 	for _, p := range f.Placeholders {
@@ -67,34 +93,95 @@ func validateForm(f OfferForm) string {
 }
 
 // defaultForm — форма по умолчанию: пока администратор ничего не настроил,
-// предложение всё равно собирается (клиент, контакт, условия).
+// предложение всё равно собирается.
+//
+// Порядок — как просил пользователь (2026-11-01): титульный лист, разрыв
+// страницы, затем поставщик / получатель / объект, свободный блок про систему и
+// материалы (текст пишет модель по подсказке), позиции (их печатает сборщик
+// документа сам) и ссылки в конце.
+//
+// Уже сохранённые формы эта функция не трогает: «строки нет в БД» — это и есть
+// «форма не настроена», а сохранённая пустая форма остаётся пустой (правило
+// 2026-10-27, живой дефект с подменой формы).
 func defaultForm(mode string) OfferForm {
 	return OfferForm{
 		Mode:  mode,
 		Title: "Коммерческое предложение",
 		Placeholders: []Placeholder{
-			{ID: "client_name", Label: "Наименование клиента"},
-			{ID: "client_contact", Label: "Контактное лицо"},
+			{ID: "supplier_name", Label: "Поставщик"},
+			{ID: "supplier_contacts", Label: "Контакты поставщика"},
+			{ID: "client_name", Label: "Получатель (организация)"},
+			{ID: "client_contact", Label: "Контактное лицо получателя"},
+			{ID: "object_name", Label: "Объект"},
+			{ID: "object_address", Label: "Адрес объекта"},
 			{ID: "valid_until", Label: "Предложение действительно до"},
 			{ID: "conditions", Label: "Условия"},
 		},
 		Blocks: []Block{
 			{
-				ID:           "intro",
-				Title:        "Вступление",
-				Content:      json.RawMessage(`[{"type":"paragraph","text":"Предлагаем Вам поставку материалов и выполнение работ по следующим позициям."}]`),
+				ID:           "cover",
+				Title:        "Титульный лист",
+				Content:      json.RawMessage(coverBlockJSON),
 				ShowInClient: true,
 			},
 			{
-				ID:           "conditions",
-				Title:        "Условия",
-				Content:      json.RawMessage(`[{"type":"paragraph","text":"Условия: {{conditions}}"},{"type":"paragraph","text":"Предложение действительно до {{valid_until}}."}]`),
+				ID:              "parties",
+				Title:           "Поставщик, получатель, объект",
+				Content:         json.RawMessage(partiesBlockJSON),
+				ShowInClient:    true,
+				PageBreakBefore: true,
+			},
+			{
+				ID:            "description",
+				Title:         "Система и материалы",
+				Content:       json.RawMessage(descriptionBlockJSON),
+				ShowInClient:  true,
+				SpacingBefore: 12,
+			},
+			{
+				ID:           "links",
+				Title:        "Ссылки",
+				Content:      json.RawMessage(`[{"type":"links","level":2}]`),
 				ShowInClient: true,
 			},
 		},
 		RequiredFields: []string{"client_name"},
 	}
 }
+
+// Содержимое блоков формы по умолчанию. Текстом, а не собранным в коде JSON:
+// эти строки правятся при изменении шаблона, и держать их рядом проще.
+const (
+	// coverBlockJSON — титульный лист. Абзацы по центру, подписи полей — в
+	// одном абзаце с {{полем}}: пустое поле даёт «Кому: » без пустых строк.
+	coverBlockJSON = `[
+		{"type":"paragraph","text":"{{supplier_name}}","align":"center"},
+		{"type":"paragraph","text":"КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ","align":"center","level":2},
+		{"type":"paragraph","text":"Кому: {{client_name}}","align":"center"},
+		{"type":"paragraph","text":"{{client_contact}}","align":"center"}
+	]`
+
+	// partiesBlockJSON — содержательная часть: кто предлагает, кому и для
+	// какого объекта. Таблицей из двух колонок, как в письмах.
+	partiesBlockJSON = `[
+		{"type":"heading","text":"Об объекте","level":2},
+		{"type":"table","rows":[
+			["Поставщик","{{supplier_name}}"],
+			["Контакты","{{supplier_contacts}}"],
+			["Получатель","{{client_name}}"],
+			["Контактное лицо","{{client_contact}}"],
+			["Объект","{{object_name}}"],
+			["Адрес объекта","{{object_address}}"]
+		]}
+	]`
+
+	// descriptionBlockJSON — свободный блок: текст пишет модель по подсказке,
+	// опираясь на объект, системы из карточек и состав предложения.
+	descriptionBlockJSON = `[
+		{"type":"heading","text":"Предлагаемое решение","level":2},
+		{"type":"prompt_text","instruction":"Опиши предлагаемую систему и материалы, входящие в неё: как они работают вместе и что дают на этом объекте. Опирайся только на данные предложения и карточки систем.","maxWords":200}
+	]`
+)
 
 func (s *Server) seedForms(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO offers_form (mode) VALUES ('client') ON CONFLICT (mode) DO NOTHING`)

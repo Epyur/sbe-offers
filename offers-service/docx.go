@@ -71,6 +71,9 @@ const (
 	// styleListBullet — маркированный список бланка. abstractNum 1 — bullet,
 	// numId 6 на него ссылается (нумерации 1..12 заняты бланком).
 	styleListBullet = "6"
+	// styleHyperlink — стиль ссылки бланка (w:styleId="ab", имя "Hyperlink").
+	// Своего стиля не заводим: имена в бланке — часть его оформления.
+	styleHyperlink = "ab"
 )
 const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -102,23 +105,109 @@ func jcVal(align string) string {
 	}
 }
 
+// paraOpts — размещение абзаца на странице (2026-11-01). Всё в пунктах; в
+// разметке Word 1 пт = 20 twips.
+//
+// Разрыв страницы живёт здесь, а не отдельным абзацем: `<w:br w:type="page"/>`
+// внутри пустого абзаца даёт лишнюю пустую строку и часто — пустую страницу.
+type paraOpts struct {
+	// Before/After — отступ до и после в пунктах (0 — как в стиле бланка).
+	Before int
+	After  int
+	// KeepLines — не разрывать абзац между страницами.
+	KeepLines bool
+	// PageBreakBefore — начать с новой страницы.
+	PageBreakBefore bool
+}
+
+func (o paraOpts) spacingXML() string {
+	if o.Before <= 0 && o.After <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("<w:spacing")
+	if o.Before > 0 {
+		sb.WriteString(` w:before="` + strconv.Itoa(o.Before*20) + `"`)
+	}
+	if o.After > 0 {
+		sb.WriteString(` w:after="` + strconv.Itoa(o.After*20) + `"`)
+	}
+	sb.WriteString("/>")
+	return sb.String()
+}
+
+// flagXML — элемент разметки Word по флагу. Два одинаковых «если включено —
+// вернуть разметку, иначе пусто» были бы парой, которую dryer ловит как дубль.
+func flagXML(on bool, markup string) string {
+	if on {
+		return markup
+	}
+	return ""
+}
+
+func (o paraOpts) keepXML() string {
+	return flagXML(o.KeepLines, "<w:keepLines/>")
+}
+
+func (o paraOpts) pageBreakXML() string {
+	return flagXML(o.PageBreakBefore, "<w:pageBreakBefore/>")
+}
+
 func paragraphXML(text, align string) string {
+	return paragraphXMLOpts(text, align, paraOpts{})
+}
+
+// paragraphXMLOpts — абзац с размещением. Порядок элементов в w:pPr задан
+// схемой: стиль, отступы/разрыв, выравнивание.
+func paragraphXMLOpts(text, align string, opts paraOpts) string {
 	var pPr strings.Builder
 	pPr.WriteString(`<w:pStyle w:val="` + styleNormal + `"/>`)
+	pPr.WriteString(opts.pageBreakXML())
+	pPr.WriteString(opts.spacingXML())
 	if j := jcVal(align); j != "" {
 		pPr.WriteString(`<w:jc w:val="` + j + `"/>`)
 	}
+	pPr.WriteString(opts.keepXML())
 	return `<w:p><w:pPr>` + pPr.String() + `</w:pPr><w:r><w:t xml:space="preserve">` +
 		escapeXML(text) + `</w:t></w:r></w:p>`
 }
 
+// pageBreakRunXML — разрыв страницы как узел содержимого: отдельный пустой
+// абзац с разрывом внутри. Так его можно поставить между любыми абзацами, в
+// том числе в середине блока.
+func pageBreakRunXML() string {
+	return `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`
+}
+
+// hyperlinkXML — внешняя ссылка. Отношение создаётся в docx_links.go; здесь
+// только разметка, чтобы печать ссылок не разъезжалась с печатью текста.
+func hyperlinkXML(relID, text, url string) string {
+	if relID == "" {
+		return paragraphXML(url, "")
+	}
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` +
+		`<w:hyperlink r:id="` + escapeXML(relID) + `" w:history="1">` +
+		`<w:r><w:rPr><w:rStyle w:val="` + styleHyperlink + `"/></w:rPr>` +
+		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:hyperlink></w:p>`
+}
+
 func listItemXML(text string) string {
+	return listItemXMLOpts(text, paraOpts{})
+}
+
+// listItemXMLOpts — пункт списка с размещением: отступы блока нужны и пункту.
+func listItemXMLOpts(text string, opts paraOpts) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
+		opts.spacingXML() +
 		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
 		`<w:r><w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
 }
 
 func headingXML(text string, level int) string {
+	return headingXMLOpts(text, level, paraOpts{})
+}
+
+func headingXMLOpts(text string, level int, opts paraOpts) string {
 	// В бланке есть только «heading 1» (styleId "1"). Уровни 3 и 4 отличаются
 	// размером шрифта, а не стилем: своих Heading2/Heading3 в бланке нет, и
 	// ссылаться на несуществующий стиль нельзя — Word покажет дефолтный шрифт.
@@ -129,7 +218,8 @@ func headingXML(text string, level int) string {
 	case 4:
 		size = "24" // 12pt
 	}
-	return `<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/></w:pPr>` +
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/>` +
+		opts.pageBreakXML() + opts.spacingXML() + opts.keepXML() + `</w:pPr>` +
 		`<w:r><w:rPr><w:b/><w:sz w:val="` + size + `"/><w:szCs w:val="` + size + `"/></w:rPr>` +
 		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
 }
@@ -198,6 +288,10 @@ func resolvePlaceholders(text string, values map[string]string) string {
 func formatMoney(v float64) string { return skills.FormatMoney(v) }
 
 // blockNode — один узел содержимого блока формы.
+//
+// Новые виды узлов (2026-11-01): `page_break` — разрыв страницы; `links` —
+// собранные ссылки предложения; `prompt_text` — текст, который модель пишет по
+// подсказке администратора.
 type blockNode struct {
 	Type  string     `json:"type"`
 	Level int        `json:"level"`
@@ -205,9 +299,38 @@ type blockNode struct {
 	Text  string     `json:"text"`
 	Items []string   `json:"items"`
 	Rows  [][]string `json:"rows"`
+	// Instruction — подсказка администратора для `prompt_text`: о чём писать.
+	Instruction string `json:"instruction"`
+	// Hint — необязательное уточнение к подсказке.
+	Hint string `json:"hint"`
+	// MaxWords — предел длины текста по промту (0 — значение по умолчанию).
+	MaxWords int `json:"maxWords"`
+	// Поля узла `image` (2026-11-01): картинка вставляется в текст с
+	// обтеканием, а не отдельной строкой.
+	ImageKey  string `json:"imageKey"`
+	ImageName string `json:"imageName"`
+	WidthCm   int    `json:"widthCm"`
+	Wrap      string `json:"wrap"`
+	Caption   string `json:"caption"`
+}
+
+// renderCtx — что нужно содержимому блока, кроме значений формы.
+//
+// Собрано структурой, а не списком аргументов: у рендера уже семь входов без
+// неё, и каждый новый вид узла добавлял бы восьмой.
+type renderCtx struct {
+	values map[string]string
+	offer  Offer
+	refs   []skills.CardRef
+	images ImageSource
+	media  *docxMedia
 }
 
 func renderBlockContent(block Block, values map[string]string) (string, error) {
+	return renderBlockContentCtx(block, renderCtx{values: values})
+}
+
+func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 	var nodes []blockNode
 	if len(block.Content) > 0 {
 		if err := json.Unmarshal(block.Content, &nodes); err != nil {
@@ -215,29 +338,111 @@ func renderBlockContent(block Block, values map[string]string) (string, error) {
 		}
 	}
 	var sb strings.Builder
-	for _, node := range nodes {
+	// Разрыв страницы перед первым текстом не печатается: Word на нём даёт
+	// пустую страницу, и это всегда ошибка оформления, а не замысел.
+	started := false
+	for i, node := range nodes {
+		opts := nodeOpts(block, i, started)
 		switch node.Type {
+		case "page_break":
+			if started {
+				sb.WriteString(pageBreakRunXML())
+				// После разрыва блок снова «начинается»: флаг «с новой
+				// страницы» ко второму абзацу того же блока не относится.
+				started = false
+			}
+			continue
 		case "heading":
-			sb.WriteString(headingXML(resolvePlaceholders(node.Text, values), node.Level))
+			sb.WriteString(headingXMLOpts(resolvePlaceholders(node.Text, rc.values), node.Level, opts))
 		case "bullet_list":
 			for _, item := range node.Items {
-				sb.WriteString(listItemXML(resolvePlaceholders(item, values)))
+				sb.WriteString(listItemXMLOpts(resolvePlaceholders(item, rc.values), opts))
+				started = true
 			}
+			continue
 		case "table":
 			rows := make([][]string, 0, len(node.Rows))
 			for _, row := range node.Rows {
 				cells := make([]string, 0, len(row))
 				for _, cell := range row {
-					cells = append(cells, resolvePlaceholders(cell, values))
+					cells = append(cells, resolvePlaceholders(cell, rc.values))
 				}
 				rows = append(rows, cells)
 			}
 			sb.WriteString(tableXML(rows))
+			started = true
+			continue
+		case "links":
+			links, ok := renderLinkSection(node, rc.refs)
+			if ok {
+				sb.WriteString(links)
+				started = true
+			}
+			continue
+		case "prompt_text":
+			text := generatedTextFor(rc, block.ID, i)
+			if text != "" {
+				sb.WriteString(paragraphXMLOpts(text, node.Align, opts))
+				started = true
+			}
+			continue
+		case "image":
+			// Плавающая картинка с обтеканием: текст идёт рядом, строка не
+			// разрывается (2026-11-01).
+			if markup, ok := imageNodeXML(node, rc.media, rc.images); ok {
+				sb.WriteString(markup)
+				started = true
+			}
+			continue
 		default:
-			sb.WriteString(paragraphXML(resolvePlaceholders(node.Text, values), node.Align))
+			sb.WriteString(paragraphXMLOpts(resolvePlaceholders(node.Text, rc.values), node.Align, opts))
 		}
+		started = true
 	}
 	return sb.String(), nil
+}
+
+// nodeOpts — размещение абзаца для узла.
+//
+// Флаги блока («с новой страницы», отступы, не разрывать) относятся к ПЕРВОМУ
+// напечатанному абзацу блока, а не к каждому: иначе «с новой страницы» давало
+// бы страницу на каждый абзац.
+func nodeOpts(block Block, index int, started bool) paraOpts {
+	if started {
+		return paraOpts{}
+	}
+	opts := paraOpts{
+		Before:    block.SpacingBefore,
+		After:     block.SpacingAfter,
+		KeepLines: block.KeepTogether,
+	}
+	if index == firstPrintedNode(block) {
+		opts.PageBreakBefore = block.PageBreakBefore
+	}
+	return opts
+}
+
+// firstPrintedNode — индекс первого узла, который что-то напечатает. Разрыв
+// страницы и «молчащие» узлы флаг не забирают.
+func firstPrintedNode(block Block) int {
+	var nodes []blockNode
+	if len(block.Content) > 0 {
+		if err := json.Unmarshal(block.Content, &nodes); err != nil {
+			return 0
+		}
+	}
+	for i, node := range nodes {
+		if node.Type == "page_break" {
+			continue
+		}
+		if node.Type == "links" || node.Type == "prompt_text" {
+			// Могут смолчать — но если напечатаются, флаг их. Индекс отдаём
+			// первый такой: админ ставит «с новой страницы» на блок целиком.
+			return i
+		}
+		return i
+	}
+	return 0
 }
 
 // renderOfferDocx собирает предложение в DOCX. Порядок: заголовок формы, блоки
@@ -245,7 +450,7 @@ func renderBlockContent(block Block, values map[string]string) (string, error) {
 // строится на корпоративном бланке (шапка/футер/тема остаются как есть).
 // renderOfferDocx — сборка без карточек систем: тот же путь, что и раньше.
 func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
-	return renderOfferDocxWithCards(form, offer, nil, nil)
+	return renderOfferDocxFull(form, offer, nil, nil, nil)
 }
 
 // renderOfferDocxWithCards — сборка с описаниями и фото из Базы знаний.
@@ -254,12 +459,27 @@ func renderOfferDocx(form OfferForm, offer Offer) ([]byte, error) {
 // главнее карточки; карточка главнее пустоты. Из карточки берётся только
 // описание: состав и цены — из каталога, чтобы в КП не было двух правд.
 //
-// images может быть nil, карточки могут отсутствовать — документ собирается в
-// любом случае. Картинка необязательна: нет файла — нет картинки.
+// images может быть nil, карточки и ссылки могут отсутствовать — документ
+// собирается в любом случае. Картинка необязательна: нет файла — нет картинки.
+// refs — ссылки из карточек (2026-11-01), печатаются узлом `links`.
 func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, images ImageSource) ([]byte, error) {
+	return renderOfferDocxFull(form, offer, cards, images, nil)
+}
+
+// renderOfferDocxFull — то же плюс ссылки из карточек (2026-11-01).
+func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images ImageSource, refs []skills.CardRef) ([]byte, error) {
 	if len(offer.Items) == 0 {
 		return nil, fmt.Errorf("в предложении нет позиций")
 	}
+
+	// Все ссылки предложения: из карточек систем, если их не передали.
+	if len(refs) == 0 {
+		refs = collectOfferRefs(cards)
+	}
+	// Картинки из формы (узлы `image`) собираются тем же сборщиком, что и
+	// картинки карточек: у бланка свои id, и второй сборщик дал бы дубли.
+	media := newTemplateMedia()
+	rc := renderCtx{values: offer.FormValues, offer: offer, refs: refs, images: images, media: media}
 
 	var sb strings.Builder
 	title := strings.TrimSpace(form.Title)
@@ -288,7 +508,7 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 		if !block.ShowInClient {
 			continue
 		}
-		content, err := renderBlockContent(block, offer.FormValues)
+		content, err := renderBlockContentCtx(block, rc)
 		if err != nil {
 			return nil, err
 		}
@@ -309,9 +529,11 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 		renderBriefSummary(&sb, offer.FormValues)
 	}
 
-	// Описания систем из карточек Базы знаний: только там, где менеджер не
+	// Описания систем из карточок Базы знаний: только там, где менеджер не
 	// согласовал свой текст (согласованное главнее).
-	cardMedia := renderCardSections(&sb, offer, cards, images)
+	// Карточки получают тот же сборщик: у формы могли уже быть картинки, и
+	// второй сборщик выдал бы повторные id — Word молча ломает вёрстку.
+	renderCardSectionsWithMedia(&sb, offer, cards, images, media)
 
 	sb.WriteString(headingXML("Состав предложения", 2))
 	rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
@@ -332,7 +554,19 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 	sb.WriteString(paragraphXML("", ""))
 	sb.WriteString(paragraphXML("Менеджер: "+manager, ""))
 
-	return buildDocxWithMedia(sb.String(), cardMedia)
+	// Ссылки раздела `links` превращаются в кликабельные: отношение на каждую.
+	body, linkRels := applyHyperlinks(sb.String(), refs)
+	relsXML, err := relsXMLWithLinks(nil, linkRels)
+	if err != nil {
+		// Ссылки без отношений печатаются текстом: документ важнее.
+		body = sb.String()
+	}
+	return buildDocxFull(body, media, linkRels, relsXML)
+}
+
+// buildDocxFull — сборка с картинками и внешними ссылками.
+func buildDocxFull(bodyXML string, media *docxMedia, links []renderedLink, _ []byte) ([]byte, error) {
+	return buildDocxWithMediaAndLinks(bodyXML, media, links)
 }
 
 // buildDocx вставляет тело в корпоративный бланк; при его отсутствии собирает
@@ -347,6 +581,15 @@ func buildDocx(bodyXML string) ([]byte, error) {
 // вычисляются по ключам шаблона (docx_media.go), а не по константе: у бланка
 // свои фигуры в колонтитулах, и дубль id ломает вёрстку молча.
 func buildDocxWithMedia(bodyXML string, media *docxMedia) ([]byte, error) {
+	return buildDocxWithMediaAndLinks(bodyXML, media, nil)
+}
+
+// buildDocxWithMediaAndLinks — сборка с картинками и внешними ссылками.
+//
+// Ссылки — обычные отношения пакета (TargetMode="External"), как картинки:
+// дописываются в word/_rels/document.xml.rels после того, как тело уже
+// вставлено, чтобы одна и та же ссылка не завела два отношения.
+func buildDocxWithMediaAndLinks(bodyXML string, media *docxMedia, links []renderedLink) ([]byte, error) {
 	tr, err := zip.NewReader(bytes.NewReader(standardTemplateDocx), int64(len(standardTemplateDocx)))
 	if err != nil {
 		return nil, fmt.Errorf("открыть шаблон: %w", err)
@@ -396,6 +639,19 @@ func buildDocxWithMedia(bodyXML string, media *docxMedia) ([]byte, error) {
 		if err := applyMedia(files, media); err != nil {
 			return nil, err
 		}
+	}
+	// Внешние ссылки: в пакете шаблона document.xml.rels уже есть (в нём
+	// колонтитулы), но без него файл тоже соберётся — relsXMLWithLinks
+	// создаёт корневой.
+	if len(links) > 0 {
+		rels, err := relsXMLWithLinks(files["word/_rels/document.xml.rels"], links)
+		if err != nil {
+			return nil, err
+		}
+		if _, existed := files["word/_rels/document.xml.rels"]; !existed {
+			names = append(names, "word/_rels/document.xml.rels")
+		}
+		files["word/_rels/document.xml.rels"] = rels
 	}
 
 	var buf bytes.Buffer
@@ -562,25 +818,20 @@ type ImageSource interface {
 // быть не должно. Возвращает сборщик изображений, чтобы картинки доехали до
 // пакета.
 func renderCardSections(sb *strings.Builder, offer Offer, cards []SystemCard, images ImageSource) *docxMedia {
-	if len(cards) == 0 {
-		return nil
-	}
-	bySKU := make(map[string]SystemCard, len(cards))
-	for _, c := range cards {
-		if c.SKU != "" {
-			bySKU[strings.ToUpper(c.SKU)] = c
-		}
-	}
-	if len(bySKU) == 0 {
-		return nil
-	}
-
-	// Список систем предложения в порядке строк состава: catalogId → SKU.
-	// Без каталога под рукой его нет, поэтому идём по карточкам, у которых есть
-	// описание, и не дублируем те, что уже согласованы менеджером.
-	// Занятые id визуальных элементов берём из бланка: в колонтитулах свои
-	// фигуры (1..25), и сборщик без карты падает на первой же картинке.
 	media := newTemplateMedia()
+	renderCardSectionsWithMedia(sb, offer, cards, images, media)
+	return media
+}
+
+// renderCardSectionsWithMedia — та же печать, но с уже существующим сборщиком
+// изображений (2026-11-01): у формы могут быть свои картинки, и второй
+// сборщик выдал бы повторные wp:docPr id.
+// Фото карточки тоже ставится с обтеканием: текстовое описание системы рядом
+// с фото читается ровнее, чем фото отдельной строкой во всю ширину.
+func renderCardSectionsWithMedia(sb *strings.Builder, offer Offer, cards []SystemCard, images ImageSource, media *docxMedia) {
+	if len(cards) == 0 || media == nil {
+		return
+	}
 	for i, c := range cards {
 		if strings.TrimSpace(c.Description) == "" {
 			continue
@@ -601,15 +852,12 @@ func renderCardSections(sb *strings.Builder, offer Offer, cards []SystemCard, im
 			continue
 		}
 		ext, contentType := imageExt(c.ImageName)
-		drawing := media.add(data, ext, contentType, cardImageWidth, cardImageHeight)
+		drawing := media.addAnchored(data, ext, contentType, cardImageWidth, cardImageHeight,
+			imageWrapSpec{side: "right"}, "right")
 		if drawing != "" {
-			sb.WriteString(`<w:p><w:pPr><w:jc w:val="center"/></w:pPr>` + drawing + `</w:p>`)
+			sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` + drawing + `</w:p>`)
 		}
 	}
-	if len(media.images) == 0 && !hasCardDescriptions(cards) {
-		return nil
-	}
-	return media
 }
 
 // hasCardDescriptions — есть ли в карточках хоть одно описание.

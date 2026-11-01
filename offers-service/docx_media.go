@@ -144,8 +144,28 @@ func newDocxMedia(files map[string][]byte) *docxMedia {
 // Пустой data — пустая строка: картинка необязательна, документ не должен
 // падать из-за отсутствующего файла.
 func (m *docxMedia) add(data []byte, ext, contentType string, cx, cy int64) string {
-	if len(data) == 0 {
+	part, ok := m.register(data, ext, contentType)
+	if !ok {
 		return ""
+	}
+	return docxDrawingXML(part.relID, part.docPrID, cx, cy)
+}
+
+// addAnchored — то же, но плавающей картинкой с обтеканием текстом
+// (2026-11-01). Отдельный метод, а не флаг: inline и anchor дают разную
+// разметку, и «переключатель» здесь только путал бы.
+func (m *docxMedia) addAnchored(data []byte, ext, contentType string, cx, cy int64, wrap imageWrapSpec, align string) string {
+	part, ok := m.register(data, ext, contentType)
+	if !ok {
+		return ""
+	}
+	return docxAnchorXML(part.relID, fmt.Sprintf("OfferImage%d", part.docPrID), part.docPrID, cx, cy, wrap, align)
+}
+
+// register кладёт картинку в пакет и выдаёт её связь и id.
+func (m *docxMedia) register(data []byte, ext, contentType string) (docxImagePart, bool) {
+	if len(data) == 0 {
+		return docxImagePart{}, false
 	}
 	m.nextRel++
 	ids := nextDrawingIDs(m.used, 1)
@@ -157,7 +177,7 @@ func (m *docxMedia) add(data []byte, ext, contentType string, cx, cy int64) stri
 		docPrID:     ids[0],
 	}
 	m.images = append(m.images, img)
-	return docxDrawingXML(img.relID, img.docPrID, cx, cy)
+	return img, true
 }
 
 // docxDrawingXML — блок картинки. Имена media-файлов начинаются с "offerimg",
@@ -199,7 +219,10 @@ func applyMedia(files map[string][]byte, m *docxMedia) error {
 	}
 	relsXML, ok := files["word/_rels/document.xml.rels"]
 	if !ok {
-		return fmt.Errorf("в шаблоне нет word/_rels/document.xml.rels")
+		// В документе без вложенного бланка такой части может не быть вовсе:
+		// создаём корневой файл, а не падаем — картинка важнее шаблона.
+		relsXML = []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`)
 	}
 	files["word/_rels/document.xml.rels"] = bytes.Replace(relsXML,
 		[]byte("</Relationships>"),
