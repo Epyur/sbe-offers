@@ -25,6 +25,10 @@ lives in [../agents_arhiv.md](../agents_arhiv.md)**, section "История с�
 entry "sbe-offers". Go there when you need to know *why* a rule exists or are
 hitting an old complaint again; work from here.
 
+**Starting cold?** Read [HANDOFF.md](HANDOFF.md) first - versions, hashes, the
+check commands, what is unfinished. It is one page and it is meant to be read
+whole.
+
 ## Purpose (current)
 
 The catalogue split into two entities on 2026-10-31 and the sections were
