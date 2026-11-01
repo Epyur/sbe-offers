@@ -104,6 +104,9 @@ type SystemCard struct {
 	Problems []string `json:"problems,omitempty"`
 	// Specifications — таблица характеристик.
 	Specifications [][]string `json:"specifications,omitempty"`
+	// Refs — ссылки из раздела «Ссылки» карточки (2026-11-01): страница на
+	// корпоративном сайте и техдокументация на навигаторе. Идут в конец КП.
+	Refs []skills.CardRef `json:"refs,omitempty"`
 	// ImageName — имя файла картинки в заметке.
 	ImageName string `json:"imageName,omitempty"`
 	// ImageKey — ключ вложения в хранилище Базы знаний. По нему картинка
@@ -297,6 +300,7 @@ func systemCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.Syst
 		Description:    parsed.Description,
 		Composition:    parsed.Composition,
 		Specifications: parsed.Specifications,
+		Refs:           parsed.Refs,
 		ImageName:      parsed.ImageName,
 		UpdatedAt:      note.UpdatedAt,
 		HasDescription: strings.TrimSpace(parsed.Description) != "",

@@ -56,6 +56,9 @@ type SystemCard struct {
 	ImageName string
 	// Specifications — таблица характеристик: строки ячеек.
 	Specifications [][]string
+	// Refs — ссылки из раздела «Ссылки» (2026-11-01): страница на сайте и
+	// техдокументация на навигаторе. Идут в текст для модели и в конец КП.
+	Refs []CardRef
 }
 
 // CompositionLink — строка состава и код материала в ней.
@@ -131,6 +134,9 @@ func ParseSystemCard(markdown string) SystemCard {
 	blocks := splitCardBlocks(splitCardLines(body))
 
 	card := SystemCard{SKU: strings.TrimSpace(meta["system_sku"])}
+	// Ссылки читаются из исходного текста, а не из блоков: раздел «Ссылки» —
+	// не текст карточки, а её реквизиты, и в описании он не нужен.
+	card.Refs = ParseCardRefs(markdown)
 	for _, b := range blocks {
 		heading := strings.ToLower(b.heading)
 		switch {
@@ -190,6 +196,14 @@ func (c SystemCard) PromptText() string {
 		b.WriteString("\nСостав:\n")
 		for _, item := range c.Composition {
 			b.WriteString("- " + item + "\n")
+		}
+	}
+	// Ссылки — как факты, а не как текст для копирования: модели разрешено
+	// сказать «техдокументация приложена в конце», но не сочинять адреса.
+	if len(c.Refs) > 0 {
+		b.WriteString("\nСсылки (только упоминать словами, не выдумывать другие адреса):\n")
+		for _, ref := range c.Refs {
+			b.WriteString("- " + ref.Label + ": " + ref.URL + "\n")
 		}
 	}
 	return strings.TrimSpace(b.String())
