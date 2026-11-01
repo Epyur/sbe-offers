@@ -29,21 +29,59 @@ CatalogItem = { id, kind: "system"|"material"|"work", name, unit,
 ## Форма КП
 
 `GET /form?mode=client` → `OfferForm`; `PUT /form` (admin).
-Если форма не настроена — отдаётся форма по умолчанию (клиент, контакт,
-условия, срок действия).
+Если форма не настроена — отдаётся форма по умолчанию: титульный лист,
+поставщик/получатель/объект, свободный блок о системе и ссылки (2026-11-01).
+Сохранённая форма не подменяется: «нет строки в БД» и «сохранена пустая» — разное.
 
 ```jsonc
 OfferForm = { id, mode, title, placeholders: [{id, label}],
-              blocks: [{id, title, content: RichNode[], showInClient, showInInternal}],
-              requiredFields: string[], updatedAt }
+              blocks: [Block], requiredFields: string[], updatedAt }
 
-RichNode = { type: "paragraph"|"heading"|"bullet_list"|"table",
-             level?: 2|3|4, align?: "center"|"right"|"justify",
-             text?: string, items?: string[], rows?: string[][] }
+Block = { id, title, content: RichNode[], showInClient, showInInternal,
+          // размещение на странице, пункты (0..200):
+          spacingBefore?, spacingAfter?, keepTogether?, pageBreakBefore? }
+
+RichNode =
+  | { type: "paragraph"|"heading"|"bullet_list"|"table",
+      level?: 2|3|4, align?: "center"|"right"|"justify"|"left",
+      text?: string, items?: string[], rows?: string[][] }
+  | { type: "page_break" }                       // разрыв страницы в этом месте
+  | { type: "links", level?: 2|3|4 }             // ссылки из карточек, в конце КП
+  | { type: "prompt_text", instruction: string,  // текст пишет модель
+      hint?: string, maxWords?: number, align? }
+  | { type: "image", imageKey: string, imageName?: string,  // с обтеканием
+      widthCm?: number, wrap?: "both"|"left"|"right"|"topAndBottom"|"none",
+      caption?: string, align? }
 ```
 
 Плейсхолдер в тексте — `{{id}}`; сервер подставляет значения из
 `formValues` КП, неизвестные вырезает.
+
+**Размещение.** Абсолютного позиционирования нет: `spacingBefore`/`spacingAfter`
+(пункты), `keepTogether` (не разрывать абзацы блока между страницами) и
+`pageBreakBefore` (начинать с новой страницы). Флаги относятся к первому
+напечатанному абзацу блока. Разрыв страницы в начале документа игнорируется —
+Word на нём даёт пустую страницу.
+
+**Изображения.** Узел `image` печатается плавающим объектом (`wp:anchor` с
+`wrapSquare`), а не `wp:inline`: текст идёт рядом с картинкой, строка не
+разрывается. Файл берётся из вложений Базы знаний по `imageKey` (ключ
+возвращает `POST /api/kb/attachments`). Картинка необязательна: нет файла —
+блока нет, документ собирается.
+
+**Текст по промту.** Модель пишет один абзац по `instruction`/`hint`, опираясь
+на данные КП (объект, адресат, площадь, системы из карточек, состав, суммы).
+Результат кэшируется: `formValues["gen.section"]` — хеш данных предложения,
+`formValues["gen.<blockId>.<узел>"]` — текст. Хеш не совпал (правили состав,
+цены, объект) — текст пишется заново. Модель недоступна — блок молчит.
+Добавление системы стирает хеш (`dropStaleBlockTexts`).
+
+**Ссылки.** Раздел `## Ссылки` карточки (системы и материала) разбирается в
+`refs: [{label, url, kind: "page"|"doc"}]`. `page` — страница на корпоративном
+сайте, `doc` — техническая документация на навигаторе (PDF, техлист, узлы).
+Узел `links` печатает их в конце документа; в Word они кликабельные (внешние
+отношения `TargetMode="External"`). Пустой раздел не печатается. Предел — 60
+ссылок, остальное называется словами, а не обрезается молча.
 
 ## Предложения
 
@@ -123,7 +161,8 @@ Offer = { id, number: "007/2026", ownerEmail,
 | `GET /bot/identity?chat_id=` | — | `{email, role}` / 404 |
 | `GET /bot/catalog?q=` | — | `{items}` |
 | `GET /bot/offers?chat_id=` | — | `{offers}` (свои, до 50) |
-| `POST /bot/offers` | `{chat_id, client, items, formValues}` | `Offer` |
+| `GET /bot/offers/{id}?chat_id=` | — | `Offer` / 403 чужое / 404 |
+| `POST /bot/offers` | `{chat_id, client, items, formValues}` | `Offer`; **`items: []` разрешено** — так открывается разговор |
 | `PATCH /bot/offers/{id}` | `{chat_id, items?, client?, formValues?}` | `Offer` |
 | `POST /bot/offers/{id}/docx?chat_id=` | — | `{docx_base64, file_name}` |
 | `POST /bot/offers/{id}/link?chat_id=` | — | `{url, expiresAt}` |
@@ -142,12 +181,33 @@ Offer = { id, number: "007/2026", ownerEmail,
 ## Сценарий бота
 
 Меню: «🧾 Собрать КП», «📂 Мои КП», «❓ Справка».
-Сборка: каталог (кнопки, поиск текстом, листание) → количество → «➕ Ещё» /
-«✏️ Добавить позицию» (строка `Название | количество | цена`) / «🗑 Убрать
-последнюю» → «✅ Готово» → вопрос «Название клиента» → создание КП → DOCX в чат
-+ кнопки «🔗 Ссылкой», «🧾 Новое КП».
-Роль `viewer` получить КП не может — бот отвечает просьбой обратиться к
-администратору.
+
+**Сборка — в две фазы (2026-11-01).** Раньше «Собрать КП» сразу открывала
+каталог, и менеджер выбирал позиции, не зная ни объекта, ни адресата.
+
+1. **Контекст.** Сразу создаётся КП с номером и **без позиций**
+   (`POST /bot/offers` с `items: []`; на REST-пути пустое КП по-прежнему 400 —
+   там клиент присылает готовое). Строка нужна, чтобы принять файл и бриф.
+   Затем идёт бриф по этапам (`skills.BriefTopics`, поле `Stage`):
+   - «Объект и адресат»: `object_name`, `object_purpose`, `object_area`,
+     `customer_address`;
+   - «Сделка»: `customer_goals`, `customer_pains`, `project_risks`;
+   - «Что предлагаем»: `planned_systems`;
+   - «Условия»: `objections`, `budget_signal`, `decision_maker`, `timeline`,
+     `why_us`, `notes`.
+
+   На каждом вопросе — кнопки «📎 Прислать файл» и «⏭ Пропустить вопрос».
+   Файл в любой момент идёт тем же двухшаговым путём `attach` → `apply`.
+   «✅ Готово» до этапа позиций = «перейти к позициям».
+
+2. **Позиции.** Каталог (кнопки, поиск текстом, листание) → количество →
+   «✏️ Добавить позицию» (строка `Название | количество | цена`) / «🗑 Убрать
+   последнюю» → «✅ Готово» → согласование текстов (секции `copy.*`) → DOCX в
+   чат + кнопки «🔗 Ссылкой», «🧾 Новое КП».
+
+Имя клиента второй раз не спрашивается, если адресат уже есть в брифе
+(`formValues.client_name`): бот читает своё КП (`GET /bot/offers/{id}`).
+Ролей в боте нет: кто вошёл по коду — тот и собирает.
 
 ## Схема БД (`offers`)
 
@@ -208,12 +268,16 @@ docker compose -f docker-compose.local.yml down -v
 ### Бриф
 
 `offers_brief` (одна строка на предложение) + `offers_brief_turn` (журнал
-реплик). Поля брифа: `object_name`, `customer_pains`, `customer_goals`,
-`project_risks`, `objections` (возражение + ответ), `budget_signal`,
-`decision_maker`, `timeline`, `why_us`, `notes`, `skipped_topics`.
+реплик). Поля брифа: `object_name`, `object_purpose`, `object_area`,
+`customer_address`, `planned_systems[]`, `customer_pains[]`,
+`customer_goals[]`, `project_risks[]`, `objections[]` (возражение + ответ),
+`budget_signal`, `decision_maker`, `timeline`, `why_us[]`, `notes`,
+`skipped_topics[]` — всего 14 полей.
 
 Темы задаются манифестом (`skills.BriefTopics`), порядок стабилен. Тема
 закрыта, когда поле заполнено ИЛИ она в `skipped_topics` («не знаю»).
+Этап (`skills.StageOf`/`CurrentStage`) закрыт, когда закрыты все его темы:
+бот называет этап, чтобы человек понимал, что до позиций ещё далеко.
 
 ### Ручки брифа (бот, `X-Service-Secret`)
 
@@ -314,7 +378,8 @@ turns: []}`: для плагина это обычное состояние (К�
 ```jsonc
 SystemCard = { noteId, path, sku, title, description, composition: string[],
                specifications?: string[][], imageName?, catalogId,
-               updatedAt, hasDescription, hasComposition, empty }
+               updatedAt, hasDescription, hasComposition, empty,
+               refs?: [{label, url, kind: "page"|"doc"}] }   // 2026-11-01
 ```
 
 `catalogId = 0` — карточка не связана с каталогом (нет `system_sku` или кода

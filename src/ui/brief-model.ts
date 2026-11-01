@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Чистые правила показа брифа (Task 10 плана 2026-10-29).
  *
  * Отдельно от UI: «сколько заполнено», «как называется тема» и «что показать
@@ -19,6 +19,10 @@ export interface BriefField {
  */
 export const BRIEF_FIELDS: BriefField[] = [
   { key: 'object_name', label: 'Объект', multiline: false },
+  { key: 'object_purpose', label: 'Назначение объекта', multiline: false },
+  { key: 'object_area', label: 'Площадь', multiline: false },
+  { key: 'customer_address', label: 'Адресат КП', multiline: false },
+  { key: 'planned_systems', label: 'Системы', multiline: true },
   { key: 'customer_goals', label: 'Задачи клиента', multiline: true },
   { key: 'customer_pains', label: 'Боли', multiline: true },
   { key: 'project_risks', label: 'Риски', multiline: true },

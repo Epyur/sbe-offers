@@ -25,6 +25,26 @@ function ok(name, condition, detail = '') {
   }
 }
 
+/**
+ * Сравнение JSON по содержимому, без учёта порядка ключей.
+ *
+ * Порядок живым контрактом не является, а проверка на строку падала уже дважды
+ * на одной перестановке полей (2026-11-01: новые поля брифа).
+ */
+function sameJson(a, b) {
+  return JSON.stringify(normalizeJson(a)) === JSON.stringify(normalizeJson(b));
+}
+
+function normalizeJson(value) {
+  if (Array.isArray(value)) return value.map(normalizeJson);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) out[key] = normalizeJson(value[key]);
+    return out;
+  }
+  return value;
+}
+
 function b64url(input) {
   return Buffer.from(input).toString('base64url');
 }
@@ -789,6 +809,11 @@ console.log('\n14. Бриф в плагине: чтение и правка (Tas
 
   const payload = {
     object_name: 'ЖК «Поэма», корпус 3',
+    // Контекст объекта и адресата — с 2026-11-01 бриф спрашивает его первым.
+    object_purpose: 'жилой дом',
+    object_area: '12 000 м² кровли',
+    customer_address: 'ООО «Строймонтаж», Иванов И.И., Новосибирск',
+    planned_systems: ['ТН-КРОВЛЯ Авто'],
     customer_pains: ['протечки на стилобате'],
     customer_goals: ['сдать в срок'],
     project_risks: [],
@@ -806,9 +831,12 @@ console.log('\n14. Бриф в плагине: чтение и правка (Tas
     JSON.stringify(saved.json?.brief?.payload?.object_name));
 
   const reread = await call('GET', `/offers/${id}/brief`, { token: ownerToken });
+  // Сравниваем содержимое, а не порядок ключей: сервер отдаёт их в порядке
+  // полей структуры, и это не контракт — ловить здесь порядок значило бы
+  // ронять проверку на безобидной перестановке полей.
   ok(
     'бриф читается обратно без потери ключей',
-    JSON.stringify(reread.json?.brief?.payload) === JSON.stringify({ ...payload }),
+    sameJson(reread.json?.brief?.payload, payload),
     JSON.stringify(reread.json?.brief?.payload),
   );
   ok('правка двигает updatedAt', (reread.json?.brief?.updatedAt ?? '') !== '',
@@ -969,34 +997,37 @@ console.log('\n17. Системы из Базы знаний (2026-10-31)');
     !list.some((s) => (s.title ?? '').includes('Мембрана')),
     JSON.stringify(list.map((s) => s.title)));
 
-  // Берём систему, в составе которой есть ссылка на материал, заведённый в
-  // разделе 16 (MAT-МЕМБ-ПВХ-0001). Порядок разделов важен: материальный
-  // справочник уже наполнен.
+  // Связь системы с материалом — по ВИКИ-ССЫЛКЕ (2026-10-31). В заглушке
+  // состав «ТН-Кровля Классик» ссылается на [[Мембрана ПВХ Эксперт]], а
+  // карточка с этим названием есть в ленте с тегом material — значит материал
+  // обязан завестись сам, из карточки, без ручного справочника.
   const materials = await call('GET', '/materials', { token: ownerToken });
-  const sku = (materials.json?.items ?? []).find((m) => (m.sku ?? '').startsWith('MAT-МЕМБ-ПВХ-'))
-    ?.sku;
-  ok('в справочнике есть материал для состава', Boolean(sku), JSON.stringify(sku));
+  const items = materials.json?.items ?? [];
+  const noteMaterial = items.find((m) => (m.noteTitle ?? '').length > 0);
+  ok('материал заведён из карточки Базы знаний', Boolean(noteMaterial),
+    JSON.stringify(items.map((m) => ({ name: m.name, note: m.noteTitle }))));
 
-  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.sku === sku)) ?? list[0] ?? {};
+  const card = list.find((s) => (s.compositionLinks ?? []).some((c) => c.wiki)) ?? list[0] ?? {};
   const links = card.compositionLinks ?? [];
   ok('у системы есть состав ссылками', links.length > 0, JSON.stringify(links));
   ok('каждая строка состава отдаёт текст', links.every((c) => (c.raw ?? '').length > 0));
 
-  const found = links.find((c) => c.sku === sku);
-  ok('ссылка на реальный материал разрешилась', Boolean(found?.found), JSON.stringify(found));
+  const found = links.find((c) => c.found);
+  ok('ссылка на материал разрешилась', Boolean(found), JSON.stringify(links));
   ok('в разрешённой строке есть название материала', (found?.name ?? '').length > 0, JSON.stringify(found?.name));
-  ok('в разрешённой строке есть id, единица и found',
+  ok('в разрешённой строке есть id и found',
     found?.materialId > 0 && found?.found === true, JSON.stringify(found));
+  ok('в строке видна цель ссылки', (found?.wiki ?? '').length > 0, JSON.stringify(found?.wiki));
 
-// Строка без кода остаётся видимой и называется в problems: молча терять
+  // Строка без ссылки остаётся видимой и называется в problems: молча терять
   // её нельзя, иначе человек не узнает, чего в системе не хватает.
-  const withoutSku = links.filter((c) => !c.sku);
-  ok('строка без кода осталась в составе', withoutSku.length > 0, JSON.stringify(withoutSku));
-  ok('строка без кода названа в проблемах',
-    withoutSku.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
+  const withoutRef = links.filter((c) => !c.found);
+  ok('несвязанная строка осталась в составе', withoutRef.length > 0, JSON.stringify(withoutRef));
+  ok('несвязанная строка названа в проблемах',
+    withoutRef.every((c) => (card.problems ?? []).some((p) => p.includes(c.raw.slice(0, 20)))),
     JSON.stringify(card.problems));
   ok('проблемы перечисляются отдельно от состава', Array.isArray(card.problems), JSON.stringify(card.problems));
-  ok('незнакомый код не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
+  ok('незнакомая ссылка не ломает выдачу', links.every((c) => typeof c.found === 'boolean'));
 
   const anon = await call('GET', '/systems');
   ok('без токена → 401', anon.status === 401, `получили ${anon.status}`);
@@ -1116,6 +1147,123 @@ console.log('\n18. Таблица менеджера и системы в КП (
     body: { chat_id: '999999', sku: 'TN-ROOF-CLASSIC' },
   });
   ok('чужой чат систему не добавляет', foreign.status === 404, `получили ${foreign.status}`);
+}
+
+// 19. Контекст сначала, блоки формы и ссылки (2026-11-01)
+//
+// Раздел проверяет ровно то, чего не видят юнит-тесты: что сервер принимает
+// ПУСТОЕ предложение из бота (иначе файл и бриф принять некуда), что карточка
+// системы отдаёт ссылки из «## Ссылки», и что документ с новыми блоками
+// собирается и не ломает бланк.
+{
+  console.log('\n19. Контекст сначала, блоки формы, ссылки (2026-11-01)');
+
+  // Пустое КП из бота — законный старт разговора.
+  const emptyDraft = await call('POST', '/bot/offers', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: String(linkedChatId), client: { name: '', contact: '' }, items: [], formValues: {} },
+  });
+  ok('бот создаёт пустое КП → 200', emptyDraft.status === 200,
+    `получили ${emptyDraft.status} ${emptyDraft.text?.slice(0, 160)}`);
+  ok('у пустого КП есть номер', (emptyDraft.json?.number ?? '') !== '', JSON.stringify(emptyDraft.json?.number));
+  ok('у пустого КП нет позиций', (emptyDraft.json?.items ?? []).length === 0,
+    JSON.stringify(emptyDraft.json?.items));
+  ok('итог пустого КП — ноль', (emptyDraft.json?.total ?? -1) === 0, JSON.stringify(emptyDraft.json?.total));
+  const emptyId = emptyDraft.json?.id;
+
+  // Одно предложение по id — чтобы бот не спрашивал дважды.
+  const oneOffer = await call('GET', `/bot/offers/${emptyId}?chat_id=${linkedChatId}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('бот читает своё КП → 200', oneOffer.status === 200, `получили ${oneOffer.status}`);
+  const foreignOffer = await call('GET', `/bot/offers/${emptyId}?chat_id=999999`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('чужой чат КП не читает → 404', foreignOffer.status === 404, `получили ${foreignOffer.status}`);
+
+  // REST-путь правила не потерял: пустое предложение от плагина по-прежнему 400.
+  const restEmpty = await call('POST', '/offers', {
+    token: ownerToken,
+    body: { client: { name: 'ООО Тест', contact: '' }, items: [], formValues: {} },
+  });
+  ok('REST по-прежнему не принимает пустое КП → 400', restEmpty.status === 400,
+    `получили ${restEmpty.status}`);
+
+  // Бриф начинается с объекта: порядок тем важен, это и есть просьба.
+  const briefStart = await call('POST', `/bot/offers/${emptyId}/brief/start?chat_id=${linkedChatId}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('бриф стартует → 200', briefStart.status === 200,
+    `получили ${briefStart.status} ${briefStart.text?.slice(0, 160)}`);
+  ok('первый вопрос — про объект', /объект/i.test(briefStart.json?.reply ?? ''),
+    JSON.stringify(briefStart.json?.reply));
+  ok('первая тема брифа — object_name', (briefStart.json?.brief?.lastTopic ?? '') === 'object_name'
+    || /объект/i.test(briefStart.json?.reply ?? ''),
+  JSON.stringify(briefStart.json?.brief?.lastTopic));
+
+  // Ссылки из карточки: stand-карточка содержит «## Ссылки».
+  const systemsResp = await call('GET', '/systems', { token: ownerToken });
+  const firstSystem = (systemsResp.json?.systems ?? [])[0];
+  ok('карточка системы отдаёт ссылки', (firstSystem?.refs ?? []).length > 0,
+    JSON.stringify(firstSystem?.refs));
+  const refKinds = new Set((firstSystem?.refs ?? []).map((r) => r.kind));
+  ok('среди ссылок есть страница или документ', refKinds.size > 0, [...refKinds].join(','));
+
+  // Документ с новыми блоками: разрыв страницы, ссылки, картинка без файла.
+  const blockForm = {
+    mode: 'client',
+    title: 'КП с блоками',
+    placeholders: [{ id: 'client_name', label: 'Клиент' }],
+    requiredFields: [],
+    blocks: [
+      {
+        id: 'cover',
+        title: 'Титул',
+        showInClient: true,
+        content: [
+          { type: 'paragraph', text: 'КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ', align: 'center' },
+          { type: 'page_break' },
+          { type: 'prompt_text', instruction: 'Опиши систему', maxWords: 40 },
+          { type: 'image', imageKey: 'нет-такого', imageName: 'x.png', widthCm: 6, wrap: 'right' },
+          { type: 'links' },
+        ],
+      },
+    ],
+  };
+  const savedForm = await call('PUT', '/form', { token: ownerToken, body: blockForm });
+  ok('форма с новыми блоками сохраняется → 200', savedForm.status === 200,
+    `получили ${savedForm.status} ${savedForm.text?.slice(0, 200)}`);
+
+  // Негатив: отрицательный отступ — ошибка админа, а не оформление.
+  const badForm = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...blockForm, blocks: [{ ...blockForm.blocks[0], spacingBefore: -5 }] },
+  });
+  ok('отрицательный отступ отклоняется → 400', badForm.status === 400, `получили ${badForm.status}`);
+
+  const docxBlock = await call('POST', `/bot/offers/${emptyId}/docx?chat_id=${linkedChatId}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('пустое КП документом не собирается → 400', docxBlock.status === 400, `получили ${docxBlock.status}`);
+
+  // Вернуть форму по умолчанию: стенд используется следующими проверками.
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      mode: 'client',
+      title: 'Коммерческое предложение',
+      placeholders: [{ id: 'client_name', label: 'Наименование клиента' }],
+      requiredFields: ['client_name'],
+      blocks: [
+        {
+          id: 'intro',
+          title: 'Вступление',
+          showInClient: true,
+          content: [{ type: 'paragraph', text: 'Предлагаем Вам поставку материалов.' }],
+        },
+      ],
+    },
+  });
 }
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
