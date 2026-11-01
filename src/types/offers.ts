@@ -1,17 +1,40 @@
-/** Одно поле формы КП — то, что администратор заводит в конфигураторе. */
+﻿/** Одно поле формы КП — то, что администратор заводит в конфигураторе. */
 export interface Placeholder {
   id: string;
   label: string;
 }
 
-/** Узел блока документа: абзац, заголовок, список или таблица. */
+/**
+ * Узел блока документа (2026-11-01).
+ *
+ * `paragraph` / `heading` / `bullet_list` / `table` — текст с подстановкой
+ * `{{полей}}`. Новые виды:
+ * - `page_break` — разрыв страницы в этом месте блока;
+ * - `links` — ссылки из карточек систем и материалов, печатаются в конце КП;
+ * - `prompt_text` — текст пишет модель по подсказке администратора;
+ * - `image` — картинка с обтеканием текстом (не разрывает абзацы).
+ */
 export interface RichNode {
-  type: 'paragraph' | 'heading' | 'bullet_list' | 'table';
+  type: 'paragraph' | 'heading' | 'bullet_list' | 'table' | 'page_break' | 'links' | 'prompt_text' | 'image';
   level?: 2 | 3 | 4;
-  align?: 'center' | 'right' | 'justify';
+  align?: 'center' | 'right' | 'justify' | 'left';
   text?: string;
   items?: string[];
   rows?: string[][];
+  /** Подсказка администратора для `prompt_text`: о чём писать. */
+  instruction?: string;
+  /** Необязательное уточнение к подсказке. */
+  hint?: string;
+  /** Предел длины текста по промту; 0 — значение по умолчанию на сервере. */
+  maxWords?: number;
+  /** Ключ картинки в хранилище Базы знаний (узел `image`). */
+  imageKey?: string;
+  imageName?: string;
+  /** Ширина в сантиметрах; 0 — серверное значение по умолчанию (8). */
+  widthCm?: number;
+  /** Сторона обтекания: текст потечёт с противоположной. */
+  wrap?: 'both' | 'left' | 'right' | 'topAndBottom' | 'none';
+  caption?: string;
 }
 
 /** Один блок документа формы КП. */
@@ -21,6 +44,14 @@ export interface Block {
   content: RichNode[];
   showInClient: boolean;
   showInInternal: boolean;
+  /** Отступ до блока в пунктах (0..200): размещение на странице. */
+  spacingBefore?: number;
+  /** Отступ после блока в пунктах (0..200). */
+  spacingAfter?: number;
+  /** Не разрывать абзацы блока между страницами. */
+  keepTogether?: boolean;
+  /** Начинать блок с новой страницы. */
+  pageBreakBefore?: boolean;
 }
 
 /** Форма КП — конфигуратор администратора. */
@@ -127,6 +158,18 @@ export function canEditOffers(role: string): boolean {
 }
 
 /**
+ * Ссылка из карточки Базы знаний.
+ *
+ * `page` — страница материала или системы на корпоративном сайте, `doc` —
+ * технический документ (техлист, узлы, инструкция) на навигаторе.
+ */
+export interface CardRef {
+  label: string;
+  url: string;
+  kind: 'page' | 'doc';
+}
+
+/**
  * Карточка системы из Базы знаний (2026-10-29).
  *
  * Источник текста для КП: название, описание, состав, картинка. Цены и
@@ -140,6 +183,11 @@ export interface SystemCard {
   description: string;
   composition: string[];
   specifications?: string[][];
+  /**
+   * Ссылки из раздела «## Ссылки» карточки (2026-11-01): страница на
+   * корпоративном сайте и техническая документация на навигаторе.
+   */
+  refs?: CardRef[];
   imageName?: string;
   /** 0 — карточка не связана с каталогом. */
   catalogId: number;
@@ -329,6 +377,14 @@ export interface BriefObjection {
  */
 export interface BriefPayload {
   object_name: string;
+  /** Назначение объекта (жилой дом, склад, паркинг…), с 2026-11-01. */
+  object_purpose: string;
+  /** Площадь или объём работ. */
+  object_area: string;
+  /** Адресат КП: организация и лицо, кому его посылают. */
+  customer_address: string;
+  /** Какие системы менеджер собирается предложить. */
+  planned_systems: string[];
   customer_pains: string[];
   customer_goals: string[];
   project_risks: string[];
@@ -372,6 +428,10 @@ export interface BriefResponse {
 export function emptyBriefPayload(): BriefPayload {
   return {
     object_name: '',
+    object_purpose: '',
+    object_area: '',
+    customer_address: '',
+    planned_systems: [],
     customer_pains: [],
     customer_goals: [],
     project_risks: [],

@@ -2,6 +2,7 @@ import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { OfferForm, Placeholder } from '../types/offers';
 import { renderBlockEditor } from './block-editor';
+import { pickAndUploadImage } from './image-picker';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
@@ -79,7 +80,12 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
 
   const blocksCard = container.createDiv({ cls: 'tn-offers-card' });
   blocksCard.createDiv({ cls: 'tn-offers-muted', text: 'Блоки документа' });
-  renderBlockEditor(blocksCard, blocks, { placeholders });
+  renderBlockEditor(blocksCard, blocks, {
+    placeholders,
+    // Картинку можно выбрать прямо в блоке: файл из вольта уходит во вложения
+    // Базы знаний, в блоке остаётся ключ (2026-11-01).
+    pickImage: () => pickAndUploadImage(view),
+  });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
   const saveBtn = actions.createEl('button', { text: '💾 Сохранить форму', cls: 'tn-btn tn-btn-primary' });

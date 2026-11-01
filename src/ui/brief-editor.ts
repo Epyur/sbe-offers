@@ -190,6 +190,10 @@ export function parseObjections(text: string): BriefObjection[] {
 function clonePayload(payload: BriefPayload): BriefPayload {
   return {
     object_name: payload.object_name ?? '',
+    object_purpose: payload.object_purpose ?? '',
+    object_area: payload.object_area ?? '',
+    customer_address: payload.customer_address ?? '',
+    planned_systems: [...(payload.planned_systems ?? [])],
     customer_pains: [...(payload.customer_pains ?? [])],
     customer_goals: [...(payload.customer_goals ?? [])],
     project_risks: [...(payload.project_risks ?? [])],
