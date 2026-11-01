@@ -1,153 +1,158 @@
-# AGENTS.md тАФ sbe-offers (LogicTEAM.╨Ъ╨Я)
+# AGENTS.md - sbe-offers (LogicTEAM.КП)
 
-╨Ъ╨╛╨╝╨╝╨╡╤А╤З╨╡╤Б╨║╨╕╨╡ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╤П: ╨║╨░╤В╨░╨╗╨╛╨│ ╤Б╨╕╤Б╤В╨╡╨╝ ╨╕ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓, ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨░╤В╨╛╤А ╤Д╨╛╤А╨╝╤Л ╨Ъ╨Я,
-╤Б╨▒╨╛╤А╨║╨░ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╨╣ ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡ ╨╕ ╤З╨╡╤А╨╡╨╖ **╤Б╨╛╨▒╤Б╤В╨▓╨╡╨╜╨╜╨╛╨│╨╛ Telegram-╨▒╨╛╤В╨░**, ╤Н╨║╤Б╨┐╨╛╤А╤В ╨▓
-DOCX. ╨Ы╨╕╨╜╨╡╨╣╨╜╤Л╨╡ ╨╝╨╡╨╜╨╡╨┤╨╢╨╡╤А╤Л ╤А╨░╨▒╨╛╤В╨░╤О╤В ╨▓ ╨▒╨╛╤В╨╡, ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А ╨╜╨░╤Б╤В╤А╨░╨╕╨▓╨░╨╡╤В ╨║╨░╤В╨░╨╗╨╛╨│ ╨╕
-╤Д╨╛╤А╨╝╤Г ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡.
+Commercial proposals: a catalogue of systems and materials, the offer form
+configurator, offer assembly in the plugin and through the **plugin's own
+Telegram bot**, DOCX export. Line managers work in the bot; the administrator
+sets up the catalogue and the form in the plugin.
 
-**╨С╤Н╨║ тАФ ╨▓ ╤Н╤В╨╛╨╣ ╨╢╨╡ ╨┐╨░╨┐╨║╨╡**: `offers-service/` (Go, API) ╨╕ `offers-bot/` (Node,
-Telegram long polling) тАФ ╨╜╨░ ╨▓╨╡╤В╨║╨╡ `backend` (main тАФ ╤З╨╕╤Б╤В╤Л╨╣ ╤А╨╡╨╗╨╕╨╖╨╜╤Л╨╣ ╤Б╤А╨╡╨╖ ╨║╨╛╨┤╨░
-╨┐╨╗╨░╨│╨╕╨╜╨░, ╨▒╨╡╨╖ ╨▒╤Н╨║╨░; ╤Б╨╝. ╨┐╤А╨░╨▓╨╕╨╗╨╛ ┬л╨С╤Н╨║╨╕ ╨▓ ╨┐╨░╨┐╨║╨░╤Е ╨┐╨╗╨░╨│╨╕╨╜╨╛╨▓┬╗ ╨▓ ╨║╨╛╤А╨╜╨╡╨▓╨╛╨╝
-`plugins/AGENTS.md`).
+**Both back ends live in this folder**: `offers-service/` (Go, API) and
+`offers-bot/` (Node, Telegram long polling) - on the `backend` branch
+(`main` is the clean release slice of the plugin code without the back ends;
+see the "Бэки в папках плагинов" rule in the root `plugins/AGENTS.md`).
 
-╨Ф╨╕╨╖╨░╨╣╨╜ тАФ `docs/superpowers/specs/2026-10-26-sbe-offers-design.md`,
-╨┐╨╗╨░╨╜ тАФ `docs/superpowers/plans/2026-10-26-sbe-offers.md`.
+Design - `docs/superpowers/specs/2026-10-26-sbe-offers-design.md`,
+plan - `docs/superpowers/plans/2026-10-26-sbe-offers.md`.
+Materials/systems cycle - `docs/superpowers/specs/2026-10-30-sbe-offers-materials-systems-design.md`
+and the matching plan; encoding investigation -
+`docs/superpowers/plans/2026-10-31-encoding-breakage-investigation-plan.md`.
 
-## ╨Э╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╨╡ (╤В╨╡╨║╤Г╤Й╨╡╨╡)
+## Purpose (current)
 
-- **╨Ъ╨░╤В╨░╨╗╨╛╨│** (`offers_catalog`) тАФ ╨║╨░╤А╤В╨╛╤З╨║╨╕ ╤Б╨╕╤Б╤В╨╡╨╝/╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓/╤А╨░╨▒╨╛╤В: ╨╜╨░╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╨╕╨╡,
-  ╤В╨╕╨┐, ╨╡╨┤╨╕╨╜╨╕╤Ж╨░, ╨▒╨░╨╖╨╛╨▓╨░╤П ╤Ж╨╡╨╜╨░, ╨╛╨┐╨╕╤Б╨░╨╜╨╕╨╡. ╨Т╨╡╨┤╤С╤В ╤В╨╛╨╗╤М╨║╨╛ admin; ╨░╤А╤Е╨╕╨▓╨╕╤А╤Г╤О╤В╤Б╤П, ╨░ ╨╜╨╡
-  ╤Г╨┤╨░╨╗╤П╤О╤В╤Б╤П (╨╜╨░ ╨╜╨╕╤Е ╤Б╤Б╤Л╨╗╨░╤О╤В╤Б╤П ╤Б╤В╨░╤А╤Л╨╡ ╨┐╤А╨╡╨┤╨╗╨╛╨╢╨╡╨╜╨╕╤П).
-- **╨д╨╛╤А╨╝╨░ ╨Ъ╨Я** (`offers_form`) тАФ ╨┐╨╗╨╡╨╣╤Б╤Е╨╛╨╗╨┤╨╡╤А╤Л + ╨▒╨╗╨╛╨║╨╕ ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░ (╨░╨▒╨╖╨░╤Ж,
-  ╨╖╨░╨│╨╛╨╗╨╛╨▓╨╛╨║, ╤Б╨┐╨╕╤Б╨╛╨║, ╤В╨░╨▒╨╗╨╕╤Ж╨░) + ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨┐╨╛╨╗╤П. ╨а╨╡╨┤╨░╨║╤В╨╛╤А тАФ ╤Б╨▓╨╛╨╣ ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А
-  ╨┐╨╛ ╨╛╨▒╤А╨░╨╖╤Ж╤Г ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨░╤В╨╛╤А╨░ ╨┐╤А╨╛╤В╨╛╨║╨╛╨╗╨╛╨▓ ╨Ы╨Ш╨Ь╨б.
-- **╨Ъ╨Я** (`offers_offer`) тАФ ╤Б╨╜╨╕╨╝╨╛╨║: ╨┐╨╛╨╖╨╕╤Ж╨╕╨╕ ╤Б ╤Ж╨╡╨╜╨╛╨╣ ╨╜╨░ ╨╝╨╛╨╝╨╡╨╜╤В ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜╨╕╤П,
-  ╨╖╨╜╨░╤З╨╡╨╜╨╕╤П ╤Д╨╛╤А╨╝╤Л, ╨╕╤В╨╛╨│, ╤Б╤В╨░╤В╤Г╤Б `draft`/`final`, ╨╜╨╛╨╝╨╡╤А `{NNN}/{yyyy}` ╤Б╨║╨▓╨╛╨╖╨╜╨╛╨╣ ╨┐╨╛
-  ╨│╨╛╨┤╤Г. ╨Т╨╕╨┤╨╕╨╝╨╛╤Б╤В╤М: admin ╨▓╨╕╨┤╨╕╤В ╨▓╤Б╨╡, ╨╛╤Б╤В╨░╨╗╤М╨╜╤Л╨╡ тАФ ╤Б╨▓╨╛╨╕.
-- **Telegram-╨▒╨╛╤В** тАФ ╨▓╤Е╨╛╨┤ ╨┐╨╛ e-mail ╨╕ ╨║╨╛╨┤╤Г (╤Б╨░╨╝╨╛╨╖╨░╨┐╤А╨╛╤Б ╨╜╨░ ╨┐╨╛╤З╤В╤Г ╨╗╨╕╨▒╨╛ ╨║╨╛╨┤ ╨╛╤В
-  ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А╨░), ╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я ╨╕╨╖ ╨║╨░╤В╨░╨╗╨╛╨│╨░ ╨╕ ╤Б╨▓╨╛╨▒╨╛╨┤╨╜╤Л╨╝╨╕ ╤Б╤В╤А╨╛╨║╨░╨╝╨╕, DOCX ╤Д╨░╨╣╨╗╨╛╨╝ ╨▓
-  ╤З╨░╤В ╨╕╨╗╨╕ ╤Б╤Б╤Л╨╗╨║╨╛╨╣ ╨┐╨╛ ╨║╨╜╨╛╨┐╨║╨╡.
-- **╨в╨╛╤З╨║╨░ ╨▓╤Е╨╛╨┤╨░** тАФ ╨╝╨░╨│╨░╨╖╨╕╨╜: ┬л╨г╤Б╤В╨░╨╜╨╛╨▓╨╗╨╡╨╜╨╜╤Л╨╡ тЖТ ╨Ю╤В╨║╤А╤Л╤В╤М┬╗ (`publishService('sbe-offers', {open})`).
+The catalogue split into two entities on 2026-10-31 and the sections were
+renamed accordingly.
 
-## ╨Р╤А╤Е╨╕╤В╨╡╨║╤В╤Г╤А╨░
+- **Materials** (`offers_material`, `offers_material_ekn`) - what is actually
+  sold: its own SKU (assigned once by the server), ЕКН variants, a price
+  *range* only. **There is no price column**: the price for a given offer comes
+  from the manager's Excel sheet. Materials are created from Knowledge Base
+  cards tagged `material` on every read of the list, and they remember the
+  source note (`note_title`, `note_id`) - that is what a system's wiki link
+  resolves against.
+- **Systems** - Knowledge Base cards tagged `commercial_propose` **without**
+  `material`. A system has no price of its own; it justifies why this
+  combination of materials was chosen. Its composition links to materials by
+  wiki reference (`[[Название]]`); a `MAT-…` code is the fallback.
+- **Offer form** (`offers_form`) - placeholders + document blocks (paragraph,
+  heading, list, table) + required fields. The editor is a block editor built
+  after the LIMS protocol configurator.
+- **Offer** (`offers_offer`) - a snapshot: positions with the price at the
+  moment they were added, form values, total, `draft`/`final` status, number
+  `{NNN}/{yyyy}` continuous through the year. Visibility: admin sees all,
+  everyone else sees their own.
+- **Telegram bot** - sign-in by e-mail and code (self-request by mail or a code
+  from the administrator), offer assembly from the catalogue and free-form
+  lines, the `система <название>` command expanding a system into positions,
+  DOCX as a file in the chat or as a link on a button.
+- **Entry point** - the store: "Installed → Open" (`publishService('sbe-offers', {open})`).
+- **Legacy** `offers_catalog` remains for old offers only: materials were
+  migrated out, the `system` rows are archived, and nothing writes to it.
+
+## Architecture
 
 ```
-sbe-offers (╨┐╨╗╨░╨│╨╕╨╜)  тФАтФАJWT app_id=offersтФАтФАтЦ║  offers-service (Go)  тФАтФАтЦ║  Postgres offers
-                                                    тФВ                    тФФтФАтЦ║ S3 sbe-offers (DOCX)
-offers-bot (Node)  тФАтФАX-Service-SecretтФАтФАтЦ║  offers-service
-        тФФтФАтФА long polling ╤З╨╡╤А╨╡╨╖ SOCKS5-╤Б╨░╨╣╨┤╨║╨░╤А offers-nl-proxy (nl_egress_proxy)
+sbe-offers (plugin)  --JWT app_id=offers-->  offers-service (Go)  -->  Postgres offers
+                                                    |                    +--> S3 sbe-offers (DOCX)
+offers-bot (Node)  --X-Service-Secret-->  offers-service
+        +-- long polling through the SOCKS5 sidecar offers-nl-proxy (nl_egress_proxy)
 ```
 
-- ╨Ы╨╕╤З╨╜╨╛╤Б╤В╤М тАФ ╨╛╨▒╤Й╨╕╨╣ `auth-service`: email; ╤А╨╛╨╗╨╕ `viewer` < `editor` < `admin` тАФ
-  ╨╕╨╖ ╤Ж╨╡╨╜╤В╤А╨░╨╗╤М╨╜╨╛╨╣ ╤В╨░╨▒╨╗╨╕╤Ж╤Л ╨┐╤А╨░╨▓ (╤Б╨╝. `authperms.go`).
-- **╨Ъ╨╛╨┤╤Л ╨▓╤Е╨╛╨┤╨░, ╨┐╤А╨╕╨▓╤П╨╖╨║╨╕ chat_id ╨╕ ╤А╨╛╨╗╨╕ ╨▒╨╛╤В╨░ ╨╢╨╕╨▓╤Г╤В ╨▓ `offers-service`**
-  (`bot_codes`, `offers_bot_link`, `offers_access`) тАФ auth-service ╨╜╨╡ ╨┐╤А╨░╨▓╨╕╤В╤Б╤П.
-- Telegram ╤Б VDS ╨▓ ╨а╨д ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╡╨╜ ╨╜╨░╨┐╤А╤П╨╝╤Г╤О (╨┤╨╕╨░╨┐╨░╨╖╨╛╨╜╤Л AS62041 ╨╖╨░╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╨╜╤Л
-  ╤Е╨╛╤Б╤В╨╡╤А╨╛╨╝) тАФ ╨┐╨╛╨╗╨╗╨╡╤А ╤Е╨╛╨┤╨╕╤В ╤З╨╡╤А╨╡╨╖ SOCKS5, ╨║╨░╨║ `portal-embed`.
+- Identity - the shared `auth-service`: e-mail; roles `viewer` < `editor` <
+  `admin` come from the central permissions table (see `authperms.go`).
+- **Sign-in codes, chat_id links and bot roles live in `offers-service`**
+  (`bot_codes`, `offers_bot_link`, `offers_access`) - `auth-service` is not
+  touched.
+- Telegram is unreachable directly from the VDS in Russia (the hoster blocks
+  AS62041 ranges), so the poller goes through SOCKS5 like `portal-embed`.
+- Knowledge Base (kb-service) and LLM (llm-service) are read over the internal
+  network; both need a URL *and* a secret in the compose block, and the stand
+  needs a stub for each (2026-10-30 lesson).
 
-## ╨б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╨┐╨╗╨░╨│╨╕╨╜╨░
+## Plugin structure
 
-| ╨д╨░╨╣╨╗ | ╨з╤В╨╛ ╤Н╤В╨╛ |
+| File | What it is |
 |---|---|
-| `src/main.ts` | `SbeOffersPlugin`: ╨╜╨░╤Б╤В╤А╨╛╨╣╨║╨╕, view, publishService, ╨╜╨╛╨▓╨╛╤Б╤В╤М ╨▓ ╨ж╨г╨Я |
+| `src/main.ts` | `SbeOffersPlugin`: settings, view, publishService, CUP news |
 | `src/constants.ts` | `OFFERS_VIEW_TYPE`, `OFFERS_APP_ID`, `OFFERS_PLUGIN_ID` |
-| `src/types/offers.ts` | `CatalogItem`, `OfferForm`, `Offer`, `OfferItem`, `AccessEntry`, `Role` |
+| `src/types/offers.ts` | `Material`, `MaterialEkn`, `CompositionItem`, `SystemCard`, `SheetPreview`, `Offer`, ... |
 | `src/types/settings.ts` | `OffersSettings { apiUrl, lastAnnouncedVersion }` |
-| `src/services/offers.service.ts` | HTTP ╨║ `/api/offers/*`, `OffersError`, `exportDocx` |
-| `src/ui/offers-view.ts` | ╤Д╨░╤Б╨░╨┤: ╤В╨╛╨┐╨▒╨░╤А + ╤Б╨░╨╣╨┤╨▒╨░╤А + ╨║╨╛╨╜╤В╨╡╨╜╤В |
-| `src/ui/offers-list.ts` | ┬лЁЯз╛ ╨Ъ╨Я┬╗: ╤Б╨┐╨╕╤Б╨╛╨║, ╨║╨░╤А╤В╨╛╤З╨║╨░, ╤А╨╡╨┤╨░╨║╤В╨╛╤А ╤Б╨╛╤Б╤В╨░╨▓╨░, DOCX, ╤Б╤Б╤Л╨╗╨║╨░ |
-| `src/ui/catalog-editor.ts` | ┬лЁЯЧВ ╨Ъ╨░╤В╨░╨╗╨╛╨│┬╗: ╤В╨░╨▒╨╗╨╕╤Ж╨░, ╨╝╨╛╨┤╨░╨╗╨║╨░ ╨║╨░╤А╤В╨╛╤З╨║╨╕ |
-| `src/ui/form-editor.ts` | ┬лтЪЩя╕П ╨д╨╛╤А╨╝╨░ ╨Ъ╨Я┬╗: ╨┐╨╛╨╗╤П, ╨▒╨╗╨╛╨║╨╕, ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ |
-| `src/ui/block-editor.ts` | ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А ╤Б ╤З╨╕╨┐╨░╨╝╨╕ `{{╨┐╨╛╨╗╨╡}}` |
-| `src/ui/access-editor.ts` | ┬лЁЯСд ╨С╨╛╤В ╨╕ ╨┤╨╛╤Б╤В╤Г╨┐┬╗: ╨║╨╛╨┤╤Л, ╤А╨╛╨╗╨╕ ╨▓╨╛╤И╨╡╨┤╤И╨╕╤Е |
-| `src/ui/help.ts` | ╤В╨╡╨║╤Б╤В ╤Б╨┐╤А╨░╨▓╨║╨╕ (╨▓╤И╨╕╤В ╨▓ ╨┐╨╗╨░╨│╨╕╨╜) |
-| `src/styles.css` | ╨║╨╗╨░╤Б╤Б╤Л `tn-offers-*` |
+| `src/services/offers.service.ts` | HTTP to `/api/offers/*`, `OffersError`, 401 retry, `exportDocx` |
+| `src/ui/offers-view.ts` | facade: top bar + sidebar + content |
+| `src/ui/offers-list.ts` | "🧾 КП": list, card, composition editor, "Добавить систему", DOCX, link |
+| `src/ui/material-editor.ts` | "🧱 Материалы": list with SKU, card with the ЕКН table |
+| `src/ui/systems-editor.ts` | "🧩 Системы": KB cards, resolved composition, problems |
+| `src/ui/sheet-upload.ts` | manager's Excel: "what I understood", then apply |
+| `src/ui/context-editor.ts` | "📚 Контекст КП": cached system cards, open note |
+| `src/ui/brief-editor.ts` + `brief-model.ts` | the brief card inside the offer editor |
+| `src/ui/form-editor.ts` | "⚙️ Форма КП": fields, blocks, required |
+| `src/ui/block-editor.ts` | block editor with `{{field}}` chips |
+| `src/ui/access-editor.ts` | "👤 Бот и доступ": codes, bot token, who signed in |
+| `src/ui/help.ts` | help text (baked into the plugin) |
+| `src/utils/date.ts`, `money.ts`, `note-path.ts` | shared helpers - one copy each |
+| `src/styles.css` | `tn-offers-*` classes (the root `styles.css` is **built**, never edit it) |
 
-## ╨б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╤Б╨╡╤А╨▓╨╡╤А╨░
+## Server structure
 
-`offers-service/`: `main.go` (╤А╨╛╤Г╤В╤Л, ╨╝╨╕╨│╤А╨░╤Ж╨╕╨╕), `jwt.go`, `register.go`,
-`authperms.go` (╨║╨╛╨┐╨╕╤П ╨╕╨╖ ╨┤╤А╤Г╨│╨╕╤Е ╤Б╨╡╤А╨▓╨╕╤Б╨╛╨▓ тАФ ╨┐╤А╨░╨▓╨╕╤В╤М ╤Б╤А╨░╨╖╤Г ╨▓╨╛ ╨▓╤Б╨╡╤Е),
-`permissions.go`, `catalog.go`, `form.go`, `offers.go`, `docx.go`,
-`access.go`, `botapi.go`, `s3.go`, `email.go`, `static.go`, `template.go`,
-`static/openapi.yaml`.
+`offers-service/`: `main.go` (routes, migrations), `jwt.go`, `register.go`,
+`authperms.go` (a copy of the other services - **edit all copies at once**),
+`permissions.go`, `catalog.go`, `material.go`, `material_notes.go`,
+`matcher.go`, `sheet.go`, `upload.go`, `systemcards.go`, `systems_compose.go`,
+`systems_links.go`, `botcatalog.go`, `botapi.go`, `form.go`, `offers.go`,
+`brief.go`, `briefstep.go`, `copystep.go`, `attach.go`, `kbclient.go`,
+`llmclient.go`, `docx.go`, `docx_media.go`, `s3.go`, `email.go`, `static.go`,
+`template.go`, `static/openapi.yaml`.
+Sub-packages: `model/` (domain types) and `skills/` (prompts, checklists, card
+and attachment parsing).
 
-`offers-bot/`: `src/main.ts`, `src/poller.ts` (╤В╤А╨░╨╜╤Б╨┐╨╛╤А╤В ╨╕ ╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╤П),
-`src/telegram.ts` (Bot API ╤З╨╡╤А╨╡╨╖ SOCKS), `src/session.ts` (╨╝╨░╤И╨╕╨╜╨░ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣
-╨▓╤Е╨╛╨┤╨░), `src/flow.ts` (╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я), `src/api.ts`, `Dockerfile`.
+`offers-bot/`: `src/main.ts`, `src/poller.ts` (transport), `src/routes.ts`
+(routing), `src/callbacks.ts` (buttons), `src/telegram.ts` (Bot API via SOCKS),
+`src/session.ts` (sign-in state machine), `src/flow/` (offer assembly, brief,
+copy, writer), `src/api.ts`, `Dockerfile`.
 
-## ╨Э╨░╤Б╤В╤А╨╛╨╣╨║╨╕ (data.json)
+## Settings (data.json)
 
 `apiUrl` (default `https://epyur.fvds.ru`), `lastAnnouncedVersion`.
 
-## ╨Я╨╡╤А╨╡╨╝╨╡╨╜╨╜╤Л╨╡ ╨╛╨║╤А╤Г╨╢╨╡╨╜╨╕╤П (╤Б╨╡╤А╨▓╨╡╤А)
+## Environment variables (server)
 
 `DATABASE_URL`, `PORT`, `JWT_SECRET`, `OFFERS_APP_ID` (`offers`),
 `OFFERS_APP_NAME`, `OFFERS_OWNER_EMAIL`, `OFFERS_SERVICE_SECRET`,
 `OFFERS_BOT_SECRET`, `AUTH_SERVICE_URL`, `S3_ENDPOINT`/`S3_ACCESS_KEY`/
-`S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`.
-╨С╨╛╤В: `TELEGRAM_BOT_TOKEN` (╤Б╨▓╨╛╨╣, ╨╕╨╖ @BotFather), `TELEGRAM_SOCKS_PROXY`,
-`OFFERS_API_URL`, `OFFERS_BOT_SECRET`, `OFFERS_BOT_RATE_LIMIT`.
+`S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`,
+`KB_SERVICE_URL`, `LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`.
+Bot: `TELEGRAM_SOCKS_PROXY`, `OFFERS_API_URL`, `OFFERS_BOT_SECRET`,
+`OFFERS_BOT_RATE_LIMIT`, `VERIFY_PORT`.
 
-## ╨Я╤А╨╛╨▓╨╡╤А╨║╨╕
+**There is no bot token variable and there must not be one** (2026-10-29): the
+token lives in `offers_bot_config` and is entered from the plugin's "Бот и
+доступ" section.
+
+## Checks
 
 ```
-npx tsc --noEmit && npm run build          # ╨┐╨╗╨░╨│╨╕╨╜
+npx tsc --noEmit && npm run build          # plugin
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
-cd offers-bot && npm run typecheck && npm run build && node --test "src/flow.test.ts"
-node plugins/scripts/check_offers_openapi.mjs
+cd offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
+node ../../scripts/check_offers_openapi.mjs
+docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
+  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
 
-## ╨Я╤А╨░╨▓╨╕╨╗╨░
+## Rules
 
-- `catch(e: unknown)` + `errorMessage()`; `requestUrl()`; `window.setTimeout()`;
-  ╨▒╨╡╨╖ `any`; UI ╨╜╨░ ╤А╤Г╤Б╤Б╨║╨╛╨╝; ╨║╨╗╨░╤Б╤Б╤Л `tn-offers-*` ╨╜╨░ ╤Б╨╡╨╝╨░╨╜╤В╨╕╤З╨╡╤Б╨║╨╕╤Е ╤В╨╛╨║╨╡╨╜╨░╤Е.
-- ╨Ъ╨╛╨╝╨╝╨╕╤В╤Л/╨┐╤Г╤И╨╕ тАФ ╤В╨╛╨╗╤М╨║╨╛ ╨┐╨╛ ╤П╨▓╨╜╨╛╨╣ ╨║╨╛╨╝╨░╨╜╨┤╨╡ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П.
-- **┬л╨д╨╕╨║╤Б╨╕╤А╤Г╨╣┬╗ = ╨┐╨╛╨┤╨╜╤П╤В╤М ╨▓╨╡╤А╤Б╨╕╤О (+0.0.1 ╨▓ `manifest.json` ╨╕ `package.json`),
-  ╨╛╨▒╨╜╨╛╨▓╨╕╤В╤М ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Ж╨╕╤О, ╨┐╨╛╨┤╨│╨╛╤В╨╛╨▓╨╕╤В╤М ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨║╨╛╨╝╨╝╨╕╤В╨░ ╨╕ ╨б╨Я╨а╨Ю╨б╨Ш╨в╨м ╨┐╨╛╨┤╤В╨▓╨╡╤А╨╢╨┤╨╡╨╜╨╕╨╡
-  commit/push.** ╨Э╨╡ ╨┐╨╛╨┤╨╜╨╕╨╝╨░╤В╤М ╨▓╨╡╤А╤Б╨╕╤О ╨┐╤А╨╕ ╨║╨╛╨╝╨╝╨╕╤В╨╡ ╤З╨╕╤Б╤В╨╛ ╨▒╤Н╨║╨╛╨▓╤Л╤Е ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╨╣.
-- Go тАФ ╤В╨╛╨╗╤М╨║╨╛ permissive-╨╗╨╕╤Ж╨╡╨╜╨╖╨╕╨╕ (MIT/BSD/Apache-2.0).
-- `.gitattributes` ╤Б `-text` ╨╜╨░ `manifest.json`/`main.js`/`styles.css` тАФ ╨╡╤Б╤В╤М.
-- ╨Я╤А╨░╨▓╨║╨░ ╨┤╨░╨╜╨╜╤Л╤Е ╨▓ ╨С╨Ф ╨╛╨▒╤П╨╖╨░╨╜╨░ ╨┤╨▓╨╕╨│╨░╤В╤М `updated_at`.
-
-## ╨Ш╤Б╤В╨╛╤А╨╕╤П ╤А╨░╨▒╨╛╤В
-
-### 2026-10-26 тАФ v0.1.0 (╤Б╨╛╨╖╨┤╨░╨╜╨╕╨╡)
-
-╨Я╨╛╨╗╨╜╤Л╨╣ ╤Ж╨╕╨║╨╗: brainstorming тЖТ ╨┤╨╕╨╖╨░╨╣╨╜-╤Б╨┐╨╡╨║╨░ тЖТ ╨┐╨╗╨░╨╜ тЖТ ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П. ╨а╨╡╤И╨╡╨╜╨╕╤П
-╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П, ╨╖╨░╤Д╨╕╨║╤Б╨╕╤А╨╛╨▓╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Б╨┐╨╡╨║╨╡: ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ ╨┐╨╗╨░╨│╨╕╨╜ ╤Б╨╛ ╤Б╨▓╨╛╨╕╨╝ ╤Б╨╡╤А╨▓╨╡╤А╨╛╨╝ ╨╕
-╤Б╨▓╨╛╨╕╨╝ ╨▒╨╛╤В╨╛╨╝; ╤Д╨╛╤А╨╝╨░ ╨Ъ╨Я ╨║╨╛╨╜╤Д╨╕╨│╤Г╤А╨╕╤А╤Г╨╡╤В╤Б╤П ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А╨╛╨╝ ╨┐╨╛ ╨╛╨▒╤А╨░╨╖╤Ж╤Г ╨Ы╨Ш╨Ь╨б; ╨║╨░╤А╤В╨╛╤З╨║╨╕
-╤Б╨╕╤Б╤В╨╡╨╝ ╨╕ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨╖╨░╨▓╨╛╨┤╨╕╤В ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А; ╨▓╤Е╨╛╨┤ ╨▓ ╨▒╨╛╤В╨░ ╨┐╨╛ e-mail ╨╕ ╨║╨╛╨┤╤Г
-(╤Б╨░╨╝╨╛╨╖╨░╨┐╤А╨╛╤Б ╨╛╤В╨║╤А╤Л╤В ╨▓╤Б╨╡╨╝, ╨║╨╛╨┤ ╤В╨░╨║╨╢╨╡ ╨╝╨╛╨╢╨╡╤В ╨▓╤Л╨┤╨░╤В╤М ╨░╨┤╨╝╨╕╨╜╨╕╤Б╤В╤А╨░╤В╨╛╤А); ╤Н╨║╤Б╨┐╨╛╤А╤В
-**╤В╨╛╨╗╤М╨║╨╛ DOCX** (PDF ╨╜╨╡ ╨┤╨╡╨╗╨░╨╡╨╝); ╨▒╨╛╤В ╨╛╤В╨┤╨░╤С╤В ╤Д╨░╨╣╨╗ ╨▓ ╤З╨░╤В, ╤Б╤Б╤Л╨╗╨║╨╛╨╣ тАФ ╨┐╨╛ ╨║╨╜╨╛╨┐╨║╨╡;
-╤Б╨╛╨│╨╗╨░╤Б╨╛╨▓╨░╨╜╨╕╤П ╨╜╨╡╤В, `draft` тЖТ `final`.
-
-- **`offers-service`**: ╨║╨░╤В╨░╨╗╨╛╨│, ╤Д╨╛╤А╨╝╨░ ╨Ъ╨Я, ╨Ъ╨Я ╤Б╨╛ ╤Б╨╜╨╕╨╝╨║╨╛╨╝ ╤Ж╨╡╨╜ ╨╕ ╨╜╤Г╨╝╨╡╤А╨░╤Ж╨╕╨╡╨╣
-  `{NNN}/{yyyy}` (advisory-lock ╨╜╨░ ╨│╨╛╨┤), DOCX ╨╜╨░ ╨║╨╛╤А╨┐╨╛╤А╨░╤В╨╕╨▓╨╜╨╛╨╝ ╨▒╨╗╨░╨╜╨║╨╡ ╤Б
-  ╨┐╨╛╨┤╤Б╤В╨░╨╜╨╛╨▓╨║╨╛╨╣ ╨┐╨╗╨╡╨╣╤Б╤Е╨╛╨╗╨┤╨╡╤А╨╛╨▓, ╨║╨╛╨┤╤Л ╨▓╤Е╨╛╨┤╨░ ╨╕ ╤А╨╛╨╗╨╕ ╨▒╨╛╤В╨░, bot API ╨┐╨╛╨┤
-  `X-Service-Secret`, Swagger ╤Б ╨┐╨╡╤А╨▓╨╛╨│╨╛ ╨║╨╛╨╝╨╝╨╕╤В╨░.
-- **`offers-bot`**: long polling ╤З╨╡╤А╨╡╨╖ SOCKS5, ╨▓╤Е╨╛╨┤ ╨┐╨╛ e-mail+╨║╨╛╨┤╤Г, ╤Б╨▒╨╛╤А╨║╨░ ╨Ъ╨Я
-  (╨║╨░╤В╨░╨╗╨╛╨│, ╤Б╨▓╨╛╨▒╨╛╨┤╨╜╤Л╨╡ ╤Б╤В╤А╨╛╨║╨╕ ┬л╨Э╨░╨╖╨▓╨░╨╜╨╕╨╡ | ╨║╨╛╨╗-╨▓╨╛ | ╤Ж╨╡╨╜╨░┬╗, ┬л╨Ь╨╛╨╕ ╨Ъ╨Я┬╗), DOCX ╤Д╨░╨╣╨╗╨╛╨╝
-  ╨╕ ╤Б╤Б╤Л╨╗╨║╨╛╨╣.
-- **╨Я╨╗╨░╨│╨╕╨╜**: ╤Д╨░╤Б╨░╨┤ ╨╕╨╖ ╨┐╤П╤В╨╕ ╤А╨░╨╖╨┤╨╡╨╗╨╛╨▓, ╤Б╨▓╨╛╨╣ ╨▒╨╗╨╛╨║-╤А╨╡╨┤╨░╨║╤В╨╛╤А, ╨╝╨╛╨┤╨░╨╗╨║╨╕ ╨║╨░╤В╨░╨╗╨╛╨│╨░,
-  ╤Б╨┐╤А╨░╨▓╨║╨░, ╨╜╨╛╨▓╨╛╤Б╤В╤М ╨▓ ╨ж╨г╨Я.
-- **╨Ш╨╜╤Д╤А╨░╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░**: `sbe-core/docker` тАФ `offers-db`, `offers`, `offers-bot`,
-  ╤Б╨░╨╣╨┤╨║╨░╤А `offers-nl-proxy`, Caddy `/api/offers/*` ╨┤╨╛ ╨╛╨▒╤Й╨╡╨│╨╛ `/api/*`, seed
-  ╨┐╤А╨╕╨╗╨╛╨╢╨╡╨╜╨╕╤П `offers` ╨▓ `auth-service/seed.go`.
-- **╨Я╤А╨╛╨▓╨╡╤А╨║╨╕**: `go test` тАФ 24 ╤В╨╡╤Б╤В╨░ (╤Б╤Г╨╝╨╝╨░ ╨╕ ╨╛╨║╤А╤Г╨│╨╗╨╡╨╜╨╕╨╡ ╨║╨╛╨┐╨╡╨╡╨║, ╨╜╨╛╨╝╨╡╤А,
-  ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╤Д╨╛╤А╨╝╤Л ╨╕ ╨Ъ╨Я, DOCX ╤Б ╤Н╨║╤А╨░╨╜╨╕╤А╨╛╨▓╨░╨╜╨╕╨╡╨╝ ╨╕ ╨╖╨░╤Й╨╕╤В╨╛╨╣ ╨╛╤В ╨┐╤Г╤Б╤В╨╛╨│╨╛ ╨Ъ╨Я, ╨║╨╛╨┤╤Л ╨╕
-  ╨╕╤Е ╨╕╤Б╤В╨╡╤З╨╡╨╜╨╕╨╡, ╤А╨╛╨╗╨╕); ╨▒╨╛╤В тАФ 10 ╤В╨╡╤Б╤В╨╛╨▓ (╨╝╨░╤И╨╕╨╜╨░ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨▓╤Е╨╛╨┤╨░, ╤Б╨▒╨╛╤А╨║╨░ ╨╕ ╨╕╤В╨╛╨│
-  ╤З╨╡╤А╨╜╨╛╨▓╨╕╨║╨░, ╨┐╤Г╤Б╤В╨╛╨╣ ╨║╨░╤В╨░╨╗╨╛╨│); `npx tsc --noEmit` ╨╕ `npm run build` тАФ ╤З╨╕╤Б╤В╨╛;
-  `check_offers_openapi.mjs` тАФ 31 ╨╝╨░╤А╤И╤А╤Г╤В, ╤Б╤Е╨╡╨╝╨░ ╤Б╤Е╨╛╨┤╨╕╤В╤Б╤П.
-
-## ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨╛╤И╨╕╨▒╨╛╨║ ╨╕ ╨╛╤В╤Б╤В╤Г╨┐╨╗╨╡╨╜╨╕╨╣
-
-- ╨Э╨░╤А╤Г╤И╨╡╨╜╨╕╨╣ ╨┐╤А╨░╨▓╨╕╨╗ ╨╜╨╡╤В: 0 `any`, 0 `fetch` ╨▓ ╨┐╨╗╨░╨│╨╕╨╜╨╡, 0 ╨╕╨╜╨╗╨░╨╣╨╜-╤Б╤В╨╕╨╗╨╡╨╣,
-  `window.setTimeout()` ╨║╨╛╤А╤А╨╡╨║╤В╨╡╨╜, ╨▓╤Б╨╡ `catch(e: unknown)` + `errorMessage()`.
-- `npx tsc --noEmit` EXIT=0, `npm run build` OK.
-- ╨Э╨░╨╣╨┤╨╡╨╜╨╛ ╨┐╤А╨╕ ╨┐╤А╨╛╨│╨╛╨╜╨╡ ╤В╨╡╤Б╤В╨╛╨▓ ╨╕ ╨╕╤Б╨┐╤А╨░╨▓╨╗╨╡╨╜╨╛: `roundMoney` ╤В╨╡╤А╤П╨╗ ╨║╨╛╨┐╨╡╨╣╨║╤Г ╨╜╨░
-  `1.005` (╨╝╨╜╨╛╨╢╨╕╤В╨╡╨╗╤М 1000 ╨▓╨╝╨╡╤Б╤В╨╛ 100); `headingXML` ╨╛╤В╨┤╨░╨▓╨░╨╗ `Heading1` ╨▓╨╝╨╡╤Б╤В╨╛
-  `Heading2` ╨┤╨╗╤П level 3; `validateCatalogItem` ╨╛╤В╨▓╨╡╤А╨│╨░╨╗ ╨║╨░╤А╤В╨╛╤З╨║╤Г ╨▒╨╡╨╖ ╤П╨▓╨╜╨╛╨│╨╛
-  ╤В╨╕╨┐╨░, ╤Е╨╛╤В╤П ╨┐╤Г╤Б╤В╨╛╨╣ ╤В╨╕╨┐ ╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О `system`.
+- `catch (e: unknown)` + `errorMessage()`; `requestUrl()`; `window.setTimeout()`;
+  no `any`; UI in Russian; `tn-offers-*` classes on semantic tokens.
+- Commits and pushes only on an explicit user command.
+- **"Фиксируй"** = bump the version (+0.0.1 in `manifest.json` and
+  `package.json`), update the documentation, prepare a commit message and ASK
+  for confirmation of commit and push. Do not bump the version for purely
+  back-end changes.
+- Go dependencies: permissive licences only (MIT/BSD/Apache-2.0).
+- `.gitattributes` with `-text` on `manifest.json`/`main.js`/`styles.css` - present.
+- Any data write in the database must move `updated_at`.
+- **Documentation records in this file are written in English** (rule
+  2026-10-27). Older Russian entries are not translated retroactively.
+- Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
+  the root `AGENTS.md`.
 
 ## Выпуск 0.1.0 — 2026-10-27
 
@@ -1155,8 +1160,8 @@ the last action, self-hosting and the https comparison.
 
 ## Release 0.3.0: materials and systems are live - 2026-10-31
 
-Done on the user's explicit command ("фиксируй, документируй, коммить, пуш в
-майн, деплой и выкладывай на самораздачу").
+Done on the user's explicit command: commit, document, push to `main`, deploy
+and self-host.
 
 **`backend` -> `main`.** The plugin part was carried over with
 `git checkout backend -- src main.js styles.css manifest.json package.json
