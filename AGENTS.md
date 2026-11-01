@@ -268,6 +268,14 @@ your change is affected.
 
 ### Data and documents
 
+- **A screen that reads another service live on every open will eventually show
+  that service's error to the user.** `GET /systems` did exactly that: hundreds
+  of KB requests per open, and one stale token poisoned the whole load - the
+  person saw «Ключ доступа недействителен» while the key was fine. Read from a
+  cache, refresh on an explicit action (2026-11-01).
+- **Service-to-service clients need the same 401 retry as the plugin.** The
+  plugin had it since 0.2.1; `KBClient` did not, so one rejected token inside a
+  long fan-out was final. `get` now drops the token and repeats once.
 - **Time in API responses must be `RFC3339Nano`, not `RFC3339`.** The shorter
   layout drops fractions, so a server row `12:17:09.284` reaches a client as
   `12:17:09Z` - older than the client's own copy - and the server loses the
@@ -325,6 +333,70 @@ your change is affected.
   остался справочник: что это, как устроено, какие правила, что сейчас живо.
 - Раздел «STATE» ниже обновляется при каждом выпуске и держится коротким:
   номера версий, суммы, что проверено, что не сделано.
+
+## 2026-11-01 (evening) - the "Системы" tab stops hammering the Knowledge Base
+
+Live complaint: the **Системы** tab answered 401 «Ключ доступа недействителен»,
+the same text appeared in **Контекст КП** on "Перечитать", and the offer editor's
+"Добавить систему" picker failed the same way. The user's direction: *"load it
+once and use what we know; refresh when refreshing"*.
+
+### What was actually broken
+
+Two separate things, and the first one is why this came back after 0.2.1.
+
+1. **`GET /api/offers/systems` read the Knowledge Base live on every call** -
+   all `commercial_propose` cards, then a full-note request per card (376
+   systems = ~380 requests, 1165 materials on the material path). A single 401
+   anywhere in that run was cached by `KBClient` for the whole run and surfaced
+   to the person. `listMaterials` did the same thing every time the materials
+   list was shown. So the tab was not flaky - it was a long fan-out of requests
+   that had to survive minutes without one rejection, and an expired hour-long
+   JWT (or one rejected request) killed the whole load.
+2. **`KBClient.get` had no retry.** The plugin had 401-retry since 0.2.1, but
+   the *service-to-service* client did not: one rejection = error for the caller.
+
+### What changed
+
+- **`GET /api/offers/systems` reads the `offers_context` cache** (`mode =
+  'systems'`). Empty cache - read the KB once and fill it; KB down - empty list
+  plus `error`, so the section says what is wrong instead of showing 401 text.
+- **`POST /api/offers/systems/refresh`** (admin) is the only path that reads the
+  KB for this section. On failure it returns the previous cache with status 200
+  and `error` filled - a temporary outage must not empty the section. Same
+  pattern as `POST /context/refresh`.
+- **`KBClient.get` retries once on 401**: drops the cached token, takes a new
+  one, repeats. A second 401 is a real error. Two tests pin this
+  (`TestKBClientRetriesOn401`, `TestKBClientGivesUpAfterSecond401`).
+- **`SystemsWithCompositionFromKB`** is now its own function and type: the
+  section returns `compositionLinks`/`problems`, the Контекст cache keeps
+  `SystemCard` without them. `listMaterialsOnce` was split out of
+  `listMaterials` so a refresh does not trigger a second KB fan-out.
+- **Plugin**: `systems-editor.ts` loads from the cache and has one
+  "↻ Перечитать из Базы знаний" button; `offersService.refreshSystems()` is the
+  new call. `styles.css` unchanged.
+
+### Verified live (2026-11-01, mailers-offers-1 rebuilt 15:19 MSK)
+
+| check | result |
+|---|---|
+| cold `GET /systems` (cache row deleted) | 376 systems, `error:""`, **4 s**, cache row written |
+| warm `GET /systems` | same 376, **0 s**, no KB traffic, no new rows on iteration |
+| `POST /systems/refresh`, owner token | 376 systems, 4 s |
+| refresh with a **viewer** role | 403 (`role`) - admin only, as the route says |
+| `GET /systems` with a **viewer** role | 200 from cache, 0 s |
+| no token on either route | 401 (`no-token`) |
+| 3x full materials sync (1165 cards) | 1 s / 1 s / 0 s, **0** KB rejections |
+
+`gofmt -l` empty, `go vet` clean, `go test ./...` green, plugin `npx tsc
+--noEmit` EXIT=0, `npm run build` OK, `check_bundle_strings.mjs` 0 missing,
+`check_offers_openapi.mjs` **61 operations / 48 paths, schema matches**.
+
+**Not fixed, on purpose**: the KB JWT still lives an hour and the service still
+caches it for 50 minutes. The retry makes a stale token self-heal, which is
+enough. If a *systematic* rejection ever shows up, the next place to look is
+`kb-service`'s gate, not this client - it logs every refusal with a reason
+(`отказ 401: ... — токен не разобран`), and those lines are the evidence.
 
 ## STATE 2026-11-01 (release 0.4.0, deployed and self-hosted)
 

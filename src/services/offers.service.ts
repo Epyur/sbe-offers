@@ -369,9 +369,19 @@ export class OffersService {
 
   // --- Системы (2026-10-31) ---------------------------------------------
 
-  /** Системы из Базы знаний с составом, разрешённым против материалов. */
+  /**
+   * Системы из Базы знаний с составом, разрешённым против материалов.
+   *
+   * Отдаются из кеша сервиса (2026-11-01): раздел не ходит в Базу знаний на
+   * каждый показ. Перечитать — отдельным действием, `refreshSystems`.
+   */
   async listSystems(): Promise<SystemsResponse> {
     return this.request<SystemsResponse>('GET', '/systems');
+  }
+
+  /** Перечитать системы из Базы знаний (одно осознанное действие человека). */
+  async refreshSystems(): Promise<SystemsResponse> {
+    return this.request<SystemsResponse>('POST', '/systems/refresh');
   }
 
   /** Перечитать карточки из Базы знаний (admin). */

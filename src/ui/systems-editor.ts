@@ -1,3 +1,4 @@
+import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { CompositionItem, SystemWithComposition } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
@@ -11,24 +12,45 @@ import { openNote } from './context-editor';
  * своей цены, она обосновывает, ПОЧЕМУ выбраны именно эти материалы. Поэтому
  * карточки живут в Базе знаний, а здесь только список с проверкой состава.
  *
- * Раздел ТОЛЬКО ДЛЯ ЧТЕНИЯ и, в отличие от «Контекста КП», читает базу знаний
- * вживую: состав проверяется против ТЕКУЩЕГО справочника материалов, и кеш
- * здесь показывал бы устаревшие данные после правки материала.
+ * Раздел ТОЛЬКО ДЛЯ ЧТЕНИЯ. Показывает то, что сервис уже прочитал из Базы
+ * знаний; «Перечитать из Базы знаний» — отдельное действие (2026-11-01).
+ *
+ * Раньше раздел читал базу знаний вживую на каждом показе, ради свежего
+ * состава. Цена оказалась выше пользы: сотни запросов на вход, минуты ожидания
+ * и «Ключ доступа недействителен» при единичном сбое посреди захода.
  */
 export function renderSystemsEditor(view: OffersView, container: HTMLElement): void {
-  container.createDiv({ cls: 'tn-offers-muted', text: 'Читаю карточки систем из Базы знаний…' });
+  container.createDiv({ cls: 'tn-offers-muted', text: 'Читаю системы…' });
   void load(view, container);
 }
 
-async function load(view: OffersView, container: HTMLElement): Promise<void> {
+/**
+ * Показать раздел: по умолчанию — то, что сервис уже знает.
+ *
+ * `refresh` — осознанное «перечитать из Базы знаний». Оно одно ходит наружу;
+ * обычный показ раздела берёт кеш (2026-11-01, требование пользователя:
+ * «загрузились и используем то, что знаем, при обновлении обновляем данные»).
+ * Иначе каждый вход в раздел стоил сотен запросов в Базу знаний, и любой сбой
+ * посреди захода показывал «Ключ доступа недействителен» на ровном месте.
+ */
+async function load(view: OffersView, container: HTMLElement, refresh = false): Promise<void> {
   let systems: SystemWithComposition[] = [];
   let kbEnabled = true;
   let error = '';
   try {
-    const res = await view.plugin.offersService.listSystems();
+    const res = refresh
+      ? await view.plugin.offersService.refreshSystems()
+      : await view.plugin.offersService.listSystems();
     systems = res.systems ?? [];
     kbEnabled = res.kbEnabled;
     error = res.error ?? '';
+    if (refresh) {
+      new Notice(
+        error
+          ? `База знаний недоступна, показаны прежние системы: ${error}`
+          : `Обновлено систем: ${systems.length}`,
+      );
+    }
   } catch (e: unknown) {
     container.empty();
     container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить системы: ${errorMessage(e)}` });
@@ -69,11 +91,13 @@ function render(
 
   const toolbar = container.createDiv({ cls: 'tn-offers-actions' });
   toolbar.createSpan({ cls: 'tn-offers-muted tn-offers-self-center', text: `Систем: ${systems.length}` });
-  const reload = toolbar.createEl('button', { text: '↻ Обновить', cls: 'tn-btn tn-btn-ghost' });
+  const reload = toolbar.createEl('button', { text: '↻ Перечитать из Базы знаний', cls: 'tn-btn tn-btn-ghost' });
   reload.addEventListener('click', () => {
+    reload.disabled = true;
+    reload.setText('Читаю…');
     container.empty();
-    container.createDiv({ cls: 'tn-offers-muted', text: 'Читаю карточки систем…' });
-    void load(view, container);
+    container.createDiv({ cls: 'tn-offers-muted', text: 'Перечитываю карточки систем из Базы знаний…' });
+    void load(view, container, true);
   });
 
   if (systems.length === 0) {
