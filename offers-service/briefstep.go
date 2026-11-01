@@ -177,9 +177,13 @@ func mergeBrief(prev model.BriefPayload, rawPayload json.RawMessage) model.Brief
 		}
 	}
 	keepStr(&out.ObjectName, incoming.ObjectName)
+	keepStr(&out.ObjectPurpose, incoming.ObjectPurpose)
+	keepStr(&out.ObjectArea, incoming.ObjectArea)
+	keepStr(&out.CustomerAddress, incoming.CustomerAddress)
 	keepList(&out.CustomerPains, incoming.CustomerPains)
 	keepList(&out.CustomerGoals, incoming.CustomerGoals)
 	keepList(&out.ProjectRisks, incoming.ProjectRisks)
+	keepList(&out.PlannedSystems, incoming.PlannedSystems)
 	keepStr(&out.BudgetSignal, incoming.BudgetSignal)
 	keepStr(&out.DecisionMaker, incoming.DecisionMaker)
 	keepStr(&out.Timeline, incoming.Timeline)
@@ -230,6 +234,9 @@ func tolerantBriefPayload(raw json.RawMessage) model.BriefPayload {
 		}
 	}
 	readString("object_name", &out.ObjectName)
+	readString("object_purpose", &out.ObjectPurpose)
+	readString("object_area", &out.ObjectArea)
+	readString("customer_address", &out.CustomerAddress)
 	readString("budget_signal", &out.BudgetSignal)
 	readString("decision_maker", &out.DecisionMaker)
 	readString("timeline", &out.Timeline)
@@ -237,6 +244,7 @@ func tolerantBriefPayload(raw json.RawMessage) model.BriefPayload {
 	readList("customer_goals", &out.CustomerGoals)
 	readList("customer_pains", &out.CustomerPains)
 	readList("project_risks", &out.ProjectRisks)
+	readList("planned_systems", &out.PlannedSystems)
 	readList("why_us", &out.WhyUs)
 	readList("skipped_topics", &out.Skipped)
 	var objections []model.BriefObjection

@@ -59,8 +59,8 @@ func TestBriefPayloadFilledCount(t *testing.T) {
 	if n := p.FilledCount(); n != 3 {
 		t.Fatalf("список из одного пункта — это заполненное поле, получили %d", n)
 	}
-	if total := p.TotalFields(); total != 10 {
-		t.Fatalf("ожидали 10 полей брифа, получили %d", total)
+	if total := p.TotalFields(); total != 14 {
+		t.Fatalf("ожидали 14 полей брифа, получили %d", total)
 	}
 }
 

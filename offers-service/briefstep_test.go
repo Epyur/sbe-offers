@@ -106,17 +106,29 @@ func TestStepBriefDropsUnknownKeys(t *testing.T) {
 	}
 }
 
+// briefUpToTerms — бриф, у которого закрыто всё до темы «бюджет» включительно
+// открытой. Порядок тем с 2026-11-01: объект и адресат, сделка, системы,
+// условия. Тест должен закрывать весь контекст, а не три старые темы, иначе
+// он проверяет не то, о чём говорит.
+func briefUpToTerms() model.BriefPayload {
+	return model.BriefPayload{
+		ObjectName:      "ЖК Поэма",
+		ObjectPurpose:   "жилой дом",
+		ObjectArea:      "12 000 м² кровли",
+		CustomerAddress: "ООО Строймонтаж, Иванов И.И.",
+		CustomerPains:   []string{"протечки"},
+		CustomerGoals:   []string{"сдать"},
+		ProjectRisks:    []string{"воды"},
+		PlannedSystems:  []string{"ТН-КРОВЛЯ Авто"},
+		Objections:      []model.BriefObjection{{Claim: "дорого", Response: "сравним"}},
+	}
+}
+
 // «Не знаю» / «пропустить» закрывает тему пустым значением, а не оставляет её
 // висеть: иначе бот спросит то же самое второй раз.
 func TestStepBriefSkipClosesTopic(t *testing.T) {
-	// Все предыдущие темы закрыты, текущая — бюджет; модель вернула её пустой.
-	before := model.BriefPayload{
-		ObjectName:    "ЖК Поэма",
-		CustomerPains: []string{"протечки"},
-		CustomerGoals: []string{"сдать"},
-		ProjectRisks:  []string{"воды"},
-		Objections:    []model.BriefObjection{{Claim: "дорого", Response: "сравним"}},
-	}
+	// Весь контекст объекта и адресата закрыт, текущая — бюджет; модель вернула её пустой.
+	before := briefUpToTerms()
 	c := &fakeCompleter{answer: `{"payload":{},"reply":"Хорошо, идём дальше.","skip":["budget_signal"]}`}
 	res := step(t, before, "не знаю", c)
 	if got, _ := nextOpenTopic(res.Payload); got.Key != "decision_maker" {
@@ -163,22 +175,31 @@ func TestStepBriefUpstreamError(t *testing.T) {
 
 // Все темы закрыты — бриф готов, следующий шаг «к расчёту».
 func TestStepBriefDoneWhenAllClosed(t *testing.T) {
-	full := model.BriefPayload{
-		ObjectName:    "ЖК Поэма",
-		CustomerPains: []string{"протечки"},
-		CustomerGoals: []string{"сдать без замечаний"},
-		ProjectRisks:  []string{"грунтовые воды"},
-		Objections:    []model.BriefObjection{{Claim: "дорого", Response: "сравним с ценой протечки"}},
-		BudgetSignal:  "до 20 млн",
-		DecisionMaker: "главный инженер",
-		Timeline:      "к маю",
-		WhyUs:         []string{"работали на соседнем объекте"},
-		Notes:         "нужен монтаж",
-	}
+	full := briefUpToTerms()
+	full.BudgetSignal = "до 20 млн"
+	full.DecisionMaker = "главный инженер"
+	full.Timeline = "к маю"
+	full.WhyUs = []string{"работали на соседнем объекте"}
+	full.Notes = "нужен монтаж"
 	c := &fakeCompleter{answer: `{"payload":{},"reply":"Готово."}`}
 	res := step(t, full, "спасибо", c)
 	if !res.Done {
 		t.Fatal("бриф со всеми закрытыми темами должен быть готов")
+	}
+}
+
+// Контекст объекта и адресата спрашивается ПЕРВЫМ (2026-11-01): пустой бриф
+// начинается с объекта, а не с задач или бюджета.
+func TestBriefStartsWithObjectContext(t *testing.T) {
+	next, ok := nextOpenTopic(model.EmptyBriefPayload())
+	if !ok {
+		t.Fatal("пустой бриф должен иметь открытую тему")
+	}
+	if next.Key != "object_name" {
+		t.Fatalf("разговор должен начинаться с объекта, а начинается с %q", next.Key)
+	}
+	if next.Stage != "object" {
+		t.Fatalf("объект относится к этапу %q, а не к %q", "object", next.Stage)
 	}
 }
 

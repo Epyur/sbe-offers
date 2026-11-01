@@ -126,7 +126,7 @@ func TestMergeBriefFieldsKeepsNotesIntact(t *testing.T) {
 
 func TestBriefProgress(t *testing.T) {
 	got := briefProgress(model.EmptyBriefPayload())
-	if !strings.Contains(got, "0 из 10") {
+	if !strings.Contains(got, "0 из 14") {
 		t.Fatalf("прогресс = %q", got)
 	}
 }

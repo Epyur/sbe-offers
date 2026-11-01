@@ -12,17 +12,28 @@ type BriefObjection struct {
 
 // BriefPayload — структурированный бриф. Порядок полей = порядок тем в
 // разговоре (см. skills.BriefTopics); менять его без правки тем не стоит.
+//
+// Контекст объекта и адресата (2026-11-01) идёт ПЕРВЫМ: бот не спрашивает
+// позиции, пока не знает, для чего и кому собирается предложение.
 type BriefPayload struct {
-	ObjectName    string           `json:"object_name"`
-	CustomerPains []string         `json:"customer_pains"`
-	CustomerGoals []string         `json:"customer_goals"`
-	ProjectRisks  []string         `json:"project_risks"`
-	Objections    []BriefObjection `json:"objections"`
-	BudgetSignal  string           `json:"budget_signal"`
-	DecisionMaker string           `json:"decision_maker"`
-	Timeline      string           `json:"timeline"`
-	WhyUs         []string         `json:"why_us"`
-	Notes         string           `json:"notes"`
+	ObjectName    string   `json:"object_name"`
+	ObjectPurpose string   `json:"object_purpose"`
+	ObjectArea    string   `json:"object_area"`
+	CustomerGoals []string `json:"customer_goals"`
+	CustomerPains []string `json:"customer_pains"`
+	ProjectRisks  []string `json:"project_risks"`
+	// CustomerAddress — адресат КП: организация и лицо, кому его посылают.
+	// Не путать с клиентом предложения: тот — снимок для шапки документа.
+	CustomerAddress string `json:"customer_address"`
+	// PlannedSystems — какие системы менеджер собирается предложить. Их состав
+	// приезжает в позиции на последнем этапе разговора.
+	PlannedSystems []string         `json:"planned_systems"`
+	Objections     []BriefObjection `json:"objections"`
+	BudgetSignal   string           `json:"budget_signal"`
+	DecisionMaker  string           `json:"decision_maker"`
+	Timeline       string           `json:"timeline"`
+	WhyUs          []string         `json:"why_us"`
+	Notes          string           `json:"notes"`
 	// Skipped — темы, от которых менеджер отказался. Без этого признака
 	// пропуск неотличим от «поле ещё не заполнено»: значение пусто и до, и
 	// после ответа «не знаю», и бот спрашивал бы одно и то же заново.
@@ -34,12 +45,13 @@ type BriefPayload struct {
 // отрисовке списка.
 func EmptyBriefPayload() BriefPayload {
 	return BriefPayload{
-		CustomerPains: []string{},
-		CustomerGoals: []string{},
-		ProjectRisks:  []string{},
-		Objections:    []BriefObjection{},
-		WhyUs:         []string{},
-		Skipped:       []string{},
+		CustomerPains:  []string{},
+		CustomerGoals:  []string{},
+		ProjectRisks:   []string{},
+		PlannedSystems: []string{},
+		Objections:     []BriefObjection{},
+		WhyUs:          []string{},
+		Skipped:        []string{},
 	}
 }
 
@@ -54,6 +66,9 @@ func (p *BriefPayload) Normalize() {
 	}
 	if p.ProjectRisks == nil {
 		p.ProjectRisks = []string{}
+	}
+	if p.PlannedSystems == nil {
+		p.PlannedSystems = []string{}
 	}
 	if p.Objections == nil {
 		p.Objections = []BriefObjection{}
@@ -83,7 +98,7 @@ func (p *BriefPayload) UnmarshalJSON(data []byte) error {
 // TotalFields — сколько полей брифа всего. Используется в подписи «заполнено
 // N из M» в плагине и в решении «бриф готов».
 func (p BriefPayload) TotalFields() int {
-	return 10
+	return 14
 }
 
 // FilledCount — сколько полей реально заполнено. Пустая строка и пустой
@@ -93,6 +108,15 @@ func (p BriefPayload) FilledCount() int {
 	if NonEmpty(p.ObjectName) {
 		n++
 	}
+	if NonEmpty(p.ObjectPurpose) {
+		n++
+	}
+	if NonEmpty(p.ObjectArea) {
+		n++
+	}
+	if NonEmpty(p.CustomerAddress) {
+		n++
+	}
 	if len(p.CustomerPains) > 0 {
 		n++
 	}
@@ -100,6 +124,9 @@ func (p BriefPayload) FilledCount() int {
 		n++
 	}
 	if len(p.ProjectRisks) > 0 {
+		n++
+	}
+	if len(p.PlannedSystems) > 0 {
 		n++
 	}
 	if hasFullObjection(p.Objections) {

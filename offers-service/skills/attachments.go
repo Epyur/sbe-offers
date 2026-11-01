@@ -113,10 +113,17 @@ type MarkdownAttachment struct {
 	// ObjectName, Timeline, BudgetSignal, DecisionMaker — поля, которые бот
 	// показывают в «что я понял» отдельной строкой.
 	ObjectName    string
-	Timeline      string
-	BudgetSignal  string
-	DecisionMaker string
-	CustomerPains []string
+	ObjectPurpose string
+	ObjectArea    string
+	// CustomerAddress — адресат КП (организация и лицо), а не заказчик
+	// исследования из прежних файлов.
+	CustomerAddress string
+	// PlannedSystems — системы, которые менеджер собирается предложить.
+	PlannedSystems []string
+	Timeline       string
+	BudgetSignal   string
+	DecisionMaker  string
+	CustomerPains  []string
 	// Notes — всё, что не разложилось по ключам. Терять текст нельзя: в нём
 	// бывают самые нужные подробности.
 	Notes string
@@ -134,9 +141,13 @@ var attachmentFieldAliases = []struct {
 	key     string
 }{
 	{pattern: []string{"объект", "объект исследования", "наименование объекта"}, key: "object_name"},
+	{pattern: []string{"назначение", "назначение объекта", "функциональное назначение"}, key: "object_purpose"},
+	{pattern: []string{"площадь", "площадь объекта", "объём работ", "объем работ"}, key: "object_area"},
+	{pattern: []string{"адресат", "кому", "адрес кп"}, key: "customer_address"},
 	{pattern: []string{"задача", "цель", "задачи"}, key: "customer_goals"},
 	{pattern: []string{"боли", "боли заказчика", "проблемы"}, key: "customer_pains"},
 	{pattern: []string{"риски", "риски проекта"}, key: "project_risks"},
+	{pattern: []string{"системы", "система", "предлагаемые системы"}, key: "planned_systems"},
 	{pattern: []string{"возражения"}, key: "objections"},
 	{pattern: []string{"бюджет"}, key: "budget_signal"},
 	{pattern: []string{"решение", "лпр", "кто решает"}, key: "decision_maker"},
@@ -232,6 +243,10 @@ func (a *MarkdownAttachment) fillFields(notes string) {
 		return ""
 	}
 	a.ObjectName = first("object_name")
+	a.ObjectPurpose = first("object_purpose")
+	a.ObjectArea = first("object_area")
+	a.CustomerAddress = first("customer_address")
+	a.PlannedSystems = append([]string{}, a.Known["planned_systems"]...)
 	a.Timeline = first("timeline")
 	a.BudgetSignal = first("budget_signal")
 	a.DecisionMaker = first("decision_maker")

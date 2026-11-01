@@ -411,12 +411,16 @@ func mergeBriefFields(prev model.BriefPayload, fields map[string][]string) model
 		}
 	}
 	setStr(&out.ObjectName, "object_name")
+	setStr(&out.ObjectPurpose, "object_purpose")
+	setStr(&out.ObjectArea, "object_area")
+	setStr(&out.CustomerAddress, "customer_address")
 	setStr(&out.BudgetSignal, "budget_signal")
 	setStr(&out.DecisionMaker, "decision_maker")
 	setStr(&out.Timeline, "timeline")
 	appendList(&out.CustomerGoals, "customer_goals")
 	appendList(&out.CustomerPains, "customer_pains")
 	appendList(&out.ProjectRisks, "project_risks")
+	appendList(&out.PlannedSystems, "planned_systems")
 	appendList(&out.WhyUs, "why_us")
 
 	// Возражения приходят списком строк «возражение — ответ»: без ответа это

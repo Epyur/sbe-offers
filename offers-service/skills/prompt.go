@@ -28,7 +28,6 @@ func RenderBriefSystem(brief model.BriefPayload, ctx model.ProductContext) strin
 		b.WriteString(fmt.Sprintf("%s %s (%s) — %s\n", mark, t.Label, t.Key, t.Question))
 	}
 	b.WriteString("\n")
-
 	b.WriteString("УЖЕ ИЗВЕСТНО:\n")
 	if s := renderBriefKnown(brief); s != "" {
 		b.WriteString(s)
@@ -62,9 +61,13 @@ func renderBriefKnown(p model.BriefPayload) string {
 		}
 	}
 	line("Объект", p.ObjectName)
+	line("Назначение объекта", p.ObjectPurpose)
+	line("Площадь", p.ObjectArea)
+	line("Адресат КП", p.CustomerAddress)
 	list("Задача заказчика", p.CustomerGoals)
 	list("Боли", p.CustomerPains)
 	list("Риски проекта", p.ProjectRisks)
+	list("Планируемые системы", p.PlannedSystems)
 	for _, o := range p.Objections {
 		if model.NonEmpty(o.Claim) || model.NonEmpty(o.Response) {
 			b.WriteString("- Возражение: " + o.Claim + " → ответ: " + o.Response + "\n")
@@ -121,6 +124,36 @@ func RenderEditSystem(kind SectionKind, ctx model.ProductContext) string {
 	b.WriteString("\n")
 	b.WriteString(renderContextBlock(ctx))
 	b.WriteString("\nФОРМАТ ОТВЕТА: только исправленный текст. Без пояснений и списка правок.\n")
+	return b.String()
+}
+
+// RenderBlockSystem собирает промпт для свободного блока формы, который
+// администратор описал подсказкой (2026-11-01).
+//
+// instruction — его слова: «опиши систему и материалы, входящие в неё». hint —
+// необязательное уточнение. Правила те же, что у секций (те же скилы), но
+// задача другая: секции согласуются с менеджером в чате, а блок печатается в
+// документе без согласования — поэтому границы «не выдумывать» здесь жёстче.
+func RenderBlockSystem(instruction, hint string, maxWords int) string {
+	var b strings.Builder
+	b.WriteString("ТЫ ПИШЕШЬ ОДИН БЛОК КОММЕРЧЕСКОГО ПРЕДЛОЖЕНИЯ ПО ПОДСКАЗКЕ АДМИНИСТРАТОРА.\n")
+	b.WriteString("Подсказка: " + strings.TrimSpace(instruction) + "\n")
+	if h := strings.TrimSpace(hint); h != "" {
+		b.WriteString("Уточнение: " + h + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(salesDoc)
+	b.WriteString("\n")
+	b.WriteString(copyDoc)
+	b.WriteString("\n")
+	b.WriteString(noInventDoc)
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("Объём: не больше %d слов, если подсказка не просит иного. ", maxWords))
+	b.WriteString("Это абзацы печатного документа, не список с маркерами — если без списка не обойтись, ")
+	b.WriteString("не больше трёх пунктов по одной строке.\n")
+	b.WriteString("Адресов сайтов и ссылок в тексте не пиши: они печатаются отдельным разделом в конце.\n")
+	b.WriteString("\nФОРМАТ ОТВЕТА: только текст блока. Без заголовка, без пояснений, ")
+	b.WriteString("без маркеров кода. Нехватка факта — [НУЖНО: что именно].\n")
 	return b.String()
 }
 
