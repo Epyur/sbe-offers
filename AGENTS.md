@@ -96,11 +96,11 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/constants.ts` | `OFFERS_VIEW_TYPE`, `OFFERS_APP_ID`, `OFFERS_PLUGIN_ID` |
 | `src/types/offers.ts` | `Material`, `MaterialEkn`, `CompositionItem`, `SystemCard`, `SheetPreview`, `Offer`, ... |
 | `src/types/settings.ts` | `OffersSettings { apiUrl, lastAnnouncedVersion }` |
-| `src/services/offers.service.ts` | HTTP to `/api/offers/*`, `OffersError`, 401 retry, `exportDocx` |
+| `src/services/offers.service.ts` | HTTP to `/api/offers/*`, `OffersError`, 401 retry, `exportDocx`, `refreshSystems` |
 | `src/ui/offers-view.ts` | facade: top bar + sidebar + content |
 | `src/ui/offers-list.ts` | "🧾 КП": list, card, composition editor, "Добавить систему", DOCX, link |
 | `src/ui/material-editor.ts` | "🧱 Материалы": list with SKU, card with the ЕКН table |
-| `src/ui/systems-editor.ts` | "🧩 Системы": KB cards, resolved composition, problems |
+| `src/ui/systems-editor.ts` | "🧩 Системы": cached systems, resolved composition, problems; one "↻ Перечитать из Базы знаний" button |
 | `src/ui/sheet-upload.ts` | manager's Excel: "what I understood", then apply |
 | `src/ui/context-editor.ts` | "📚 Контекст КП": cached system cards, open note |
 | `src/ui/brief-editor.ts` + `brief-model.ts` | the brief card inside the offer editor |
@@ -485,6 +485,9 @@ and `selfHosted: true`, `uploadedAt 2026-11-01T11:11:10Z`. The git copy in
 
 ### Checks at the moment of release
 
+**These are the 0.4.0 numbers, kept as a record.** The current ones are in the
+0.4.1 entry above (`main` 44.6%, 61 operations / 48 paths).
+
 `gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green (`main` 44.0%,
 `model` 70.1%, `skills` 84%), bot `tsc --noEmit` clean and **78 tests**,
 plugin `tsc --noEmit` EXIT=0 and `npm run build` OK at 0.4.0,
@@ -525,11 +528,16 @@ this cycle).
 7. **The bot conversation was not walked end-to-end by a human in Telegram**
    after this release. The unit tests and the stand cover the state machine;
    the live checks covered the routes, not a real dialogue.
+8. **The "Системы" cache is refreshed only by the button** (0.4.1, by the
+   user's direction). Editing a KB card does not reach the section by itself -
+   expect "изменил карточку, а в системе старое" and answer with "Перечитать из
+   Базы знаний". Do not "fix" it by restoring the live read.
 
 ### Where to look first when something breaks
 
 | symptom | start here |
 |---|---|
+| «Ключ доступа недействителен» on a screen | the screen is reading another service live on every open; `offers_context` cache + explicit refresh, and `KBClient.get` retries 401 once. Check `docker logs mailers-kb-1` for `отказ 401: ... — <reason>`: that line names the cause, the client does not. |
 | bot asks positions immediately | `callbacks.ts` `startDraft` must create the offer and call `beginBrief`; `draft.stage` must be `context` |
 | «в предложении нет позиций» on save | `finishDraft` PATCHes the existing offer; an empty `items` from the sheet means `attach/apply` did not run |
 | a block is missing from the DOCX | model down (`prompt_text` is silent by design), image key not in the store, or `showInClient` off |
