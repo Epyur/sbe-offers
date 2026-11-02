@@ -838,16 +838,46 @@ removed with the old text, three lines of this release added);
 (`sku`/`noteId` documented on both endpoints); stand **231/231** (five new
 checks).
 
-## STATE 2026-11-02 (0.4.4b, in the working tree)
+## STATE 2026-11-02 (release 0.4.4 - deployed and self-hosted)
 
-Version **0.4.4** (`manifest.json` = `package.json`), `main` still 0.4.2, so the
-suffix `b` applies. **Not committed, not deployed, not self-hosted** - the
-working tree on `backend` holds the "Добавить систему" fix (see the entry
-above). Checks: `go test` green, bot 89 tests, plugin `tsc` EXIT=0 + build,
-bundle strings 0 missing, OpenAPI 61/48, stand **231/231**.
+| | value |
+|---|---|
+| plugin | **0.4.4** (`manifest.json` = `package.json`), no `b` suffix: `main` and `backend` match |
+| `backend` | `2c192b0` (fix) + documentation commit - pushed |
+| `main` | `c59d059` - plugin part including the 0.4.3 changes that had never left `backend`; pushed |
+| `sbe-apstore-registry` | `31b759e`; the server copy `www/registry.json` was replaced too (backup `registry.json.bak-20261102-0.4.2`) |
+| live containers | `mailers-offers-1`, `mailers-offers-bot-1` rebuilt from `git archive 2c192b0`, recreated 2026-11-02, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`, three sums checked over https and against `/registry.json` |
 
-The "Добавить систему" item of the user report is now closed: the cause was
-the missing `system_sku` on every live card, and the choice travels by note id.
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `10b7f0c57cd5d717c052f6647394b60ed3c2f28cb706782a045b968874feff53` | 468 |
+| `main.js` | `b9295e63f3904305c97dfbaa016b5416fcf652166beb9475ae81ebd2351884a3` | 115875 |
+| `styles.css` | `13a62f1820d50c6683d184a94e6c0c057d1ce626016924ec97716be1917a03fe` | 31633 |
+
+`styles.css` changed for the first time since 0.3.0: the 0.4.3 CSS edits
+(`tn-offers-ekn`, form chips) had never been shipped before this release.
+
+The "Добавить систему" item of the user report is closed: every live card
+lacks `system_sku`, and the choice now travels by note id.
+
+**Two traps of this release** (both cost time):
+
+1. **Switching `backend` → `main` does not reset the working tree to `main`.**
+   After `git checkout main`, `src/ui/offers-list.ts` still held the `backend`
+   version (with the EKN field) while `src/types/offers.ts` came from `main` -
+   `tsc` failed on `OfferItem.ekn`. The port must copy **the whole `src`
+   folder** from `origin/backend`, not a hand-picked list of files.
+2. **`git archive` on Windows applies the CRLF filter to the file list**, and
+   the tar that reached the server carried paths with a trailing `\r`; the
+   extraction silently overwrote nothing. Use `git archive --format=tar
+   <commit> offers-service offers-bot` (it packs the commit's bytes) and
+   `tar xf` on the server, then compare `md5sum` with the local files - done
+   here, all four compared files matched.
+
+Also: `kb-selfhost.sh` writes the file sums into `registry_file_overrides`
+but does **not** touch `www/registry.json`; the registry update is a separate
+step (git copy in `sbe-apstore-registry` and the server file).
 
 ## STATE 2026-11-02 (0.4.3b committed, not deployed)
 
