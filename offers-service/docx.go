@@ -263,8 +263,12 @@ func tableXML(rows [][]string) string {
 	return sb.String()
 }
 
-// resolvePlaceholders подставляет {{id}} значениями формы. Неизвестные поля
-// заменяются пустой строкой — в документе не должно остаться служебных скобок.
+// resolvePlaceholders подставляет {{id}} значениями формы.
+//
+// Неизвестные поля заменяются пустой строкой — в документе не должно остаться
+// служебных скобок. Служебные поля (`offer_number`, `offer_date`, `manager`)
+// подставляются всегда: номер, дата и подпись есть у каждого предложения, и
+// держать их в форме руками значит забыть обновить после копирования КП.
 func resolvePlaceholders(text string, values map[string]string) string {
 	for key, value := range values {
 		text = strings.ReplaceAll(text, "{{"+key+"}}", value)
@@ -320,10 +324,34 @@ type blockNode struct {
 // неё, и каждый новый вид узла добавлял бы восьмой.
 type renderCtx struct {
 	values map[string]string
-	offer  Offer
-	refs   []skills.CardRef
-	images ImageSource
-	media  *docxMedia
+	// service — служебные поля шаблона (номер, дата, подпись, клиент, объект):
+	// считаются из самого предложения и в форме не хранятся.
+	service map[string]string
+	offer   Offer
+	refs    []skills.CardRef
+	images  ImageSource
+	media   *docxMedia
+}
+
+// text подставляет поля формы и служебные значения предложения в один кусок
+// текста. Одна точка на все виды узлов: иначе служебные поля доезжали бы до
+// таблицы и не доезжали до абзаца (или наоборот), и расхождение искали бы глазами.
+func (rc renderCtx) text(raw string) string {
+	return resolvePlaceholders(raw, rc.allValues())
+}
+
+// allValues — значения формы плюс служебные, служебные не затирают форму.
+func (rc renderCtx) allValues() map[string]string {
+	out := make(map[string]string, len(rc.values)+len(ServiceFieldIDs))
+	for _, key := range ServiceFieldIDs {
+		if v, ok := rc.service[key]; ok && v != "" {
+			out[key] = v
+		}
+	}
+	for k, v := range rc.values {
+		out[k] = v
+	}
+	return out
 }
 
 func renderBlockContent(block Block, values map[string]string) (string, error) {
@@ -353,10 +381,10 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			}
 			continue
 		case "heading":
-			sb.WriteString(headingXMLOpts(resolvePlaceholders(node.Text, rc.values), node.Level, opts))
+			sb.WriteString(headingXMLOpts(rc.text(node.Text), node.Level, opts))
 		case "bullet_list":
 			for _, item := range node.Items {
-				sb.WriteString(listItemXMLOpts(resolvePlaceholders(item, rc.values), opts))
+				sb.WriteString(listItemXMLOpts(rc.text(item), opts))
 				started = true
 			}
 			continue
@@ -365,7 +393,7 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			for _, row := range node.Rows {
 				cells := make([]string, 0, len(row))
 				for _, cell := range row {
-					cells = append(cells, resolvePlaceholders(cell, rc.values))
+					cells = append(cells, rc.text(cell))
 				}
 				rows = append(rows, cells)
 			}
@@ -395,7 +423,7 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			}
 			continue
 		default:
-			sb.WriteString(paragraphXMLOpts(resolvePlaceholders(node.Text, rc.values), node.Align, opts))
+			sb.WriteString(paragraphXMLOpts(rc.text(node.Text), node.Align, opts))
 		}
 		started = true
 	}
@@ -483,40 +511,38 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 	// Картинки из формы (узлы `image`) собираются тем же сборщиком, что и
 	// картинки карточек: у бланка свои id, и второй сборщик дал бы дубли.
 	media := newTemplateMedia()
-	rc := renderCtx{values: offer.FormValues, offer: offer, refs: refs, images: images, media: media}
+	rc := renderCtx{
+		values:  offer.FormValues,
+		service: serviceValues(offer),
+		offer:   offer,
+		refs:    refs,
+		images:  images,
+		media:   media,
+	}
 
 	var sb strings.Builder
-	title := strings.TrimSpace(form.Title)
-	if title == "" {
-		title = "Коммерческое предложение"
-	}
-	sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr><w:t xml:space="preserve">`)
-	sb.WriteString(escapeXML(title))
-	sb.WriteString(`</w:t></w:r></w:p>`)
-
-	dateLine := "№ " + offer.Number
-	// Дата — только если она есть: у предложения, собранного в коде без БД,
-	// createdAt пустой, и срез [:10] уронил бы весь экспорт.
-	if len(offer.CreatedAt) >= 10 {
-		dateLine += " от " + offer.CreatedAt[:10]
-	}
-	sb.WriteString(paragraphXML(dateLine, "right"))
-	if offer.Client.Name != "" {
-		sb.WriteString(paragraphXML("Клиент: "+offer.Client.Name, ""))
-	}
-	if offer.Client.Contact != "" {
-		sb.WriteString(paragraphXML("Контактное лицо: "+offer.Client.Contact, ""))
+	// Заголовок, номер и клиента печатает ПЕРВЫЙ блок формы (обычно титульный
+	// лист). Расшаблонивать их здесь нельзя: подставленные шаблонные фразы
+	// попадали в готовый файл (2026-11-02 — «Текст с полем», английский текст
+	// задания модели в экспортированном КП 003/2026). Когда блоков нет вовсе,
+	// шапку рисуем сами — документ без названия читать невозможно.
+	if len(form.Blocks) == 0 {
+		writeOfferHead(&sb, form, offer)
 	}
 
-	for _, block := range form.Blocks {
-		if !block.ShowInClient {
-			continue
-		}
+	blocks := visibleBlocks(form)
+	for _, block := range blocks {
 		content, err := renderBlockContentCtx(block, rc)
 		if err != nil {
 			return nil, err
 		}
 		sb.WriteString(content)
+	}
+	// Название формы — подзаголовок, если шапку не дал ни один блок: форму
+	// могли сохранить пустой (админ удалил титульный лист), а документ без
+	// названия читать невозможно. Не повторяем, если такой заголовок уже есть.
+	if !documentHasTitle(blocks, form.Title) {
+		sb.WriteString(paragraphXML(titleOr(form.Title), ""))
 	}
 
 	// Согласованный менеджером текст секций (2026-10-29). Идёт после блоков
@@ -546,24 +572,16 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 		sb.WriteString(paragraphXML(
 			"Состав и стоимость материалов передаются отдельным документом.", ""))
 	} else {
-		rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
-		for i, item := range offer.Items {
-			rows = append(rows, []string{
-				strconv.Itoa(i + 1),
-				item.Name,
-				item.Unit,
-				strconv.FormatFloat(item.Qty, 'f', -1, 64),
-				formatMoney(item.Price),
-				formatMoney(item.Sum),
-			})
-		}
-		sb.WriteString(tableXML(rows))
+		sb.WriteString(tableXML(offerItemsTable(offer.Items)))
 		sb.WriteString(paragraphXML("Итого: "+formatMoney(offer.Total)+" руб.", "right"))
 	}
 
-	manager := offer.OwnerEmail
-	sb.WriteString(paragraphXML("", ""))
-	sb.WriteString(paragraphXML("Менеджер: "+manager, ""))
+	// Подпись — только если её нет в блоке формы: форму легко испортить
+	// шаблонной подписью, и вторая строка «Менеджер» выглядела бы как сбой.
+	if !formBlocksMention(form, "{{manager}}") {
+		sb.WriteString(paragraphXML("", ""))
+		sb.WriteString(paragraphXML("Менеджер: "+offer.OwnerEmail, ""))
+	}
 
 	// Ссылки раздела `links` превращаются в кликабельные: отношение на каждую.
 	body, linkRels := applyHyperlinks(sb.String(), refs)
@@ -573,6 +591,199 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 		body = sb.String()
 	}
 	return buildDocxFull(body, media, linkRels, relsXML)
+}
+
+// Служебные поля шаблона: то, что служба знает про предложение сама, без
+// заполнения админом.
+const (
+	fieldOfferNumber = "offer_number"
+	fieldOfferDate   = "offer_date"
+	fieldManager     = "manager"
+	fieldClientName  = "offer_client"
+	fieldObjectName  = "offer_object"
+)
+
+// ServiceFieldIDs — служебные поля, которые конфигуратор показывает администратору
+// справочно: они есть всегда и заполнять их в форме не нужно.
+//
+// Один список на сервер и плагин: в плагине он продублирован для чипов, и
+// расхождение видно сразу (поле-чип, которое сервер не знает).
+var ServiceFieldIDs = []string{
+	fieldOfferNumber, fieldOfferDate, fieldManager, fieldClientName, fieldObjectName,
+}
+
+// serviceValues — значения служебных полей шаблона.
+//
+// Считаются при печати, а не хранятся в form_values: номер, дата и подпись есть
+// у каждого предложения, и заполнять их руками в форме значит забыть обновить
+// после копирования КП.
+func serviceValues(offer Offer) map[string]string {
+	return map[string]string{
+		fieldOfferNumber: offer.Number,
+		fieldOfferDate:   offerDateText(offer.CreatedAt),
+		fieldManager:     offer.OwnerEmail,
+		fieldClientName:  offer.Client.Name,
+		fieldObjectName:  formValue(offer.FormValues, "object_name"),
+	}
+}
+
+// titleOr — заголовок документа: сохранённый или заводской.
+func titleOr(title string) string {
+	if t := strings.TrimSpace(title); t != "" {
+		return t
+	}
+	return "Коммерческое предложение"
+}
+
+// visibleBlocks — блоки, которые печатаются клиенту, в порядке формы.
+func visibleBlocks(form OfferForm) []Block {
+	out := make([]Block, 0, len(form.Blocks))
+	for _, block := range form.Blocks {
+		if block.ShowInClient {
+			out = append(out, block)
+		}
+	}
+	return out
+}
+
+// documentHasTitle — есть ли уже название документа среди блоков. Сравнение по
+// подстроке: название может стоять внутри строки титульного листа.
+func documentHasTitle(blocks []Block, title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return false
+	}
+	for _, block := range blocks {
+		for _, node := range blockNodes(block) {
+			if strings.Contains(node.Text, title) {
+				return true
+			}
+			for _, row := range node.Rows {
+				for _, cell := range row {
+					if strings.Contains(cell, title) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// formBlocksMention ищет метку во всех блоках формы, включая таблицы и списки.
+func formBlocksMention(form OfferForm, marker string) bool {
+	for _, block := range form.Blocks {
+		for _, node := range blockNodes(block) {
+			if strings.Contains(node.Text, marker) {
+				return true
+			}
+			for _, item := range node.Items {
+				if strings.Contains(item, marker) {
+					return true
+				}
+			}
+			for _, row := range node.Rows {
+				for _, cell := range row {
+					if strings.Contains(cell, marker) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// formValue — значение из карты формы или пустая строка.
+func formValue(values map[string]string, key string) string {
+	if values == nil {
+		return ""
+	}
+	return strings.TrimSpace(values[key])
+}
+
+// offerDateText — дата предложения в виде «01.11.2026»; пусто, если её нет.
+func offerDateText(createdAt string) string {
+	if len(createdAt) < 10 {
+		return ""
+	}
+	day, month, year, ok := parseISODate(createdAt[:10])
+	if !ok {
+		return createdAt[:10]
+	}
+	return day + "." + month + "." + year
+}
+
+// parseISODate разбирает «2026-11-01» на части. Сделано вручную: time.Parse здесь
+// тянет часовые пояса, а дата в шапке — просто текст.
+func parseISODate(raw string) (day, month, year string, ok bool) {
+	parts := strings.Split(raw, "-")
+	if len(parts) != 3 || len(parts[0]) != 4 {
+		return "", "", "", false
+	}
+	return parts[2], parts[1], parts[0], true
+}
+
+// offerItemsTable — таблица состава для документа.
+//
+// Колонка ЕКН появилась в 2026-11-02: менеджер и заказчик сверяют позиции по
+// номеру. Если ЕКН не известен ни у одной позиции, колонки нет вовсе — пустая
+// колонка на всю таблицу выглядит как сбой, а не как «номера нет».
+func offerItemsTable(items []OfferItem) [][]string {
+	withEkn := false
+	for _, item := range items {
+		if strings.TrimSpace(item.EKN) != "" {
+			withEkn = true
+			break
+		}
+	}
+	rows := [][]string{{"№", "Наименование"}}
+	if withEkn {
+		rows[0] = append(rows[0], "Код ЕКН")
+	}
+	rows[0] = append(rows[0], "Ед.", "Кол-во", "Цена", "Сумма")
+	for i, item := range items {
+		row := []string{strconv.Itoa(i + 1), item.Name}
+		if withEkn {
+			row = append(row, item.EKN)
+		}
+		row = append(row,
+			item.Unit,
+			strconv.FormatFloat(item.Qty, 'f', -1, 64),
+			formatMoney(item.Price),
+			formatMoney(item.Sum),
+		)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// writeOfferHead — название документа, номер с датой и клиент.
+//
+// Печатается только у формы без блоков: при нормальной форме шапку собирает
+// первый блок, и здесь она дала бы второй заголовок и вторую дату.
+func writeOfferHead(sb *strings.Builder, form OfferForm, offer Offer) {
+	title := strings.TrimSpace(form.Title)
+	if title == "" {
+		title = "Коммерческое предложение"
+	}
+	sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr><w:t xml:space="preserve">`)
+	sb.WriteString(escapeXML(title))
+	sb.WriteString(`</w:t></w:r></w:p>`)
+
+	dateLine := "№ " + offer.Number
+	// Дата — только если она есть: у предложения, собранного в коде без БД,
+	// createdAt пустой, и срез [:10] уронил бы весь экспорт.
+	if len(offer.CreatedAt) >= 10 {
+		dateLine += " от " + offer.CreatedAt[:10]
+	}
+	sb.WriteString(paragraphXML(dateLine, "right"))
+	if offer.Client.Name != "" {
+		sb.WriteString(paragraphXML("Клиент: "+offer.Client.Name, ""))
+	}
+	if offer.Client.Contact != "" {
+		sb.WriteString(paragraphXML("Контактное лицо: "+offer.Client.Contact, ""))
+	}
 }
 
 // buildDocxFull — сборка с картинками и внешними ссылками.

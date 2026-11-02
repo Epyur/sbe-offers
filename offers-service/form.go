@@ -154,9 +154,12 @@ func defaultForm(mode string) OfferForm {
 const (
 	// coverBlockJSON — титульный лист. Абзацы по центру, подписи полей — в
 	// одном абзаце с {{полем}}: пустое поле даёт «Кому: » без пустых строк.
+	//
+	// Номер и дата — служебными полями (2026-11-02): у каждого КП они свои, и
+	// набирать их в форме руками значило бы забыть обновить после копирования.
 	coverBlockJSON = `[
+		{"type":"paragraph","text":"Коммерческое предложение № {{offer_number}} от {{offer_date}}","align":"center"},
 		{"type":"paragraph","text":"{{supplier_name}}","align":"center"},
-		{"type":"paragraph","text":"КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ","align":"center","level":2},
 		{"type":"paragraph","text":"Кому: {{client_name}}","align":"center"},
 		{"type":"paragraph","text":"{{client_contact}}","align":"center"}
 	]`

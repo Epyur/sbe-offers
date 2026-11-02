@@ -92,6 +92,16 @@ func TestRenderOfferDocxEscapesClientName(t *testing.T) {
 		t.Fatal("в документе нет word/document.xml")
 	}
 
+	// Название клиента печатает блок формы ({{client_name}}), а не заголовок
+	// шапки: шапку в 0.4.3 отдали первому блоку, чтобы шаблонные фразы не
+	// попадали в готовый файл. Поэтому проверка идёт на значение поля формы.
+	offer.FormValues["client_name"] = offer.Client.Name
+	data, err = renderOfferDocx(form, offer)
+	if err != nil {
+		t.Fatalf("сборка упала: %v", err)
+	}
+	docXML = docXMLOf(t, data)
+
 	if strings.Contains(docXML, "<Ко>") {
 		t.Fatal("«<» из названия клиента превратилось в тег — экранирование не работает")
 	}

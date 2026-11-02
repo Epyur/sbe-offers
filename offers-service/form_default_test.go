@@ -81,7 +81,11 @@ func TestDefaultFormRendersInOrder(t *testing.T) {
 	if !contains(xml, `<w:br w:type="page"/>`) && !contains(xml, `<w:pageBreakBefore/>`) {
 		t.Fatal("нет разрыва между титулом и содержательной частью")
 	}
+	// Титул печатает номер и дату служебными полями (2026-11-02).
 	order := []string{"ООО Поставщик", "ЖК Поэма", "Новосибирск, ул. Ленина, 1", "Состав предложения"}
+	if !contains(xml, "Коммерческое предложение № "+offer.Number+" от ") {
+		t.Fatal("титул должен печатать номер и дату предложения")
+	}
 	pos := make([]int, len(order))
 	for i, needle := range order {
 		pos[i] = strings.Index(xml, needle)

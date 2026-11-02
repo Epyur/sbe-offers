@@ -32,6 +32,22 @@ function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/**
+ * Поля, которые сервер подставляет сам, без заполнения администратором.
+ *
+ * Номер и дата предложения, подпись и клиент есть у каждого КП; вписывать их
+ * в форму руками — забыть обновить после копирования. Тот же список считает
+ * сервер (`ServiceFieldIDs`, offers-service/docx.go) — правя один, поправьте
+ * второй, иначе чип предложит поле, которого сервер не знает.
+ */
+export const SERVICE_FIELDS: Placeholder[] = [
+  { id: 'offer_number', label: 'Номер предложения' },
+  { id: 'offer_date', label: 'Дата предложения' },
+  { id: 'manager', label: 'Подпись (e-mail менеджера)' },
+  { id: 'offer_client', label: 'Получатель из КП' },
+  { id: 'offer_object', label: 'Объект из формы КП' },
+];
+
 const NODE_LABELS: Array<[RichNode['type'], string]> = [
   ['paragraph', 'Абзац'],
   ['heading', 'Заголовок'],
@@ -314,11 +330,12 @@ function onNodeKindChanged(node: RichNode): void {
 }
 
 export function renderPlaceholderPicker(placeholders: Placeholder[], target: HTMLTextAreaElement): void {
-  if (placeholders.length === 0) return;
+  const all = [...placeholders, ...SERVICE_FIELDS];
+  if (all.length === 0) return;
   const picker = target.parentElement?.createDiv({ cls: 'tn-offers-row tn-offers-chip-row' });
   if (!picker) return;
   picker.createSpan({ cls: 'tn-offers-muted', text: 'Вставить поле:' });
-  for (const p of placeholders) {
+  for (const p of all) {
     const chip = picker.createEl('button', { cls: 'tn-offers-chip tn-offers-chip-btn', text: p.label });
     chip.addEventListener('click', () => {
       const insert = `{{${p.id}}}`;
