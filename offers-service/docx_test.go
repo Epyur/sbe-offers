@@ -8,14 +8,49 @@ import (
 	"testing"
 )
 
-func TestRenderOfferDocxRejectsEmptyOffer(t *testing.T) {
-	_, err := renderOfferDocx(defaultForm("client"), Offer{Number: "001/2026"})
-	if err == nil {
-		t.Fatal("ожидали ошибку для предложения без позиций")
+// Предложение без позиций собирается (2026-11-01): менеджеры на первых шагах
+// берут из системы только описательную часть, а цены вписывают сами. Раньше
+// здесь была ошибка «нет позиций», и такой сценарий был невозможен.
+func TestRenderOfferDocxWithoutPositions(t *testing.T) {
+	data, err := renderOfferDocx(defaultForm("client"), Offer{Number: "001/2026"})
+	if err != nil {
+		t.Fatalf("документ без позиций не собрался: %v", err)
 	}
-	if !strings.Contains(err.Error(), "нет позиций") {
-		t.Fatalf("текст ошибки должен быть понятным, получили %q", err.Error())
+	text := docxDocumentText(t, data)
+	if !strings.Contains(text, "передаются отдельным документом") {
+		t.Fatalf("нет строки о том, где состав: %q", text[:min(len(text), 400)])
 	}
+	// Нулевой таблицы быть не должно: «Итого: 0,00» читается как бесплатно.
+	if strings.Contains(text, "Итого: 0,00") {
+		t.Fatalf("в документе нулевой итог: %q", text[:min(len(text), 400)])
+	}
+}
+
+// docxDocumentText — текст документа из собранного файла: проверка того, что
+// человек увидит, а не того, какую функцию вызвали.
+func docxDocumentText(t *testing.T, data []byte) string {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("собранный файл не zip: %v", err)
+	}
+	for _, f := range zr.File {
+		if f.Name != "word/document.xml" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("открыть document.xml: %v", err)
+		}
+		defer rc.Close()
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("прочитать document.xml: %v", err)
+		}
+		return string(body)
+	}
+	t.Fatal("в документе нет word/document.xml")
+	return ""
 }
 
 func TestRenderOfferDocxEscapesClientName(t *testing.T) {

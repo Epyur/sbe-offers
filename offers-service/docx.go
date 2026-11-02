@@ -467,10 +467,14 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 }
 
 // renderOfferDocxFull — то же плюс ссылки из карточек (2026-11-01).
+//
+// Пустой состав — НЕ ошибка (2026-11-01). Менеджеры на первых шагах берут из
+// системы только описательную часть: объект, систему, преимущества, условия, а
+// цены вписывают сами. Раньше документ в этом случае не собирался вовсе, и
+// «Собрать КП» без позиций упиралось в отказ. Теперь печатается всё, кроме
+// таблицы состава, а вместо неё — честная строка о том, что состав передаётся
+// отдельно. Врать про «итого 0,00» нельзя: это выглядит как бесплатно.
 func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images ImageSource, refs []skills.CardRef) ([]byte, error) {
-	if len(offer.Items) == 0 {
-		return nil, fmt.Errorf("в предложении нет позиций")
-	}
 
 	// Все ссылки предложения: из карточек систем, если их не передали.
 	if len(refs) == 0 {
@@ -536,19 +540,26 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 	renderCardSectionsWithMedia(&sb, offer, cards, images, media)
 
 	sb.WriteString(headingXML("Состав предложения", 2))
-	rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
-	for i, item := range offer.Items {
-		rows = append(rows, []string{
-			strconv.Itoa(i + 1),
-			item.Name,
-			item.Unit,
-			strconv.FormatFloat(item.Qty, 'f', -1, 64),
-			formatMoney(item.Price),
-			formatMoney(item.Sum),
-		})
+	if len(offer.Items) == 0 {
+		// Состав передаётся отдельно — так и говорим, без нулевой таблицы и
+		// без «итого 0,00»: ноль в счёте читается как «бесплатно».
+		sb.WriteString(paragraphXML(
+			"Состав и стоимость материалов передаются отдельным документом.", ""))
+	} else {
+		rows := [][]string{{"№", "Наименование", "Ед.", "Кол-во", "Цена", "Сумма"}}
+		for i, item := range offer.Items {
+			rows = append(rows, []string{
+				strconv.Itoa(i + 1),
+				item.Name,
+				item.Unit,
+				strconv.FormatFloat(item.Qty, 'f', -1, 64),
+				formatMoney(item.Price),
+				formatMoney(item.Sum),
+			})
+		}
+		sb.WriteString(tableXML(rows))
+		sb.WriteString(paragraphXML("Итого: "+formatMoney(offer.Total)+" руб.", "right"))
 	}
-	sb.WriteString(tableXML(rows))
-	sb.WriteString(paragraphXML("Итого: "+formatMoney(offer.Total)+" руб.", "right"))
 
 	manager := offer.OwnerEmail
 	sb.WriteString(paragraphXML("", ""))

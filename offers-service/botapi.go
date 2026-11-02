@@ -263,9 +263,14 @@ func (s *Server) handleBotPatchOffer(w http.ResponseWriter, r *http.Request) {
 	if req.FormValues != nil {
 		offer.FormValues = req.FormValues
 	}
-	if msg := validateOffer(offer); msg != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
-		return
+	// Пустой состав на ботовом пути законен (2026-11-01), как и при создании:
+	// менеджеру нужна описательная часть, цены он впишет сам. Проверяются
+	// только сами строки, если они есть.
+	if len(offer.Items) > 0 {
+		if msg := validateOffer(offer); msg != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
+			return
+		}
 	}
 	offer.Total = recalcOfferTotal(offer.Items)
 
