@@ -116,6 +116,7 @@ function render(
 function renderCard(view: OffersView, container: HTMLElement, card: SystemWithComposition): void {
   const problems = card.problems ?? [];
   const links = card.compositionLinks ?? [];
+  const layers = links.filter((l) => l.layer).length;
   const ok = problems.length === 0 && links.length > 0;
 
   const box = container.createDiv({ cls: 'tn-offers-card tn-offers-system-card' });
@@ -123,9 +124,12 @@ function renderCard(view: OffersView, container: HTMLElement, card: SystemWithCo
   const titleWrap = head.createDiv();
   titleWrap.createDiv({ cls: 'tn-offers-card-title', text: card.title || '(без названия)' });
   titleWrap.createDiv({ cls: 'tn-offers-muted', text: card.sku ? `Код системы: ${card.sku}` : 'Кода системы нет' });
+  // «Есть ошибки в составе» на всех системах подряд — ложная тревога
+  // (2026-11-02): у живых карточек в составе есть слои и работы, материала у
+  // них нет по смыслу. Ошибка — только то, что можно исправить.
   const state = head.createSpan({
     cls: ok ? 'tn-offers-ok' : 'tn-offers-warn',
-    text: ok ? 'состав распознан' : 'есть ошибки в составе',
+    text: ok ? 'состав распознан' : 'есть замечания к составу',
   });
   void state;
 
@@ -134,6 +138,14 @@ function renderCard(view: OffersView, container: HTMLElement, card: SystemWithCo
     for (const p of problems) {
       list.createEl('li', { text: p });
     }
+  }
+  if (layers > 0) {
+    box.createDiv({
+      cls: 'tn-offers-muted',
+      text:
+        `Слои без материала: ${layers}. Это работы и слои («Подготовка основания», ` +
+        '«Уплотнённый грунт») — материала у них нет по смыслу, в позиции они не попадают.',
+    });
   }
 
   if (links.length > 0) {
@@ -163,11 +175,15 @@ function renderCard(view: OffersView, container: HTMLElement, card: SystemWithCo
   }
 }
 
-/** Ячейка «материал»: найден — название, нет — честная пометка причины. */
+/** Ячейка «материал»: найден — название, слой — так и называется, нет — причина. */
 function materialCell(row: HTMLElement, item: CompositionItem): void {
   const cell = row.createEl('td');
   if (item.found) {
     cell.createSpan({ text: item.name || '' });
+    return;
+  }
+  if (item.layer) {
+    cell.createSpan({ cls: 'tn-offers-muted', text: 'слой / работа' });
     return;
   }
   if (!item.sku) {
