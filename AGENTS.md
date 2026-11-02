@@ -793,6 +793,44 @@ row shape described); stand **226/226**.
   system is still selectable and its materials still compose; the wording will
   be revisited with the repeatable-block work (P2).
 
+## STATE 2026-11-02 (0.4.3b committed, not deployed)
+
+Working tree clean on `backend`, HEAD `3abd91f` (pushed). Three commits:
+`1e4730e` (document head from the form block + service fields), `367204c`
+(EKN in positions, in the document table and in sheet matching), `3abd91f`
+(version 0.4.3, CUP news, docs, bundle-string checks). The suffix `b` is
+implied while `main` stays at 0.4.2.
+
+**Live service, registry and self-hosting are still 0.4.2** - the deploy and
+self-host is a separate command; before it, refresh HANDOFF.md and this block
+with the new hashes.
+
+### What is left from the user report of 2026-11-02
+
+The report had four items; P0 (document head) and P1 (EKN) are done.
+
+1. **"Добавить систему" does not attach (first half of item 1).** NOT
+   reproducible on the stand: `POST /offers/{id}/system` takes the code the
+   list returns and appends the composition; cache and live KB both return
+   the same 376 systems. **Wait for the exact error text from the user**
+   before touching it. Hypotheses once it arrives: (a) systems with an empty
+   `sku` - the option value is an empty string and the button exits silently
+   at `if (!sku)` in `offers-list.ts`; (b) `offerForEditor` allows only the
+   owner or an admin, so an `editor` editing someone else's offer gets 403.
+2. **"ошибки в составе" (second half of item 1).** Does NOT block the system
+   - measured on all 373 live cards: 1273 composition lines without a link,
+   all of them real layers (concrete, gravel, membrane) or general works.
+   Reword in `resolveComposition` (`systemcards.go`) and
+   `systems-editor.ts`: "слои без материала", no red badge.
+3. **DOCX layout template upload (item 2).** Not started. Load a `.docx`
+   master into the form editor with placeholders (`{{object_name}}`,
+   `{{manager}}`) and content markers (`{{#blocks}}`, `{{#positions}}`,
+   `{{#per-system}}`); the service fills the master and keeps the brand
+   styles. Open decision: own blank vs the corporate `standard.docx`.
+4. **Repeatable form block "per system" (item 2).** Not started. A new
+   `repeat` node with `source: "systems"` and child nodes: printed once per
+   system of the offer (`cardsForOffer`).
+
 ## STATE 2026-11-02 (release 0.4.2)
 
 | | value |
