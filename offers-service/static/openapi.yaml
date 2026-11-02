@@ -1631,6 +1631,9 @@ components:
             properties:
               row:
                 type: object
+                description: |
+                  Разобранная строка файла: line, name, ekn, unit, qty, price,
+                  sum и признаки «колонка была» (hasQty/hasPrice/hasSum).
               materialId:
                 type: integer
                 format: int64
@@ -1873,6 +1876,11 @@ components:
           type: integer
           format: int64
           nullable: true
+        ekn:
+          type: string
+          description: |
+            Номер ЕКН на момент добавления позиции (2026-11-02). Печатается
+            колонкой в таблице состава документа; у позиции без номера — пусто.
         name:
           type: string
         unit:

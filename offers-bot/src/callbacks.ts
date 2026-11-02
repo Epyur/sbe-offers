@@ -236,7 +236,14 @@ export async function finishDraft(ctx: CallbackCtx): Promise<void> {
       ...draft,
       offerId: saved.id,
       number: saved.number,
-      items: saved.items.map((i) => ({ catalogId: i.catalogId, name: i.name, unit: i.unit, qty: i.qty, price: i.price })),
+      items: saved.items.map((i) => ({
+        catalogId: i.catalogId,
+        ekn: i.ekn,
+        name: i.name,
+        unit: i.unit,
+        qty: i.qty,
+        price: i.price,
+      })),
       step: 'done' as const,
     };
     apply(ctx, { ...ctx.session, draft: done });

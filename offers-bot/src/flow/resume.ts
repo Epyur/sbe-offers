@@ -17,7 +17,7 @@ export interface ResumedOffer {
   id: number;
   number: string;
   client?: { name?: string; contact?: string };
-  items?: Array<{ catalogId?: number; name: string; unit: string; qty: number; price: number }>;
+  items?: Array<{ catalogId?: number; ekn?: string; name: string; unit: string; qty: number; price: number }>;
   formValues?: Record<string, string>;
 }
 

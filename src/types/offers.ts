@@ -82,6 +82,11 @@ export interface CatalogItem {
 /** Позиция КП — снимок на момент добавления. */
 export interface OfferItem {
   catalogId?: number;
+  /**
+   * Номер ЕКН на момент добавления (2026-11-02). Печатается колонкой в
+   * таблице состава: по нему менеджер и заказчик сверяют позиции.
+   */
+  ekn?: string;
   name: string;
   unit: string;
   qty: number;
@@ -314,6 +319,7 @@ export interface MatchResult {
   materialId: number;
   sku: string;
   name: string;
+  /** Чем строка найдена: `ekn` — по номеру, `name` — по названию (2026-11-02). */
   method: MatchMethod;
   reason?: string;
   /** Материал предложен моделью — применять только после подтверждения. */

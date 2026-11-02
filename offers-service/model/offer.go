@@ -7,12 +7,17 @@ package model
 // момент добавления карточки, поэтому последующая правка каталога на старые
 // предложения не влияет.
 type OfferItem struct {
-	CatalogID *int64  `json:"catalogId,omitempty"`
-	Name      string  `json:"name"`
-	Unit      string  `json:"unit"`
-	Qty       float64 `json:"qty"`
-	Price     float64 `json:"price"`
-	Sum       float64 `json:"sum"`
+	CatalogID *int64 `json:"catalogId,omitempty"`
+	// EKN — номер ЕКН материала на момент добавления (2026-11-02). Печатается
+	// в таблице состава: менеджер и заказчик сверяют позиции именно по нему,
+	// а у материала их может быть несколько — в позицию идёт тот, что был в
+	// таблице менеджера, иначе первый по справочнику.
+	EKN   string  `json:"ekn,omitempty"`
+	Name  string  `json:"name"`
+	Unit  string  `json:"unit"`
+	Qty   float64 `json:"qty"`
+	Price float64 `json:"price"`
+	Sum   float64 `json:"sum"`
 }
 
 // OfferClient — данные клиента в предложении.

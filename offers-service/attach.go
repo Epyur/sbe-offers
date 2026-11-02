@@ -103,14 +103,23 @@ type specFromFile struct {
 
 // specRowView — строка спецификации для показа менеджеру.
 type specRowView struct {
-	Name       string  `json:"name"`
-	Unit       string  `json:"unit"`
-	Qty        float64 `json:"qty"`
-	Price      float64 `json:"price"`
-	Sum        float64 `json:"sum"`
-	CatalogID  *int64  `json:"catalogId,omitempty"`
-	HasCatalog bool    `json:"hasCatalog"`
-	PriceDiff  bool    `json:"priceDiff"`
+	Name string `json:"name"`
+	// EKN — номер из колонки «ЕКН» файла (2026-11-02). В позицию идёт он:
+	// в старых КП присылают именно эту колонку, и сводить её с материалами
+	// по названию без номера — то, на что жаловались.
+	EKN       string  `json:"ekn,omitempty"`
+	Unit      string  `json:"unit"`
+	Qty       float64 `json:"qty"`
+	Price     float64 `json:"price"`
+	Sum       float64 `json:"sum"`
+	CatalogID *int64  `json:"catalogId,omitempty"`
+	// MaterialEKN — номер ЕКН найденного материала (по справочнику). Так
+	// менеджер видит, с чем именно сверена строка.
+	MaterialEKN string `json:"materialEkn,omitempty"`
+	// MatchedBy — чем строка нашлась: «ekn» или «name». Пусто — не нашлась.
+	MatchedBy  string `json:"matchedBy,omitempty"`
+	HasCatalog bool   `json:"hasCatalog"`
+	PriceDiff  bool   `json:"priceDiff"`
 }
 
 // handleBotAttach принимает файл и разбирает его, ничего не записывая в КП.
@@ -310,9 +319,12 @@ func briefFromMarkdown(parsed skills.MarkdownAttachment) *briefFromFile {
 
 // specFromFile сверяет строки таблицы с каталогом.
 //
-// Сверка по наименованию, а не по артикулу: в файлах от заказчиков артикула чаще
-// всего нет, а наименование есть. Расхождение цен НЕ исправляется само — оно
-// показывается, и решает менеджер.
+// Сверка — СНАЧАЛА по ЕКН, потом по названию (2026-11-02). Раньше был только
+// наименование, и колонка ЕКН читалась разбором и выбрасывалась: в файлах
+// менеджера номер стоит рядом с материалом, и не узнать по нему материал —
+// ровно то, на что жаловались («ЕКН не привязались к продуктам»).
+//
+// Расхождение цен НЕ исправляется само — оно показывается, и решает менеджер.
 func (s *Server) specFromFile(ctx context.Context, parsed skills.XlsxAttachment) *specFromFile {
 	out := &specFromFile{Warnings: parsed.Warnings}
 	items, err := s.listCatalogItems(ctx, false)
@@ -325,12 +337,15 @@ func (s *Server) specFromFile(ctx context.Context, parsed skills.XlsxAttachment)
 	for _, item := range items {
 		byName[strings.ToLower(strings.TrimSpace(item.Name))] = item
 	}
+	byEkn := s.materialIndexByEkn(ctx)
 	for _, row := range parsed.Rows {
-		view := specRowView{Name: row.Name, Unit: row.Unit, Qty: row.Qty, Price: row.Price, Sum: row.Sum}
-		if item, ok := byName[strings.ToLower(strings.TrimSpace(row.Name))]; ok {
+		view := specRowView{Name: row.Name, EKN: row.EKN, Unit: row.Unit, Qty: row.Qty, Price: row.Price, Sum: row.Sum}
+		if item, ok := matchSheetRow(row, byName, byEkn); ok {
 			view.HasCatalog = true
 			catalogID := item.ID
 			view.CatalogID = &catalogID
+			view.MaterialEKN = item.EKN
+			view.MatchedBy = item.matchedBy()
 			out.Matched++
 			if item.BasePrice != row.Price && row.Price > 0 {
 				view.PriceDiff = true
@@ -342,6 +357,66 @@ func (s *Server) specFromFile(ctx context.Context, parsed skills.XlsxAttachment)
 		out.Rows = append(out.Rows, view)
 	}
 	out.Summary = specSummary(len(out.Rows), out.Matched, out.New, out.PriceDiffs)
+	return out
+}
+
+// matchedCatalogRow — то, что нашлось в каталоге по строке таблицы.
+type matchedCatalogRow struct {
+	// ID — материал справочника, если нашли через справочник материалов.
+	ID int64
+	// EKN — номер ЕКН материала: из справочника он главнее номера из файла
+	// (файл мог написать номер по-своему), иначе номер из файла.
+	EKN        string
+	BasePrice  float64
+	MatchByEkn bool
+}
+
+// matchSheetRow ищет строку таблицы в каталоге: по ЕКН, затем по названию.
+//
+// Возвращает материал, его номер и признак «по ЕКН»: второй признак нужен
+// только сводке, но без него человек не поймёт, чему верить.
+// matchedBy — чем строка нашлась, для показа человеку.
+func (m matchedCatalogRow) matchedBy() string {
+	if m.MatchByEkn {
+		return "ekn"
+	}
+	return "name"
+}
+
+func matchSheetRow(row skills.SpecRow, byName map[string]CatalogItem, byEkn map[string]matchedCatalogRow) (matchedCatalogRow, bool) {
+	if hit, ok := byEkn[normalizeEkn(row.EKN)]; ok && hit.ID != 0 {
+		hit.MatchByEkn = true
+		return hit, true
+	}
+	if item, ok := byName[strings.ToLower(strings.TrimSpace(row.Name))]; ok {
+		return matchedCatalogRow{ID: item.ID, EKN: strings.TrimSpace(row.EKN), BasePrice: item.BasePrice}, true
+	}
+	return matchedCatalogRow{}, false
+}
+
+// materialIndexByEkn — материалы справочника по номеру ЕКН.
+//
+// Ошибка справочника не роняет сверку: без индекса остаётся путь по названию,
+// и файл всё равно разбирается — молча терять разбор хуже, чем потерять номер.
+func (s *Server) materialIndexByEkn(ctx context.Context) map[string]matchedCatalogRow {
+	materials, err := s.listMaterialsOnce(ctx, false)
+	if err != nil {
+		return map[string]matchedCatalogRow{}
+	}
+	out := make(map[string]matchedCatalogRow)
+	for _, m := range materials {
+		for _, e := range m.Ekn {
+			key := normalizeEkn(e.Ekn)
+			if key == "" || out[key].ID != 0 {
+				continue
+			}
+			low := 0.0
+			if m.PriceMin != nil {
+				low = *m.PriceMin
+			}
+			out[key] = matchedCatalogRow{ID: m.ID, EKN: strings.TrimSpace(e.Ekn), BasePrice: low}
+		}
+	}
 	return out
 }
 
@@ -654,10 +729,13 @@ func (s *Server) applySpecFromFile(ctx context.Context, offer Offer, spec *specF
 		}
 		item := OfferItem{
 			CatalogID: row.CatalogID,
-			Name:      row.Name,
-			Unit:      row.Unit,
-			Qty:       row.Qty,
-			Price:     price,
+			// Номер — из материала справочника, если он нашёлся, иначе из
+			// строки файла: в файле от заказчика номера может не быть вовсе.
+			EKN:   rowEkn(row),
+			Name:  row.Name,
+			Unit:  row.Unit,
+			Qty:   row.Qty,
+			Price: price,
 		}
 		if item.Unit == "" {
 			item.Unit = "шт"
@@ -678,6 +756,14 @@ UPDATE offers_offer SET items = $2, total = $3, updated_at = now() WHERE id = $1
 		return Offer{}, err
 	}
 	return s.loadOffer(ctx, offer.ID)
+}
+
+// rowEkn — номер для позиции: из справочника, иначе из строки файла.
+func rowEkn(row specRowView) string {
+	if v := strings.TrimSpace(row.MaterialEKN); v != "" {
+		return v
+	}
+	return strings.TrimSpace(row.EKN)
 }
 
 // attachmentTitle — подпись файла в ответе боту (имя без пути).

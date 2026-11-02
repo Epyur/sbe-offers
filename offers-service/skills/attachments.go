@@ -385,7 +385,11 @@ type XlsxAttachment struct {
 
 // SpecRow — строка спецификации из файла.
 type SpecRow struct {
-	Name  string
+	Name string
+	// EKN — номер из колонки «ЕКН» (2026-11-02). Раньше колонка опознавалась
+	// только для того, чтобы НЕ принять её за наименование, и номер терялся:
+	// сопоставить строку с материалом можно было лишь по названию.
+	EKN   string
 	Unit  string
 	Qty   float64
 	Price float64
@@ -470,6 +474,15 @@ func classifyXlsxSheet(rows [][]string) XlsxAttachment {
 // люди присылают и так.
 func collectXlsxSpec(rows [][]string) XlsxAttachment {
 	cols, start := findSpecHeader(rows, 0)
+	if cols.ok() {
+		// В шапке нет подписи ЕКН, зато она есть строкой ниже («ЕКН», а под
+		// ней номера). Колонка терялась молча (2026-11-02) — находим её.
+		cols = cols.withEknFrom(rows, start)
+	}
+	if !cols.ok() {
+		// Шапки нет, но колонка ЕКН рядом с наименованием опознаётся и сама.
+		cols, start = findEknLayoutHeader(rows)
+	}
 	if !cols.ok() {
 		if spec, _, _ := buildXlsxSpec(noSpecColumns(), rows); spec.IsSpecification {
 			return spec
@@ -531,6 +544,7 @@ func buildXlsxSpec(cols specColumns, rows [][]string) (XlsxAttachment, []string,
 		}
 		item := SpecRow{
 			Name:  name,
+			EKN:   xlsxCellAt(row, cols.ekn),
 			Unit:  xlsxCellAt(row, cols.unit),
 			Qty:   parseAttachmentNumber(xlsxCellAt(row, cols.qty)),
 			Price: parseAttachmentNumber(xlsxCellAt(row, cols.price)),
@@ -568,17 +582,35 @@ func buildXlsxSpec(cols specColumns, rows [][]string) (XlsxAttachment, []string,
 
 // noSpecColumns — «колонок не нашли»: пустой набор для разбора без шапки.
 func noSpecColumns() specColumns {
-	return specColumns{name: -1, unit: -1, qty: -1, price: -1, sum: -1}
+	return specColumns{name: -1, unit: -1, qty: -1, price: -1, sum: -1, ekn: -1}
 }
 
 // specColumns — номера колонок спецификации (с нуля), -1 если колонки нет.
 type specColumns struct {
 	name, unit, qty, price, sum int
+	// ekn — колонка номера ЕКН, -1 если её нет.
+	ekn int
+	// eknOnly — колонка ЕКН опознана БЕЗ шапки наименования (живой файл
+	// менеджера: подпись «Наименование» есть, а строки под ней — номера
+	// колонок). Значит, наименование — следующая колонка.
+	eknOnly bool
 }
 
 // ok — по шапке можно собирать состав: есть наименование и количество.
+//
+// Кроме шапки, годится и разметка без подписей — наименование и ЕКН рядом
+// (2026-11-02, живой файл менеджера: «ЕКН | Наименование | Ед. | Кол-во |
+// Коэф. | Цена | Стоимость», а под ней строка «2 | 3 | 4 | 5 | 6 | 7» с
+// номерами колонок). Раньше такой лист считался «без колонок» и разбирался
+// позиционно, и колонка ЕКН уезжала в наименование: материал искался по
+// названию «66950 Гидроизоляционная…» и не находился никогда.
 func (c specColumns) ok() bool {
 	return c.name >= 0 && c.qty >= 0
+}
+
+// headerless — шапки нет, но лист всё равно таблица: наименование и ЕКН рядом.
+func (c specColumns) headerless() bool {
+	return (c.name >= 0 || c.eknOnly) && c.ekn >= 0 && c.qty < 0
 }
 
 // clashesWith — признак того, что строка является ШАПКОЙ, а не позицией:
@@ -597,7 +629,18 @@ func matchSpecColumns(header []string) specColumns {
 	cols := noSpecColumns()
 	for i, cell := range header {
 		label := normalizeAttachmentLabel(cell)
-		if label == "" || isEknColumnLabel(label) {
+		if label == "" {
+			continue
+		}
+		// ЕКН опознаётся первым и отдельно: номер — не наименование, но и
+		// терять его нельзя (2026-11-02).
+		if isEknColumnLabel(label) {
+			if cols.ekn < 0 {
+				cols.ekn = i
+				// Наименование в этой же строке так и не нашлось — колонка
+				// стоит одна, без подписи «Наименование» рядом.
+				cols.eknOnly = true
+			}
 			continue
 		}
 		switch {
@@ -611,6 +654,8 @@ func matchSpecColumns(header []string) specColumns {
 			cols.unit = i
 		case cols.name < 0 && isNameColumnLabel(label):
 			cols.name = i
+			// Подпись наименования нашлась — колонка ЕКН не одинока.
+			cols.eknOnly = false
 		}
 	}
 	return cols
@@ -693,6 +738,92 @@ func findSpecHeader(rows [][]string, from int) (specColumns, int) {
 }
 
 // flushXlsxRows превращает строки в текст: пустые ячейки пропускаются, чтобы
+// withEknFrom — та же шапка плюс колонка ЕКН, если она подписана отдельной
+// строкой под шапкой (живой файл: шапка «Наименование | Ед. | Кол-во | …», под
+// ней «ЕКН | Устройство гидроизоляции…»). Смотрим первые две строки данных.
+func (c specColumns) withEknFrom(rows [][]string, start int) specColumns {
+	if c.ekn >= 0 {
+		return c
+	}
+	// Подпись «ЕКН» может стоять в самой шапке или отдельной строкой под ней:
+	// «Наименование | Ед. | Кол-во | …», а ниже «ЕКН | Устройство …».
+	// Сравниваем ячейку целиком: иначе номера данных («66950») подошли бы под
+	// проверку «начинается с ЕКН» и колонка нашлась бы в данных.
+	// Строка с подписью «ЕКН» стоит ПОД шапкой, на месте первой строки данных:
+	// шапка на строке 33, подпись на 34, данные с 35 — поэтому смотрим и
+	// start+1, а пропущенные строки шапки её не сдвигают.
+	for _, i := range []int{start - 1, start, start + 1} {
+		if i < 0 || i >= len(rows) {
+			continue
+		}
+		for col, cell := range rows[i] {
+			if col == c.name || col == c.qty || col == c.unit || col == c.price || col == c.sum {
+				continue
+			}
+			if isEknNumber(cell) || strings.TrimSpace(cell) == "" {
+				continue
+			}
+			if isEknColumnLabel(normalizeAttachmentLabel(cell)) {
+				c.ekn = col
+				return c
+			}
+		}
+	}
+	return c
+}
+
+// findEknLayoutHeader — шапка без подписей: колонка «ЕКН» и наименование рядом.
+//
+// Возвращает набор колонок с пустым количеством (его значения читаются так же,
+// как в разобранной без шапки таблице) и строку, с которой начинаются данные.
+func findEknLayoutHeader(rows [][]string) (specColumns, int) {
+	for i, row := range rows {
+		cols := matchSpecColumns(row)
+		if !cols.headerless() {
+			continue
+		}
+		// Колонка ЕКН должна заполняться номерами, а не заголовком: у соседней
+		// с ней колонки наименований в строках ниже проставлен текст.
+		if !hasEknNumbers(rows[i+1:], cols.ekn) {
+			continue
+		}
+		name := cols.name
+		if name < 0 {
+			// «ЕКН» один токен: наименование — соседняя колонка справа.
+			name = cols.ekn + 1
+		}
+		return specColumns{name: name, ekn: cols.ekn, unit: -1, qty: -1, price: cols.price, sum: cols.sum}, i + 1
+	}
+	return noSpecColumns(), 0
+}
+
+// hasEknNumbers — есть ли в колонке хотя бы один номер (только цифры).
+func hasEknNumbers(rows [][]string, col int) bool {
+	for _, row := range rows {
+		if col < 0 || col >= len(row) {
+			continue
+		}
+		if isEknNumber(row[col]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isEknNumber — строка похожа на номер ЕКН: от трёх цифр, без букв.
+func isEknNumber(raw string) bool {
+	v := strings.TrimSpace(raw)
+	if len(v) < 3 || len(v) > 12 {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // не получить «|  |  |  |» вместо содержания.
 func flushXlsxRows(rows [][]string) []string {
 	out := make([]string, 0, len(rows))

@@ -34,6 +34,8 @@ export interface SystemAddResponse {
 
 export interface OfferItemPayload {
   catalogId?: number;
+  /** Номер ЕКН (2026-11-02): приходит от сервера и уходит назад в PATCH. */
+  ekn?: string;
   name: string;
   unit: string;
   qty: number;

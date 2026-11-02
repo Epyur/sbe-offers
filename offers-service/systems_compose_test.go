@@ -113,3 +113,23 @@ func TestFindSystemNormalizesSku(t *testing.T) {
 		t.Fatal("незнакомый код не должен ничего находить")
 	}
 }
+
+// Номер ЕКН из справочника доезжает до позиции (2026-11-02): без него в
+// таблице КП позицию нельзя сверить с прайсом заказчика.
+func TestItemForMaterialCarriesFirstEkn(t *testing.T) {
+	low := 100.0
+	m := Material{ID: 9, Name: "Мембрана", Unit: "м2", PriceMin: &low,
+		Ekn: []MaterialEkn{{Ekn: "  "}, {Ekn: "66950"}, {Ekn: "66951"}}}
+	item, _ := itemForMaterial(m)
+	if item.EKN != "66950" {
+		t.Fatalf("ЕКН позиции = %q, ожидали первый непустой номер 66950", item.EKN)
+	}
+}
+
+// Номеров нет вовсе — пустая строка, а не выдуманный код.
+func TestItemForMaterialWithoutEkn(t *testing.T) {
+	item, _ := itemForMaterial(Material{ID: 10, Name: "Песок", Unit: "м3"})
+	if item.EKN != "" {
+		t.Fatalf("у материала без ЕКН номер позиции = %q, ожидали пусто", item.EKN)
+	}
+}

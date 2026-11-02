@@ -207,4 +207,32 @@ func TestParseXlsxIgnoresEknColumn(t *testing.T) {
 	if got.Rows[0].Name != "Мембрана" {
 		t.Fatalf("наименование = %q, ожидали «Мембрана» (номер ЕКН не имя)", got.Rows[0].Name)
 	}
+	// И номер из колонки ЕКН не теряется: по нему строка сводится с материалом
+	// справочника (2026-11-02 — живая жалоба «ЕКН не привязались к продуктам»).
+	if got.Rows[0].EKN != "66950" {
+		t.Fatalf("номер ЕКН строки = %q, ожидали 66950", got.Rows[0].EKN)
+	}
+}
+
+// Живой файл менеджера: колонка ЕКН стоит первой в строке состава, и номер
+// обязан доехать до каждой позиции — а не только до первой.
+func TestParseLegacyOfferKeepsEkn(t *testing.T) {
+	got, err := ParseXlsxAttachment(loadLegacyOffer(t))
+	if err != nil {
+		t.Fatalf("разбор упал: %v", err)
+	}
+	withEkn := 0
+	for _, row := range got.Rows {
+		if strings.TrimSpace(row.EKN) != "" {
+			withEkn++
+		}
+	}
+	if withEkn == 0 {
+		t.Fatalf("ни у одной из %d строк нет ЕКН — колонка потеряна", len(got.Rows))
+	}
+	for _, row := range got.Rows {
+		if strings.Contains(row.Name, "Logicbase V-SL 2 мм") && row.EKN != "66950" {
+			t.Fatalf("у мембраны 2 мм ЕКН = %q, ожидали 66950", row.EKN)
+		}
+	}
 }

@@ -212,11 +212,15 @@ func (s *Server) handleSheetApply(w http.ResponseWriter, r *http.Request) {
 		catalogID := material.ID
 		items = append(items, OfferItem{
 			CatalogID: &catalogID,
-			Name:      material.Name,
-			Unit:      material.Unit,
-			Qty:       qty,
-			Price:     price,
-			Sum:       roundMoney(qty * price),
+			// Номер ЕКН — из ТОЙ ЖЕ строки, по которой взята цена: у материала
+			// их может быть несколько, и печатать надо тот, что видит менеджер
+			// в своей таблице. Пустой номер в файле — первый по справочнику.
+			EKN:   itemEkn(row.Ekn, material),
+			Name:  material.Name,
+			Unit:  material.Unit,
+			Qty:   qty,
+			Price: price,
+			Sum:   roundMoney(qty * price),
 		})
 		applied++
 
@@ -243,6 +247,14 @@ func (s *Server) handleSheetApply(w http.ResponseWriter, r *http.Request) {
 		"applied": applied,
 		"offer":   offer,
 	})
+}
+
+// itemEkn — номер ЕКН для позиции: из строки таблицы, иначе первый по справочнику.
+func itemEkn(fromRow string, m Material) string {
+	if v := strings.TrimSpace(fromRow); v != "" {
+		return v
+	}
+	return primaryEkn(m)
 }
 
 // rememberSheetPrice дописывает ЕКН и расширяет вилку цен материала.

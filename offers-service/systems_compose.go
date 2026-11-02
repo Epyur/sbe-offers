@@ -161,12 +161,26 @@ func itemForMaterial(m Material) (OfferItem, bool) {
 	}
 	return OfferItem{
 		CatalogID: &id,
+		EKN:       primaryEkn(m),
 		Name:      m.Name,
 		Unit:      m.Unit,
 		Qty:       1,
 		Price:     price,
 		Sum:       roundMoney(price),
 	}, hasPrice
+}
+
+// primaryEkn — номер для позиции КП: первый по справочнику.
+//
+// Пусто — тоже нормально: цены и позиции живут и без ЕКН, а выдуманный номер
+// в документе хуже пустой ячейки — его начнут сверять.
+func primaryEkn(m Material) string {
+	for _, e := range m.Ekn {
+		if v := strings.TrimSpace(e.Ekn); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // appendComposition дописывает позиции состава и возвращает число добавленных.

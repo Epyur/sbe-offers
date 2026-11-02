@@ -143,6 +143,16 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
     }
     items.forEach((item, index) => {
       const row = itemsEl.createDiv({ cls: 'tn-offers-row' });
+      // Код ЕКН — рядом с наименованием: его печатает таблица документа, и
+      // только здесь человек может его исправить или вписать (2026-11-02).
+      const ekn = row.createEl('input', {
+        cls: 'tn-offers-input tn-offers-mono tn-offers-ekn',
+        attr: { placeholder: 'ЕКН' },
+      });
+      ekn.value = item.ekn ?? '';
+      ekn.addEventListener('input', () => {
+        item.ekn = ekn.value.trim();
+      });
       const name = row.createEl('input', { cls: 'tn-offers-input tn-offers-grow' });
       name.value = item.name;
       name.addEventListener('input', () => {
