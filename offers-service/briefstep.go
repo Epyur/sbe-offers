@@ -116,7 +116,7 @@ func briefFailure(brief model.BriefPayload, err error) BriefStep {
 // текст, ```json, обрезка — всё переживаем.
 func parseBriefAnswer(raw string) (briefModelAnswer, error) {
 	var answer briefModelAnswer
-	value, _, err := extractJSON(raw)
+	value, _, err := model.ExtractJSON(raw)
 	if err != nil {
 		return answer, err
 	}

@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"encoding/json"
@@ -45,7 +45,7 @@ func jsonPreview(text string, max int) string {
 
 // extractJSON вытаскивает первый объект или массив из ответа модели.
 // Возвращает разобранное значение; при обрезке — частичное и флаг repaired.
-func extractJSON(text string) (value any, repaired bool, err error) {
+func ExtractJSON(text string) (value any, repaired bool, err error) {
 	cleaned := strings.TrimSpace(text)
 	if fence := fenceBlock(cleaned); fence != "" {
 		cleaned = strings.TrimSpace(fence)
@@ -80,14 +80,14 @@ func extractJSON(text string) (value any, repaired bool, err error) {
 				return v, true, nil
 			}
 		}
-		if v, ok := repairJSON(candidate); ok {
+		if v, ok := RepairJSON(candidate); ok {
 			return v, true, nil
 		}
 		return nil, false, fmt.Errorf("ответ модели не разобрался как JSON: %s", jsonPreview(cleaned, 300))
 	}
 
 	// Закрывающей скобки нет — ответ обрезан по лимиту токенов. Достраиваем.
-	if v, ok := repairJSON(cleaned[start:]); ok {
+	if v, ok := RepairJSON(cleaned[start:]); ok {
 		return v, true, nil
 	}
 	return nil, false, fmt.Errorf("ответ модели обрезан и не восстановлен: %s", jsonPreview(cleaned, 300))
@@ -194,7 +194,7 @@ func pairedEnd(s string, start int, open, closeCh byte) int {
 // Возвращает false, если из текста не выходит ничего разбираемого.
 //
 // Перенесено из llm-center.ts:repairJson.
-func repairJSON(text string) (any, bool) {
+func RepairJSON(text string) (any, bool) {
 	var stack []byte
 	inString := false
 	escaped := false
