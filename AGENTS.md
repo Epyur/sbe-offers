@@ -932,8 +932,8 @@ Short version is in [HANDOFF.md](HANDOFF.md).
 | | value |
 |---|---|
 | plugin | **0.4.5** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `5967a8d` - pushed |
-| `main` | `354d99a` - pushed; plugin part identical to `backend` |
+| `backend` | `e6304e3` - pushed |
+| `main` | `9e0fb13` - pushed; plugin part identical to `backend` |
 | **self-hosting** | **0.4.5, uploaded 2026-11-02 18:32Z**: `manifest 094ac35d…`, `main b7ae1ee3…`, `styles 13a62f18…`; all three verified over https (downloaded to a file and hashed) and match `/registry.json` (`selfHosted: true`, `uploadedAt 2026-11-02T18:31:56Z`) |
 | registry | `sbe-apstore-registry` `4b918f5`; server copy `www/registry.json` replaced (previous `registry.json.bak-20261102-0.4.4`, sha256 identical to the local file, `a3b82913…`) |
 | **live service / bot** | **0.4.5**, recreated 2026-11-02 18:37Z, health `ok`, bot poller started; backups `offers-service.bak-0.4.4-20261102`, `offers-bot.bak-0.4.4-20261102` |
