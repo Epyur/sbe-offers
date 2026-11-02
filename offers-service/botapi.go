@@ -105,6 +105,7 @@ func (s *Server) handleBotSystems(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cards {
 		items = append(items, map[string]any{
 			"sku":      c.SKU,
+			"noteId":   c.NoteID,
 			"title":    c.Title,
 			"problems": c.Problems,
 		})
@@ -775,6 +776,7 @@ func (s *Server) handleBotAddSystem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ChatID string `json:"chat_id"`
 		SKU    string `json:"sku"`
+		NoteID int64  `json:"noteId"`
 	}
 	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -786,7 +788,7 @@ func (s *Server) handleBotAddSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	// Правило состава одно с плагином — assembleSystem. Разница только во
 	// входе: секрет сервиса и chat_id вместо пользовательского JWT.
-	_, resp, err := s.assembleSystem(r.Context(), offer, req.SKU)
+	_, resp, err := s.assembleSystem(r.Context(), offer, SystemChoice{SKU: req.SKU, NoteID: req.NoteID})
 	if err != nil {
 		writeComposeError(w, err)
 		return

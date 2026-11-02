@@ -784,14 +784,70 @@ row shape described); stand **226/226**.
 
 ### Still open (not done in this batch)
 
-- "Добавить систему" by SKU still cannot be reproduced as a defect on the
-  stand: the endpoint accepts the code the list returns and appends the
-  composition. The live list is served by a different code path (KB live vs
-  cache). **Ask the user for the exact text of the error** before changing it.
 - The "ошибки в составе" label still marks any unlinked line, including real
   layers (concrete, gravel, membrane) that are deliberately not materials. The
   system is still selectable and its materials still compose; the wording will
   be revisited with the repeatable-block work (P2).
+
+## 2026-11-02 (part 3) - "Добавить систему" answered "Выберите систему"
+
+The user's report named the exact flow: open offer 003/2026, pick a system in
+the offer card, press "➕ Добавить" - the Notice says "Выберите систему" and
+nothing is added, although the brief shows the system was chosen.
+
+### Root cause (measured on the live database, not guessed)
+
+**Not one of the 375 live `commercial_propose` notes carries `system_sku`**
+(`select count(*) filter (where content_md ~ 'system_sku\s*:\s*\S')` on
+`mailers-kb-db-1` -> 0; the `systems` cache row has 375 cards and every `sku`
+is `""`). The plugin built `<option value={system.sku || ''}>`, so every option
+in the list had the same empty value and `if (!sku)` in `offers-list.ts` fired
+on any pick. The same hole sat on the bot (`SystemItem.sku` from
+`/bot/systems`) and on the server, where `FindSystem` could only match a code.
+
+This is why the defect never reproduced on the stand: the stub cards all had
+`system_sku` filled in. A fixture that cannot express the live data shape
+proves nothing about it.
+
+### What changed
+
+- Server: `SystemChoice{SKU, NoteID}` (`systems_compose.go`),
+  `SystemCard.Choice()` / `SystemChoice.Handle()` and `ParseSystemChoice`.
+  The handle is `sys-<noteId>` for a note and the code otherwise - the prefix
+  keeps a numeric code from being read as a note id. `FindSystem` matches the
+  code first, then the note. Both system endpoints (`/offers/{id}/system`,
+  `/bot/offers/{id}/system`) accept `sku` or `noteId`; `/bot/systems` returns
+  `noteId`. `FindSystemCard` goes through `ParseSystemChoice`, so one parsing
+  rule serves every caller.
+- Plugin: `<option value="sys-<noteId>">`; `offersService.addSystem(choice)`
+  parses the handle and sends `noteId` (the server contract is typed, not
+  positional).
+- Bot: `systemChoice(item)` - the code when present, the note otherwise.
+- Stand: `kb-stub` gained a card **without** a code (note 100). The systems
+  cache lives in the stand database, so after a stub edit run
+  `delete from offers_context where mode='systems'` and restart
+  `offers-local-kb-stub`, otherwise the old cache hides the change.
+
+### Verified
+
+`go test ./...` green, `gofmt -l` empty, `go vet` clean; bot `tsc --noEmit` and
+**89 tests** (3 new on `systemChoice`); plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing (two 0.4.3 news lines
+removed with the old text, three lines of this release added);
+`check_offers_openapi.mjs` **61 operations / 48 paths, schema matches**
+(`sku`/`noteId` documented on both endpoints); stand **231/231** (five new
+checks).
+
+## STATE 2026-11-02 (0.4.4b, in the working tree)
+
+Version **0.4.4** (`manifest.json` = `package.json`), `main` still 0.4.2, so the
+suffix `b` applies. **Not committed, not deployed, not self-hosted** - the
+working tree on `backend` holds the "Добавить систему" fix (see the entry
+above). Checks: `go test` green, bot 89 tests, plugin `tsc` EXIT=0 + build,
+bundle strings 0 missing, OpenAPI 61/48, stand **231/231**.
+
+The "Добавить систему" item of the user report is now closed: the cause was
+the missing `system_sku` on every live card, and the choice travels by note id.
 
 ## STATE 2026-11-02 (0.4.3b committed, not deployed)
 
@@ -809,14 +865,11 @@ with the new hashes.
 
 The report had four items; P0 (document head) and P1 (EKN) are done.
 
-1. **"Добавить систему" does not attach (first half of item 1).** NOT
-   reproducible on the stand: `POST /offers/{id}/system` takes the code the
-   list returns and appends the composition; cache and live KB both return
-   the same 376 systems. **Wait for the exact error text from the user**
-   before touching it. Hypotheses once it arrives: (a) systems with an empty
-   `sku` - the option value is an empty string and the button exits silently
-   at `if (!sku)` in `offers-list.ts`; (b) `offerForEditor` allows only the
-   owner or an admin, so an `editor` editing someone else's offer gets 403.
+1. **"Добавить систему" does not attach (first half of item 1).** ~~NOT
+   reproducible on the stand~~ - **FIXED in 0.4.4** (see "2026-11-02 (part
+   3)" above): the live cards carry no `system_sku`, the choice now travels by
+   note id. The second hypothesis (`editor` editing someone else's offer gets
+   403) was not the cause.
 2. **"ошибки в составе" (second half of item 1).** Does NOT block the system
    - measured on all 373 live cards: 1273 composition lines without a link,
    all of them real layers (concrete, gravel, membrane) or general works.

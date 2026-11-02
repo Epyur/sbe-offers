@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -38,17 +39,80 @@ type composeError struct {
 
 func (e composeError) Error() string { return e.text }
 
-// FindSystem — система по коду в списке из Базы знаний.
+// SystemChoice — выбор системы человеком: код из карточки или заметка Базы
+// знаний, по которой он её выбрал.
 //
-// Код сравнивается без учёта регистра и краевых пробелов: в карточку его пишут
-// руками, и `TN-roof-classic` с пробелом на конце — тот же код.
-func FindSystem(systems []SystemCard, sku string) (SystemCard, bool) {
-	want := strings.ToUpper(strings.TrimSpace(sku))
-	if want == "" {
+// Идентификатор заметки появился 2026-11-02 по живой жалобе: ни одна из 375
+// живых карточек `commercial_propose` не несёт `system_sku`, поэтому список в
+// карточке КП состоял из вариантов с пустым значением, и «Добавить систему»
+// отвечало «Выберите систему» на любой выбор. Заметка есть у каждой карточки
+// всегда — по ней выбор и передаётся.
+type SystemChoice struct {
+	SKU    string `json:"sku,omitempty"`
+	NoteID int64  `json:"noteId,omitempty"`
+}
+
+// Choice — то, чем карточку выбирает список: хэндл и код.
+//
+// Хэндл — заметка, а когда её нет — код. Значение пустым не бывает, иначе
+// список снова получил бы варианты, которые нельзя выбрать.
+func (c SystemCard) Choice() SystemChoice {
+	if c.NoteID > 0 {
+		return SystemChoice{NoteID: c.NoteID}
+	}
+	return SystemChoice{SKU: c.SKU}
+}
+
+// Handle — значение варианта списка: номер заметки или код.
+func (c SystemChoice) Handle() string {
+	if c.NoteID > 0 {
+		return systemChoiceNotePrefix + strconv.FormatInt(c.NoteID, 10)
+	}
+	return strings.TrimSpace(c.SKU)
+}
+
+// ParseSystemChoice разбирает значение варианта списка.
+//
+// `sys-<noteId>` — заметка, пусто — ничего не выбрано, остальное — код
+// системы. Префикс нужен, чтобы номер заметки никогда не спутался с кодом:
+// код свободный текст, и «12» в нём допустим.
+func ParseSystemChoice(handle string) SystemChoice {
+	value := strings.TrimSpace(handle)
+	if value == "" {
+		return SystemChoice{}
+	}
+	if rest, ok := strings.CutPrefix(value, systemChoiceNotePrefix); ok {
+		if id, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64); err == nil && id > 0 {
+			return SystemChoice{NoteID: id}
+		}
+		return SystemChoice{}
+	}
+	return SystemChoice{SKU: value}
+}
+
+const systemChoiceNotePrefix = "sys-"
+
+// FindSystem — система по выбору из списка.
+//
+// Код главнее заметки и сравнивается без учёта регистра и краевых пробелов: в
+// карточку его пишут руками, и `TN-roof-classic` с пробелом на конце — тот же
+// код. Заметка ищется, когда кода нет: в живых карточках его почти никогда нет,
+// и именно этот случай раньше был невыразим (2026-11-02).
+func FindSystem(systems []SystemCard, choice SystemChoice) (SystemCard, bool) {
+	want := strings.ToUpper(strings.TrimSpace(choice.SKU))
+	if want != "" {
+		for _, card := range systems {
+			if strings.ToUpper(strings.TrimSpace(card.SKU)) == want {
+				return card, true
+			}
+		}
+		return SystemCard{}, false
+	}
+	if choice.NoteID <= 0 {
 		return SystemCard{}, false
 	}
 	for _, card := range systems {
-		if strings.ToUpper(strings.TrimSpace(card.SKU)) == want {
+		if card.NoteID == choice.NoteID {
 			return card, true
 		}
 	}
@@ -63,7 +127,7 @@ func FindSystem(systems []SystemCard, sku string) (SystemCard, bool) {
 //
 // Возвращает обновлённое предложение и сводку. Если дописать нечего —
 // composeError со статусом 400, и предложение НЕ сохраняется.
-func (s *Server) assembleSystem(ctx context.Context, offer Offer, sku string) (Offer, ComposeSystemResponse, error) {
+func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemChoice) (Offer, ComposeSystemResponse, error) {
 	materials, err := s.listMaterials(ctx, false)
 	if err != nil {
 		return offer, ComposeSystemResponse{}, composeError{
@@ -76,7 +140,7 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, sku string) (O
 			status: http.StatusBadGateway, text: "База знаний недоступна: " + err.Error(),
 		}
 	}
-	card, found := FindSystem(systems, sku)
+	card, found := FindSystem(systems, choice)
 	if !found {
 		return offer, ComposeSystemResponse{}, composeError{
 			status: http.StatusNotFound, text: "система не найдена",
@@ -218,13 +282,14 @@ func (s *Server) handleAddSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		SKU string `json:"sku"`
+		SKU    string `json:"sku"`
+		NoteID int64  `json:"noteId"`
 	}
 	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	_, resp, err := s.assembleSystem(r.Context(), offer, req.SKU)
+	_, resp, err := s.assembleSystem(r.Context(), offer, SystemChoice{SKU: req.SKU, NoteID: req.NoteID})
 	if err != nil {
 		writeComposeError(w, err)
 		return

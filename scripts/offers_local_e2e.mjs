@@ -1130,6 +1130,36 @@ console.log('\n18. Таблица менеджера и системы в КП (
   });
   ok('неизвестная система → 404', unknownSystem.status === 404, `получили ${unknownSystem.status}`);
 
+  // Карточка БЕЗ кода (заметка 100 в заглушке) — таких на бою все 375. Выбор по
+// заметке обязан доходить до сервера и дописывать состав, а не рассыпаться на
+// «Выберите систему» в карточке КП и «система не найдена» на сервере.
+  const pickList = (await call('GET', '/systems', { token: ownerToken })).json?.systems ?? [];
+  const noteCard = pickList.find((s) => s.noteId > 0 && !(s.sku ?? '').trim()) ?? {};
+  ok('в списке есть карточка без кода с номером заметки', noteCard.noteId > 0,
+    JSON.stringify(pickList.map((s) => ({ noteId: s.noteId, sku: s.sku, title: s.title }))));
+  ok('у карточки без кода есть материал для добавления',
+    (noteCard.compositionLinks ?? []).some((c) => c.found), JSON.stringify(noteCard.compositionLinks));
+  // Выбор системы по заметке (2026-11-02, живая жалоба по КП 003).
+  //
+  // В живых карточках Базы знаний `system_sku` не заполнен ни у одной, поэтому
+  // список в карточке КП состоял из вариантов с пустым значением: выбрать было
+  // нечего, а «Добавить» отвечало «Выберите систему». Выбор теперь несёт
+  // заметку, поэтому проверяем, что сервер принимает `noteId` без кода.
+  const noteChosen = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { noteId: noteCard.noteId },
+  });
+  ok('система без кода добавляется по заметке → 200', noteChosen.status === 200,
+    `получили ${noteChosen.status} ${noteChosen.text?.slice(0, 200)}`);
+  ok('по заметке дописана хотя бы одна позиция', (noteChosen.json?.added ?? 0) >= 1,
+    JSON.stringify(noteChosen.json?.added));
+
+  const badNote = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken,
+    body: { noteId: 999999 },
+  });
+  ok('чужая заметка → 404', badNote.status === 404, `получили ${badNote.status}`);
+
   const noToken = await call('POST', `/offers/${offerId}/system`, { body: { sku: 'TN-ROOF-CLASSIC' } });
   ok('добавление системы без токена → 401', noToken.status === 401, `получили ${noToken.status}`);
 

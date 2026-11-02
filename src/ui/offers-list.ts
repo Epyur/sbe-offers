@@ -229,8 +229,11 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         }
         for (const system of res.systems) {
           const broken = (system.problems ?? []).length > 0;
+          // Значение — заметка, когда кода нет: у живых карточек
+          // `system_sku` не заполнен, и вариант с пустым значением выбрать
+          // нельзя (2026-11-02, КП 003: «Выберите систему» на любой выбор).
           systemsSelect.createEl('option', {
-            value: system.sku || '',
+            value: `sys-${system.noteId}`,
             text: `${system.title}${broken ? ' (есть ошибки в составе)' : ''}`,
           });
         }
@@ -244,14 +247,14 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
     });
 
     async function addSystemPicked(): Promise<void> {
-      const sku = systemsSelect.value;
-      if (!sku) {
+      const choice = systemsSelect.value;
+      if (!choice) {
         new Notice('Выберите систему');
         return;
       }
       addSystemBtn.setAttr('disabled', 'true');
       try {
-        const res = await view.plugin.offersService.addSystem(current.id, sku);
+        const res = await view.plugin.offersService.addSystem(current.id, choice);
         items.splice(0, items.length, ...res.offer.items.map((i) => ({ ...i })));
         redrawItems();
         const notes: string[] = [`Добавлено позиций: ${res.added}`];

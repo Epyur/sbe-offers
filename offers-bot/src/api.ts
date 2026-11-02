@@ -21,8 +21,21 @@ export interface CatalogItem {
 /** Система для выбора в боте: без цены, только код, название и состав. */
 export interface SystemItem {
   sku: string;
+  /** Заметка Базы знаний: у живых карточек кода нет, выбор идёт по ней. */
+  noteId?: number;
   title: string;
   problems?: string[];
+}
+
+/**
+ * Чем выбирается система: кодом или заметкой.
+ *
+ * Живые карточки Базы знаний кода не несут вовсе (2026-11-02), и выбор по
+ * одному `sku` для них был пустым — бот отвечал «система не найдена».
+ */
+export interface SystemChoice {
+  sku?: string;
+  noteId?: number;
 }
 
 /** Ответ «состав системы дописан». */
@@ -138,9 +151,9 @@ export async function systems(): Promise<{ systems: SystemItem[]; kbEnabled: boo
 export async function addSystem(
   offerId: number,
   chatId: string,
-  sku: string,
+  choice: SystemChoice,
 ): Promise<SystemAddResponse> {
-  return call('POST', `/bot/offers/${offerId}/system`, { chat_id: chatId, sku });
+  return call('POST', `/bot/offers/${offerId}/system`, { chat_id: chatId, ...choice });
 }
 
 export async function createOffer(payload: {

@@ -100,17 +100,97 @@ func TestFindSystemNormalizesSku(t *testing.T) {
 		{NoteID: 1, SKU: "TN-ROOF-CLASSIC", Title: "Кровля"},
 		{NoteID: 2, SKU: " TN-STILOBAT ", Title: "Стилобат"},
 	}
-	if got, ok := FindSystem(systems, " tn-roof-classic  "); !ok || got.NoteID != 1 {
+	if got, ok := FindSystem(systems, ParseSystemChoice(" tn-roof-classic  ")); !ok || got.NoteID != 1 {
 		t.Fatalf("код не найден без учёта регистра и пробелов: %+v %v", got, ok)
 	}
-	if got, ok := FindSystem(systems, "tn-stilobat"); !ok || got.NoteID != 2 {
+	if got, ok := FindSystem(systems, ParseSystemChoice("tn-stilobat")); !ok || got.NoteID != 2 {
 		t.Fatalf("код с пробелами в карточке не найден: %+v %v", got, ok)
 	}
-	if _, ok := FindSystem(systems, "   "); ok {
+	if _, ok := FindSystem(systems, ParseSystemChoice("   ")); ok {
 		t.Fatal("пустой код не должен ничего находить")
 	}
-	if _, ok := FindSystem(systems, "TN-OTHER"); ok {
+	if _, ok := FindSystem(systems, ParseSystemChoice("TN-OTHER")); ok {
 		t.Fatal("незнакомый код не должен ничего находить")
+	}
+}
+
+// Выбор системы из списка не теряется (2026-11-02, живая жалоба по КП 003).
+//
+// В живых карточках Базы знаний кода системы нет вовсе: ни одна из 375 заметок
+// с тегом commercial_propose не содержит `system_sku`. Плагин при этом
+// предлагал выбрать систему из списка, которого нет — единственный вариант
+// списка имел пустое значение, и «Добавить» отвечало «Выберите систему».
+// Поэтому выбор несёт идентификатор заметки, а поиск идёт сначала по коду,
+// затем по заметке.
+func TestFindSystemByNoteID(t *testing.T) {
+	systems := []SystemCard{
+		{NoteID: 11, Title: "Кровля"},
+		{NoteID: 12, SKU: "TN-STILOBAT", Title: "Стилобат"},
+	}
+	if got, ok := FindSystem(systems, SystemChoice{NoteID: 11}); !ok || got.NoteID != 11 {
+		t.Fatalf("система без кода не найдена по заметке: %+v %v", got, ok)
+	}
+	if got, ok := FindSystem(systems, SystemChoice{NoteID: 12}); !ok || got.SKU != "TN-STILOBAT" {
+		t.Fatalf("система с кодом не найдена по заметке: %+v %v", got, ok)
+	}
+	if _, ok := FindSystem(systems, SystemChoice{NoteID: 99}); ok {
+		t.Fatal("чужой номер заметки не должен ничего находить")
+	}
+}
+
+// Пустой выбор — отказ с понятным текстом, а не молчаливое «не найдено».
+func TestFindSystemRejectsEmptyChoice(t *testing.T) {
+	systems := []SystemCard{{NoteID: 11, Title: "Кровля"}}
+	for _, choice := range []SystemChoice{{}, {NoteID: -1}} {
+		if _, ok := FindSystem(systems, choice); ok {
+			t.Fatalf("пустой выбор %+v не должен ничего находить", choice)
+		}
+	}
+}
+
+// Код главнее номера заметки: система с кодом ищется и по коду, по которому
+// её печатает бот и подставляет старый плагин.
+func TestFindSystemPrefersSku(t *testing.T) {
+	systems := []SystemCard{{NoteID: 11, SKU: "TN-ROOF", Title: "Кровля"}}
+	if got, ok := FindSystem(systems, SystemChoice{SKU: " tn-roof ", NoteID: 99}); !ok || got.NoteID != 11 {
+		t.Fatalf("поиск по коду сломан: %+v %v", got, ok)
+	}
+}
+
+// Значение варианта списка никогда не пустое, и заметка не путается с кодом:
+// по нему плагин отправляет выбор назад, а сервис разбирает его.
+//
+// Ровно здесь и был живой дефект: у 375 карточек нет кода, вариант списка
+// получался пустым, и «Добавить» отвечало «Выберите систему».
+func TestSystemChoiceHandleRoundTrip(t *testing.T) {
+	cases := []struct {
+		card   SystemCard
+		handle string
+		parsed SystemChoice
+	}{
+		{SystemCard{NoteID: 42}, "sys-42", SystemChoice{NoteID: 42}},
+		{SystemCard{NoteID: 42, SKU: "TN-ROOF"}, "sys-42", SystemChoice{NoteID: 42}},
+		{SystemCard{SKU: "TN-ROOF"}, "TN-ROOF", SystemChoice{SKU: "TN-ROOF"}},
+		// Код, похожий на число, остаётся кодом: префикс его отличает.
+		{SystemCard{SKU: "12"}, "12", SystemChoice{SKU: "12"}},
+	}
+	for _, tc := range cases {
+		handle := tc.card.Choice().Handle()
+		if handle != tc.handle {
+			t.Fatalf("значение варианта %+v = %q, ожидали %q", tc.card, handle, tc.handle)
+		}
+		if handle == "" {
+			t.Fatalf("у карточки %+v пустое значение варианта — выбрать её нельзя", tc.card)
+		}
+		if got := ParseSystemChoice(handle); got != tc.parsed {
+			t.Fatalf("разбор %q = %+v, ожидали %+v", handle, got, tc.parsed)
+		}
+	}
+	// Мусор в значении варианта — пустой выбор, а не поиск по коду "sys-x".
+	for _, bad := range []string{"", "   ", "sys-", "sys-abc", "sys-0", "sys--3"} {
+		if got := ParseSystemChoice(bad); got != (SystemChoice{}) {
+			t.Fatalf("разбор мусора %q = %+v, ожидали пустой выбор", bad, got)
+		}
 	}
 }
 

@@ -447,7 +447,7 @@ func linkCatalogID(sku string, catalog []CatalogItem) int64 {
 // состава в КП). Тонкая обёртка: правило сравнения кодов живёт в одном месте,
 // иначе поиск в документе и поиск в редакторе разошлись бы в мелочах.
 func FindSystemCard(cards []SystemCard, sku string) (SystemCard, bool) {
-	return FindSystem(cards, sku)
+	return FindSystem(cards, ParseSystemChoice(sku))
 }
 
 // --- Кеш систем в offers_context ---------------------------------------

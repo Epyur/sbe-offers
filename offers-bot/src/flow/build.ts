@@ -21,6 +21,8 @@ export interface CatalogCard {
 /** Система в списке для выбора: код, название и проблемы состава. */
 export interface SystemOption {
   sku: string;
+  /** Заметка Базы знаний: у живых карточек кода нет вовсе (2026-11-02). */
+  noteId?: number;
   title: string;
   /** Проблемы состава; пусто, если сервер их не прислал. */
   problems?: string[];

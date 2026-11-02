@@ -362,9 +362,22 @@ export class OffersService {
     });
   }
 
-  /** Дописать состав системы в предложение. */
-  async addSystem(offerId: number, sku: string): Promise<ComposeSystemResponse> {
-    return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, { sku });
+  /**
+   * Дописать состав системы в предложение.
+   *
+   * `choice` — значение варианта списка систем: `sys-<noteId>` или код. У
+   * живых карточек кода нет вовсе, поэтому передавать один только `sku`
+   * нельзя: сервер получал пустой выбор и отвечал «система не найдена», а
+   * карточка КП — «Выберите систему» (2026-11-02, КП 003).
+   */
+  async addSystem(offerId: number, choice: string): Promise<ComposeSystemResponse> {
+    const note = /^sys-(\d+)$/.exec(choice.trim());
+    if (note) {
+      return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, {
+        noteId: Number(note[1]),
+      });
+    }
+    return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, { sku: choice });
   }
 
   // --- Системы (2026-10-31) ---------------------------------------------

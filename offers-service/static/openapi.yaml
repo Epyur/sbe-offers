@@ -286,11 +286,21 @@ paths:
           application/json:
             schema:
               type: object
-              required: [sku]
+              description: |
+                Выбор системы — `sku` или `noteId`, ровно одно из двух.
+                Код есть не у каждой карточки: у живых карточек `system_sku` не
+                заполнен, поэтому вызывающий передаёт заметку. Код, если задан,
+                главнее заметки.
               properties:
                 sku:
                   type: string
                   description: Код системы из карточки Базы знаний.
+                noteId:
+                  type: integer
+                  format: int64
+                  description: |
+                    Заметка Базы знаний, по которой выбрана система. Так
+                    выбирается карточка без кода (2026-11-02).
       responses:
         '200':
           description: Состав дописан
@@ -1056,12 +1066,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [chat_id, sku]
+              required: [chat_id]
+              description: |
+                Выбор системы — `sku` или `noteId`, ровно одно из двух (тот же
+                выбор, что у ручки плагина): у живых карточек кода нет.
               properties:
                 chat_id:
                   type: string
                 sku:
                   type: string
+                noteId:
+                  type: integer
+                  format: int64
+                  description: Заметка Базы знаний, по которой выбрана система.
       responses:
         '200':
           description: Состав дописан

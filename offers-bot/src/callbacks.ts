@@ -365,7 +365,7 @@ async function handleSystemCommand(ctx: CallbackCtx, query: string): Promise<voi
     return;
   }
   if (found.length === 1) {
-    await addSystemBySku(ctx, found[0]);
+    await addPickedSystem(ctx, found[0]);
     return;
   }
   // Показанный список сохраняем рядом с контекстом: кнопка несёт индекс, и
@@ -401,22 +401,36 @@ export async function onSystemPick(ctx: CallbackCtx, index: number): Promise<voi
     await ctx.deps.send(ctx.chatId, 'Список устарел — пришлите название системы ещё раз.');
     return;
   }
-  await addSystemBySku(ctx, system);
+  await addPickedSystem(ctx, system);
 }
 
 /** Дописать состав и показать, что вошло, а что осталось без цены. */
-async function addSystemBySku(ctx: CallbackCtx, system: api.SystemItem): Promise<void> {
+async function addPickedSystem(ctx: CallbackCtx, system: api.SystemItem): Promise<void> {
   const draft = ctx.session.draft;
   if (!draft || !draft.offerId) {
     await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
     return;
   }
   try {
-    const res = await api.addSystem(draft.offerId, ctx.chatId, system.sku);
+    const res = await api.addSystem(draft.offerId, ctx.chatId, systemChoice(system));
     await ctx.deps.send(ctx.chatId, systemAddedMessage(res), MAIN_KEYBOARD);
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось добавить систему: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Чем бот называет выбранную систему.
+ *
+ * Код, если он есть: он есть у систем, заведённых по стандарту. У живых
+ * карточек кода нет, и тогда выбор несёт заметку — иначе сервер получает
+ * пустую строку и отвечает «система не найдена» (2026-11-02).
+ */
+export function systemChoice(system: api.SystemItem): api.SystemChoice {
+  const sku = system.sku.trim();
+  if (sku) return { sku };
+  if (system.noteId && system.noteId > 0) return { noteId: system.noteId };
+  return { sku };
 }
 
 // --- Кнопки ------------------------------------------------------------
