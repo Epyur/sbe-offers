@@ -80,6 +80,29 @@ func TestAppendCompositionKeepsUnlinkedLines(t *testing.T) {
 	}
 }
 
+// Слой (2026-11-02) — не несвязанная строка: «Подготовка основания» называет
+// работу, материала у неё нет, и человеку об этом сообщать нечем. До правки
+// такая строка попадала в «не удалось дописать», а карточка КП показывала
+// «есть ошибки в составе» на всех системах сразу.
+func TestAppendCompositionSkipsLayerProblem(t *testing.T) {
+	low := 900.0
+	materials := map[int64]Material{1: {ID: 1, Name: "Мембрана", Unit: "м2", PriceMin: &low}}
+	links := []CompositionItem{
+		{Raw: "Мембрана", MaterialID: 1, Found: true},
+		{Raw: "Подготовка основания", Layer: true},
+		{Raw: "Праймер битумный"},
+	}
+	resp := ComposeSystemResponse{Problems: []string{}}
+	items, added := appendComposition(nil, links, materials, &resp)
+
+	if added != 1 || len(items) != 1 {
+		t.Fatalf("позиция должна быть одна: added=%d items=%#v", added, items)
+	}
+	if len(resp.Problems) != 1 || resp.Problems[0] != "Праймер битумный" {
+		t.Fatalf("в проблемах должен быть только забытый материал: %#v", resp.Problems)
+	}
+}
+
 // Дописывание не стирает уже собранный состав: позиции прибавляются в конец.
 func TestAppendCompositionKeepsExistingItems(t *testing.T) {
 	existing := []OfferItem{{Name: "Старая позиция", Qty: 1, Price: 10, Sum: 10}}

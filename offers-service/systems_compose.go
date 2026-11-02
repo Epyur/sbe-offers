@@ -27,7 +27,9 @@ type ComposeSystemResponse struct {
 	// MissingPrice — материалы, у которых цены ещё не видели: их позиции
 	// попадут в КП с нулём, и менеджер должен об этом знать.
 	MissingPrice []string `json:"missingPrice,omitempty"`
-	// Problems — строки состава, которые дописать не удалось.
+	// Problems — строки состава, которые дописать не удалось. Слои и работы
+	// («Подготовка основания») сюда не попадают: материала у них нет и не
+	// будет, это нормальный состав (2026-11-02).
 	Problems []string `json:"problems,omitempty"`
 }
 
@@ -251,7 +253,8 @@ func primaryEkn(m Material) string {
 //
 // Несвязанные строки не теряются: они уходят в Problems, потому что человек,
 // добавивший систему, должен увидеть, чего в ней не хватает, а не считать её
-// полной. Материалы без вилки цен называются отдельно.
+// полной. Слой (Layer) называется отдельно от замечания — «материала нет, и не
+// нужно», это не недоделка. Материалы без вилки цен называются отдельно.
 func appendComposition(
 	items []OfferItem,
 	links []CompositionItem,
@@ -262,7 +265,9 @@ func appendComposition(
 	for _, link := range links {
 		material, ok := byID[link.MaterialID]
 		if !link.Found || !ok {
-			resp.Problems = append(resp.Problems, link.Raw)
+			if !link.Layer {
+				resp.Problems = append(resp.Problems, link.Raw)
+			}
 			continue
 		}
 		item, hasPrice := itemForMaterial(material)

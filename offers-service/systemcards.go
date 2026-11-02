@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"mailers/offers/skills"
@@ -169,14 +170,21 @@ type CompositionItem struct {
 	Unit       string   `json:"unit,omitempty"`
 	Ekn        []string `json:"ekn,omitempty"`
 	Found      bool     `json:"found"`
+	// Layer — строка называет слой или работу, а не материал: «Подготовка
+	// основания», «Уплотнённый грунт». Материала у неё нет и не будет, поэтому
+	// в Problems она не попадает — иначе у живых карточек (1273 такие строки)
+	// каждая система помечалась бы «есть ошибки в составе» (2026-11-02).
+	Layer bool `json:"layer,omitempty"`
 }
 
 // resolveComposition разрешает строки состава против справочника материалов.
 //
-// Проблема — не ошибка: система без единого материала тоже законна (работы
-// без кода), но человек должен знать, что именно в ней не связано. Поэтому
-// каждая несвязанная строка называется отдельно, а пустой состав — одно
-// общее замечание.
+// Слой — не проблема: «Подготовка основания», «Уплотнённый грунт» называют
+// работу, а не товар, и материалом никогда не станут. Такая строка помечается
+// Layer и в замечания не идёт (2026-11-02: 1273 такие строки на живых
+// карточках помечали КАЖДУЮ систему «есть ошибки в составе», хотя ни одна не
+// была сломана). Замечание остаётся для того, что действительно можно
+// исправить: ссылка ведёт не туда, код незнаком, материал снят с продажи.
 func resolveComposition(card skills.SystemCard, materials []Material) ([]CompositionItem, []string) {
 	links := card.Links
 	// Старый кеш карточки мог не нести Links: тогда разбираем строки сами.
@@ -217,8 +225,10 @@ func resolveComposition(card skills.SystemCard, materials []Material) ([]Composi
 			m, resolvedBy = bySku[strings.ToUpper(strings.TrimSpace(link.SKU))], "коду"
 		}
 		if resolvedBy == "" {
+			if item.Layer = isLayerLine(link.Raw); !item.Layer {
+				problems = append(problems, fmt.Sprintf("%q: не указан ни код, ни ссылка на материал", shortenRaw(link.Raw)))
+			}
 			items = append(items, item)
-			problems = append(problems, fmt.Sprintf("%q: не указан ни код, ни ссылка на материал", shortenRaw(link.Raw)))
 			continue
 		}
 		if m.ID == 0 {
@@ -246,6 +256,28 @@ func notFoundProblem(item CompositionItem, resolvedBy string) string {
 		return fmt.Sprintf("[[%s]]: по ссылке материал не найден в справочнике", shortenRaw(item.Wiki))
 	}
 	return fmt.Sprintf("%s: материал не найден в справочнике", item.SKU)
+}
+
+// reWorkWord — слово, по которому видно работу, а не товар.
+//
+// Границы заданы явно: `\b` в Go считается по ASCII, и на кириллице он не
+// находит ничего (грабля ловилась трижды — см. AGENTS.md).
+var reWorkWord = regexp.MustCompile(`(?:^|[^А-ЯЁA-Z])(?:подготовк|устройств|уплотнени|разборк|демонтаж|монтаж|укладк|нанесени|грунтовк|очистк|выравнивани|засыпк|испытани|работ)`)
+
+// isLayerLine — строка называет слой или работу, а не материал.
+//
+// Проверяется только строка БЕЗ кода и БЕЗ ссылки: если человек проставил
+// ссылку или код, это его утверждение о материале, и спорить с ним нечем —
+// несвязанная ссылка остаётся замечанием. Здесь же решается лишь одно:
+// ругать ли карточку за строку, которая материалом никогда не была.
+//
+// Формулировка продиктована живыми данными (2026-11-02): на 373 карточках
+// 1273 строки без ссылки, и все они — слои и общестроительные работы.
+func isLayerLine(raw string) bool {
+	if wikiTarget(raw) != "" || strings.TrimSpace(skills.ExtractSku(raw)) != "" {
+		return false
+	}
+	return reWorkWord.MatchString(strings.ToLower(raw))
 }
 
 // materialEknNumbers — номера ЕКН материала в порядке справочника.

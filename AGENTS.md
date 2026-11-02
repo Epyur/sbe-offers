@@ -784,10 +784,8 @@ row shape described); stand **226/226**.
 
 ### Still open (not done in this batch)
 
-- The "ошибки в составе" label still marks any unlinked line, including real
-  layers (concrete, gravel, membrane) that are deliberately not materials. The
-  system is still selectable and its materials still compose; the wording will
-  be revisited with the repeatable-block work (P2).
+- ~~The "ошибки в составе" label marks any unlinked line, including real
+  layers~~ - **fixed 2026-11-02** (see "part 4" below).
 
 ## 2026-11-02 (part 3) - "Добавить систему" answered "Выберите систему"
 
@@ -837,6 +835,81 @@ removed with the old text, three lines of this release added);
 `check_offers_openapi.mjs` **61 operations / 48 paths, schema matches**
 (`sku`/`noteId` documented on both endpoints); stand **231/231** (five new
 checks).
+
+## 2026-11-02 (part 4) - layers in the composition are not errors
+
+Second half of item 1 of the user's report: *"в карточке КП у всех систем —
+есть ошибки в составе"*. Measured on the stand first (the cache row dropped so
+the section re-read the stub): **every** card showed the red badge, and the
+reason was identical everywhere - a line without a code and without a link.
+
+### Root cause
+
+`resolveComposition` treated every unresolved line as a problem. On the live
+cards that is 1273 lines out of 373 cards, and every one of them names a **layer
+or a work**: «Подготовка основания», «Уплотнённый грунт», «Монтаж». A material
+cannot appear there and must not — the line is the justification of the system,
+not a forgotten item. So the badge was true for nobody, and the user learned to
+ignore it; a real defect (a forgotten material, a link pointing at the wrong
+note) would have been invisible.
+
+### What changed
+
+- `CompositionItem.Layer` (`systemcards.go`) plus `isLayerLine` /
+  `reWorkWord`. Only a line with **neither** a wiki link **nor** a code can be
+  a layer: once a person wrote a link or a code they claimed a material, and an
+  unresolved claim stays a problem. `isLayerLine` is therefore the *only* place
+  that decides, and it decides one thing.
+- The layer stays in `compositionLinks` with `found: false, layer: true`, so the
+  table still shows it; it just does not reach `problems`.
+- `appendComposition` (`systems_compose.go`) skips layers when filling
+  `problems` of "Добавить систему" - same reason, same place.
+- Plugin: `CompositionItem.layer` in `types/offers.ts`; the "Системы" card says
+  «есть замечания к составу» instead of «есть ошибки в составе», lists the
+  layer count separately («Слои без материала: N…»), and the material cell
+  reads «слой / работа» instead of a warning. The offer card's picker and the
+  Notice after adding a system say «замечания» / «состав без материала».
+- Bot: `(есть замечания)` in the system keyboard, nothing else to change -
+  `systemAddedMessage` prints only what the server sends in `problems`.
+- OpenAPI: `layer` documented on `CompositionItem`, and both `problems`
+  descriptions say layers are excluded.
+- Stand: `kb-stub` note 100 now has `- 2 Подготовка основания` next to the
+  linked membrane; note 102 keeps «Праймер битумный» as a **forgotten
+  material**, so the test proves the new rule does not swallow real gaps.
+  Checks: layer is marked, layer is not in `problems`, layer is not `found`,
+  forgotten material is in `problems`, and «Праймер битумный» is named after
+  "Добавить систему".
+
+### Verified
+
+`go test ./...` green (`main`, `model`, `skills`), `gofmt -l` empty, `go vet`
+clean; bot `tsc --noEmit` and **89 tests**; plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing (two lines added);
+`check_offers_openapi.mjs` **61 operations / 48 paths, schema matches**;
+stand **235/235** (four new checks).
+
+### Released as 0.4.5 (2026-11-02, explicit user command "фиксируй …")
+
+`manifest.json` = `package.json` = **0.4.5**, no `b` suffix (the whole change
+is on both branches). CUP news rewritten for this release; the 0.4.4 news line
+was removed from `check_bundle_strings.mjs` together with the old text.
+
+**A new trap, and it will hit the next release too:** esbuild escapes
+«ёлочки» in a JS **string literal** as `\xAB`/`\xBB`, not as `\u00AB`/`\u00BB`,
+while the same characters inside template literals stay `\u00AB`. The checker
+only knows `\uXXXX`, so a news line starting with «…» is reported missing even
+though it is in the bundle (`probe` on `main.js` showed the real form). Do not
+"fix" the checker by teaching it `\xAB` blindly - choose a needle without
+quotes (done here: `Убрана ложная тревога в разделе систем`), or escape the
+guillemets in the source.
+
+### Trap met while writing the tests
+
+An `if item.Layer = …; !item.Layer` guard that appended the item to `items`
+*before* the assignment compiled fine, passed `go vet`, and silently produced a
+copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNotProblem`
+red for the right reason). Assign first, append second. Same class as rule 4 in
+"Rules from the agent's own mistakes".
 
 ## STATE 2026-11-02 (release 0.4.4 - deployed and self-hosted)
 

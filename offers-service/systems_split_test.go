@@ -164,6 +164,73 @@ func TestResolveCompositionCaseInsensitiveSku(t *testing.T) {
 	}
 }
 
+// Строка-слой материалом не считается и проблемой не становится.
+//
+// Живая жалоба 2026-11-02: «в карточке КП у всех систем — есть ошибки в
+// составе». Причина — 1273 строки состава без ссылки на 373 живых карточках,
+// и все они называют слои и работы («Подготовка основания», «Уплотнённый
+// грунт»). Материала у них нет не по недосмотру, а по смыслу, поэтому красная
+// метка была ложной на КАЖДОЙ системе. Строка остаётся в составе и помечается
+// слоем; замечание — только про то, что можно исправить.
+func TestResolveCompositionLayerIsNotProblem(t *testing.T) {
+	card := skills.SystemCard{
+		Composition: []string{"[[Мембрана ПВХ Эксперт]]", "Подготовка основания"},
+		Links: []skills.CompositionLink{
+			{Raw: "[[Мембрана ПВХ Эксперт]]"},
+			{Raw: "Подготовка основания"},
+		},
+	}
+	materials := []Material{materialFromNote("Мембрана ПВХ Эксперт", 7)}
+
+	composition, problems := resolveComposition(card, materials)
+
+	if len(composition) != 2 {
+		t.Fatalf("строка слоя потерялась: %#v", composition)
+	}
+	if !composition[0].Found || composition[0].Layer {
+		t.Errorf("найденный материал помечен слоем: %#v", composition[0])
+	}
+	if composition[1].Found || !composition[1].Layer {
+		t.Errorf("слой не отмечен или считается найденным: %#v", composition[1])
+	}
+	if len(problems) != 0 {
+		t.Errorf("слой не повод ругать карточку: %#v", problems)
+	}
+}
+
+// Ссылка на заметку не делается слоем даже при «работном» названии: человек
+// утверждал, что это материал, — значит, ищем именно его. Иначе «[[Монтаж
+// узла]]» молча перестал бы быть замечанием.
+func TestResolveCompositionLinkedWorkStaysProblem(t *testing.T) {
+	card := skills.SystemCard{
+		Composition: []string{"[[Монтаж узла]]"},
+		Links:       []skills.CompositionLink{{Raw: "[[Монтаж узла]]"}},
+	}
+	composition, problems := resolveComposition(card, nil)
+	if composition[0].Layer {
+		t.Fatalf("строка со ссылкой не может быть слоем: %#v", composition[0])
+	}
+	if len(problems) != 1 {
+		t.Fatalf("несвязанная ссылка должна быть замечанием: %#v", problems)
+	}
+}
+
+// Строка без «работного» слова остаётся замечанием: «Праймер битумный» — это
+// материал, который забыли завести, и молчать о нём нельзя.
+func TestResolveCompositionUnlinkedMaterialStaysProblem(t *testing.T) {
+	card := skills.SystemCard{
+		Composition: []string{"Праймер битумный"},
+		Links:       []skills.CompositionLink{{Raw: "Праймер битумный"}},
+	}
+	composition, problems := resolveComposition(card, nil)
+	if composition[0].Layer {
+		t.Fatalf("материал принят за слой: %#v", composition[0])
+	}
+	if len(problems) != 1 {
+		t.Fatalf("забытый материал должен быть замечанием: %#v", problems)
+	}
+}
+
 // Карточка без состава — ноль строк и одна общая проблема «состав не заполнен».
 func TestResolveCompositionEmptyIsProblem(t *testing.T) {
 	composition, problems := resolveComposition(skills.SystemCard{Title: "ТН-ПУСТО"}, nil)
