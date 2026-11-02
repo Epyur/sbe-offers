@@ -92,7 +92,7 @@ function renderPreview(
 
   const table = container.createEl('table', { cls: 'tn-offers-table' });
   const head = table.createEl('thead').createEl('tr');
-  for (const title of ['', 'Строка', 'Из таблицы', 'Материал', 'Кол-во', 'Цена', 'Сумма']) {
+  for (const title of ['', 'Строка', 'ЕКН', 'Из таблицы', 'Материал', 'Кол-во', 'Цена', 'Сумма']) {
     head.createEl('th', { text: title });
   }
   const body = table.createEl('tbody');
@@ -124,6 +124,7 @@ function renderPreview(
       matCell.createSpan({ cls: 'tn-offers-muted tn-offers-mono', text: ` ${r.sku}` });
       if (r.needsConfirm) matCell.createSpan({ cls: 'tn-offers-warn', text: ' (догадка модели)' });
       else if (r.method === 'ekn') matCell.createSpan({ cls: 'tn-offers-muted', text: ' (по ЕКН)' });
+      else if (r.method === 'name') matCell.createSpan({ cls: 'tn-offers-muted', text: ' (по названию)' });
     } else {
       matCell.createSpan({ cls: 'tn-offers-warn', text: r.reason || 'не сопоставлено' });
     }

@@ -691,6 +691,199 @@ where it hurts, so the next session can start without re-discovering it.
     and 1284 composition lines still have no `[[link]]`. Both are data work, not
     code - hand to the technologist.
 
+## 2026-11-02 (part 2) - ЕКН in positions, document head from the form
+
+Intermediate batch (P0 + P1 of the four-item report from the user). **Not yet
+released to self-hosting** — the version was bumped to 0.4.3 and committed, the
+service is not redeployed yet (see "STATE 2026-11-02 (0.4.3, in progress)").
+
+### What the user reported
+
+1. "В таблице КП отсутствует столбец ЕКН; в каталоге материалов ЕКН не
+   привязались к соответствующим продуктам, в целом не было проведено
+   сопоставление с базой." Reproduced on the live export
+   `Коммерческое предложение 003-2026.docx`: no ЕКН column at all.
+2. The exported document carried a title nobody ordered above the cover page,
+   the editor placeholder «Текст с полем», the line «Условия:» with nothing
+   after it, and **the whole English task prompt of the model** as body text.
+
+### Root causes (both live, both in code)
+
+- **The ЕКН column was read and thrown away.** `skills.ParseXlsxAttachment`
+  recognised the «ЕКН» column only so that it would not be mistaken for a name
+  (`isEknColumnLabel`), and never put the value into `SpecRow`. Matching to the
+  catalogue then ran by name only (`specFromFile`), so a row whose name was
+  written "66950 Гидроизоляционная ПВХ мембрана…" (the number ran into the name
+  in the legacy fixture) could never match. `OfferItem` had no ЕКН field and the
+  documents table had six columns without it.
+- **The document head was printed twice**, once by `renderOfferDocxFull` and
+  once by the first form block (`cover`). The template phrases were content
+  saved into the form itself: the «Текст с полем» paragraph came from the block
+  editor's default node, the English paragraph from a prompt block whose
+  instructions were pasted in as text. Nothing in the pipeline could tell a
+  draft from a finished form.
+
+### What changed
+
+Server (`offers-service`):
+
+- `SpecRow.EKN` + `specColumns.ekn`: the parser keeps the number. A headerless
+  layout («ЕКН | Наименование | …» with column numbers underneath) and a header
+  where «ЕКН» sits one row below the labels are both recognised
+  (`withEknFrom`, `findEknLayoutHeader`). Covered by
+  `TestParseLegacyOfferKeepsEkn` and the existing EKN test now also asserts the
+  value.
+- `specFromFile` matches **ЕКН first, then name** (`matchSheetRow`,
+  `materialIndexByEkn`); `specRowView` gained `ekn`, `materialEkn`, `matchedBy`
+  so the manager sees what a row was matched by.
+- `OfferItem.EKN` (`model/offer.go`) — snapshot at the moment of adding, filled
+  by `itemForMaterial` (`primaryEkn`), by `handleSheetApply` (`itemEkn`: row
+  number first, catalogue fallback) and by `applySpecFromFile` (`rowEkn`).
+- `offerItemsTable` prints a «Код ЕКН» column; when no position has a number
+  the column is omitted (an empty column looks like a failure, not like «нет
+  номера»).
+- **Document head**: `renderOfferDocxFull` no longer prints its own title, number
+  and client when the form has blocks; `writeOfferHead` does it only for a form
+  with no blocks. The form title is printed as a paragraph when no block carries
+  it (`documentHasTitle`). The manager line is skipped when a block already has
+  `{{manager}}` (`formBlocksMention`).
+- **Service fields**: `{{offer_number}}`, `{{offer_date}}` (dd.mm.yyyy),
+  `{{manager}}`, `{{offer_client}}`, `{{offer_object}}` are computed at render
+  time (`serviceValues`, `ServiceFieldIDs`); a `form_values` value with the same
+  key wins. The default cover block now uses the number and date.
+- Tests: `docx_head_test.go` (title once, number and date once, form value wins,
+  manager line not duplicated, empty form still titled, ЕКН column present,
+  column omitted when unknown), `TestItemForMaterialCarriesFirstEkn`.
+
+Plugin (`src`):
+
+- `SERVICE_FIELDS` in `block-editor.ts` — the same five ids as chips in every
+  text field, so the administrator does not type them by hand.
+- `draftBlockHints` + `renderDraftHints` in `form-editor.ts`: the editor warns
+  about lines that will read as a draft to the client (the default editor
+  text, an English task prompt, «Условия:» with nothing after it). Warns — does
+  not delete: the decision is the administrator's.
+- The offer card has an ЕКН field next to each position name; the sheet preview
+  has an ЕКН column and says whether a row was matched «по ЕКН» or «по
+  названию».
+
+Bot: `OfferItem.ekn` is carried through `resume.ts`, `callbacks.ts` and
+`api.ts` — without it the bot's PATCH would erase the column on the next edit.
+
+Stand: a new check that the number from the sheet reaches the position
+(**226/226**).
+
+### Verified
+
+`go test ./...` green (`main`, `model`, `skills`), `gofmt -l` empty, `go vet`
+clean; bot `tsc --noEmit`, build, **86 tests**; plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing (two lines of the 0.4.2
+news removed, four lines of this release added); `check_offers_openapi.mjs`
+**61 operations / 48 paths, schema matches** (`OfferItem.ekn` documented, sheet
+row shape described); stand **226/226**.
+
+### Still open (not done in this batch)
+
+- The "ошибки в составе" label still marks any unlinked line, including real
+  layers (concrete, gravel, membrane) that are deliberately not materials. The
+  system is still selectable and its materials still compose; the wording will
+  be revisited with the repeatable-block work (P2).
+
+## 2026-11-02 (part 3) - "Добавить систему" answered "Выберите систему"
+
+The user's report named the exact flow: open offer 003/2026, pick a system in
+the offer card, press "➕ Добавить" - the Notice says "Выберите систему" and
+nothing is added, although the brief shows the system was chosen.
+
+### Root cause (measured on the live database, not guessed)
+
+**Not one of the 375 live `commercial_propose` notes carries `system_sku`**
+(`select count(*) filter (where content_md ~ 'system_sku\s*:\s*\S')` on
+`mailers-kb-db-1` -> 0; the `systems` cache row has 375 cards and every `sku`
+is `""`). The plugin built `<option value={system.sku || ''}>`, so every option
+in the list had the same empty value and `if (!sku)` in `offers-list.ts` fired
+on any pick. The same hole sat on the bot (`SystemItem.sku` from
+`/bot/systems`) and on the server, where `FindSystem` could only match a code.
+
+This is why the defect never reproduced on the stand: the stub cards all had
+`system_sku` filled in. A fixture that cannot express the live data shape
+proves nothing about it.
+
+### What changed
+
+- Server: `SystemChoice{SKU, NoteID}` (`systems_compose.go`),
+  `SystemCard.Choice()` / `SystemChoice.Handle()` and `ParseSystemChoice`.
+  The handle is `sys-<noteId>` for a note and the code otherwise - the prefix
+  keeps a numeric code from being read as a note id. `FindSystem` matches the
+  code first, then the note. Both system endpoints (`/offers/{id}/system`,
+  `/bot/offers/{id}/system`) accept `sku` or `noteId`; `/bot/systems` returns
+  `noteId`. `FindSystemCard` goes through `ParseSystemChoice`, so one parsing
+  rule serves every caller.
+- Plugin: `<option value="sys-<noteId>">`; `offersService.addSystem(choice)`
+  parses the handle and sends `noteId` (the server contract is typed, not
+  positional).
+- Bot: `systemChoice(item)` - the code when present, the note otherwise.
+- Stand: `kb-stub` gained a card **without** a code (note 100). The systems
+  cache lives in the stand database, so after a stub edit run
+  `delete from offers_context where mode='systems'` and restart
+  `offers-local-kb-stub`, otherwise the old cache hides the change.
+
+### Verified
+
+`go test ./...` green, `gofmt -l` empty, `go vet` clean; bot `tsc --noEmit` and
+**89 tests** (3 new on `systemChoice`); plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing (two 0.4.3 news lines
+removed with the old text, three lines of this release added);
+`check_offers_openapi.mjs` **61 operations / 48 paths, schema matches**
+(`sku`/`noteId` documented on both endpoints); stand **231/231** (five new
+checks).
+
+## STATE 2026-11-02 (0.4.4b, in the working tree)
+
+Version **0.4.4** (`manifest.json` = `package.json`), `main` still 0.4.2, so the
+suffix `b` applies. **Not committed, not deployed, not self-hosted** - the
+working tree on `backend` holds the "Добавить систему" fix (see the entry
+above). Checks: `go test` green, bot 89 tests, plugin `tsc` EXIT=0 + build,
+bundle strings 0 missing, OpenAPI 61/48, stand **231/231**.
+
+The "Добавить систему" item of the user report is now closed: the cause was
+the missing `system_sku` on every live card, and the choice travels by note id.
+
+## STATE 2026-11-02 (0.4.3b committed, not deployed)
+
+Working tree clean on `backend`, HEAD `3abd91f` (pushed). Three commits:
+`1e4730e` (document head from the form block + service fields), `367204c`
+(EKN in positions, in the document table and in sheet matching), `3abd91f`
+(version 0.4.3, CUP news, docs, bundle-string checks). The suffix `b` is
+implied while `main` stays at 0.4.2.
+
+**Live service, registry and self-hosting are still 0.4.2** - the deploy and
+self-host is a separate command; before it, refresh HANDOFF.md and this block
+with the new hashes.
+
+### What is left from the user report of 2026-11-02
+
+The report had four items; P0 (document head) and P1 (EKN) are done.
+
+1. **"Добавить систему" does not attach (first half of item 1).** ~~NOT
+   reproducible on the stand~~ - **FIXED in 0.4.4** (see "2026-11-02 (part
+   3)" above): the live cards carry no `system_sku`, the choice now travels by
+   note id. The second hypothesis (`editor` editing someone else's offer gets
+   403) was not the cause.
+2. **"ошибки в составе" (second half of item 1).** Does NOT block the system
+   - measured on all 373 live cards: 1273 composition lines without a link,
+   all of them real layers (concrete, gravel, membrane) or general works.
+   Reword in `resolveComposition` (`systemcards.go`) and
+   `systems-editor.ts`: "слои без материала", no red badge.
+3. **DOCX layout template upload (item 2).** Not started. Load a `.docx`
+   master into the form editor with placeholders (`{{object_name}}`,
+   `{{manager}}`) and content markers (`{{#blocks}}`, `{{#positions}}`,
+   `{{#per-system}}`); the service fills the master and keeps the brand
+   styles. Open decision: own blank vs the corporate `standard.docx`.
+4. **Repeatable form block "per system" (item 2).** Not started. A new
+   `repeat` node with `source: "systems"` and child nodes: printed once per
+   system of the offer (`cardsForOffer`).
+
 ## STATE 2026-11-02 (release 0.4.2)
 
 | | value |

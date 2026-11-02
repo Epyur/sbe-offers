@@ -1,6 +1,6 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import type { OfferForm, Placeholder } from '../types/offers';
+import type { Block, OfferForm, Placeholder } from '../types/offers';
 import { renderBlockEditor } from './block-editor';
 import { pickAndUploadImage } from './image-picker';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
@@ -80,6 +80,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
 
   const blocksCard = container.createDiv({ cls: 'tn-offers-card' });
   blocksCard.createDiv({ cls: 'tn-offers-muted', text: 'Блоки документа' });
+  renderDraftHints(blocksCard, blocks);
   renderBlockEditor(blocksCard, blocks, {
     placeholders,
     // Картинку можно выбрать прямо в блоке: файл из вольта уходит во вложения
@@ -113,4 +114,54 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
       new Notice(`Не удалось сохранить форму: ${errorMessage(e)}`);
     }
   }
+}
+
+/** Показать замечания по блокам над редактором: пусто — замечаний нет. */
+function renderDraftHints(container: HTMLElement, blocks: Block[]): void {
+  const hints = draftBlockHints(blocks);
+  if (hints.length === 0) return;
+  const box = container.createDiv({ cls: 'tn-offers-warn tn-offers-form-hints' });
+  box.createDiv({ text: 'В форме есть строки, которые клиент прочитает как черновик:' });
+  const list = box.createEl('ul', { cls: 'tn-offers-problems' });
+  for (const hint of hints) list.createEl('li', { text: hint });
+}
+
+/**
+ * Что выглядит черновиком, но уйдёт клиенту (2026-11-02).
+ *
+ * Живой случай: в выгруженном КП над титулом стоял заголовок, которого никто
+ * не заказывал, а в тексте — «Текст с полем» и английское задание модели.
+ * Причина не в сборке документа, а в форме: блоки сохранились с этими
+ * строками. Показываем их в редакторе, чтобы человек увидел до выгрузки.
+ */
+export function draftBlockHints(blocks: Block[]): string[] {
+  const hints: string[] = [];
+  for (const block of blocks) {
+    if (!block.showInClient) continue;
+    for (const node of block.content) {
+      const texts = [node.text ?? '', ...(node.items ?? []), ...(node.rows ?? []).flat()];
+      for (const text of texts) {
+        if (text.trim() === '') continue;
+        const reason = draftTextReason(text);
+        if (reason) {
+          hints.push(`Блок «${block.title || block.id}»: ${reason}`);
+        }
+      }
+    }
+  }
+  return hints;
+}
+
+/** Почему строка выглядит недоделанной; пусто — выглядит готовой. */
+function draftTextReason(text: string): string {
+  if (/\btask\s*:/i.test(text) || /\bwrite\s+(one|a)\b/i.test(text)) {
+    return 'похоже на задание модели, а не на текст для клиента';
+  }
+  if (text.includes('Текст с полем') || text.includes('Текст блока')) {
+    return 'заводская заготовка редактора — её увидит клиент';
+  }
+  if (text.trim() === 'Условия:') {
+    return 'подпись без условий — добавьте текст или уберите строку';
+  }
+  return '';
 }
