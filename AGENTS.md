@@ -899,9 +899,9 @@ was removed from `check_bundle_strings.mjs` together with the old text.
 
 | | value |
 |---|---|
-| `backend` | `22298b5` (fix) + `122b384` (release) - pushed |
-| `main` | `3c4e6ee` - plugin part copied by file from `git archive 122b384`; pushed |
-| `main` vs `backend`, plugin part | identical: `git diff --quiet 122b384 origin/main -- main.js manifest.json styles.css src` exits 0 |
+| `backend` | `22298b5` (fix) + `122b384` (release) + `74953e8` (docs) - pushed |
+| `main` | `3c4e6ee` (release) + `7016da6` (docs) - plugin part copied by file from `git archive 122b384`; pushed |
+| `main` vs `backend`, plugin part | identical: `git diff --quiet 122b384 origin/main~1 -- main.js manifest.json styles.css src` exits 0 |
 | server / bot / registry / self-hosting | **still 0.4.4** - the deploy is a separate command |
 | local build | `manifest.json` `094ac35d…` 468 B, `main.js` `b7ae1ee3…` 117609 B, `styles.css` `13a62f18…` 31633 B (unchanged since 0.4.4) |
 
@@ -930,8 +930,8 @@ Short version is in [HANDOFF.md](HANDOFF.md).
 | | value |
 |---|---|
 | plugin | **0.4.5** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `122b384` - pushed |
-| `main` | `3c4e6ee` - pushed; plugin part identical to `backend` |
+| `backend` | `74953e8` - pushed |
+| `main` | `7016da6` - pushed; plugin part identical to `backend` |
 | live service / bot | **0.4.4**, health `ok` |
 | registry (`sbe-apstore-registry`) | **0.4.4** (`31b759e`), untouched |
 | self-hosting | **0.4.4**, three sums verified over https |
