@@ -691,6 +691,108 @@ where it hurts, so the next session can start without re-discovering it.
     and 1284 composition lines still have no `[[link]]`. Both are data work, not
     code - hand to the technologist.
 
+## 2026-11-02 (part 2) - ЕКН in positions, document head from the form
+
+Intermediate batch (P0 + P1 of the four-item report from the user). **Not yet
+released to self-hosting** — the version was bumped to 0.4.3 and committed, the
+service is not redeployed yet (see "STATE 2026-11-02 (0.4.3, in progress)").
+
+### What the user reported
+
+1. "В таблице КП отсутствует столбец ЕКН; в каталоге материалов ЕКН не
+   привязались к соответствующим продуктам, в целом не было проведено
+   сопоставление с базой." Reproduced on the live export
+   `Коммерческое предложение 003-2026.docx`: no ЕКН column at all.
+2. The exported document carried a title nobody ordered above the cover page,
+   the editor placeholder «Текст с полем», the line «Условия:» with nothing
+   after it, and **the whole English task prompt of the model** as body text.
+
+### Root causes (both live, both in code)
+
+- **The ЕКН column was read and thrown away.** `skills.ParseXlsxAttachment`
+  recognised the «ЕКН» column only so that it would not be mistaken for a name
+  (`isEknColumnLabel`), and never put the value into `SpecRow`. Matching to the
+  catalogue then ran by name only (`specFromFile`), so a row whose name was
+  written "66950 Гидроизоляционная ПВХ мембрана…" (the number ran into the name
+  in the legacy fixture) could never match. `OfferItem` had no ЕКН field and the
+  documents table had six columns without it.
+- **The document head was printed twice**, once by `renderOfferDocxFull` and
+  once by the first form block (`cover`). The template phrases were content
+  saved into the form itself: the «Текст с полем» paragraph came from the block
+  editor's default node, the English paragraph from a prompt block whose
+  instructions were pasted in as text. Nothing in the pipeline could tell a
+  draft from a finished form.
+
+### What changed
+
+Server (`offers-service`):
+
+- `SpecRow.EKN` + `specColumns.ekn`: the parser keeps the number. A headerless
+  layout («ЕКН | Наименование | …» with column numbers underneath) and a header
+  where «ЕКН» sits one row below the labels are both recognised
+  (`withEknFrom`, `findEknLayoutHeader`). Covered by
+  `TestParseLegacyOfferKeepsEkn` and the existing EKN test now also asserts the
+  value.
+- `specFromFile` matches **ЕКН first, then name** (`matchSheetRow`,
+  `materialIndexByEkn`); `specRowView` gained `ekn`, `materialEkn`, `matchedBy`
+  so the manager sees what a row was matched by.
+- `OfferItem.EKN` (`model/offer.go`) — snapshot at the moment of adding, filled
+  by `itemForMaterial` (`primaryEkn`), by `handleSheetApply` (`itemEkn`: row
+  number first, catalogue fallback) and by `applySpecFromFile` (`rowEkn`).
+- `offerItemsTable` prints a «Код ЕКН» column; when no position has a number
+  the column is omitted (an empty column looks like a failure, not like «нет
+  номера»).
+- **Document head**: `renderOfferDocxFull` no longer prints its own title, number
+  and client when the form has blocks; `writeOfferHead` does it only for a form
+  with no blocks. The form title is printed as a paragraph when no block carries
+  it (`documentHasTitle`). The manager line is skipped when a block already has
+  `{{manager}}` (`formBlocksMention`).
+- **Service fields**: `{{offer_number}}`, `{{offer_date}}` (dd.mm.yyyy),
+  `{{manager}}`, `{{offer_client}}`, `{{offer_object}}` are computed at render
+  time (`serviceValues`, `ServiceFieldIDs`); a `form_values` value with the same
+  key wins. The default cover block now uses the number and date.
+- Tests: `docx_head_test.go` (title once, number and date once, form value wins,
+  manager line not duplicated, empty form still titled, ЕКН column present,
+  column omitted when unknown), `TestItemForMaterialCarriesFirstEkn`.
+
+Plugin (`src`):
+
+- `SERVICE_FIELDS` in `block-editor.ts` — the same five ids as chips in every
+  text field, so the administrator does not type them by hand.
+- `draftBlockHints` + `renderDraftHints` in `form-editor.ts`: the editor warns
+  about lines that will read as a draft to the client (the default editor
+  text, an English task prompt, «Условия:» with nothing after it). Warns — does
+  not delete: the decision is the administrator's.
+- The offer card has an ЕКН field next to each position name; the sheet preview
+  has an ЕКН column and says whether a row was matched «по ЕКН» or «по
+  названию».
+
+Bot: `OfferItem.ekn` is carried through `resume.ts`, `callbacks.ts` and
+`api.ts` — without it the bot's PATCH would erase the column on the next edit.
+
+Stand: a new check that the number from the sheet reaches the position
+(**226/226**).
+
+### Verified
+
+`go test ./...` green (`main`, `model`, `skills`), `gofmt -l` empty, `go vet`
+clean; bot `tsc --noEmit`, build, **86 tests**; plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing (two lines of the 0.4.2
+news removed, four lines of this release added); `check_offers_openapi.mjs`
+**61 operations / 48 paths, schema matches** (`OfferItem.ekn` documented, sheet
+row shape described); stand **226/226**.
+
+### Still open (not done in this batch)
+
+- "Добавить систему" by SKU still cannot be reproduced as a defect on the
+  stand: the endpoint accepts the code the list returns and appends the
+  composition. The live list is served by a different code path (KB live vs
+  cache). **Ask the user for the exact text of the error** before changing it.
+- The "ошибки в составе" label still marks any unlinked line, including real
+  layers (concrete, gravel, membrane) that are deliberately not materials. The
+  system is still selectable and its materials still compose; the wording will
+  be revisited with the repeatable-block work (P2).
+
 ## STATE 2026-11-02 (release 0.4.2)
 
 | | value |
