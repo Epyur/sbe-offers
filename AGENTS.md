@@ -112,7 +112,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/utils/date.ts`, `money.ts`, `note-path.ts` | shared helpers - one copy each |
 | `src/styles.css` | `tn-offers-*` classes (the root `styles.css` is **built**, never edit it) |
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
-| `scripts/offers_local_e2e.mjs` | the stand: 213 HTTP checks, 19 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: 225 HTTP checks, 20 sections |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -127,14 +127,17 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `docx.go`, `docx_media.go`, `docx_links.go` (link section + hyperlink rels),
 `docx_image.go` (`wp:anchor` + wrap), `docx_text.go` (prompt blocks + cache),
 `s3.go`, `email.go`, `static.go`, `template.go`, `static/openapi.yaml`.
-Sub-packages: `model/` (domain types) and `skills/` (prompts, checklists, card
-and attachment parsing, `cardrefs.go` = `## Ссылки` parser).
+Sub-packages: `model/` (domain types, plus `jsonrepair.go` - tolerant JSON
+extraction shared with `skills`), `skills/` (prompts, checklists, card and
+attachment parsing, `cardrefs.go` = `## Ссылки` parser, `filecontext*.go` =
+object context out of a file: literal facts, model prompt, merge).
 
 `offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), `src/routes.ts`
 (routing), `src/callbacks.ts` (the draft flow and buttons), `src/telegram.ts`
 (Bot API via SOCKS), `src/session.ts` (sign-in state machine), `src/attach.ts`
 (file preview → confirm), `src/flow/` (`build` catalogue, `brief` dialog,
-`copy` sections, `writer` orchestration), `src/api.ts`, `Dockerfile`.
+`copy` sections, `writer` orchestration, `resume` = reopen a saved offer),
+`src/api.ts`, `Dockerfile`.
 
 ## Settings (data.json)
 
@@ -202,6 +205,57 @@ docker restart offers-local-app
   2026-10-27). Older Russian entries are not translated retroactively.
 - Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
   the root `AGENTS.md`.
+
+## Rules from the agent's own mistakes (2026-11-02)
+
+Every line below is something an agent did wrong in this repository and had to
+undo. **They are rules, not anecdotes** - read them before the first edit of a
+session, they cost minutes and each one cost a broken working tree.
+
+1. **Never rewrite a source file through a PowerShell pipeline.**
+   `(Get-Content -Raw x) -replace … | Set-Content -Encoding utf8 x` both writes a
+   BOM and re-encodes Cyrillic as mojibake: `jsonrepair.go` came back as
+   `Р Р°Р·Р±РѕСЂ JSON…` and had to be restored from git. Use the editor tools,
+   or Python with an explicit `io.open(..., encoding='utf-8', newline='')`.
+   Verify after any bulk edit: first three bytes must be `7B 0A 20`, and
+   `U+FFFD` count must be 0.
+2. **Do not move or rename a file with a shell command and then "fix" it in
+   place.** `Move-Item` + `Set-Content` lost the encoding and produced the
+   mojibake of rule 1. Copy with the file tools, edit the copy, delete the
+   original only after `go build` passes.
+3. **A narrow replace must be checked for what else it hits.** Removing
+   `isUnitColumnLabel` with a block replace also deleted the function that a
+   neighbouring block needed; the build caught it, the diff did not look wrong.
+   Read the surrounding 30 lines before an `edit`, and re-read after.
+4. **TDD means watching the test fail for the RIGHT reason.** Three parsing
+   tests passed on the broken code because they only asserted "no bad rows" and
+   there were no rows at all. An assertion that is true on an empty result
+   proves nothing - add a positive assertion (count, expected value) next to
+   every negative one.
+5. **Do not build a test fixture the service cannot actually consume.** A test
+   written against a home-made xlsx builder proved nothing about the real file;
+   it had to be replaced by the real one. If the defect came from a real file,
+   the regression test uses a real file (anonymised, see rule 6).
+6. **A real customer file in `testdata/` must be anonymised before commit.**
+   `Epyur/sbe-offers` is a **public** repository. The live fixture carried an
+   address, a cadastral number, a person's name and a corporate signature; all
+   were replaced (`Охотская` → `Примерная`, `54:35:…` → `00:00:…`) while keeping
+   the structure that causes the defect. Check with a grep over
+   `xl/sharedStrings.xml` before committing.
+7. **`go vet` output through a pipeline is not a result.** `go build … | Select-Object
+   -Last 5` printed nothing for a failing build and looked green. Run the
+   command on its own line and read `$LASTEXITCODE` (the root rule about `tail`
+   over ssh, in Go form).
+8. **Do not leave throwaway probe scripts inside the repository.** `cmd/tmpprobe`
+   and `zz_dbg_test.go` were written to inspect a file and had to be deleted;
+   build them under the temp directory, and delete before `git status`.
+9. **A build artefact is not part of the change.** `offers-service/offers-stand`
+   appeared in `git status`; added to `.gitignore` rather than committed. Check
+   `git status --short` for untracked binaries before the first `git add`.
+10. **A test that pins the old behaviour is a decision to make, not an
+    obstacle.** `TestRenderOfferDocxRejectsEmptyOffer` and two E2E checks
+    asserted the refusal the user asked to remove. Rewrite them to assert the
+    NEW behaviour and say so in the comment; never delete them silently.
 
 ## Gotchas
 
@@ -296,6 +350,13 @@ your change is affected.
 - **`wp:inline` breaks the text flow; `wp:anchor` + `wp:wrapSquare` does not.**
   This is why the image block is anchored: a picture must not push a paragraph
   onto its own line.
+- **An offer without positions still produces a document** (2026-11-01). The
+  reason is commercial: on their first weeks managers take only the descriptive
+  part out of the system and price it themselves. `renderOfferDocxFull` prints a
+  line saying the composition is supplied separately instead of an empty table;
+  never print "Итого: 0,00" - a reader takes it as "free". `validateOffer` still
+  refuses an empty offer on the REST path; do not reintroduce the check inside
+  the renderer.
 - **A page break at the very start of the document is ignored** - Word renders
   an empty page and the letter looks broken.
 - **Text written by the model has to be cached against the offer's data hash**
@@ -321,10 +382,49 @@ your change is affected.
 - **Sign-in is checked once, in `routes.ts`**, for both text and callbacks.
   Writing the check twice already cost a duplicated fix.
 - **The offer is created at the start of the conversation** (2026-11-01), so a
-  file can attach to it. `handleBotCreateOffer` accepts `items: []`; the REST
-  path still refuses an empty offer - do not "unify" these two.
+  file can attach to it. `handleBotCreateOffer` **and** `handleBotPatchOffer`
+  accept `items: []`; the REST path still refuses an empty offer - do not
+  "unify" these two. An empty offer is a legitimate end state: the document is
+  built without positions (see "Data and documents").
 - **`callback_data` is limited to 64 bytes**; system codes are Cyrillic, so
   buttons carry an index into the per-chat list, not the code.
+- **A saved offer is opened for editing from the list** (2026-11-01): `edit:<id>`
+  in "Мои КП", or the number typed as text. The session draft is rebuilt from
+  the offer (`flow/resume.ts`), the stage jumps straight to `positions`, and the
+  previous file-attach pending is dropped - it belonged to another conversation.
+  Do not "restore" the context stage here: that repeat-quizzes the manager.
+
+### Files, parsing and context
+
+- **The parsing layer is fed by real manager files, not tidy fixtures.** A live
+  old offer (2026-11-01) broke every assumption at once: cells without `r`
+  refs, a "Коэффициент расхода" column between quantity and price, several
+  header blocks on one sheet, section rows with a quantity but no material, and
+  a column-numbering row (`2 | 3 | 4 | 5 | 6 | 7`). The fixture
+  `skills/testdata/legacy-offer.xlsx` is a real file (header + both systems,
+  images and external links stripped). Every fix has a test named after the
+  symptom; keep it that way.
+- **Address cells by `r` (`B35`), never by position.** Skipped cells are simply
+  absent from the XML, so counting shifts the whole row left - the price ends up
+  in the coefficient column. `xlsxColumnIndex` does the conversion; it is
+  covered by `TestParseXlsxUsesCellReferences`.
+- **"Сметная стоимость" is a sum, "Стоимость единицы" is a price.** Matching a
+  column by the substring "стоимость" puts the block total where the unit price
+  belongs.
+- **`\b` in Go is ASCII-only** - already the first gotcha; it bit again in
+  `filecontext_facts.go` anchors. On Cyrillic write the boundary explicitly.
+- **A dot is not a sentence end for object names**: «по ул. Охотская»,
+  «г. Новосибирска». Cutting the object at `\.` truncated it to «…по ул».
+- **A file's item names are not object context.** Positions from a
+  spec table must not become brief notes - the bot then promises "записать
+  контекст", which it cannot. `contextFromParsed(isSpec=true, …)` returns nil;
+  cover this when touching the attach path.
+- **Model extraction never overrides the literal one.** `MergeFileContexts`
+  keeps the value from `ExtractBriefFacts` and lets the model fill only what is
+  missing; otherwise "Многоквартирный дом" from the file becomes "жилой
+  комплекс" from the model.
+- **`jsonrepair.go` lives in `model`, not in `main`** (moved 2026-11-01 so
+  `skills` can use `ExtractJSON`). Both packages import it; do not copy it back.
 
 ## Изменения правил по итогам ревизии 2026-11-01
 
@@ -422,6 +522,144 @@ caches it for 50 minutes. The retry makes a stale token self-heal, which is
 enough. If a *systematic* rejection ever shows up, the next place to look is
 `kb-service`'s gate, not this client - it logs every refusal with a reason
 (`отказ 401: ... — токен не разобран`), and those lines are the evidence.
+
+## 2026-11-01/02 - real manager files, object context, empty offers, editing
+
+Live user run of the bot in Telegram, offer `003/2026`. The dialogue itself was
+fine; the file was not. The manager sent an old offer in Excel (`Копия_ЖК_Поэма_
+Гидроизоляция_V_SL_26_1.xlsx`) and wrote "информация в файле". The bot answered
+"состава в ней не нашёл" and the object never reached the brief. Two further
+requests came with the same message (see the last two subsections).
+
+### Why the file was not understood, exactly
+
+Reproduced on the stand against the live file:
+
+1. **Cells were placed by order, not by address.** `parseXlsxSheetRows` appended
+   values as they came, ignoring the `r` attribute; the sheet skips empty cells,
+   so every row after a gap shifted left and the price landed in the wrong
+   column. `TestParseXlsxUsesCellReferences`.
+2. **Columns were matched by position, not by label.** "Коэффициент расхода"
+   sits between quantity and price; a summary "Сметная стоимость" matched
+   "стоимость" before "Стоимость единицы" did. `matchSpecColumns` now identifies
+   each column by its own heading, and "ЕКН" is never a name.
+3. **Only the first header was read.** The file holds two systems with their own
+   header rows; `findXlsxHeaderRow` returned the first and `buildXlsxSpec` ran
+   to the end of the sheet. Now every header block is parsed and the next header
+   stops the previous block (`collectXlsxSpec`, third return value = rows used,
+   otherwise the second block parsed twice).
+4. **Section rows and column-numbering rows became positions.**
+   "Устройство гидроизоляции фундамента (горизонталь)" had a quantity and a
+   block sum; the row "2 | 3 | 4 | 5 | 6 | 7" numbered the columns.
+   `isXlsxSectionLabel` drops both.
+
+Result on the live file: **41 positions**, each with the right unit, quantity and
+price (checked line by line against the sheet); section rows, footnotes, the
+"Итого" line and the reference block are excluded.
+
+5. **And the context had nowhere to go.** `attachedFile.Context` was filled and
+   never read by anything - the brief, the sections and the form did not know
+   about the file. A file that did not produce a spec produced nothing at all.
+
+### What was added
+
+- **Object context out of any file** (`skills/filecontext*.go`,
+  `attach.go:contextWithModel`). A literal pass (`ExtractBriefFacts`) reads
+  "для объекта: …" / "Объект: …", area, system titles without a model; the
+  model pass adds purpose, risks and the description
+  (`RenderFileContextSystem`). `MergeFileContexts` keeps the literal value and
+  lets the model fill only the gaps. The result travels as `contextFields`
+  and is written to the brief on confirmation - alone in `mode: brief`, or
+  together with the composition in `mode: spec`.
+- **Context is NOT built from a spec table**: item names are not an object
+  description. This was a live bug of this same change, caught on the stand
+  (`contextFromParsed(isSpec=true, …) == nil`, `TestSpecFileDoesNotBecomeBriefContext`).
+- **The document builds without positions** (`docx.go`): a line saying the
+  composition is supplied separately instead of a table and "Итого: 0,00".
+  `handleBotPatchOffer` now accepts an empty offer like `handleBotCreateOffer`
+  does; the REST path still refuses one.
+- **A saved offer is reopened for editing** (`flow/resume.ts`, `edit:<id>`,
+  `edit:brief`, `edit:doc`, number typed as text). The draft is rebuilt from the
+  offer, the stage is `positions`, the previous attach pending is dropped.
+- `jsonrepair.go` moved `main` → `model` so `skills` can use `ExtractJSON`
+  (one copy, not two). `containsString` now delegates to `skills.ContainsFold`
+  (dryer flagged the copy).
+
+### Verified
+
+`go test ./...` green (`main` 43.3%, `model` 82.4%, `skills` 86.2%), `gofmt -l`
+empty, `go vet` clean; bot `tsc --noEmit` clean and **86 tests**; plugin
+`tsc --noEmit` EXIT=0, `npm run build` OK, `check_bundle_strings.mjs` 0 missing;
+`check_offers_openapi.mjs` **61 operations / 48 paths, schema matches** (the
+schema gained `contextFields` and `context`); stand **225/225**, 20 sections;
+`dryer` no new duplicates (three pre-existing remain); `crapper`: every new
+function under CRAP 10, `handleDraftText` (CC 13) is the same pre-existing debt.
+
+Live checks on the stand with the real file: 41 positions with correct prices;
+`contextFields` empty for a spec table (by design); a descriptive file gives
+object / area / systems / timeline, and after apply the brief holds
+`object_name`, `object_purpose`, `object_area`, `planned_systems`, `timeline`.
+
+**Released as 0.4.2** on the explicit "фиксируй" command - see
+"STATE 2026-11-02 (release 0.4.2)" below for versions, hashes and the
+deployment record.
+
+## Next iterations (backlog, 2026-11-02)
+
+Ordered by what will bite the commercial department soonest. Each item says
+where it hurts, so the next session can start without re-discovering it.
+
+1. **Word documents as a context source.** Old offers arrive as `.docx` more
+   often than as Excel; today `readAttachedFile` answers "пришлите .md или
+   .xlsx". Removing the refusal is mostly `word/document.xml` text extraction
+   (same zip walk as xlsx, `w:p` → line). **The reason it matters:** the whole
+   point of 0.4.2 is "we understand the manager's files, not only tidy ones",
+   and `.docx` is the most common untidy one.
+2. **Old binary `.xls`.** Refusal today. A minimal BIFF reader is a large task;
+   the cheap step first is a better message plus a link to the conversion
+   instructions, then a decision.
+3. **`.docx` and `.xls` in the plugin's own upload screen
+   (`src/ui/sheet-upload.ts`)** - was not touched in this cycle and may share
+   the old positional-cell assumptions. Verify with the anonymised fixture
+   before promising anything.
+4. **Multiple sheets.** `ParseXlsxAttachment` takes the first sheet with a
+   composition and stops. A workbook with one system per sheet loses the rest.
+   Merge all sheets that have a header block.
+5. **Grouped / hidden rows in xlsx.** Row grouping (`outlineLevel`) is ignored;
+   a sheet with subtotals inside groups can produce junk positions. Detect
+   `hidden="1"` and skip, or at least warn in `warnings`.
+6. **Manual overrides vs the file.** A file always wins over what the manager
+   typed in chat (`MergeFileContexts` keeps the literal value). If the manager
+   corrected the object by hand and then attached an old file, the old address
+   returns. Decide: mark fields as "taken from file" and ask before replacing.
+7. **Editing a saved offer** has no per-item delete (only "убрать последнюю")
+   and does not re-ask for the client if it is empty. `flow/resume.ts` was built
+   to make this easy - add the handlers there, not in `callbacks.ts`.
+8. **`handleDraftText` is still CC 13** (`callbacks.ts`): a dispatcher mixing
+   brief, `система`, free item, quantity and form field. Pre-existing debt,
+   carried into 0.4.2 unchanged. Take it apart with a handler table.
+9. **`contextWithModel` and `Complete` have no unit coverage** - network glue
+   checked only on the stand. A test with a stub that returns garbage proves the
+   important part: the literal extraction survives a broken model.
+10. **`SKU` for materials synced from KB is meaningless** (`MAT-ПРОЧ-ОБЩ-NNNN`),
+    and 1284 composition lines still have no `[[link]]`. Both are data work, not
+    code - hand to the technologist.
+
+## STATE 2026-11-02 (release 0.4.2)
+
+| | value |
+|---|---|
+| plugin | **0.4.2** (`manifest.json` = `package.json`) |
+| remote `backend` | see the release commit below |
+| remote `main` | plugin part only; server folders stay `.gitignore`d there |
+| live containers | `mailers-offers-1`, `mailers-offers-bot-1` recreated from `backend` |
+| `sbe-apstore-registry` | updated in the same batch |
+
+What changed: the parsing of manager files (address cells, columns by label,
+several header blocks, section rows), object context out of any file
+(`contextFields` → brief, literal over model), a document without positions,
+and an offer reopened for editing from "Мои КП". Details - the entry
+"2026-11-01/02" above.
 
 ## STATE 2026-11-01 (release 0.4.1 - supersedes the 0.4.0 block below)
 
