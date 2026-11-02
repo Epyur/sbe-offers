@@ -452,34 +452,81 @@ func ParseXlsxAttachment(data []byte) (XlsxAttachment, error) {
 }
 
 // classifyXlsxSheet решает, спецификация перед нами или контекст.
+//
+// Лист обходится ЦЕЛИКОМ, а не до первой шапки: живой пользовательский КП
+// (2026-11-01) — это две системы на одном листе, у каждой своя шапка состава,
+// между ними описание и преимущества. Разбор первой шапки терял вторую систему.
 func classifyXlsxSheet(rows [][]string) XlsxAttachment {
-	if idx, ok := findXlsxHeaderRow(rows); ok {
-		spec, _ := buildXlsxSpec(rows[idx], rows[idx+1:])
-		if spec.IsSpecification {
-			return spec
-		}
-		// Шапка есть, но колонок состава нет — это контекст: отдаём текст
-		// таблицы целиком, вместе с шапкой.
-		return XlsxAttachment{Text: flushXlsxRows(rows)}
-	}
-	// Шапки не нашли — пробуем без неё (выгрузка без строки заголовков).
-	if spec, _ := buildXlsxSpec(nil, rows); spec.IsSpecification {
+	spec := collectXlsxSpec(rows)
+	if spec.IsSpecification {
 		return spec
 	}
 	return XlsxAttachment{Text: flushXlsxRows(rows)}
 }
 
-// buildXlsxSpec собирает строки спецификации по колонкам шапки.
-func buildXlsxSpec(header []string, rows [][]string) (XlsxAttachment, []string) {
-	cols := matchSpecColumns(header)
+// collectXlsxSpec собирает состав по ВСЕМ шапкам листа.
+//
+// Если шапок нет вовсе — пробует разобрать лист как выгрузку без заголовков:
+// люди присылают и так.
+func collectXlsxSpec(rows [][]string) XlsxAttachment {
+	cols, start := findSpecHeader(rows, 0)
+	if !cols.ok() {
+		if spec, _, _ := buildXlsxSpec(noSpecColumns(), rows); spec.IsSpecification {
+			return spec
+		}
+		return XlsxAttachment{}
+	}
 	var out XlsxAttachment
-	if cols.name < 0 || cols.qty < 0 {
-		return out, nil
+	for {
+		part, warnings, next := buildXlsxSpec(cols, rows[start:])
+		out.Rows = append(out.Rows, part.Rows...)
+		out.Warnings = append(out.Warnings, warnings...)
+		if len(out.Rows) >= MaxSpecRows {
+			out.Rows = out.Rows[:MaxSpecRows]
+			out.Warnings = append(out.Warnings, fmt.Sprintf("взяты только первые %d строк", MaxSpecRows))
+			break
+		}
+		nextCols, nextStart := findSpecHeader(rows, start+next)
+		if !nextCols.ok() {
+			break
+		}
+		cols, start = nextCols, nextStart
+	}
+	if len(out.Rows) == 0 {
+		return XlsxAttachment{}
+	}
+	out.IsSpecification = true
+	return out
+}
+
+// buildXlsxSpec собирает строки спецификации по колонкам шапки.
+//
+// Идёт до конца листа, но останавливается, встретив следующую шапку: её строки
+// разберёт вызывающий своим набором колонок. Иначе вторая шапка («Наименование»,
+// «Ед. изм.», …) сама стала бы позицией состава.
+//
+// Третий результат — сколько строк листа израсходовано (включая шапку и
+// остановившую разбор строку). Без него поиск следующей шапки начинался бы
+// там же, где предыдущая, и второй блок разбирался бы дважды (поймано тестом).
+func buildXlsxSpec(cols specColumns, rows [][]string) (XlsxAttachment, []string, int) {
+	var out XlsxAttachment
+	if !cols.ok() {
+		return out, nil, 0
 	}
 	var warnings []string
-	for _, row := range rows {
+	used := 0
+	for i, row := range rows {
+		if i > 0 && cols.clashesWith(matchSpecColumns(row)) {
+			break
+		}
+		used = i + 1
 		name := xlsxCellAt(row, cols.name)
 		if !model.NonEmpty(name) {
+			continue
+		}
+		if isXlsxSectionLabel(name) {
+			// «Устройство гидроизоляции фундамента (горизонталь)» — заголовок
+			// раздела внутри таблицы: количество есть, материала нет.
 			continue
 		}
 		item := SpecRow{
@@ -494,6 +541,11 @@ func buildXlsxSpec(header []string, rows [][]string) (XlsxAttachment, []string) 
 			// таблицы, а не позиция. В состав им нельзя.
 			continue
 		}
+		if item.Price <= 0 && item.Sum <= 0 {
+			// Ни цены, ни суммы — итоговая или служебная строка. Позиция без
+			// цены придёт из каталога; из файла её брать нечем.
+			continue
+		}
 		if item.Sum == 0 && item.Price > 0 {
 			item.Sum = roundAttachmentMoney(item.Qty * item.Price)
 		}
@@ -505,17 +557,18 @@ func buildXlsxSpec(header []string, rows [][]string) (XlsxAttachment, []string) 
 				formatAttachmentNumber(item.Sum)))
 		}
 		out.Rows = append(out.Rows, item)
-		if len(out.Rows) >= MaxSpecRows {
-			warnings = append(warnings, fmt.Sprintf("взяты только первые %d строк", MaxSpecRows))
-			break
-		}
 	}
 	if len(out.Rows) == 0 {
-		return XlsxAttachment{}, nil
+		return XlsxAttachment{}, nil, used
 	}
 	out.IsSpecification = true
 	out.Warnings = warnings
-	return out, warnings
+	return out, warnings, used
+}
+
+// noSpecColumns — «колонок не нашли»: пустой набор для разбора без шапки.
+func noSpecColumns() specColumns {
+	return specColumns{name: -1, unit: -1, qty: -1, price: -1, sum: -1}
 }
 
 // specColumns — номера колонок спецификации (с нуля), -1 если колонки нет.
@@ -523,24 +576,72 @@ type specColumns struct {
 	name, unit, qty, price, sum int
 }
 
+// ok — по шапке можно собирать состав: есть наименование и количество.
+func (c specColumns) ok() bool {
+	return c.name >= 0 && c.qty >= 0
+}
+
+// clashesWith — признак того, что строка является ШАПКОЙ, а не позицией:
+// у неё своё наименование и своё количество, и они в других колонках.
+func (c specColumns) clashesWith(other specColumns) bool {
+	return other.ok() && (other.name != c.name || other.qty != c.qty)
+}
+
+// matchSpecColumns раскладывает шапку по колонкам.
+//
+// Порядок проверок важен, а не порядок колонок: живой файл ставит между
+// количеством и ценой «Коэффициент расхода», и разбор по порядку сделал бы
+// ценой коэффициент (1,15 вместо 769,56). Поэтому каждая колонка опознаётся по
+// СВОЕЙ подписи, и «ЕКН» тоже: номер — не наименование.
 func matchSpecColumns(header []string) specColumns {
-	cols := specColumns{name: -1, unit: -1, qty: -1, price: -1, sum: -1}
+	cols := noSpecColumns()
 	for i, cell := range header {
 		label := normalizeAttachmentLabel(cell)
+		if label == "" || isEknColumnLabel(label) {
+			continue
+		}
 		switch {
-		case cols.name < 0 && isNameColumnLabel(label):
-			cols.name = i
+		case cols.qty < 0 && isQtyColumnLabel(label):
+			cols.qty = i
+		case cols.sum < 0 && isSumColumnLabel(label):
+			cols.sum = i
+		case cols.price < 0 && isPriceColumnLabel(label):
+			cols.price = i
 		case cols.unit < 0 && isUnitColumnLabel(label):
 			cols.unit = i
-		case cols.qty < 0 && strings.Contains(label, "кол-во") || cols.qty < 0 && strings.Contains(label, "количество"):
-			cols.qty = i
-		case cols.price < 0 && strings.Contains(label, "цена"):
-			cols.price = i
-		case cols.sum < 0 && strings.Contains(label, "сумма") || cols.sum < 0 && strings.Contains(label, "стоимость"):
-			cols.sum = i
+		case cols.name < 0 && isNameColumnLabel(label):
+			cols.name = i
 		}
 	}
 	return cols
+}
+
+// isEknColumnLabel — колонка номера ЕКН. Проверяется раньше остальных:
+// «ЕКН» без подписи не должна попасть ни в наименование, ни куда-либо ещё.
+func isEknColumnLabel(label string) bool {
+	return label == "екн" || label == "ekn" || strings.HasPrefix(label, "екн ")
+}
+
+func isQtyColumnLabel(label string) bool {
+	return strings.Contains(label, "кол-во") || strings.Contains(label, "количество") ||
+		strings.HasPrefix(label, "кол ")
+}
+
+// isPriceColumnLabel — «цена», «стоимость единицы», «цена за ед».
+//
+// «Сметная стоимость» — это СУММА, а не цена: у «стоимости» проверяется
+// отдельно, есть ли в подписи единица.
+func isPriceColumnLabel(label string) bool {
+	if strings.Contains(label, "цена") {
+		return true
+	}
+	return strings.Contains(label, "стоимость") &&
+		(strings.Contains(label, "единиц") || strings.Contains(label, "ед.") || strings.Contains(label, "за "))
+}
+
+func isSumColumnLabel(label string) bool {
+	return strings.Contains(label, "сумма") || strings.Contains(label, "итого") ||
+		strings.Contains(label, "сметная стоимость")
 }
 
 func isNameColumnLabel(label string) bool {
@@ -553,6 +654,7 @@ func isNameColumnLabel(label string) bool {
 	return strings.Contains(label, "продукц")
 }
 
+// isUnitColumnLabel — «Ед. изм.», «единица измерения», «ед.».
 func isUnitColumnLabel(label string) bool {
 	switch {
 	case label == "ед", strings.HasPrefix(label, "ед."), label == "ед изм":
@@ -561,21 +663,33 @@ func isUnitColumnLabel(label string) bool {
 	return strings.Contains(label, "единиц")
 }
 
-// findXlsxHeaderRow — строка, похожая на шапку таблицы: в ней есть и
-// наименование, и количество. Только по такой строке колонки и опознаются.
-func findXlsxHeaderRow(rows [][]string) (int, bool) {
-	limit := len(rows)
-	if limit > 20 {
-		// Шапку ниже двадцатой строки не ищем: это уже не шапка.
-		limit = 20
+// isXlsxSectionLabel — заголовок раздела внутри таблицы, а не позиция.
+//
+// Живой файл: «Устройство гидроизоляции фундамента (горизонталь)» с площадью
+// 4800 м2 и суммой по разделу. Это не материал, и в состав ему нельзя.
+//
+// Второй вид — строка номеров колонок под шапкой («2 | 3 | 4 | 5 | 6 | 7»):
+// человек нумерует графы бланка. Для разбора это не позиция, а оглавление
+// таблицы; без этой проверки в состав уезжала строка «2 — 3 × 6 = 7».
+func isXlsxSectionLabel(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(lower, "устройство ") {
+		return true
 	}
-	for i := 0; i < limit; i++ {
+	_, err := strconv.ParseFloat(strings.ReplaceAll(lower, ",", "."), 64)
+	return err == nil
+}
+
+// findSpecHeader ищет ближайшую шапку состава, начиная со строки from.
+// Возвращает колонки и номер строки ДАННЫХ (сразу под шапкой).
+func findSpecHeader(rows [][]string, from int) (specColumns, int) {
+	for i := from; i < len(rows); i++ {
 		cols := matchSpecColumns(rows[i])
-		if cols.name >= 0 && cols.qty >= 0 {
-			return i, true
+		if cols.ok() {
+			return cols, i + 1
 		}
 	}
-	return 0, false
+	return noSpecColumns(), from
 }
 
 // flushXlsxRows превращает строки в текст: пустые ячейки пропускаются, чтобы
@@ -679,17 +793,27 @@ func parseXlsxSharedStrings(raw []byte) []string {
 }
 
 type xlsxWorksheet struct {
-	Rows []struct {
-		Cells []struct {
-			Type  string `xml:"t,attr"`
-			Value string `xml:"v"`
-			Text  string `xml:"is>t"`
-		} `xml:"c"`
-	} `xml:"sheetData>row"`
+	Rows []xlsxRow `xml:"sheetData>row"`
+}
+
+// xlsxRow — строка листа. Отдельный тип ради адреса ячейки: он лежит в
+// атрибуте `r`, без него пропущенная ячейка сдвинула бы весь ряд влево.
+type xlsxRow struct {
+	Cells []xlsxCell `xml:"c"`
+}
+
+type xlsxCell struct {
+	// Ref — адрес ячейки («B35»), а не её порядок в строке. В живых файлах
+	// пропущенные ячейки просто отсутствуют, и счёт по порядку съезжает
+	// (живой случай 2026-11-01: цена оказывалась в колонке коэффициента).
+	Ref   string `xml:"r,attr"`
+	Type  string `xml:"t,attr"`
+	Value string `xml:"v"`
+	Text  string `xml:"is>t"`
 }
 
 // parseXlsxSheetRows читает лист в таблицу строк. Ячейки со словарным типом
-// «s» разворачиваются через общий словарь.
+// «s» разворачиваются через общий словарь, адрес ячейки задаёт колонку.
 func parseXlsxSheetRows(raw []byte, shared []string) [][]string {
 	var ws xlsxWorksheet
 	if err := xml.Unmarshal(raw, &ws); err != nil {
@@ -711,11 +835,47 @@ func parseXlsxSheetRows(raw []byte, shared []string) [][]string {
 			case "inlineStr":
 				value = c.Text
 			}
-			cells = append(cells, strings.TrimSpace(value))
+			cells = xlsxPlaceCell(cells, c.Ref, strings.TrimSpace(value))
 		}
 		rows = append(rows, cells)
 	}
 	return rows
+}
+
+// xlsxPlaceCell ставит значение на колонку из адреса ячейки, добивая строку
+// пустыми местами до неё. Адрес без номера колонки (мусор во входе) — значение
+// дописывается в конец: потерять его хуже, чем поставить не туда.
+func xlsxPlaceCell(cells []string, ref, value string) []string {
+	col := xlsxColumnIndex(ref)
+	switch {
+	case col < 0:
+		return append(cells, value)
+	case col < len(cells):
+		cells[col] = value
+		return cells
+	default:
+		for len(cells) < col {
+			cells = append(cells, "")
+		}
+		return append(cells, value)
+	}
+}
+
+// xlsxColumnIndex переводит «B35» в номер колонки (с нуля): B → 1.
+// Пусто и мусор — -1. Номер строки в адресе не нужен: строки уже разделены.
+func xlsxColumnIndex(ref string) int {
+	index, letters := 0, 0
+	for _, r := range ref {
+		if r < 'A' || r > 'Z' {
+			break
+		}
+		index = index*26 + int(r-'A'+1)
+		letters++
+	}
+	if letters == 0 {
+		return -1
+	}
+	return index - 1
 }
 
 // XlsxSheetRows читает ПЕРВЫЙ непустой лист как есть — строка за строкой.

@@ -212,9 +212,15 @@ func TestParseXlsxPrefersFirstNonEmptySheet(t *testing.T) {
 // --- вспомогательное: сборка минимального xlsx ---
 
 type xlsxSheet struct {
-	name   string
+	name string
+	// shared — общий словарь строк книги; строки листа ссылаются на него.
 	shared []string
-	rows   [][]string
+	// rows — простой вид листа: ячейки по порядку, без пропусков и адресов.
+	rows [][]string
+	// raw — готовый XML листа, когда нужно проверить неудобный случай:
+	// пропущенные ячейки, повторные шапки, адреса вместо порядка (2026-11-01).
+	// Если задан, rows и shared игнорируются: сборщик берёт XML как есть.
+	raw string
 }
 
 func buildTestZip(t *testing.T, files map[string]string) []byte {
@@ -245,6 +251,24 @@ func buildTestXlsx(t *testing.T, sheet xlsxSheet) []byte {
 	return buildTestXlsxMulti(t, []xlsxSheet{sheet})
 }
 
+// buildTestXlsxRaw собирает книгу из готового XML листа: словарь берётся из
+// поля shared, а лист — из raw без пересборки.
+func buildTestXlsxRaw(t *testing.T, sheet xlsxSheet) []byte {
+	t.Helper()
+	var sharedXML strings.Builder
+	sharedXML.WriteString(`<sst>`)
+	for _, s := range sheet.shared {
+		sharedXML.WriteString(`<si><t>` + s + `</t></si>`)
+	}
+	sharedXML.WriteString(`</sst>`)
+	files := map[string]string{
+		"xl/workbook.xml":          `<workbook><sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+		"xl/sharedStrings.xml":     sharedXML.String(),
+		"xl/worksheets/sheet1.xml": sheet.raw,
+	}
+	return buildTestZip(t, files)
+}
+
 func buildTestXlsxMulti(t *testing.T, sheets []xlsxSheet) []byte {
 	t.Helper()
 	files := map[string]string{
@@ -268,6 +292,10 @@ func buildTestXlsxMulti(t *testing.T, sheets []xlsxSheet) []byte {
 	files["xl/sharedStrings.xml"] = sharedXML.String()
 
 	for i, s := range sheets {
+		if s.raw != "" {
+			files["xl/worksheets/sheet"+itoa(i+1)+".xml"] = s.raw
+			continue
+		}
 		files["xl/worksheets/sheet"+itoa(i+1)+".xml"] = sheetXML(s, shared)
 	}
 	return buildTestZip(t, files)
