@@ -19,9 +19,11 @@ import {
   ID_BUTTONS,
   applyAttachConfirm,
   handleDraftText,
+  onEditOffer,
   startDraft,
   type CallbackCtx,
 } from './callbacks.ts';
+import { canResume } from './flow/resume.ts';
 import {
   NO_OFFER_FOR_FILE,
   attachMessage,
@@ -144,10 +146,17 @@ async function handleMyOffers(deps: BotDeps, chatId: string): Promise<void> {
     }
     const lines = offers.slice(0, 15).map((o) => {
       const client = o.client?.name ? ` — ${o.client.name}` : '';
-      return `№ ${o.number}${client} · ${formatTotal(o.total)} руб.`;
+      const items = (o.items ?? []).length;
+      const count = items > 0 ? `${items} поз.` : 'без позиций';
+      return `№ ${o.number}${client} · ${formatTotal(o.total)} руб. · ${count}`;
     });
-    const buttons = offers.slice(0, 15).map((o) => [
-      { text: `📄 ${o.number}`, callback_data: `doc:${o.id}` },
+    // Две кнопки на КП (2026-11-01): открыть на правку и забрать файл.
+    // Раньше была одна «документ», и продолжить КП в боте было нечем.
+    const buttons = offers.slice(0, 15).flatMap((o) => [
+      [
+        { text: `✏️ ${o.number}`, callback_data: `edit:${o.id}` },
+        { text: `📄 файл`, callback_data: `doc:${o.id}` },
+      ],
     ]);
     await deps.send(chatId, `Последние предложения:\n\n${lines.join('\n')}`, {
       inline_keyboard: buttons,
@@ -183,6 +192,16 @@ async function routeMenu(
   if (trimmed === '📂 Мои КП' || trimmed === '/my') {
     await handleMyOffers(deps, ctx.chatId);
     return true;
+  }
+  // «003/2026» — открыть сохранённое КП на правку (2026-11-01). Номер узнаётся
+  // по форме, поэтому команду можно вводить, не открывая список.
+  if (canResume(trimmed)) {
+    const offers = await api.listOffers(ctx.chatId).catch(() => []);
+    const found = offers.find((o) => o.number.trim() === trimmed);
+    if (found) {
+      await onEditOffer(ctx, found.id);
+      return true;
+    }
   }
   return false;
 }
