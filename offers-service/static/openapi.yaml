@@ -1382,6 +1382,28 @@ paths:
                     description: Строки таблицы, когда это контекст, а не состав
                     items:
                       type: string
+                  contextFields:
+                    type: object
+                    description: |
+                      Контекст объекта, разложенный по полям брифа: объект,
+                      назначение, площадь, адресат, системы, цели, риски и
+                      заметки. Строится из любого файла, где он есть, — из
+                      описательной таблицы и из свободного текста. Если файл
+                      разобран как состав, контекст из него НЕ строится: строки
+                      позиций — наименования материалов, а не описание объекта.
+                    properties:
+                      fields:
+                        type: object
+                        additionalProperties:
+                          type: array
+                          items:
+                            type: string
+                      summary:
+                        type: array
+                        items:
+                          type: string
+                      notes:
+                        type: string
         '400':
           description: Формат не принят (docx, xls, pdf, незнакомый файл)
         '403':
@@ -1419,6 +1441,27 @@ paths:
                 spec:
                   type: object
                   description: Разбор таблицы из ответа attach
+                context:
+                  type: object
+                  description: |
+                    Контекст объекта из ответа attach (`contextFields`): объект,
+                    назначение, площадь, системы, заметки. Применяется вместе с
+                    разбором — в режиме `brief` сливается с ним, в режиме `spec`
+                    записывается в бриф после состава. Пришёл из свободного
+                    текста файла, поэтому полей может не быть.
+                  properties:
+                    fields:
+                      type: object
+                      additionalProperties:
+                        type: array
+                        items:
+                          type: string
+                    summary:
+                      type: array
+                      items:
+                        type: string
+                    notes:
+                      type: string
       responses:
         '200':
           description: Что применилось

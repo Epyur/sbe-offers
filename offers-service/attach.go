@@ -45,11 +45,24 @@ type attachedFile struct {
 	Spec *specFromFile `json:"spec,omitempty"`
 	// Context — строки таблицы, когда это контекст, а не состав.
 	Context []string `json:"context,omitempty"`
+	// ContextFields — контекст объекта, разложенный по полям брифа
+	// (2026-11-01). Приезжает и с таблицей состава: старый КП в Excel — это
+	// одновременно состав и описание объекта, и терять второе нельзя.
+	ContextFields *skills.FileContext `json:"contextFields,omitempty"`
 	// Reply — что бот скажет менеджеру: «что я понял» и вопрос-подтверждение.
 	Reply string `json:"reply"`
 	// NeedsConfirm — есть что применять. false — файл прочитан, но в бриф из
 	// него ничего не идёт (например, пустая таблица).
 	NeedsConfirm bool `json:"needsConfirm"`
+}
+
+// specRows — строки состава, если они есть. Одна точка вместо повторного
+// «out.Spec != nil && len(...) > 0» в каждом ответе.
+func (a *attachedFile) specRows() []specRowView {
+	if a.Spec == nil {
+		return nil
+	}
+	return a.Spec.Rows
 }
 
 // briefFromFile — разложенный по брифу текст из файла.
@@ -60,6 +73,19 @@ type briefFromFile struct {
 	Notes string `json:"notes,omitempty"`
 	// Summary — человеческое описание «что понял», по пунктам.
 	Summary []string `json:"summary"`
+}
+
+// hasFields — есть ли что записывать в бриф.
+func (b *briefFromFile) hasFields() bool {
+	if b == nil {
+		return false
+	}
+	for _, values := range b.Fields {
+		if len(values) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // specFromFile — распознанная таблица спецификации вместе со сверкой каталога.
@@ -141,15 +167,23 @@ func drainBody(r io.Reader) {
 }
 
 // readAttachedFile разбирает файл по типу и собирает ответ «что я понял».
+//
+// Файл всегда даёт БРИФ (контекст объекта), а таблица вдобавок может дать
+// состав. Раньше это были две несвязанные ветки, и старый КП в Excel, из
+// которого не собрался состав, отдавал только текст — «состава нет», и
+// менеджеру приходилось перепечатывать объект руками (живой случай
+// 2026-11-01). Теперь текст файла всегда идёт в контекст брифа.
 func (s *Server) readAttachedFile(ctx context.Context, offer Offer, name string, data []byte) (*attachedFile, error) {
 	kind := skills.DetectAttachmentType(name, data)
 	out := &attachedFile{Kind: kind, Name: name}
 	switch kind {
 	case string(skills.AttachmentMarkdown):
-		parsed := skills.ParseMarkdownAttachment(string(data))
-		out.Brief = briefFromMarkdown(parsed)
-		out.NeedsConfirm = len(out.Brief.Fields) > 0
-		out.Reply = attachReplyBrief(out.Brief)
+		text := string(data)
+		out.Brief = briefFromMarkdown(skills.ParseMarkdownAttachment(text))
+		// Тот же разбор контекста, что у таблиц (2026-11-01): текст «Объект: …»
+		// распознаётся и дословно, и моделью. Без этого бриф из .md заполнялся
+		// только по строгим подписям и молчал на живом тексте.
+		out.ContextFields = s.contextWithModel(ctx, strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n"))
 	case string(skills.AttachmentXlsx):
 		parsed, err := skills.ParseXlsxAttachment(data)
 		if err != nil {
@@ -157,13 +191,14 @@ func (s *Server) readAttachedFile(ctx context.Context, offer Offer, name string,
 		}
 		if parsed.IsSpecification {
 			out.Spec = s.specFromFile(ctx, parsed)
-			out.NeedsConfirm = len(out.Spec.Rows) > 0
-			out.Reply = attachReplySpec(out.Spec)
+			// Состав разобран отдельно. Контекст из него НЕ строим: строки
+			// позиций — это наименования материалов, а не описание объекта.
+			// Живая ошибка 2026-11-01: они уезжали в заметки брифа, и бот
+			// обещал «записать контекст», которого нет.
 			break
 		}
 		out.Context = parsed.Text
-		out.Reply = "Прочитал таблицу, но состава в ней не нашёл. " +
-			"Пришлите файл с колонками «Наименование» и «Количество» — или соберите состав из каталога."
+		out.ContextFields = s.contextWithModel(ctx, parsed.Text)
 	case string(skills.AttachmentDocx):
 		return nil, errors.New("файлы Word пока не принимаю: пришлите .md или .xlsx")
 	case string(skills.AttachmentOldExcel):
@@ -174,10 +209,62 @@ func (s *Server) readAttachedFile(ctx context.Context, offer Offer, name string,
 		return nil, errors.New("не понял формат файла: пришлите .md или .xlsx")
 	}
 
+	// Что применять к КП: состав, если он есть; иначе контекст брифа, если из
+	// файла хоть что-то разложилось. Разбор файла без полезного содержимого
+	// остаётся «прочитал, применять нечего».
+	out.NeedsConfirm = len(out.specRows()) > 0 ||
+		out.Brief.hasFields() ||
+		(out.ContextFields != nil && out.ContextFields.HasContent())
+	out.Reply = attachReply(out, name)
+
 	// Файл сохраняем как вложение предложения: потом видно, откуда взялись
 	// данные. Ошибка хранилища файл не отменяет — разбор важнее.
 	out.Key = s.storeAttachment(ctx, offer, name, data)
 	return out, nil
+}
+
+// contextWithModel дополняет дословный разбор модельным.
+//
+// Дословное главнее (MergeFileContexts), поэтому пустая или неудачная модель —
+// не ошибка: контекст всё равно собран. Сеть здесь единственная: остальной
+// разбор файла чистый.
+func (s *Server) contextWithModel(ctx context.Context, lines []string) *skills.FileContext {
+	facts := contextFromParsed(false, lines)
+	if facts == nil {
+		return nil
+	}
+	raw, err := Complete(ctx, skills.RenderFileContextSystem(), skills.RenderFileContextUser(lines), 900)
+	if err != nil {
+		return facts
+	}
+	fromModel, parseErr := skills.ParseFileContextAnswer(raw)
+	if parseErr != nil {
+		return facts
+	}
+	merged := skills.MergeFileContexts(*facts, fromModel)
+	if !merged.HasContent() {
+		return facts
+	}
+	return &merged
+}
+
+// contextFromParsed решает, строить ли контекст брифа, и строит его.
+//
+// isSpec — файл уже разобран как состав. Тогда контекста НЕ бывает: строки
+// позиций — наименования материалов, а не описание объекта. Живая ошибка
+// 2026-11-01: они уезжали в заметки, и бот обещал «записать контекст».
+//
+// Модельный путь включается отдельно (`contextWithModel`), потому что он ходит
+// в сеть, а эта функция — чистая: по ней проверяется правило.
+func contextFromParsed(isSpec bool, lines []string) *skills.FileContext {
+	if isSpec {
+		return nil
+	}
+	facts := skills.ExtractBriefFacts(lines)
+	if !facts.HasContent() {
+		return nil
+	}
+	return &facts
 }
 
 // storeAttachment кладёт файл в хранилище рядом с DOCX предложения.
@@ -273,25 +360,40 @@ func specSummary(total, matched, newRows, priceDiffs int) string {
 	return strings.Join(parts, ", ")
 }
 
-// attachReplyBrief — что бот говорит после разбора текстового файла.
-func attachReplyBrief(b *briefFromFile) string {
-	if len(b.Fields) == 0 {
-		return "Файл прочитал, но полей брифа в нём не нашёл. " +
-			"Разложить заметки в «прочее»?"
+// attachReply — что бот говорит после разбора файла.
+//
+// Одна функция на все виды файла: раньше их было три, и новый путь (контекст
+// из таблицы) в них не помещался. Порядок разговора — состав, потом контекст,
+// потому что состав — это то, ради чего менеджер прислал таблицу.
+func attachReply(out *attachedFile, name string) string {
+	hasContext := out.ContextFields != nil && out.ContextFields.HasContent()
+	hasSpec := len(out.specRows()) > 0
+	var parts []string
+	if hasSpec {
+		parts = append(parts, "Нашёл таблицу: "+out.Spec.Summary+".")
+		if out.Spec.PriceDiffs > 0 {
+			parts = append(parts, "Цены в файле отличаются от каталога — заменять состав буду по каталогу, "+
+				"если не скажете иначе.")
+		}
 	}
-	return "Понял: " + strings.Join(b.Summary, ", ") + ".\n" +
-		"Разложить в бриф? ✓ / ✏️"
-}
-
-// attachReplySpec — что бот говорит после разбора таблицы.
-func attachReplySpec(spec *specFromFile) string {
-	reply := "Нашёл таблицу: " + spec.Summary + "."
-	if spec.PriceDiffs > 0 {
-		reply += "\nЦены в файле отличаются от каталога — заменять состав буду по каталогу, " +
-			"если не скажете иначе."
+	if hasContext {
+		parts = append(parts, "Из файла понял: "+strings.Join(out.ContextFields.Summary, ", ")+".")
 	}
-	reply += "\nСобрать состав по этой таблице? ✓ / ✏️"
-	return reply
+	switch {
+	case len(parts) == 0:
+		if len(out.Context) > 0 {
+			return "Прочитал «" + attachmentTitle(name) + "», но ничего применить не смог: " +
+				"ни состава (нужны «Наименование» и «Количество»), ни описания объекта. " +
+				"Расскажите про объект в чате — вопросы задам сам."
+		}
+		return "Файл прочитал, но применять нечего. Расскажите про объект в чате — вопросы задам сам."
+	case hasSpec && hasContext:
+		return strings.Join(parts, "\n") + "\nСобрать состав и записать контекст в бриф? ✓ / ✏️"
+	case hasSpec:
+		return strings.Join(parts, "\n") + "\nСобрать состав по этой таблице? ✓ / ✏️"
+	default:
+		return strings.Join(parts, "\n") + "\nЗаписать это в бриф? ✓ / ✏️"
+	}
 }
 
 // --- Применение подтверждённого ----------------------------------------
@@ -312,6 +414,9 @@ func (s *Server) handleBotAttachApply(w http.ResponseWriter, r *http.Request) {
 		Mode   string         `json:"mode"`
 		Brief  *briefFromFile `json:"brief"`
 		Spec   *specFromFile  `json:"spec"`
+		// Context — контекст объекта из файла (2026-11-01). Приходит вместе
+		// с составом: подтверждение одно («собрать и записать»), а путей два.
+		Context *skills.FileContext `json:"context,omitempty"`
 	}
 	if err := decodeJSON(w, r, &req, 2<<20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -324,11 +429,18 @@ func (s *Server) handleBotAttachApply(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Mode {
 	case "brief":
-		if req.Brief == nil {
+		// Разбор брифа и контекст объекта — одно и то же по смыслу, но
+		// приходят разными путями: строгие подписи (`brief`) и свободный текст
+		// (`context`). Применяем оба, чтобы подтверждение не теряло половину.
+		from := req.Brief
+		if ctxFields := briefFromContext(req.Context); ctxFields != nil {
+			from = mergeBriefFiles(from, ctxFields)
+		}
+		if from == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "нет разбора файла"})
 			return
 		}
-		updated, err := s.applyBriefFromFile(r.Context(), offer, req.Brief)
+		updated, err := s.applyBriefFromFile(r.Context(), offer, from)
 		if err != nil {
 			dbError(w, "attach apply brief", err)
 			return
@@ -348,14 +460,82 @@ func (s *Server) handleBotAttachApply(w http.ResponseWriter, r *http.Request) {
 			dbError(w, "attach apply spec", err)
 			return
 		}
+		reply := fmt.Sprintf("Состав обновлён: позиций %d, итого %s руб.", len(applied.Items), formatMoney(applied.Total))
+		// Контекст того же файла не теряется: строка-ответ одна, и молчать о
+		// второй половине разбора нельзя.
+		if ctxFields := briefFromContext(req.Context); ctxFields != nil {
+			if _, briefErr := s.applyBriefFromFile(r.Context(), offer, ctxFields); briefErr == nil {
+				reply += "\nКонтекст объекта записан в бриф."
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"offer":   applied,
-			"reply":   fmt.Sprintf("Состав обновлён: позиций %d, итого %s руб.", len(applied.Items), formatMoney(applied.Total)),
+			"reply":   reply,
 			"applied": true,
 		})
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "mode: brief|spec"})
 	}
+}
+
+// briefFromContext переводит контекст из файла в разбор брифа.
+//
+// nil или пустой контекст — nil: вызывающий не должен различать «не пришёл» и
+// «пришёл пустой», обоих случаев хватает одного «применять нечего».
+func briefFromContext(ctx *skills.FileContext) *briefFromFile {
+	if ctx == nil || !ctx.HasContent() {
+		return nil
+	}
+	out := &briefFromFile{Fields: ctx.Fields, Notes: ctx.Notes, Summary: ctx.Summary}
+	if out.Fields == nil {
+		out.Fields = map[string][]string{}
+	}
+	return out
+}
+
+// mergeBriefFiles складывает два разбора в один.
+//
+// Приоритет: строгий разбор подписей (`base`) главнее свободного контекста
+// (`extra`) — он читает написанное как есть. Заметки объединяются.
+func mergeBriefFiles(base, extra *briefFromFile) *briefFromFile {
+	switch {
+	case base == nil:
+		return extra
+	case extra == nil:
+		return base
+	}
+	out := &briefFromFile{
+		Fields:  make(map[string][]string, len(base.Fields)+len(extra.Fields)),
+		Notes:   joinBriefNotes(base.Notes, extra.Notes),
+		Summary: append([]string{}, base.Summary...),
+	}
+	for key, values := range extra.Fields {
+		out.Fields[key] = append([]string{}, values...)
+	}
+	for key, values := range base.Fields {
+		out.Fields[key] = append([]string{}, values...)
+	}
+	for _, line := range extra.Summary {
+		if !containsString(out.Summary, line) {
+			out.Summary = append(out.Summary, line)
+		}
+	}
+	return out
+}
+
+// joinBriefNotes склеивает заметки, не повторяя строки.
+func joinBriefNotes(parts ...string) string {
+	var lines []string
+	for _, part := range parts {
+		for _, line := range strings.Split(part, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || containsString(lines, line) {
+				continue
+			}
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // applyBriefFromFile записывает поля файла в бриф предложения.
@@ -443,14 +623,13 @@ func mergeBriefFields(prev model.BriefPayload, fields map[string][]string) model
 	return out
 }
 
-// containsString — есть ли строка в списке (для объединения без повторов).
+// containsString — есть ли строка в списке без учёта регистра.
+//
+// Своя реализация была второй копией `skills.ContainsFold` (правило «одно
+// решение в одном месте»). Оставлена обёртка: точка вызова читается лучше, а
+// логика — одна.
 func containsString(list []string, value string) bool {
-	for _, v := range list {
-		if strings.EqualFold(v, value) {
-			return true
-		}
-	}
-	return false
+	return skills.ContainsFold(list, value)
 }
 
 // briefProgress — «N из M» для ответа боту.

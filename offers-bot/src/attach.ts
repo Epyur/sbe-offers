@@ -13,7 +13,7 @@
  * стендом (attach.test.ts) без Telegram и без сервиса.
  */
 import type { AttachResult } from './api.ts';
-import type { AttachPending, ChatSession, SpecFromFile } from './session.ts';
+import type { AttachPending, ChatSession, FileContextFromFile, SpecFromFile } from './session.ts';
 
 export type AttachSession = ChatSession;
 export type { AttachPending, AttachResult };
@@ -53,11 +53,26 @@ export function attachMessage(result: AttachResult): { text: string; keyboard?: 
   if (result.spec) {
     lines.push('', ...specPreview(result.spec));
   }
+  if (result.contextFields && result.contextFields.summary.length > 0) {
+    lines.push('', 'Из файла понял:', ...contextPreview(result.contextFields));
+  }
   if (result.brief && result.brief.notes?.trim()) {
     lines.push('', 'Прочее из файла:', truncate(result.brief.notes.trim(), 400));
   }
   return { text: lines.join('\n'), keyboard: CONFIRM_KEYBOARD };
 }
+
+/** Строки контекста из файла для чата: по пункту на поле. */
+export function contextPreview(context: FileContextFromFile): string[] {
+  const out = context.summary.slice(0, MAX_CONTEXT_LINES).map((line) => `• ${line}`);
+  if (context.summary.length > MAX_CONTEXT_LINES) {
+    out.push(`…и ещё ${context.summary.length - MAX_CONTEXT_LINES}`);
+  }
+  return out;
+}
+
+/** Предел извлечённых полей в чате: остальное всё равно ляжет в бриф. */
+const MAX_CONTEXT_LINES = 8;
 
 /** Строки таблицы для показа в чате: название, количество, цена. */
 export function specPreview(spec: SpecFromFile): string[] {
@@ -83,7 +98,11 @@ function truncate(text: string, limit: number): string {
 /** Запомнить разбор до подтверждения. */
 export function rememberAttach(session: AttachSession, result: AttachResult): AttachSession {
   if (!result.needsConfirm) return session;
-  if (result.spec) return { ...session, attach: { kind: 'spec', spec: result.spec } };
+  if (result.spec) {
+    // Состав вместе с контекстом: подтверждение одно, а запишутся оба.
+    return { ...session, attach: { kind: 'spec', spec: result.spec, context: result.contextFields } };
+  }
+  if (result.contextFields) return { ...session, attach: { kind: 'brief', brief: result.contextFields } };
   if (result.brief) return { ...session, attach: { kind: 'brief', brief: result.brief } };
   return session;
 }

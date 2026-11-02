@@ -143,3 +143,45 @@ test('отказ: разные слова для брифа и таблицы', 
 test('подсказка без черновика объясняет, что делать', () => {
   assert.match(NO_OFFER_FOR_FILE, /Собрать КП/);
 });
+
+// Контекст из файла (2026-11-01): старый КП в Excel — это и состав, и объект.
+const specWithContext: AttachResult = {
+  ...specResult,
+  reply: 'Нашёл таблицу: строк: 41, нет в каталоге: 41.\nИз файла понял: объект: Дом на Охотской.',
+  contextFields: {
+    fields: { object_name: ['Дом на Охотской'], planned_systems: ['ТН-ФУНДАМЕНТ Дренаж Проф'] },
+    notes: 'Описание системы.',
+    summary: ['объект: Дом на Охотской', 'системы из файла: ТН-ФУНДАМЕНТ Дренаж Проф'],
+  },
+};
+
+test('состав и контекст приходят одним подтверждением', () => {
+  const remembered = rememberAttach(session(), specWithContext);
+  assert.equal(remembered.attach?.kind, 'spec');
+  assert.ok(
+    remembered.attach?.kind === 'spec' && remembered.attach.context,
+    'контекст не запомнен вместе с составом',
+  );
+});
+
+test('в чате видно, что понято из файла', () => {
+  const { text } = attachMessage(specWithContext);
+  assert.match(text, /Из файла понял/);
+  assert.match(text, /Охотской/);
+  assert.match(text, /ФУНДАМЕНТ/);
+});
+
+test('контекст без состава — это бриф, а не состав', () => {
+  const contextOnly: AttachResult = {
+    kind: 'xlsx',
+    name: 'описание.xlsx',
+    reply: 'Из файла понял: объект: Склад.',
+    needsConfirm: true,
+    contextFields: {
+      fields: { object_name: ['Склад'] },
+      summary: ['объект: Склад'],
+    },
+  };
+  const remembered = rememberAttach(session(), contextOnly);
+  assert.equal(remembered.attach?.kind, 'brief');
+});

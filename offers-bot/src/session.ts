@@ -39,10 +39,17 @@ export interface ChatSession {
 /** Что бот ждёт от человека после показа разбора файла. */
 export type AttachPending =
   | { kind: 'brief'; brief: BriefFromFile }
-  | { kind: 'spec'; spec: SpecFromFile };
+  | { kind: 'spec'; spec: SpecFromFile; context?: FileContextFromFile };
 
 /** Разобранный файл: повторяет ответ offers-service (см. api.ts). */
 export interface BriefFromFile {
+  fields: Record<string, string[]>;
+  notes?: string;
+  summary: string[];
+}
+
+/** Контекст объекта из файла (2026-11-01): те же ключи, что у брифа. */
+export interface FileContextFromFile {
   fields: Record<string, string[]>;
   notes?: string;
   summary: string[];

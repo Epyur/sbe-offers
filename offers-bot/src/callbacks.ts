@@ -33,6 +33,7 @@ import {
   type AttachPending,
   type AttachSession,
 } from './attach.ts';
+import { EDIT_KEYBOARD, resumeMessage, resumeSession } from './flow/resume.ts';
 import {
   BRIEF_FILE_KEYBOARD,
   beginBrief,
@@ -211,19 +212,15 @@ export async function sendDocx(ctx: CallbackCtx, offerId: number): Promise<void>
  * С 2026-11-01 КП создаётся в начале разговора (номер выдаётся сразу, чтобы
  * принять файл и бриф), поэтому новый offer здесь не создаётся — иначе на одно
  * КП было бы два номера и две строки в «Мои КП».
+ *
+ * Пустой состав — законный результат (2026-11-01): менеджерам на первых шагах
+ * нужна описательная часть, цены они вписывают сами. Раньше «Готово» без
+ * позиций упиралось в отказ, и КП нельзя было ни собрать, ни потом открыть.
  */
 export async function finishDraft(ctx: CallbackCtx): Promise<void> {
   const draft = ctx.session.draft;
   if (!draft) {
     await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
-    return;
-  }
-  if (draft.items.length === 0) {
-    await ctx.deps.send(
-      ctx.chatId,
-      'В предложении нет позиций. Добавьте материалы из каталога, свои строки или пришлите таблицу.',
-      DRAFT_KEYBOARD,
-    );
     return;
   }
   try {
@@ -243,7 +240,10 @@ export async function finishDraft(ctx: CallbackCtx): Promise<void> {
       step: 'done' as const,
     };
     apply(ctx, { ...ctx.session, draft: done });
-    await ctx.deps.send(ctx.chatId, `Предложение № ${done.number}.\n\n${draftSummary(done)}`);
+    const summary = done.items.length > 0
+      ? draftSummary(done)
+      : 'Позиций нет — документ соберётся с описательной частью, состав и цены впишете сами.';
+    await ctx.deps.send(ctx.chatId, `Предложение № ${done.number}.\n\n${summary}`);
     // Состав готов — дальше согласование текстов. Бриф к этому моменту уже
     // собран (он шёл первым), и повторно его не запускаем.
     await startCopy(ctx);
@@ -521,6 +521,54 @@ export async function onLink(ctx: CallbackCtx, id: number): Promise<void> {
   }
 }
 
+// --- Продолжение сохранённого КП (2026-11-01) ---------------------------
+
+/**
+ * Открыть сохранённое КП на правку.
+ *
+ * Раньше к КП можно было вернуться только из плагина: бот жил одним
+ * черновиком в памяти, и после «Готово» без позиций продолжить разговор было
+ * нечем. Теперь состояние черновика собирается из самого предложения, а
+ * происхождение данных неважно — файл, каталог или ручные строки.
+ */
+export async function onEditOffer(ctx: CallbackCtx, id: number): Promise<void> {
+  let offer: api.OfferPayload;
+  try {
+    offer = await api.getOffer(id, ctx.chatId);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось открыть предложение: ${(e as Error).message}`, MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, resumeSession(ctx.session, offer));
+  await ctx.deps.send(ctx.chatId, resumeMessage(offer), EDIT_KEYBOARD);
+}
+
+/**
+ * «📚 Дополнить контекст»: вернуться к брифу этого КП.
+ *
+ * Бриф уже существует — он заводится вместе с КП. Сервис сам скажет, какая
+ * тема не заполнена, поэтому разговор продолжается с места, а не с начала.
+ */
+export async function onEditBrief(ctx: CallbackCtx): Promise<void> {
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  if (!offerId) {
+    await ctx.deps.send(ctx.chatId, 'Сначала откройте предложение из «Мои КП».', MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, { ...ctx.session, briefDone: false, briefSkipped: false });
+  await beginBrief(ctx, offerId);
+}
+
+/** «📄 Документ»: собрать файл по сохранённому КП. */
+export async function onEditDoc(ctx: CallbackCtx): Promise<void> {
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  if (!offerId) {
+    await ctx.deps.send(ctx.chatId, 'Сначала откройте предложение из «Мои КП».', MAIN_KEYBOARD);
+    return;
+  }
+  await sendDocx(ctx, offerId);
+}
+
 /**
  * Подтверждение разбора файла (2026-10-29): `att:yes` применяет, `att:no`
  * забывает.
@@ -555,6 +603,7 @@ export async function applyAttachConfirm(ctx: CallbackCtx, yes: boolean): Promis
       api.applyAttach(offerId, ctx.chatId, mode, {
         brief: payload.kind === 'brief' ? payload.brief : undefined,
         spec: payload.kind === 'spec' ? payload.spec : undefined,
+        context: payload.kind === 'spec' ? payload.context : undefined,
       }),
     );
     apply(ctx, forgetAttach(session));
@@ -580,12 +629,17 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'copy:accept': onCopyAccept,
   'copy:edit': onCopyEdit,
   'copy:skip': onCopySkip,
+  // Продолжение сохранённого КП (2026-11-01).
+  'edit:brief': onEditBrief,
+  'edit:doc': onEditDoc,
 };
 
 export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promise<void>> = {
   pick: onPick,
   doc: onDoc,
   link: onLink,
+  // Открыть сохранённое КП на правку: `edit:<id>`.
+  edit: onEditOffer,
   // Выбор системы из списка: `sys:<индекс>`. Индекс, а не код: callback_data
   // ограничен 64 байтами, а код системы с кириллицей туда не влезет.
   sys: onSystemPick,

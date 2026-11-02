@@ -240,8 +240,21 @@ export interface AttachResult {
   brief?: BriefFromFile;
   spec?: SpecFromFile;
   context?: string[];
+  /**
+   * Контекст объекта из файла, разложенный по полям брифа (2026-11-01).
+   * Приезжает и вместе с таблицей состава: старый КП в Excel — это и позиции,
+   * и описание объекта.
+   */
+  contextFields?: FileContextFromFile;
   reply: string;
   needsConfirm: boolean;
+}
+
+/** Контекст объекта из файла: те же ключи, что у полей брифа. */
+export interface FileContextFromFile {
+  fields: Record<string, string[]>;
+  notes?: string;
+  summary: string[];
 }
 
 /**
@@ -288,13 +301,14 @@ export async function applyAttach(
   id: number,
   chatId: string,
   mode: 'brief' | 'spec',
-  payload: { brief?: BriefFromFile; spec?: SpecFromFile },
+  payload: { brief?: BriefFromFile; spec?: SpecFromFile; context?: FileContextFromFile },
 ): Promise<{ reply: string }> {
   return call('POST', `/bot/offers/${id}/attach/apply`, {
     chat_id: chatId,
     mode,
     brief: payload.brief,
     spec: payload.spec,
+    context: payload.context,
   });
 }
 
