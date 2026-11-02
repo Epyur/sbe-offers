@@ -896,13 +896,15 @@ stand **235/235** (four new checks).
 `manifest.json` = `package.json` = **0.4.5**, no `b` suffix (the whole change
 is on both branches). CUP news rewritten for this release; the 0.4.4 news line
 was removed from `check_bundle_strings.mjs` together with the old text.
+Deployed and self-hosted the same evening - the live state is in the
+"STATE 2026-11-02 evening" block above.
 
 | | value |
 |---|---|
-| `backend` | `22298b5` (fix) + `122b384` (release) + `74953e8` (docs) - pushed |
-| `main` | `3c4e6ee` (release) + `7016da6` (docs) - plugin part copied by file from `git archive 122b384`; pushed |
-| `main` vs `backend`, plugin part | identical: `git diff --quiet 122b384 origin/main~1 -- main.js manifest.json styles.css src` exits 0 |
-| server / bot / registry / self-hosting | **still 0.4.4** - the deploy is a separate command |
+| `backend` | `22298b5` (fix) + `122b384` (release) + `74953e8`, `5967a8d` (docs) - pushed |
+| `main` | `3c4e6ee` (release) + `7016da6`, `354d99a` (docs) - plugin part copied by file from `git archive 122b384`; pushed |
+| `main` vs `backend`, plugin part | identical: `git diff --quiet 122b384 origin/main -- main.js manifest.json styles.css src` exits 0 |
+| server deploy | tar of `122b384` → `/opt/mailers`, `docker compose build` + `up -d offers offers-bot`, recreated 18:37Z |
 | local build | `manifest.json` `094ac35d…` 468 B, `main.js` `b7ae1ee3…` 117609 B, `styles.css` `13a62f18…` 31633 B (unchanged since 0.4.4) |
 
 **A new trap, and it will hit the next release too:** esbuild escapes
@@ -922,7 +924,7 @@ copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNot
 red for the right reason). Assign first, append second. Same class as rule 4 in
 "Rules from the agent's own mistakes".
 
-## STATE 2026-11-02 evening (0.4.5 committed and pushed, NOT deployed)
+## STATE 2026-11-02 evening (0.4.5: released - plugin self-hosted, service deployed)
 
 This block is the one to read first; older STATE blocks below are history.
 Short version is in [HANDOFF.md](HANDOFF.md).
@@ -930,18 +932,32 @@ Short version is in [HANDOFF.md](HANDOFF.md).
 | | value |
 |---|---|
 | plugin | **0.4.5** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `74953e8` - pushed |
-| `main` | `7016da6` - pushed; plugin part identical to `backend` |
-| live service / bot | **0.4.4**, health `ok` |
-| registry (`sbe-apstore-registry`) | **0.4.4** (`31b759e`), untouched |
-| self-hosting | **0.4.4**, three sums verified over https |
+| `backend` | `5967a8d` - pushed |
+| `main` | `354d99a` - pushed; plugin part identical to `backend` |
+| **self-hosting** | **0.4.5, uploaded 2026-11-02 18:32Z**: `manifest 094ac35d…`, `main b7ae1ee3…`, `styles 13a62f18…`; all three verified over https (downloaded to a file and hashed) and match `/registry.json` (`selfHosted: true`, `uploadedAt 2026-11-02T18:31:56Z`) |
+| registry | `sbe-apstore-registry` `4b918f5`; server copy `www/registry.json` replaced (previous `registry.json.bak-20261102-0.4.4`, sha256 identical to the local file, `a3b82913…`) |
+| **live service / bot** | **0.4.5**, recreated 2026-11-02 18:37Z, health `ok`, bot poller started; backups `offers-service.bak-0.4.4-20261102`, `offers-bot.bak-0.4.4-20261102` |
 | working tree | clean; checked out on `backend`; stand binary = current code |
 
-**The only thing left for 0.4.5 is the deploy + self-hosting**, in four steps
-(tar of the commit → `/opt/mailers`, `docker compose build` + `up -d`,
-`kb-selfhost.sh sbe-offers`, registry + `www/registry.json`; verify over https
-by hashing the downloaded FILE). The step-by-step, with the traps, is in
-`HANDOFF.md`, "Выпуск 0.4.5 — что осталось сделать".
+### Verified live after the deploy (not assumed)
+
+- Container files equal the working tree: `md5sum` of `systemcards.go`,
+  `systems_compose.go`, `callbacks.ts`, `build.ts` on the server = the local
+  ones, and `git diff 122b384 -- offers-service offers-bot` is empty.
+- `GET /api/offers/systems/refresh` then `GET /api/offers/systems` with the
+  owner's JWT: **375 systems**, `error:""`, **51 rows carry `layer: true`**,
+  **0 layers leak into `problems`**.
+- Old cards still name real gaps: e.g. ТН-ДОРОГА Труба Водопропускная keeps
+  «Песок» and «Фундаментное основание» in `problems` while
+  «Гравийно-песчаная подготовка» is a layer. The fix does not silence what a
+  technologist has to fill in.
+
+**Trap met during this deploy:** the section's cache (`offers_context`,
+`mode='systems'`) was written before the deploy, so the first read showed
+**0 layers** - the server was right, the cache was old. The cache stores cards
+without `Layer`, so `refresh` rewrites it. Same rule as 2026-11-01: after a
+deploy that changes card shape, press (or call) «Перечитать из Базы знаний»
+before concluding that the fix did not work.
 
 ## STATE 2026-11-02 (release 0.4.4 - deployed and self-hosted)
 
