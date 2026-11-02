@@ -256,6 +256,20 @@ session, they cost minutes and each one cost a broken working tree.
     obstacle.** `TestRenderOfferDocxRejectsEmptyOffer` and two E2E checks
     asserted the refusal the user asked to remove. Rewrite them to assert the
     NEW behaviour and say so in the comment; never delete them silently.
+11. **Stage by intent, not by file, when one file carries two themes.**
+    `callbacks.ts` got the edit-offer handlers into the "context out of a file"
+    commit because the whole file was staged. The history still tells the truth
+    about the content, but the commit message lies about its scope. If a file
+    serves two commits, either split the hunks or admit both themes in the
+    message.
+12. **`git checkout <branch>` deletes the untracked-looking server folders on
+    `main`.** They are `.gitignore`d there, so switching branches makes
+    `offers-service/` and `offers-bot/` inert: the files are still on disk and
+    still written to, but git no longer tracks edits. Do server work on
+    `backend`, and re-check `git status` after every branch switch.
+13. **`Invoke-WebRequest` without `-OutFile` gives a decoded string, not the
+    bytes.** A 468-byte `manifest.json` reported `720 bytes` and a wrong hash
+    after the self-host upload. Always download to a file and hash the file.
 
 ## Gotchas
 
@@ -604,6 +618,38 @@ object / area / systems / timeline, and after apply the brief holds
 "STATE 2026-11-02 (release 0.4.2)" below for versions, hashes and the
 deployment record.
 
+### Release log 0.4.2 (2026-11-02)
+
+1. Version `0.4.1` → `0.4.2` in `manifest.json` and `package.json` (byte-safe
+   write, no BOM), CUP news text rewritten for this release and two of its lines
+   added to `check_bundle_strings.mjs` so their presence in the bundle is
+   asserted, not eyeballed.
+2. Six commits on `backend`: `jsonrepair` moved to `model`; the Excel parsing
+   fix; object context out of a file; a document without positions; the offer
+   reopened for editing; the release commit (version, news, docs, stand).
+3. `backend` pushed. Plugin part copied to `main` by **file**, not by
+   cherry-pick: `offers-bot/` does not exist on `main` (it is `.gitignore`d
+   there), and a cherry-pick of the bot commit conflicts on `routes.ts`. The
+   nine plugin files were taken from `origin/backend` into a clean `main`, and
+   `.gitignore` was deliberately **not** taken - on `main` it must keep
+   ignoring the server folders.
+4. Deployed: `git ls-files` of both server folders packed into a tar (160
+   files, `jsonrepair.go` removed from the old path first, otherwise the stale
+   copy breaks the build), unpacked into `/opt/mailers`, `docker compose build`
+   + `up -d --force-recreate offers offers-bot`.
+5. Self-hosted via `kb-selfhost.sh sbe-offers` (the script computes the sums
+   from the files it just copied), three sums checked over https, registry
+   entry updated and pushed.
+
+**Mistake made in this release, recorded so the next session does not repeat
+it:** `callbacks.ts` was staged whole for the "context" commit, so the
+edit-offer handlers and `EDIT_KEYBOARD` landed in a commit titled "context out
+of a file". The content is correct and verified; only the grouping is off. It
+was not rewritten, because a history rewrite on someone else's working tree is
+more risk than the benefit of a tidy split. Rule: **stage by intent, not by
+file, when a file carries two themes** - or say in the commit message that it
+carries both.
+
 ## Next iterations (backlog, 2026-11-02)
 
 Ordered by what will bite the commercial department soonest. Each item says
@@ -650,15 +696,40 @@ where it hurts, so the next session can start without re-discovering it.
 | | value |
 |---|---|
 | plugin | **0.4.2** (`manifest.json` = `package.json`) |
-| remote `backend` | see the release commit below |
-| remote `main` | plugin part only; server folders stay `.gitignore`d there |
-| live containers | `mailers-offers-1`, `mailers-offers-bot-1` recreated from `backend` |
-| `sbe-apstore-registry` | updated in the same batch |
+| remote `backend` | `854df42` |
+| remote `main` | `99211fe` (plugin part only; server folders `.gitignore`d there) |
+| `sbe-apstore-registry` | `9fc4c76` |
+| live containers | `mailers-offers-1` (image `mailers-offers`), `mailers-offers-bot-1` recreated 2026-11-02 04:53 UTC, health `ok` |
+| deploy | `tar` of the 160 tracked files → `/opt/mailers`, backups `offers-service.bak-0.4.1-20261102`, `offers-bot.bak-0.4.1-20261102` |
 
-What changed: the parsing of manager files (address cells, columns by label,
-several header blocks, section rows), object context out of any file
+Self-hosting, checked over https with `_t=` cache-buster, downloaded with
+`-OutFile` so the bytes are compared, not a decoded string:
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `5c283e0cf6bb0847aa24a436304aa0660258a69f5c33557a1f31bc054ce21652` | 468 |
+| `main.js` | `9bbf1000c4de06c34bb60ee7215ff21655eb03e87a91341195cb97054241cff4` | 113597 |
+| `styles.css` | `46f4c8801248eb87cac43b6c4ac00df86af55c0d3c0ff55401224d634f1d83d0` | 31438 |
+
+`styles.css` unchanged since 0.3.0 (no CSS edits). Served manifest reads
+`version 0.4.2`. `/registry.json` reports the same three hashes,
+`selfHosted: true`, `uploadedAt 2026-11-02T04:55:42Z`.
+
+**A trap met during this release, worth knowing:** `Invoke-WebRequest | .Content`
+returns a *decoded string*, and the byte count becomes 720 for a 468-byte file.
+The hash then differs and looks like a failed upload. Download to a file
+(`-OutFile`) and hash the file.
+
+### Verified after deploy (live, 2026-11-02)
+
+Service health `{"status":"ok"}`, `offers-service listening on :3000`,
+`registerApp: offers registered`, Knowledge Base reachable; bot poller started
+and its token check listens on `:3000`. No errors in either log.
+
+What went into 0.4.2: parsing of real manager files (address cells, columns by
+label, several header blocks, section rows), object context out of any file
 (`contextFields` → brief, literal over model), a document without positions,
-and an offer reopened for editing from "Мои КП". Details - the entry
+an offer reopened for editing from "Мои КП". Details - the entry
 "2026-11-01/02" above.
 
 ## STATE 2026-11-01 (release 0.4.1 - supersedes the 0.4.0 block below)
