@@ -1241,10 +1241,13 @@ console.log('\n18. Таблица менеджера и системы в КП (
   });
   ok('отрицательный отступ отклоняется → 400', badForm.status === 400, `получили ${badForm.status}`);
 
+  // Пустое КП собирается документом (2026-11-01): менеджерам нужна
+  // описательная часть, а цены они вписывают сами. Раньше здесь ждали 400.
   const docxBlock = await call('POST', `/bot/offers/${emptyId}/docx?chat_id=${linkedChatId}`, {
     headers: { 'X-Service-Secret': BOT_SECRET },
   });
-  ok('пустое КП документом не собирается → 400', docxBlock.status === 400, `получили ${docxBlock.status}`);
+  ok('пустое КП собирается документом → 200', docxBlock.status === 200, `получили ${docxBlock.status} ${docxBlock.text?.slice(0, 200)}`);
+  ok('в документе без позиций есть файл', (docxBlock.json?.docx_base64 ?? '').length > 1000);
 
   // Вернуть форму по умолчанию: стенд используется следующими проверками.
   await call('PUT', '/form', {
@@ -1264,6 +1267,71 @@ console.log('\n18. Таблица менеджера и системы в КП (
       ],
     },
   });
+}
+
+// 20. Контекст объекта из файла (2026-11-01).
+//
+// Живой случай: менеджер прислал старый КП в Excel и написал «информация в
+// файле». Бот не нашёл состава и ответил «состава нет», а объект из файла так
+// и не попал в бриф. Теперь любой файл даёт контекст, а таблица — ещё и состав.
+{
+  console.log('\n20. Контекст объекта из файла (2026-11-01)');
+
+  const created = await call('POST', '/bot/offers', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: String(linkedChatId), client: { name: '', contact: '' }, items: [], formValues: {} },
+  });
+  const offerId = created.json?.id;
+
+  // Файл-описание: объект, площадь, системы — как их пишет менеджер.
+  const description = [
+    'Объект: Многоквартирный дом по ул. Охотская в Заельцовском районе Новосибирска',
+    'Площадь: 9 200 м2',
+    'Системы: ТН-ФУНДАМЕНТ Дренаж Проф',
+    'Сроки: до 15 сентября',
+  ].join('\n');
+  const attach = await fetch(`${BASE}/api/offers/bot/offers/${offerId}/attach?chat_id=${encodeURIComponent(linkedChatId)}`, {
+    method: 'POST',
+    headers: {
+      'X-Service-Secret': BOT_SECRET,
+      'X-File-Name': encodeURIComponent('описание объекта.md'),
+      'Content-Type': 'application/octet-stream',
+    },
+    body: Buffer.from(description, 'utf8'),
+  });
+  const parsed = await attach.json().catch(() => ({}));
+  ok('файл-описание принят → 200', attach.status === 200, `получили ${attach.status}`);
+  ok('из файла построен контекст объекта', Boolean(parsed?.contextFields), JSON.stringify(parsed?.contextFields));
+  ok('объект разобран из файла',
+    (parsed?.contextFields?.fields?.object_name ?? []).some((v) => v.includes('Охотская')),
+    JSON.stringify(parsed?.contextFields?.fields?.object_name));
+  ok('площадь разобрана как 9 200 м2',
+    (parsed?.contextFields?.fields?.object_area ?? []).some((v) => v.includes('200')),
+    JSON.stringify(parsed?.contextFields?.fields?.object_area));
+  ok('бот предлагает записать разбор в бриф', /бриф/i.test(parsed?.reply ?? ''), JSON.stringify(parsed?.reply));
+
+  const applied = await call('POST', `/bot/offers/${offerId}/attach/apply`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: String(linkedChatId), mode: 'brief', brief: parsed?.brief, context: parsed?.contextFields },
+  });
+  ok('контекст применён → 200', applied.status === 200, `получили ${applied.status} ${applied.text?.slice(0, 160)}`);
+
+  const brief = await call('GET', `/bot/offers/${offerId}/brief?chat_id=${linkedChatId}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  const payload = brief.json?.brief?.payload ?? {};
+  ok('объект лёг в бриф', String(payload.object_name ?? '').includes('Охотская'), JSON.stringify(payload.object_name));
+  ok('площадь легла в бриф', String(payload.object_area ?? '').includes('200'), JSON.stringify(payload.object_area));
+  ok('система из файла легла в бриф',
+    (payload.planned_systems ?? []).some((s) => s.includes('ФУНДАМЕНТ')),
+    JSON.stringify(payload.planned_systems));
+
+  // Продолжение сохранённого КП: бот читает его состав и данные клиента.
+  const reopened = await call('GET', `/bot/offers/${offerId}?chat_id=${linkedChatId}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('сохранённое КП открывается на правку → 200', reopened.status === 200, `получили ${reopened.status}`);
+  ok('у открытого КП есть номер', (reopened.json?.number ?? '') !== '', JSON.stringify(reopened.json?.number));
 }
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
