@@ -156,6 +156,8 @@ export function systemAddedMessage(result: SystemAddResult): string {
       `В составе не нашлось материала: ${(result.problems ?? []).join('; ')}.`,
     );
   }
+  // Слои и работы («Подготовка основания») сервер замечанием не считает:
+  // материала у них нет по смыслу, и менеджеру нечего исправлять.
   return parts.join('\n');
 }
 

@@ -228,13 +228,16 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
           return;
         }
         for (const system of res.systems) {
+          // Слои — нормальный состав, а не ошибка (2026-11-02): у живых
+          // карточек почти в каждой есть работы без материала, и пометка
+          // «есть ошибки» стояла у всех подряд.
           const broken = (system.problems ?? []).length > 0;
           // Значение — заметка, когда кода нет: у живых карточек
           // `system_sku` не заполнен, и вариант с пустым значением выбрать
           // нельзя (2026-11-02, КП 003: «Выберите систему» на любой выбор).
           systemsSelect.createEl('option', {
             value: `sys-${system.noteId}`,
-            text: `${system.title}${broken ? ' (есть ошибки в составе)' : ''}`,
+            text: `${system.title}${broken ? ' (есть замечания к составу)' : ''}`,
           });
         }
       })
@@ -261,8 +264,10 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         if ((res.missingPrice ?? []).length > 0) {
           notes.push(`без цены (загрузите таблицу): ${(res.missingPrice ?? []).join(', ')}`);
         }
+        // Слои и работы сервер сюда не относит (2026-11-02): материала у них
+        // нет по смыслу. В заметке — только то, что человек может исправить.
         if ((res.problems ?? []).length > 0) {
-          notes.push(`строки состава без материала: ${(res.problems ?? []).join('; ')}`);
+          notes.push(`состав без материала: ${(res.problems ?? []).join('; ')}`);
         }
         new Notice(notes.join('. '));
       } catch (e: unknown) {

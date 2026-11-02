@@ -384,7 +384,7 @@ async function handleSystemCommand(ctx: CallbackCtx, query: string): Promise<voi
 function systemPickerKeyboard(systems: api.SystemItem[]): Record<string, unknown> {
   const rows = systems.map((s, index) => [
     {
-      text: s.problems && s.problems.length > 0 ? `${s.title} (есть проблемы)` : s.title,
+      text: s.problems && s.problems.length > 0 ? `${s.title} (есть замечания)` : s.title,
       callback_data: `sys:${index}`,
     },
   ]);
