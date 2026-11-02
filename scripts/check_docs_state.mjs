@@ -38,17 +38,21 @@ for (const f of ['manifest.json', 'main.js', 'styles.css']) {
 
 // Коммиты: обе ветки и их короткие хэши упоминаются в AGENTS.
 //
-// HEAD на `main` берётся только из тех коммитов, что меняли код плагина или его
-// сборку: коммит одной документации сдвигает HEAD, но AGENTS тогда пришлось бы
-// править ради самого факта правки документации (так и вышло 2026-11-02 —
-// проверка покраснела на своём же коммите). Выкладка меняет эти файлы, поэтому
-// настоящий сдвиг она всё равно поймает.
+// Считается только «содержательная» вершина ветки — последний коммит, который
+// менял код, сборку или серверную папку. Коммит одной документации сдвигает
+// HEAD, но AGENTS тогда пришлось бы править ради самого факта правки
+// документации (так и вышло 2026-11-02 — проверка краснела на собственном
+// коммите дважды). Выкладка меняет эти файлы, поэтому настоящий сдвиг она
+// всё равно поймает.
 const git = (...args) => execFileSync('git', args).toString().trim();
-const head = git('rev-parse', '--short', 'HEAD');
-const pluginFiles = ['src', 'main.js', 'manifest.json', 'package.json', 'styles.css', 'scripts'];
-const mainHead = git('rev-list', '-1', '--abbrev-commit', 'origin/main', '--', ...pluginFiles);
-check('AGENTS содержит HEAD backend', agents.includes(head), head);
-check('AGENTS содержит HEAD main по коду плагина', agents.includes(mainHead), mainHead);
+const codePaths = [
+  'src', 'main.js', 'manifest.json', 'package.json', 'styles.css', 'scripts',
+  'offers-service', 'offers-bot', 'specification.md',
+];
+const head = git('rev-list', '-1', '--abbrev-commit', 'HEAD', '--', ...codePaths);
+const mainHead = git('rev-list', '-1', '--abbrev-commit', 'origin/main', '--', ...codePaths);
+check('AGENTS содержит HEAD backend по коду', agents.includes(head), head);
+check('AGENTS содержит HEAD main по коду', agents.includes(mainHead), mainHead);
 
 // Шапка HANDOFF не должна утверждать, что текущая версия уже выложена:
 // версия на сервере меняется отдельной командой, и её сдвиг сюда попадёт
