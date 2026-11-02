@@ -27,7 +27,8 @@ hitting an old complaint again; work from here.
 
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first - versions, hashes, the
 check commands, what is unfinished. It is one page and it is meant to be read
-whole.
+whole. The section "Текущее состояние" there is always the current truth; the
+newest "STATE" block at the bottom of this file is the short version of it.
 
 ## Purpose (current)
 
@@ -112,7 +113,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/utils/date.ts`, `money.ts`, `note-path.ts` | shared helpers - one copy each |
 | `src/styles.css` | `tn-offers-*` classes (the root `styles.css` is **built**, never edit it) |
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
-| `scripts/offers_local_e2e.mjs` | the stand: 225 HTTP checks, 20 sections |
+| `scripts/check_docs_state.mjs` | docs vs code: version in `manifest`/`package`, SHA-256 of the three build files, HEAD of both branches present in `AGENTS.md` |
+| `scripts/offers_local_e2e.mjs` | the stand: **235** HTTP checks, 20 sections |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -162,6 +164,7 @@ token lives in `offers_bot_config` and is entered from the plugin's "Бот и
 ```
 npx tsc --noEmit && npm run build          # plugin
 node scripts/check_bundle_strings.mjs      # русские строки в бандле (экранированы!)
+node scripts/check_docs_state.mjs          # документация не разошлась с кодом
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
 node ../../scripts/check_offers_openapi.mjs
@@ -894,6 +897,14 @@ stand **235/235** (four new checks).
 is on both branches). CUP news rewritten for this release; the 0.4.4 news line
 was removed from `check_bundle_strings.mjs` together with the old text.
 
+| | value |
+|---|---|
+| `backend` | `22298b5` (fix) + `122b384` (release) - pushed |
+| `main` | `3c4e6ee` - plugin part copied by file from `git archive 122b384`; pushed |
+| `main` vs `backend`, plugin part | identical: `git diff --quiet 122b384 origin/main -- main.js manifest.json styles.css src` exits 0 |
+| server / bot / registry / self-hosting | **still 0.4.4** - the deploy is a separate command |
+| local build | `manifest.json` `094ac35d…` 468 B, `main.js` `b7ae1ee3…` 117609 B, `styles.css` `13a62f18…` 31633 B (unchanged since 0.4.4) |
+
 **A new trap, and it will hit the next release too:** esbuild escapes
 «ёлочки» in a JS **string literal** as `\xAB`/`\xBB`, not as `\u00AB`/`\u00BB`,
 while the same characters inside template literals stay `\u00AB`. The checker
@@ -910,6 +921,27 @@ An `if item.Layer = …; !item.Layer` guard that appended the item to `items`
 copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNotProblem`
 red for the right reason). Assign first, append second. Same class as rule 4 in
 "Rules from the agent's own mistakes".
+
+## STATE 2026-11-02 evening (0.4.5 committed and pushed, NOT deployed)
+
+This block is the one to read first; older STATE blocks below are history.
+Short version is in [HANDOFF.md](HANDOFF.md).
+
+| | value |
+|---|---|
+| plugin | **0.4.5** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `122b384` - pushed |
+| `main` | `3c4e6ee` - pushed; plugin part identical to `backend` |
+| live service / bot | **0.4.4**, health `ok` |
+| registry (`sbe-apstore-registry`) | **0.4.4** (`31b759e`), untouched |
+| self-hosting | **0.4.4**, three sums verified over https |
+| working tree | clean; checked out on `backend`; stand binary = current code |
+
+**The only thing left for 0.4.5 is the deploy + self-hosting**, in four steps
+(tar of the commit → `/opt/mailers`, `docker compose build` + `up -d`,
+`kb-selfhost.sh sbe-offers`, registry + `www/registry.json`; verify over https
+by hashing the downloaded FILE). The step-by-step, with the traps, is in
+`HANDOFF.md`, "Выпуск 0.4.5 — что осталось сделать".
 
 ## STATE 2026-11-02 (release 0.4.4 - deployed and self-hosted)
 
