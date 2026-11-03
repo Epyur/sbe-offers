@@ -129,3 +129,81 @@ func TestGenerateBlockTextsKeyedByBlockID(t *testing.T) {
 		t.Fatalf("текст блока не найден под своим id: %#v", values)
 	}
 }
+
+// Размышление вслух выбрасывается (2026-11-03).
+//
+// Живой случай, КП 003/2026: модель вернула не текст, а свой черновик —
+// английские строки о задании, перебор того, что известно, оценки собственных
+// фраз («That's a real property», «Считаю допустимым»), причём вперемешку с
+// русскими пересказами состава. Всё это ушло в документ клиенту. Промпт
+// исправлен, но граница должна быть и в коде: ответ печатается без человека.
+func TestCleanBlockTextDropsInterleavedReasoning(t *testing.T) {
+	raw := `The task: write a block of a commercial proposal. Under 150 words.
+
+Brief info: no explicit object description given. I need to write advantages.
+
+- ПВХ мембрана — гидроизоляция подземной части; сварка швов даёт контур... hmm, "сварка" is not in the brief. Better to be careful.
+- Гидрошпонки на деформационных швах — узлы остаются герметичными при подвижках.
+
+Word limit 150. Need paragraphs, no bullets preferably.
+
+Header: "заголовки должны утверждать" — but format says "без заголовка". So no heading.
+
+Подземная часть защищена по всей высоте и по всем узлам.`
+	got := cleanBlockText(raw)
+	for _, bad := range []string{"The task", "Brief info", "Word limit", "Header:", "hmm", "Better to be", "So no heading"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("в тексте осталось %q:\n%s", bad, got)
+		}
+	}
+	// Содержание при этом не теряется: это и есть смысл ответа.
+	if !strings.Contains(got, "гидроизоляция подземной части") {
+		t.Fatalf("пропал полезный текст:\n%s", got)
+	}
+	if !strings.Contains(got, "Гидрошпонки на деформационных швах") {
+		t.Fatalf("пропала вторая строка ответа:\n%s", got)
+	}
+	if !strings.Contains(got, "Подземная часть защищена") {
+		t.Fatalf("пропал последний абзац:\n%s", got)
+	}
+}
+
+// Готовый текст модели не трогается: чистка ищет признаки рассуждения, а не
+// «что-нибудь латинское». Иначе обычная марка материала съедала бы абзац.
+func TestCleanBlockTextKeepsRealText(t *testing.T) {
+	text := "Мембрана Logicbase V-SL держит воду под давлением. Заказчик получает сухой подвал на сдаче."
+	if got := cleanBlockText(text); got != text {
+		t.Fatalf("готовый текст изменился: %q", got)
+	}
+}
+
+// Латинские слова в обычной фразе — не рассуждение: русских слов в строке
+// всё равно больше.
+func TestCleanBlockTextKeepsLineWithBrandNames(t *testing.T) {
+	text := "Утеплитель XPS Carbon Prof укладывается на глубину промерзания, компенсатор 50х100 мм."
+	if got := cleanBlockText(text); got != text {
+		t.Fatalf("строка с марками материалов изменилась: %q", got)
+	}
+}
+
+// Ответ целиком по-английски — это не блок для русского КП: блок молчит, как и
+// при недоступной модели. Пустой блок честнее английского черновика.
+func TestCleanBlockTextAllReasoningGivesEmpty(t *testing.T) {
+	raw := "The task: write a block.\n\nLet me think about what's actually known.\n\nStill reasoning only."
+	if got := cleanBlockText(raw); got != "" {
+		t.Fatalf("ожидали пустой текст, получили %q", got)
+	}
+}
+
+// Пометка о нехватке факта в ответе остаётся: это не рассуждение, это то, что
+// увидит менеджер.
+func TestCleanBlockTextKeepsNeedMarker(t *testing.T) {
+	raw := "Let me think first.\n\nМембрана укладывается в два слоя. [НУЖНО: марка грунта на объекте]"
+	got := cleanBlockText(raw)
+	if !strings.Contains(got, "[НУЖНО: марка грунта на объекте]") {
+		t.Fatalf("пометка потерялась: %q", got)
+	}
+	if strings.Contains(got, "Let me") {
+		t.Fatalf("рассуждение осталось: %q", got)
+	}
+}
