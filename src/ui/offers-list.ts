@@ -213,11 +213,14 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   });
   redrawItems();
 
-  // «Добавить систему» (Task 7, 2026-10-31) работает с сохранённым КП: сервер
-  // сам собирает состав и знает цены. У нового КП нет ни номера, ни id.
+  // Выбор системы (Task 7, 2026-10-31; переработка 2026-11-03) работает с
+  // сохранённым КП. Позиций он НЕ добавляет: в КП попадают обоснование
+  // применения и описание продуктов, а состав с ценами менеджер заводит сам —
+  // файлом или руками. До правки состав дописывался к таблице, и одни и те же
+  // продукты стояли в ней дважды, с ценой и с нулём (КП 003/2026).
   if (current.id) {
     const systemsCard = itemsCard.createDiv({ cls: 'tn-offers-row tn-offers-system-add' });
-    systemsCard.createSpan({ cls: 'tn-offers-muted', text: 'Добавить систему:' });
+    systemsCard.createSpan({ cls: 'tn-offers-muted', text: 'Система в КП:' });
     const systemsSelect = systemsCard.createEl('select', { cls: 'tn-offers-input tn-offers-grow' });
     systemsSelect.createEl('option', { value: '', text: '— выбрать систему —' });
     void view.plugin.offersService
@@ -240,14 +243,28 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
             text: `${system.title}${broken ? ' (есть замечания к составу)' : ''}`,
           });
         }
+        // Отмечаем уже выбранную систему, чтобы человек видел текущую.
+        const chosen = current.system;
+        if (chosen && chosen.noteId) systemsSelect.value = `sys-${chosen.noteId}`;
+        else if (chosen?.sku) systemsSelect.value = chosen.sku;
       })
       .catch((e: unknown) => {
         systemsCard.createSpan({ cls: 'tn-offers-warn', text: ` Список систем: ${errorMessage(e)}` });
       });
-    const addSystemBtn = systemsCard.createEl('button', { text: '➕ Добавить', cls: 'tn-btn tn-btn-ghost' });
+    const addSystemBtn = systemsCard.createEl('button', { text: '✔ Выбрать', cls: 'tn-btn tn-btn-ghost' });
     addSystemBtn.addEventListener('click', () => {
       void addSystemPicked();
     });
+    const chosenLabel = systemsCard.createDiv({ cls: 'tn-offers-muted' });
+
+    function showChosen(offer: Offer, count: number): void {
+      chosenLabel.setText(
+        offer.system && (offer.system.noteId || offer.system.sku)
+          ? `Выбрана система: ${count} основных продуктов. Описание и ссылки попадут в документ; позиции добавьте файлом или руками.`
+          : 'Система не выбрана: КП соберётся без описания системы.',
+      );
+    }
+    showChosen(current, 0);
 
     async function addSystemPicked(): Promise<void> {
       const choice = systemsSelect.value;
@@ -257,21 +274,15 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
       }
       addSystemBtn.setAttr('disabled', 'true');
       try {
-        const res = await view.plugin.offersService.addSystem(current.id, choice);
-        items.splice(0, items.length, ...res.offer.items.map((i) => ({ ...i })));
-        redrawItems();
-        const notes: string[] = [`Добавлено позиций: ${res.added}`];
-        if ((res.missingPrice ?? []).length > 0) {
-          notes.push(`без цены (загрузите таблицу): ${(res.missingPrice ?? []).join(', ')}`);
-        }
-        // Слои и работы сервер сюда не относит (2026-11-02): материала у них
-        // нет по смыслу. В заметке — только то, что человек может исправить.
-        if ((res.problems ?? []).length > 0) {
-          notes.push(`состав без материала: ${(res.problems ?? []).join('; ')}`);
-        }
-        new Notice(notes.join('. '));
+        const res = await view.plugin.offersService.addSystem(current.id!, choice);
+        // Позиции не трогаем: сервер их не меняет, а локальный список в
+        // редакторе остаётся тем, что человек правил.
+        showChosen(res.offer, res.composition ?? 0);
+        new Notice(
+          `Система выбрана: «${res.system?.title ?? ''}». Позиции не добавлялись — их состав вы заводите сами.`,
+        );
       } catch (e: unknown) {
-        new Notice(`Не удалось добавить систему: ${errorMessage(e)}`);
+        new Notice(`Не удалось выбрать систему: ${errorMessage(e)}`);
       } finally {
         addSystemBtn.removeAttribute('disabled');
       }
