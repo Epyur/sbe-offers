@@ -931,12 +931,12 @@ red for the right reason). Assign first, append second. Same class as rule 4 in
 
 ## 2026-11-03 - system choice adds no positions; model reasoning kept out of the document
 
-Version (manifest.json = package.json) = **0.5.0**; the last released one is
-0.4.5. Two live defects from the
-exported `Коммерческое предложение 003-2026.docx`. Both are fixed in code and
-verified on the stand; the build is **not committed, deployed or self-hosted
-yet** - those are separate commands. Hashes of this local build are in
-[HANDOFF.md](HANDOFF.md).
+Version (manifest.json = package.json) = **0.5.0**, **released 2026-11-03**:
+both branches pushed, `offers` and `offers-bot` redeployed (health `ok`, bot
+poller started), the plugin self-hosted (three sums checked over https and in
+`/registry.json`), registry `sbe-apstore-registry` `dce3e5a`. Two live defects
+from the exported `Коммерческое предложение 003-2026.docx`; state and hashes are
+in [HANDOFF.md](HANDOFF.md).
 
 ### 1. The system composition was added to positions from the manager's file
 
@@ -1062,8 +1062,8 @@ Short version is in [HANDOFF.md](HANDOFF.md).
 | | value |
 |---|---|
 | plugin | **0.4.5** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `41a6268` (docs) - pushed; last content commit `5967a8d` |
-| `main` | `1ff4fb2` (docs) - pushed; last content commit `354d99a` |
+| `backend` | `0d45ec2` (release 0.5.0) - pushed |
+| `main` | `bc656be` (release 0.5.0, plugin part copied from `git archive 0d45ec2`) - pushed |
 | **self-hosting** | **0.4.5, uploaded 2026-11-02 18:32Z**: `manifest 094ac35d…`, `main b7ae1ee3…`, `styles 13a62f18…`; all three verified over https (downloaded to a file and hashed) and match `/registry.json` (`selfHosted: true`, `uploadedAt 2026-11-02T18:31:56Z`) |
 | registry | `sbe-apstore-registry` `4b918f5`; server copy `www/registry.json` replaced (previous `registry.json.bak-20261102-0.4.4`, sha256 identical to the local file, `a3b82913…`) |
 | **live service / bot** | **0.4.5**, recreated 2026-11-02 18:37Z, health `ok`, bot poller started; backups `offers-service.bak-0.4.4-20261102`, `offers-bot.bak-0.4.4-20261102` |
