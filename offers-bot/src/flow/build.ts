@@ -28,11 +28,15 @@ export interface SystemOption {
   problems?: string[];
 }
 
-/** Что ответил сервер, когда состав системы дописан в КП. */
+/**
+ * Что ответил сервер, когда система выбрана для КП (2026-11-03).
+ *
+ * Позиций выбор системы не прибавляет: `composition` — сколько основных
+ * продуктов в её составе, а цены и состав менеджер ведёт сам.
+ */
 export interface SystemAddResult {
-  added: number;
-  missingPrice?: string[];
-  problems?: string[];
+  title?: string;
+  composition?: number;
 }
 
 export function newDraft(): OfferDraft {
@@ -138,26 +142,25 @@ export function pickSystem(systems: SystemOption[], query: string): SystemOption
 }
 
 /**
- * Текст ответа после добавления системы.
+ * Текст ответа после выбора системы.
  *
- * Число добавленных позиций, материалы без цены и несвязанные строки
- * называются всегда, если они есть: молча добавить неполный состав хуже, чем
- * сказать, чего не хватает.
+ * Главное, что должен понять менеджер: позиции не добавились и добавлять их
+ * нужно самому — файлом или руками. Без этой строки человек ждёт таблицу и
+ * решает, что бот не сработал (2026-11-03).
  */
 export function systemAddedMessage(result: SystemAddResult): string {
-  const parts = [`Система добавлена: позиций — ${result.added}.`];
-  if ((result.missingPrice ?? []).length > 0) {
-    parts.push(
-      `Без цены (загрузите таблицу ценой): ${(result.missingPrice ?? []).join(', ')}.`,
-    );
+  const title = (result.title ?? '').trim();
+  const parts = [
+    title ? `Система «${title}» выбрана для КП.` : 'Система выбрана для КП.',
+  ];
+  const count = result.composition ?? 0;
+  if (count > 0) {
+    parts.push(`В её составе основных продуктов: ${count}.`);
   }
-  if ((result.problems ?? []).length > 0) {
-    parts.push(
-      `В составе не нашлось материала: ${(result.problems ?? []).join('; ')}.`,
-    );
-  }
-  // Слои и работы («Подготовка основания») сервер замечанием не считает:
-  // материала у них нет по смыслу, и менеджеру нечего исправлять.
+  parts.push(
+    'Позиции не добавлены: описание системы, обоснование применения и ссылки попадут в документ, ' +
+      'а состав с ценами загрузите файлом или введите вручную.',
+  );
   return parts.join('\n');
 }
 

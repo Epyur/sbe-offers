@@ -18,6 +18,7 @@ import (
 type Offer = model.Offer
 type OfferItem = model.OfferItem
 type OfferClient = model.OfferClient
+type OfferSystem = model.OfferSystem
 
 // roundMoney округляет до копеек без двоичных хвостов (0.1+0.2). Множитель
 // 1000 снимает артефакт представления: 1.005 * 100 = 100.49999999999999,
@@ -99,13 +100,13 @@ FROM offers_offer WHERE number LIKE '%' || $1`, suffix).Scan(&maxNum)
 
 func (s *Server) loadOffer(ctx context.Context, id int64) (Offer, error) {
 	var offer Offer
-	var client, items, values []byte
+	var client, items, values, system []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT id, number, owner_email, client, items, form_values, total, status, docx_key,
+SELECT id, number, owner_email, client, items, form_values, system_choice, total, status, docx_key,
 	to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
 FROM offers_offer WHERE id = $1`, id).
-		Scan(&offer.ID, &offer.Number, &offer.OwnerEmail, &client, &items, &values,
+		Scan(&offer.ID, &offer.Number, &offer.OwnerEmail, &client, &items, &values, &system,
 			&offer.Total, &offer.Status, &offer.DocxKey, &offer.CreatedAt, &offer.UpdatedAt)
 	if err != nil {
 		return offer, err
@@ -121,6 +122,9 @@ FROM offers_offer WHERE id = $1`, id).
 	}
 	if len(values) > 0 {
 		_ = json.Unmarshal(values, &offer.FormValues)
+	}
+	if len(system) > 0 {
+		_ = json.Unmarshal(system, &offer.System)
 	}
 	return offer, nil
 }
@@ -222,6 +226,11 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
 	}
+	systemJSON, err := json.Marshal(offer.System)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
 
 	var id int64
 	if raw := r.PathValue("id"); raw != "" {
@@ -241,10 +250,15 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "править можно только своё предложение"})
 			return
 		}
+		// Пустой выбор в запросе не стирает сохранённый (2026-11-03): плагин и
+		// бот присылают предложение без этого поля, и полное сохранение
+		// обнуляло бы систему, выбранную отдельной ручкой.
 		_, err = s.pool.Exec(r.Context(), `
 UPDATE offers_offer SET client = $2, items = $3, form_values = $4, total = $5,
-	status = $6, updated_at = now()
-WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status)
+	status = $6,
+	system_choice = CASE WHEN $7::jsonb = '{}'::jsonb THEN system_choice ELSE $7::jsonb END,
+	updated_at = now()
+WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status, systemJSON)
 		if err != nil {
 			dbError(w, "update offer", err)
 			return
@@ -256,10 +270,10 @@ WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status
 			return
 		}
 		err = s.pool.QueryRow(r.Context(), `
-INSERT INTO offers_offer (number, owner_email, client, items, form_values, total, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+INSERT INTO offers_offer (number, owner_email, client, items, form_values, system_choice, total, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
 			number, strings.ToLower(actorEmailFromCtx(r)), clientJSON, itemsJSON,
-			valuesJSON, offer.Total, offer.Status).Scan(&id)
+			valuesJSON, systemJSON, offer.Total, offer.Status).Scan(&id)
 		if err != nil {
 			dbError(w, "insert offer", err)
 			return

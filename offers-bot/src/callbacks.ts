@@ -332,11 +332,16 @@ export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<b
 // --- Системы в боте (Task 8, 2026-10-31) -------------------------------
 
 /**
- * «система <название>»: найти карточку в Базе знаний и дописать её состав.
+ * «система <название>»: найти карточку в Базе знаний и выбрать её для КП.
  *
  * Каталог бота систем не содержит — у системы нет цены. Поэтому выбор
  * отдельным шагом: если название подошло к нескольким системам, бот показывает
- * их списком и просит уточнить, а дописывает по одному нажатию.
+ * их списком и просит уточнить.
+ *
+ * Позиций выбор системы НЕ добавляет (2026-11-03): в КП попадают обоснование и
+ * описание продуктов, а состав с ценами менеджер заводит сам. Раньше состав
+ * дописывался, и в таблице КП одни и те же продукты стояли дважды — с ценой
+ * из файла и с нулём из системы.
  */
 async function handleSystemCommand(ctx: CallbackCtx, query: string): Promise<void> {
   const draft = ctx.session.draft;
@@ -404,7 +409,7 @@ export async function onSystemPick(ctx: CallbackCtx, index: number): Promise<voi
   await addPickedSystem(ctx, system);
 }
 
-/** Дописать состав и показать, что вошло, а что осталось без цены. */
+/** Выбрать систему для КП: позиций она не добавляет (2026-11-03). */
 async function addPickedSystem(ctx: CallbackCtx, system: api.SystemItem): Promise<void> {
   const draft = ctx.session.draft;
   if (!draft || !draft.offerId) {
@@ -415,7 +420,7 @@ async function addPickedSystem(ctx: CallbackCtx, system: api.SystemItem): Promis
     const res = await api.addSystem(draft.offerId, ctx.chatId, systemChoice(system));
     await ctx.deps.send(ctx.chatId, systemAddedMessage(res), MAIN_KEYBOARD);
   } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось добавить систему: ${(e as Error).message}`);
+    await ctx.deps.send(ctx.chatId, `Не удалось выбрать систему: ${(e as Error).message}`);
   }
 }
 

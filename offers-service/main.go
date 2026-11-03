@@ -285,9 +285,13 @@ func (s *Server) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS offers_access (
 			email      TEXT PRIMARY KEY,
 			role       TEXT NOT NULL DEFAULT 'viewer',
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		// Выбранная система (2026-11-03). Отдельной колонкой, а не в
+		// form_values: по ней печатаются описание и ссылки, и её же читает
+		// раздел «Системы». Пустой JSON — система не выбрана.
+		`ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS system_choice JSONB NOT NULL DEFAULT '{}'`,
 		// Токен Telegram-бота — ОДИН хозяин (2026-10-29): до этой правки он
 		// приходил из TELEGRAM_BOT_TOKEN окружения, и в соседнем portal-embed
 		// именно второй источник полтора суток слал чужим ботом. Пустая строка —

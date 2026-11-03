@@ -4,115 +4,93 @@ import (
 	"testing"
 )
 
-// Состав системы в предложение (Task 7, 2026-10-31).
+// Выбор системы в предложение (переработан 2026-11-03).
 //
-// Правило денег проверяется отдельно от HTTP: цена позиции — нижняя граница
-// вилки, а если вилки нет, цена остаётся нулём, и материал называется
-// человеку. Подставить «похожее» число здесь означало бы отправить заказчику
-// выдуманную цену.
+// Позиций выбор системы больше НЕ добавляет: в КП от него попадают обоснование
+// применения, преимущества и описание основных продуктов, а состав с ценами
+// менеджер ведёт сам — файлом или руками. Причина — живое КП 003/2026: состав
+// дописывался к позициям из таблицы, и одни и те же продукты стояли в таблице
+// дважды, с ценой и с нулём.
 
-// Вилка есть — позиция получает нижнюю границу и помечена как «с ценой».
-func TestItemForMaterialUsesPriceFloor(t *testing.T) {
-	low, high := 1200.0, 1500.0
-	item, hasPrice := itemForMaterial(Material{ID: 5, Name: "Мембрана", Unit: "м2", PriceMin: &low, PriceMax: &high})
-	if !hasPrice {
-		t.Fatal("вилка есть — цена должна считаться известной")
-	}
-	if item.Price != 1200 {
-		t.Errorf("цена: %v, ожидали нижнюю границу вилки 1200", item.Price)
-	}
-	if item.Sum != 1200 || item.Qty != 1 {
-		t.Errorf("сумма и количество: %+v", item)
-	}
-	if item.Name != "Мембрана" || item.Unit != "м2" {
-		t.Errorf("поля позиции: %+v", item)
-	}
-}
-
-// Вилки нет — цена ноль, и признак «не знаем» выставлен: молча класть ноль как
-// настоящую цену нельзя.
-func TestItemForMaterialWithoutPrice(t *testing.T) {
-	item, hasPrice := itemForMaterial(Material{ID: 7, Name: "Песок", Unit: "м3"})
-	if hasPrice {
-		t.Fatal("вилки нет — известной цены быть не может")
-	}
-	if item.Price != 0 {
-		t.Errorf("цена без вилки: %v", item.Price)
-	}
-}
-
-// Ноль в вилке — это настоящая цена (бесплатная работа), а не «не знаем».
-func TestItemForMaterialZeroPriceIsKnown(t *testing.T) {
-	zero := 0.0
-	_, hasPrice := itemForMaterial(Material{ID: 8, Name: "Работа", PriceMin: &zero})
-	if !hasPrice {
-		t.Fatal("ноль в вилке — известная цена, а не её отсутствие")
-	}
-}
-
-// Дописывание состава: связанные строки становятся позициями, несвязанные
-// уходят в проблемы и не теряются, «без цены» называется отдельно.
-func TestAppendCompositionKeepsUnlinkedLines(t *testing.T) {
-	low := 900.0
-	materials := map[int64]Material{
-		1: {ID: 1, Name: "Мембрана", Unit: "м2", PriceMin: &low},
-		2: {ID: 2, Name: "Песок", Unit: "м3"},
-	}
-	links := []CompositionItem{
-		{Raw: "Мембрана (MAT-МЕМБ-ПВХ-0001)", MaterialID: 1, Found: true},
-		{Raw: "Песок", MaterialID: 2, Found: true},
-		{Raw: "Непонятная строка"},
-	}
-	resp := ComposeSystemResponse{Problems: []string{}}
-	items, added := appendComposition(nil, links, materials, &resp)
-
-	if added != 2 || len(items) != 2 {
-		t.Fatalf("должны дописаться две строки из трёх: added=%d items=%d", added, len(items))
-	}
-	if len(resp.Problems) != 1 || resp.Problems[0] != "Непонятная строка" {
-		t.Fatalf("несвязанная строка должна быть в проблемах: %#v", resp.Problems)
-	}
-	if len(resp.MissingPrice) != 1 || resp.MissingPrice[0] != "Песок" {
-		t.Fatalf("материал без вилки должен называться: %#v", resp.MissingPrice)
-	}
-	if items[0].Price != 900 || items[1].Price != 0 {
-		t.Errorf("цены: %v / %v", items[0].Price, items[1].Price)
-	}
-}
-
-// Слой (2026-11-02) — не несвязанная строка: «Подготовка основания» называет
-// работу, материала у неё нет, и человеку об этом сообщать нечем. До правки
-// такая строка попадала в «не удалось дописать», а карточка КП показывала
-// «есть ошибки в составе» на всех системах сразу.
-func TestAppendCompositionSkipsLayerProblem(t *testing.T) {
-	low := 900.0
-	materials := map[int64]Material{1: {ID: 1, Name: "Мембрана", Unit: "м2", PriceMin: &low}}
+// Система даёт число основных продуктов — только найденных в справочнике.
+// Слои и работы материалом не являются, и обещать больше продуктов, чем есть,
+// значит врать в документе.
+func TestCountCompositionMaterialsCountsFoundOnly(t *testing.T) {
 	links := []CompositionItem{
 		{Raw: "Мембрана", MaterialID: 1, Found: true},
+		{Raw: "Песок", MaterialID: 2, Found: true},
 		{Raw: "Подготовка основания", Layer: true},
-		{Raw: "Праймер битумный"},
+		{Raw: "Забытый материал"},
 	}
-	resp := ComposeSystemResponse{Problems: []string{}}
-	items, added := appendComposition(nil, links, materials, &resp)
-
-	if added != 1 || len(items) != 1 {
-		t.Fatalf("позиция должна быть одна: added=%d items=%#v", added, items)
-	}
-	if len(resp.Problems) != 1 || resp.Problems[0] != "Праймер битумный" {
-		t.Fatalf("в проблемах должен быть только забытый материал: %#v", resp.Problems)
+	if got := countCompositionMaterials(links); got != 2 {
+		t.Fatalf("ожидали двух продуктов, получили %d", got)
 	}
 }
 
-// Дописывание не стирает уже собранный состав: позиции прибавляются в конец.
-func TestAppendCompositionKeepsExistingItems(t *testing.T) {
-	existing := []OfferItem{{Name: "Старая позиция", Qty: 1, Price: 10, Sum: 10}}
-	links := []CompositionItem{{Raw: "Мембрана", MaterialID: 1, Found: true}}
-	low := 5.0
-	resp := ComposeSystemResponse{Problems: []string{}}
-	items, added := appendComposition(existing, links, map[int64]Material{1: {ID: 1, Name: "Мембрана", PriceMin: &low}}, &resp)
+// Пустой состав — ноль, а не ошибка: карточку без состава выбирать можно.
+func TestCountCompositionMaterialsEmpty(t *testing.T) {
+	if got := countCompositionMaterials(nil); got != 0 {
+		t.Fatalf("у пустого состава ожидали 0, получили %d", got)
+	}
+}
 
-	if added != 1 || len(items) != 2 || items[0].Name != "Старая позиция" {
-		t.Fatalf("прежняя позиция потеряна: %#v", items)
+// Попытка дописать позиции по системе должна исчезнуть вместе с кодом —
+// проверяем, что в ответе ручки нет поля позиций, а состав предложения не
+// меняется. До 2026-11-03 здесь было `added` и дописанные строки.
+func TestComposeSystemResponseHasNoPositions(t *testing.T) {
+	resp := ComposeSystemResponse{
+		Offer:       Offer{Items: []OfferItem{{Name: "Своя позиция", Qty: 1, Price: 10, Sum: 10}}},
+		System:      SystemCard{Title: "Кровля", Description: "Описание"},
+		Composition: 3,
+	}
+	if len(resp.Offer.Items) != 1 || resp.Offer.Items[0].Name != "Своя позиция" {
+		t.Fatalf("состав предложения изменился: %#v", resp.Offer.Items)
+	}
+	if resp.System.Description == "" || resp.Composition != 3 {
+		t.Fatalf("карточка и число продуктов не заполнены: %#v", resp)
+	}
+}
+
+// Пустой выбор системы в предложении — ни одной карточки: старые КП печатаются
+// как раньше, без описаний систем.
+func TestCardsForOfferWithoutChoice(t *testing.T) {
+	offer := Offer{Items: []OfferItem{{Name: "Мембрана ПВХ", Qty: 1, Price: 10, Sum: 10}}}
+	cards := []SystemCard{{SKU: "A", Title: "Кровля", Description: "Описание"}}
+	if got := cardsForOffer(cards, offer); len(got) != 0 {
+		t.Fatalf("без выбранной системы карточки не нужны: %#v", got)
+	}
+}
+
+// Выбранная система печатается даже в пустом КП: описание и обоснование нужны
+// менеджеру ДО того, как он завёл позиции (это и есть весь смысл выбора).
+func TestCardsForOfferByChoiceWithoutItems(t *testing.T) {
+	offer := Offer{System: OfferSystem{NoteID: 11}}
+	cards := []SystemCard{
+		{NoteID: 11, Title: "Кровля", Description: "Описание кровли"},
+		{NoteID: 12, Title: "Стена", Description: "Описание стены"},
+	}
+	got := cardsForOffer(cards, offer)
+	if len(got) != 1 || got[0].Title != "Кровля" {
+		t.Fatalf("ожидали только выбранную систему: %#v", got)
+	}
+}
+
+// Система выбирается и по коду: код главнее заметки, правило одно с FindSystem.
+func TestCardsForOfferBySku(t *testing.T) {
+	offer := Offer{System: OfferSystem{SKU: " tn-roof "}}
+	cards := []SystemCard{{SKU: "TN-ROOF", Title: "Кровля", Description: "Описание"}}
+	if got := cardsForOffer(cards, offer); len(got) != 1 || got[0].SKU != "TN-ROOF" {
+		t.Fatalf("система по коду не выбрана: %#v", got)
+	}
+}
+
+// Выбранная система исчезла из Базы знаний — карточки нет, и это не падение:
+// документ собирается без описания, как раньше.
+func TestCardsForOfferUnknownChoice(t *testing.T) {
+	offer := Offer{System: OfferSystem{NoteID: 999}}
+	cards := []SystemCard{{NoteID: 11, Title: "Кровля", Description: "Описание"}}
+	if got := cardsForOffer(cards, offer); len(got) != 0 {
+		t.Fatalf("чужой номер заметки ничего не выбирает: %#v", got)
 	}
 }
 
@@ -217,22 +195,20 @@ func TestSystemChoiceHandleRoundTrip(t *testing.T) {
 	}
 }
 
-// Номер ЕКН из справочника доезжает до позиции (2026-11-02): без него в
-// таблице КП позицию нельзя сверить с прайсом заказчика.
-func TestItemForMaterialCarriesFirstEkn(t *testing.T) {
-	low := 100.0
-	m := Material{ID: 9, Name: "Мембрана", Unit: "м2", PriceMin: &low,
+// Номер ЕКН из справочника: первый непустой. После 2026-11-03 он нужен не
+// выбору системы, а загрузке таблицы менеджера (upload.go), поэтому функция
+// осталась и проверяется здесь же.
+func TestPrimaryEknTakesFirstNonEmpty(t *testing.T) {
+	m := Material{ID: 9, Name: "Мембрана", Unit: "м2",
 		Ekn: []MaterialEkn{{Ekn: "  "}, {Ekn: "66950"}, {Ekn: "66951"}}}
-	item, _ := itemForMaterial(m)
-	if item.EKN != "66950" {
-		t.Fatalf("ЕКН позиции = %q, ожидали первый непустой номер 66950", item.EKN)
+	if got := primaryEkn(m); got != "66950" {
+		t.Fatalf("ЕКН = %q, ожидали первый непустой номер 66950", got)
 	}
 }
 
 // Номеров нет вовсе — пустая строка, а не выдуманный код.
-func TestItemForMaterialWithoutEkn(t *testing.T) {
-	item, _ := itemForMaterial(Material{ID: 10, Name: "Песок", Unit: "м3"})
-	if item.EKN != "" {
-		t.Fatalf("у материала без ЕКН номер позиции = %q, ожидали пусто", item.EKN)
+func TestPrimaryEknWithoutNumbers(t *testing.T) {
+	if got := primaryEkn(Material{ID: 10, Name: "Песок", Unit: "м3"}); got != "" {
+		t.Fatalf("у материала без ЕКН номер = %q, ожидали пусто", got)
 	}
 }

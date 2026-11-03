@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,28 +10,33 @@ import (
 	"strings"
 )
 
-// Состав системы в предложение (Task 7, 2026-10-31).
+// Выбор системы в предложение (Task 7, 2026-10-31; переработка 2026-11-03).
 //
-// «Добавить систему» не может быть клиентской склейкой: цену позиции клиент не
-// знает (её нет ни у системы, ни у материала), а сервер знает вилку, которую
-// видел в таблицах менеджера. Поэтому состав собирает сервер и дописывает его
-// в сохранённое предложение.
+// Выбор системы НЕ дописывает позиции. Он говорит, какая система предложена:
+// отсюда в КП попадают обоснование применения, преимущества и описание
+// основных продуктов (раздел «Системы» и карточка системы при печати).
+// Позиции менеджер заводит сам — файлом или руками.
+//
+// Почему так (КП 003/2026, 2026-11-03): состав системы дописывался к позициям
+// из таблицы менеджера, и в таблице оказывались одни и те же продукты дважды —
+// с ценой из таблицы и с нулём из системы. Сматчить их нечем: названия в
+// карточке и в таблице пишутся по-разному, а собранный состав был неотличим от
+// остальных позиций. Теперь позиций от выбора системы в КП не появляется вовсе.
 //
 // Правило у плагина и у бота ОДНО — assembleSystem; разница только во входе
 // (JWT против секрета сервиса с chat_id) и в том, кто отвечает за ошибку.
 
-// ComposeSystemResponse — что добавилось и что осталось без цены.
+// ComposeSystemResponse — какая система выбрана и что о ней известно.
 type ComposeSystemResponse struct {
 	Offer Offer `json:"offer"`
-	// Added — сколько позиций дописано.
-	Added int `json:"added"`
-	// MissingPrice — материалы, у которых цены ещё не видели: их позиции
-	// попадут в КП с нулём, и менеджер должен об этом знать.
-	MissingPrice []string `json:"missingPrice,omitempty"`
-	// Problems — строки состава, которые дописать не удалось. Слои и работы
-	// («Подготовка основания») сюда не попадают: материала у них нет и не
-	// будет, это нормальный состав (2026-11-02).
-	Problems []string `json:"problems,omitempty"`
+	// System — выбранная карточка: её текст и печатается в КП.
+	System SystemCard `json:"system"`
+	// Title — название системы строкой: клиентам (плагин, бот) оно нужно
+	// для ответа человеку, и вытаскивать его из карточки незачем.
+	Title string `json:"title"`
+	// Composition — сколько основных продуктов в составе системы. Позиций в
+	// КП это не прибавляет: число нужно, чтобы человек увидел, о чём система.
+	Composition int `json:"composition"`
 }
 
 // composeError — отказ сборки, который вызывающий превращает в HTTP-статус.
@@ -121,14 +127,16 @@ func FindSystem(systems []SystemCard, choice SystemChoice) (SystemCard, bool) {
 	return SystemCard{}, false
 }
 
-// assembleSystem дописывает состав системы в предложение.
+// assembleSystem помечает предложение выбранной системой.
 //
 // Система ищется в живой ленте Базы знаний, а не в кеше карточек: человек
 // выбрал её из раздела «Системы», который читает базу знаний вживую, и кеш
 // мог отстать от того, что он видел на экране.
 //
-// Возвращает обновлённое предложение и сводку. Если дописать нечего —
-// composeError со статусом 400, и предложение НЕ сохраняется.
+// Возвращает обновлённое предложение и сводку. Позиции НЕ дописываются
+// (2026-11-03): в КП попадают обоснование и описание, а состав цен и позиций
+// менеджер ведёт сам. Если система не найдена — composeError со статусом 404,
+// и предложение НЕ сохраняется.
 func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemChoice) (Offer, ComposeSystemResponse, error) {
 	materials, err := s.listMaterials(ctx, false)
 	if err != nil {
@@ -148,27 +156,29 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 			status: http.StatusNotFound, text: "система не найдена",
 		}
 	}
-
-	// Вилка цен по материалам: одна выборка вместо запроса на каждую строку.
-	byID := make(map[int64]Material, len(materials))
-	for _, m := range materials {
-		byID[m.ID] = m
-	}
-
-	resp := ComposeSystemResponse{Problems: []string{}}
-	offer.Items, resp.Added = appendComposition(offer.Items, card.CompositionLinks, byID, &resp)
-	if resp.Added == 0 {
-		return offer, resp, composeError{
+	if card.IsEmpty() {
+		return offer, ComposeSystemResponse{}, composeError{
 			status: http.StatusBadRequest,
-			text:   "в составе системы нет ни одного материала из справочника",
+			text:   "в карточке системы нет ни описания, ни состава",
 		}
 	}
-	if err := s.persistOfferItems(ctx, offer); err != nil {
+
+	// Система запоминается в самом предложении: по ней печатаются описание,
+	// преимущества и ссылки, и по ней же ищется карточка, когда менеджер потом
+	// грузит таблицу — сопоставление позиций с системой больше не нужно.
+	offer.System = OfferSystem{SKU: card.SKU, NoteID: card.NoteID}
+	resp := ComposeSystemResponse{
+		Offer:       offer,
+		System:      card,
+		Title:       card.Title,
+		Composition: countCompositionMaterials(card.CompositionLinks),
+	}
+	if err := s.persistOfferSystem(ctx, offer); err != nil {
 		return offer, resp, composeError{
 			status: http.StatusInternalServerError, text: "не удалось сохранить предложение",
 		}
 	}
-	// Состав изменился — значит, текст блоков «по промту» про старый состав
+	// Система сменилась — значит, текст блоков «по промту» про прежнюю систему
 	// больше не годится. Кэш стираем здесь, при записи, а не при печати:
 	// между ними человек может открыть КП и увидеть старый текст (2026-11-01).
 	offer.FormValues = dropStaleBlockTexts(offer.FormValues)
@@ -177,6 +187,20 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 	}
 	resp.Offer = offer
 	return offer, resp, nil
+}
+
+// countCompositionMaterials — сколько в составе системы найдено материалов.
+//
+// Считаем только найденные: строка-слой («Подготовка основания») материалом не
+// является, и обещать «12 продуктов» там, где их девять, значит врать.
+func countCompositionMaterials(links []CompositionItem) int {
+	n := 0
+	for _, link := range links {
+		if link.Found {
+			n++
+		}
+	}
+	return n
 }
 
 // dropStaleBlockTexts убирает хеш данных из form_values: при следующей сборке
@@ -212,30 +236,6 @@ func writeComposeError(w http.ResponseWriter, err error) {
 	dbError(w, "add system", err)
 }
 
-// itemForMaterial — позиция КП из материала. Второе значение — «цена
-// известна»: вилка есть, значит видели цены в таблицах менеджера.
-//
-// Цена позиции — нижняя граница вилки. Верхняя была бы осторожнее для
-// заказчика, но лгать в другую сторону так же нехорошо: менеджер увидит цену,
-// поправит руками, а КП с нулём или пустым полем он замечает сразу.
-func itemForMaterial(m Material) (OfferItem, bool) {
-	id := m.ID
-	price := 0.0
-	hasPrice := m.PriceMin != nil
-	if hasPrice {
-		price = *m.PriceMin
-	}
-	return OfferItem{
-		CatalogID: &id,
-		EKN:       primaryEkn(m),
-		Name:      m.Name,
-		Unit:      m.Unit,
-		Qty:       1,
-		Price:     price,
-		Sum:       roundMoney(price),
-	}, hasPrice
-}
-
 // primaryEkn — номер для позиции КП: первый по справочнику.
 //
 // Пусто — тоже нормально: цены и позиции живут и без ЕКН, а выдуманный номер
@@ -249,35 +249,20 @@ func primaryEkn(m Material) string {
 	return ""
 }
 
-// appendComposition дописывает позиции состава и возвращает число добавленных.
+// persistOfferSystem пишет выбранную систему и двигает updated_at.
 //
-// Несвязанные строки не теряются: они уходят в Problems, потому что человек,
-// добавивший систему, должен увидеть, чего в ней не хватает, а не считать её
-// полной. Слой (Layer) называется отдельно от замечания — «материала нет, и не
-// нужно», это не недоделка. Материалы без вилки цен называются отдельно.
-func appendComposition(
-	items []OfferItem,
-	links []CompositionItem,
-	byID map[int64]Material,
-	resp *ComposeSystemResponse,
-) ([]OfferItem, int) {
-	added := 0
-	for _, link := range links {
-		material, ok := byID[link.MaterialID]
-		if !link.Found || !ok {
-			if !link.Layer {
-				resp.Problems = append(resp.Problems, link.Raw)
-			}
-			continue
-		}
-		item, hasPrice := itemForMaterial(material)
-		if !hasPrice {
-			resp.MissingPrice = append(resp.MissingPrice, material.Name)
-		}
-		items = append(items, item)
-		added++
+// Отдельной ручкой, а не полным сохранением предложения: выбор системы — одно
+// поле, и гонять через него validateOffer (состав, цены) значило бы отказать в
+// выборе из-за позиции, которую менеджер ещё не завёл.
+func (s *Server) persistOfferSystem(ctx context.Context, offer Offer) error {
+	raw, err := json.Marshal(offer.System)
+	if err != nil {
+		return err
 	}
-	return items, added
+	_, err = s.pool.Exec(ctx, `
+UPDATE offers_offer SET system_choice = $2, updated_at = now() WHERE id = $1`,
+		offer.ID, raw)
+	return err
 }
 
 // handleAddSystem — «Добавить систему» в редакторе плагина.

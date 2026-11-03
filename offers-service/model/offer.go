@@ -26,6 +26,24 @@ type OfferClient struct {
 	Contact string `json:"contact"`
 }
 
+// OfferSystem — система, которую менеджер выбрал для предложения.
+//
+// Хранится и код, и заметка (2026-11-03): у живых карточек `system_sku` не
+// заполнен, и без номера заметки система не находится после перезапуска. Поле
+// одно на предложение: система в КП одна, а описание, преимущества и ссылки
+// печатаются из её карточки.
+//
+// Позиции выбор системы НЕ добавляет: цены и состав ведёт менеджер.
+type OfferSystem struct {
+	SKU    string `json:"sku,omitempty"`
+	NoteID int64  `json:"noteId,omitempty"`
+}
+
+// Empty — система не выбрана.
+func (s OfferSystem) Empty() bool {
+	return s.SKU == "" && s.NoteID <= 0
+}
+
 // Offer — коммерческое предложение.
 type Offer struct {
 	ID         int64             `json:"id"`
@@ -34,9 +52,11 @@ type Offer struct {
 	Client     OfferClient       `json:"client"`
 	Items      []OfferItem       `json:"items"`
 	FormValues map[string]string `json:"formValues"`
-	Total      float64           `json:"total"`
-	Status     string            `json:"status"`
-	DocxKey    string            `json:"docxKey"`
-	CreatedAt  string            `json:"createdAt"`
-	UpdatedAt  string            `json:"updatedAt"`
+	// System — выбранная система (2026-11-03). Пусто — система не выбрана.
+	System    OfferSystem `json:"system"`
+	Total     float64     `json:"total"`
+	Status    string      `json:"status"`
+	DocxKey   string      `json:"docxKey"`
+	CreatedAt string      `json:"createdAt"`
+	UpdatedAt string      `json:"updatedAt"`
 }

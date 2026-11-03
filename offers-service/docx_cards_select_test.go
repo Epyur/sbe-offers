@@ -2,52 +2,11 @@ package main
 
 import "testing"
 
-// Выбор карточек и сброс кэша текстов (2026-11-01).
+// Сброс кэша текстов (2026-11-01).
 //
-// Обе функции решают, ЧТО попадёт в документ, и обе были без тестов: карточки
-// чужой системы дали бы в КП описание того, чего в нём нет, а старый текст —
-// цифры прошлой версии.
-
-// В документ идёт описание только той системы, чей материал есть в составе.
-func TestCardsForOfferKeepsOnlyComposedSystems(t *testing.T) {
-	offer := testOfferForBlocks()
-	offer.Items = []OfferItem{{Name: "Мембрана ПВХ", Unit: "м²", Qty: 1, Price: 10, Sum: 10}}
-	cards := []SystemCard{
-		{SKU: "A", Title: "Кровля", CompositionLinks: []CompositionItem{{Name: "Мембрана ПВХ", Found: true}}},
-		{SKU: "B", Title: "Стена", CompositionLinks: []CompositionItem{{Name: "Утеплитель", Found: true}}},
-	}
-	got := cardsForOffer(cards, offer)
-	if len(got) != 1 || got[0].SKU != "A" {
-		t.Fatalf("ожидали только систему кровли: %#v", got)
-	}
-}
-
-// Строка состава без ссылки тоже считается: в старых карточках состав — текст.
-func TestCardsForOfferMatchesByCompositionText(t *testing.T) {
-	offer := testOfferForBlocks()
-	offer.Items = []OfferItem{{Name: "Песок", Unit: "т", Qty: 1, Price: 10, Sum: 10}}
-	cards := []SystemCard{{SKU: "A", Title: "Тротуар", Composition: []string{"Песок"}}}
-	if got := cardsForOffer(cards, offer); len(got) != 1 {
-		t.Fatalf("состав текстом не сопоставлен: %#v", got)
-	}
-}
-
-// Сравнение терпимо к регистру, ё и пробелам: карточку пишут руками.
-func TestCardsForOfferNormalisesNames(t *testing.T) {
-	offer := testOfferForBlocks()
-	offer.Items = []OfferItem{{Name: "  ПЕНОПОЛИСТИРОЛ  XPS ", Unit: "м²", Qty: 1, Price: 10, Sum: 10}}
-	cards := []SystemCard{{SKU: "A", Title: "Пол", CompositionLinks: []CompositionItem{{Name: "пенополистирол XPS", Found: true}}}}
-	if got := cardsForOffer(cards, offer); len(got) != 1 {
-		t.Fatalf("название не нормализовано: %#v", got)
-	}
-}
-
-// Пустое предложение — ни одной карточки: описания без состава не нужны.
-func TestCardsForOfferEmptyOffer(t *testing.T) {
-	if got := cardsForOffer([]SystemCard{{SKU: "A", Title: "X"}}, Offer{}); len(got) != 0 {
-		t.Fatalf("для пустого состава карточки не нужны: %#v", got)
-	}
-}
+// Выбор карточек систем переехал в systems_compose_test.go (2026-11-03):
+// карточка теперь выбирается по выбранной системе, а не по совпадению названий
+// позиций.
 
 // Сброс кэша текстов стирает ТОЛЬКО хеш данных; тексты остаются.
 func TestDropStaleBlockTextsRemovesHashOnly(t *testing.T) {

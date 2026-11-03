@@ -102,6 +102,8 @@ export interface Offer {
   client: { name?: string; contact?: string };
   items: OfferItem[];
   formValues: Record<string, string>;
+  /** Выбранная система; пусто — система не выбрана (2026-11-03). */
+  system?: OfferSystem;
   total: number;
   status: 'draft' | 'final';
   docxKey: string;
@@ -276,14 +278,22 @@ export interface SystemWithComposition extends SystemCard {
   problems?: string[];
 }
 
-/** Ответ «Добавить систему»: что дописалось и что осталось без цены. */
+/** Выбранная система предложения (2026-11-03). */
+export interface OfferSystem {
+  sku?: string;
+  noteId?: number;
+}
+
+/** Ответ выбора системы: какая система выбрана и что о ней известно. */
 export interface ComposeSystemResponse {
   offer: Offer;
-  added: number;
-  /** Материалы без вилки цен: позиция вошла с нулём. */
-  missingPrice?: string[];
-  /** Строки состава без материала в справочнике — в КП не попали. */
-  problems?: string[];
+  /** Карточка выбранной системы: её текст печатается в КП. */
+  system: SystemCard;
+  /**
+   * Сколько основных продуктов в составе системы. Позиций в КП это не
+   * прибавляет — число нужно, чтобы показать, о какой системе речь.
+   */
+  composition: number;
 }
 
 /** Ответ раздела «Системы». */

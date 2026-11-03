@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"mailers/offers/model"
@@ -49,48 +50,26 @@ func genKeyTextByID(blockID string, nodeIndex int) string {
 	return fmt.Sprintf("gen.%s.%d", blockID, nodeIndex)
 }
 
-// cardsForOffer — карточки тех систем, чьи материалы реально вошли в состав.
+// cardsForOffer — карточки систем, о которых говорится в предложении.
 //
-// Проверка по материалу, а не по SKU системы: в позиции попадает материал, а
-// не система, и связь «система → состав» есть только в карточке. Отдаём
-// карточки в порядке кэша; несвязанная система в документ не попадает, иначе
-// КП получало бы описание того, чего в нём нет.
+// Основание — сам факт выбора системы, а не совпадение названий позиций
+// (2026-11-03). До этого карточка попадала в КП, только если какой-то её
+// материал нашёлся среди позиций; система, выбранная ради обоснования, в
+// документ не печаталась вовсе. Названия в карточке и в таблице менеджера
+// совпадать не обязаны: «Гидроизоляционная ПВХ мембрана Logicbase V-SL 2 мм
+// (1 слой)» и «Мембрана Logicbase V-SL» — одна мембрана, а дословно две
+// разные строки.
+//
+// Пустой выбор — ни одной карточки: старые КП печатаются как раньше.
 func cardsForOffer(cards []SystemCard, offer Offer) []SystemCard {
-	if len(offer.Items) == 0 {
+	if offer.System.Empty() {
 		return nil
 	}
-	inOffer := make(map[string]bool, len(offer.Items))
-	for _, it := range offer.Items {
-		inOffer[normalizeItemName(it.Name)] = true
+	choice := SystemChoice{SKU: offer.System.SKU, NoteID: offer.System.NoteID}
+	if card, found := FindSystem(cards, choice); found {
+		return []SystemCard{card}
 	}
-	out := make([]SystemCard, 0, len(cards))
-	for _, card := range cards {
-		if cardInOffer(card, inOffer) {
-			out = append(out, card)
-		}
-	}
-	return out
-}
-
-// cardInOffer — есть ли хоть один материал карточки в составе предложения.
-//
-// Поиск идёт по CompositionLinks, если они есть (кэш их хранит), иначе по
-// названиям строк состава: название материала в позиции совпадает с ним.
-func cardInOffer(card SystemCard, inOffer map[string]bool) bool {
-	for _, link := range card.CompositionLinks {
-		if !link.Found {
-			continue
-		}
-		if inOffer[normalizeItemName(link.Name)] {
-			return true
-		}
-	}
-	for _, line := range card.Composition {
-		if inOffer[normalizeItemName(line)] {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 // normalizeItemName — название для сравнения: регистр, ё и пробелы.
@@ -222,8 +201,19 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 	return cleanBlockText(raw), nil
 }
 
-// cleanBlockText убирает то, что модель добавляет по привычке: маркеры кода и
-// кавычки вокруг всего ответа.
+// cleanBlockText убирает то, что модель добавляет по привычке: маркеры кода,
+// кавычки вокруг всего ответа и размышление вслух перед ответом.
+//
+// Рассуждение появилось в живом КП 003/2026 (2026-11-03): модель вернула
+// «The task: … / Let me think… / hmm, is not in the brief» и черновик, и всё
+// это ушло клиенту. Запрет стоит и в промпте, но промпт — просьба, а не
+// гарантия: у провайдера меняется модель, и однажды поведение вернётся. Ответ
+// печатается без человека, поэтому граница должна быть в коде.
+//
+// Что делает: если ответ открывается признаком рассуждения (строка о задании,
+// «Let me…», «I should…», «думаю», «итак», «hmm»), отбрасывается всё до
+// первого абзаца русского текста. Пусто после этого — блок молчит, как и при
+// недоступной модели: пустой блок в документе честнее черновика.
 func cleanBlockText(raw string) string {
 	text := strings.TrimSpace(raw)
 	text = strings.TrimPrefix(text, "```markdown")
@@ -234,7 +224,141 @@ func cleanBlockText(raw string) string {
 	if len(text) > 1 && strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) {
 		text = strings.TrimSpace(text[1 : len(text)-1])
 	}
-	return text
+	return stripReasoning(text)
+}
+
+// reReasoningLine — строка-признак размышления модели, а не текста для клиента.
+//
+// Список собран по живому ответу КП 003/2026 (2026-11-03): модель пересказывала
+// задание по-английски, планировала ответ («Let me draft»), считала слова
+// («Word limit 150») и оценивала свои же фразы («That's a real property…»,
+// «Считаю допустимым»). Именно эти строки увидел заказчик.
+//
+// Проверяется начало строки: «Мембрана защищает…» в абзаце КП не совпадёт ни
+// с одним признаком.
+var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|let me\b|let's\b|i need\b|i should\b|i will\b|i'll\b|i have\b|i am\b|i'm\b|hmm\b|okay\b|ok,|first,\s+i\b|so,?\s+i\b|word limit\b|advantages that are\b|is a fact\b|that's a real\b|better to be\b|is not in the brief|it's fair to say|header:|format says|this is fine|so no heading|need paragraphs|считаю допустимым|считаю,? что допустимо|осторожн)`)
+
+// stripReasoning выбрасывает размышление модели из ответа.
+//
+// Живой ответ из КП 003/2026 (2026-11-03) показал, что рассуждение не идёт
+// «куском до ответа»: строки модели о задании перемежаются с русскими
+// пересказами состава, а внутри строк оно начинается с середины — «…даёт
+// герметичный контур... hmm, "сварка" is not in the brief». Поэтому чистка
+// идёт в два прохода: по строкам и внутри строки.
+//
+// Что выбрасывается:
+//   - строка-признак рассуждения (план, «Let me…», «Word limit», «Header: …»);
+//   - строка, где русского меньше, чем латинского: служебный текст модели;
+//   - кусок строки от первой латинской скобки-рассуждения до конца строки
+//     (см. reReasoningTail) и короткие вставки вида «hmm, …» внутри строки.
+//
+// Что НЕ делается: русский текст не переписывается и абзацы не склеиваются
+// заново сверх уборки пустых строк. Текст КП для клиента терять нельзя.
+func stripReasoning(text string) string {
+	if text == "" || !hasReasoningLine(text) {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	dropped := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			kept = append(kept, "")
+			continue
+		}
+		if reReasoningLine.MatchString(trimmed) || !mostlyCyrillic(trimmed) {
+			dropped++
+			continue
+		}
+		if cleaned := reReasoningTail.ReplaceAllString(trimmed, ""); cleaned != trimmed {
+			dropped++
+			trimmed = strings.TrimSpace(reasoningTailSeparators.ReplaceAllString(cleaned, ""))
+			if trimmed == "" {
+				continue
+			}
+			// Хвост отрезан — точку в конце ставим, иначе строка висит.
+			if !strings.HasSuffix(trimmed, ".") {
+				trimmed += "."
+			}
+		}
+		kept = append(kept, trimmed)
+	}
+	if dropped == 0 {
+		return text
+	}
+	return collapseBlankLines(strings.Join(kept, "\n"))
+}
+
+// reReasoningTail — рассуждение, начавшееся с середины строки.
+//
+// В живом ответе оно начиналось словами после многоточия: «… smug контур...
+// hmm, "сварка" is not in the brief», «…после сдачи. That's a real property».
+// Берём от этого места до конца строки: всё, что после рассуждения, — тоже
+// рассуждение, а не ответ.
+var reReasoningTail = regexp.MustCompile(`(?i)\s*(?:\.\.\.\s*)?(?:hmm\b|\bthat's a real\b|\bis a fact about\b|\bit's fair to say\b|\bbetter to be\b|\bis not in the brief\b|\bi should\b|\bi need\b|\blet me\b|\bword limit\b).*$`)
+
+// reasoningTailSeparators — то, что остаётся на месте отрезанного хвоста:
+// лишние точки, запятые и пробелы.
+var reasoningTailSeparators = regexp.MustCompile(`[\s.,;:—–-]+$`)
+
+// hasReasoningLine — есть ли в тексте хоть один признак рассуждения. Дешёвая
+// проверка до разбора: обычный ответ модели её не проходит.
+func hasReasoningLine(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if reReasoningLine.MatchString(trimmed) || !mostlyCyrillic(trimmed) {
+			return true
+		}
+		if reReasoningTail.MatchString(trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
+// collapseBlankLines убирает лишние пустые строки, оставшиеся после выброса
+// кусков, и оставляет абзацы ровно с одной пустой строкой между ними.
+func collapseBlankLines(text string) string {
+	var out []string
+	blank := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if !blank && len(out) > 0 {
+				out = append(out, "")
+			}
+			blank = true
+			continue
+		}
+		blank = false
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// mostlyCyrillic — строка написана по-русски, а не латиницей с русскими
+// вставками.
+//
+// Строка считается текстом ответа, если русских букв в ней не меньше, чем
+// латинских. «Мембрана Logicbase V-SL защищает подвал» — ответ. «Let me think
+// about what's known: мембрана, геотекстиль» — черновик: слов немного и они
+// английские. В живом ответе КП 003/2026 ровно такие строки шли вперемешку с
+// русскими, и это единственное, что их различает.
+func mostlyCyrillic(s string) bool {
+	var cyr, lat int
+	for _, r := range s {
+		switch {
+		case (r >= 'А' && r <= 'я') || r == 'Ё' || r == 'ё':
+			cyr++
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			lat++
+		}
+	}
+	return cyr > 0 && cyr >= lat
 }
 
 // buildBlockUserPrompt — данные предложения текстом для модели.
