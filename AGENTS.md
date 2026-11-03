@@ -46,6 +46,9 @@ renamed accordingly.
   `material`. A system has no price of its own; it justifies why this
   combination of materials was chosen. Its composition links to materials by
   wiki reference (`[[Название]]`); a `MAT-…` code is the fallback.
+  **Choosing a system does not add its materials as positions** (2026-11-03):
+  the offer gets the description, advantages and links, while the priced
+  composition is entered by the manager (a file or by hand).
 - **Offer form** (`offers_form`) - placeholders + document blocks + required
   fields. The editor is a block editor built after the LIMS protocol
   configurator. Since 2026-11-01 a block is more than text: `paragraph`,
@@ -58,13 +61,15 @@ renamed accordingly.
   `{NNN}/{yyyy}` continuous through the year. Visibility: admin sees all,
   everyone else sees their own. Since 2026-11-01 the row is created at the
   **start** of the bot conversation with `items: []` (the REST path still
-  refuses an empty offer).
+  refuses an empty offer). Since 2026-11-03 it also carries the chosen system
+  (`system_choice`: `sku` and/or note id) - that is what prints the
+  justification, the advantages and the links.
 - **Telegram bot** - sign-in by e-mail and code (self-request by mail or a code
   from the administrator). "Собрать КП" now **starts with context**: object,
   purpose, area, addressee, the deal, planned systems, terms - and only then
   positions. A file can be sent at any step. The `система <название>` command
-  expands a system into positions; DOCX arrives as a file in the chat or as a
-  link on a button.
+  chooses the system for the offer - it does **not** add positions (2026-11-03);
+  DOCX arrives as a file in the chat or as a link on a button.
 - **Entry point** - the store: "Installed → Open" (`publishService('sbe-offers', {open})`).
 - **Legacy** `offers_catalog` remains for old offers only: materials were
   migrated out, the `system` rows are archived, and nothing writes to it.
@@ -924,7 +929,132 @@ copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNot
 red for the right reason). Assign first, append second. Same class as rule 4 in
 "Rules from the agent's own mistakes".
 
-## STATE 2026-11-02 evening (0.4.5: released - plugin self-hosted, service deployed)
+## 2026-11-03 - system choice adds no positions; model reasoning kept out of the document
+
+Version (manifest.json = package.json) = **0.5.0**; the last released one is
+0.4.5. Two live defects from the
+exported `Коммерческое предложение 003-2026.docx`. Both are fixed in code and
+verified on the stand; the build is **not committed, deployed or self-hosted
+yet** - those are separate commands. Hashes of this local build are in
+[HANDOFF.md](HANDOFF.md).
+
+### 1. The system composition was added to positions from the manager's file
+
+The user's report: *"система добавляется, но добавляемые при этом позиции не
+матчатся с теми позициями, которые уже заведены в КП из пользовательского
+файла, в результате в таблице у нас есть одни и те же продукты с ценами и
+без"*. Measured in the live document: rows 42-51 are eight products with
+quantity 1 and price 0,00 - the expanded composition of the chosen system,
+sitting next to the same products priced from the manager's Excel.
+
+**Why matching could not fix it.** `cardsForOffer`/`appendComposition` matched by
+name, and the names never agree. The card says "Мембрана Logicbase V-SL"; the
+sheet says "Гидроизоляционная ПВХ мембрана Logicbase V-SL 2 мм (1 слой)". A
+composed item also carried `PriceMin` from the catalogue range (or zero), while
+the real price lived in the sheet row - so even a successful match would have
+produced two rows with two different prices, and no field said which one came
+from where.
+
+**The user's rule, now the behaviour.** System choice exists so that the offer
+carries **the justification of the system, its advantages and a description of
+the main products in it**. Positions are entered by the manager alone - by
+uploading a file and/or by hand.
+
+What changed:
+
+- `assembleSystem` (`systems_compose.go`) no longer touches `offer.Items`. It
+  stores the choice (`OfferSystem{SKU, NoteID}` in `offers_offer.system_choice`)
+  and returns `{offer, system, title, composition}`. `added`, `missingPrice` and
+  `problems` are gone from the response; `itemForMaterial` and
+  `appendComposition` were deleted with them (`primaryEkn` stays - `upload.go`
+  still uses it).
+- `handleSaveOffer` keeps the stored choice when the incoming offer carries an
+  empty one (`CASE WHEN $7::jsonb = '{}' ...`). Without this a plain save from
+  the plugin or the bot - neither sends the field - would have wiped it.
+- `cardsForOffer` (`docx_text.go`) now selects the card **by the stored choice**,
+  not by name matching. This also fixes a second bug found while reading the
+  code: a system chosen for its justification but with no matching position never
+  reached the document at all, so the descriptive part could not be printed
+  before prices were entered - which is exactly the order the user described.
+- Plugin: `Offer.system`, `ComposeSystemResponse{system, title, composition}`;
+  the offer card block is titled "Система в КП:", the button reads "✔ Выбрать",
+  it preselects the current choice and says in a line under it that positions
+  are not added and the description will go into the document.
+- Bot: `SystemAddResponse{title, composition}`; `systemAddedMessage` says the
+  system is chosen, how many main products it has, and that positions were not
+  added.
+- Migration: `ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS system_choice
+  JSONB NOT NULL DEFAULT '{}'` (in `main.go`, next to the CREATE TABLE).
+- OpenAPI: both endpoints rewritten, `Offer.system` documented.
+
+### 2. The LLM block contained the model's reasoning, in English
+
+The user's report: *"описание системы от ЛЛМ в КП выглядит больше как процесс
+рассуждения, нежели ответ"*. The document paragraph was the whole chain of
+thought: "The task: write a block…", "Brief info: no explicit object
+description given…", "Let me think about what's actually known…", "Word limit
+150…", interleaved with Russian notes about the composition and ending in
+"Let me draft / I need to write…". The prompt's own words ("Under 150 words",
+"Only numbers from the calculation") matched the document verbatim, which is how
+it was traced to `RenderBlockSystem`.
+
+**Two causes, both fixed.**
+
+- `skills.RenderBlockSystem` forbade nothing about reasoning. It now says the
+  text is for the customer, must be in Russian, and has a "ЧЕГО НЕ ДЕЛАТЬ"
+  section: no retelling of the task, no "Let me think"/"I should", no remarks
+  about the text itself, and a missing fact is one short `[НУЖНО: …]` marker
+  instead of a discussion.
+- `cleanBlockText` (`docx_text.go`) stored the reply verbatim. It now runs
+  `stripReasoning` over it. **The rule was rewritten against the real reply, not
+  guessed:** the first version cut a "reasoning prefix" and passed its own
+  tests, and the live text showed reasoning is *interleaved* with Russian lines
+  and also starts mid-sentence ("… даёт герметичный контур... hmm, "сварка" is
+  not in the brief"). The final version drops reasoning lines, lines with more
+  Latin than Cyrillic, and reasoning tails inside a line, then collapses blank
+  lines. Russian text is never rewritten.
+
+Verified on the live reply itself (temporary test with `OFFERS_LIVE_LEAK`
+pointing at the extracted paragraph, not committed because the public repo must
+not carry a customer's object text): the output is six readable Russian bullets
+and the `[НУЖНО: …]` marker, with none of `The task`, `Let me`, `hmm`, `Brief
+info`, `Word limit`, `Header:`.
+
+### Verified
+
+`go test ./...` green (main/model/skills), `gofmt -l` empty, `go vet` clean;
+bot `tsc --noEmit` and **90 tests**; plugin `tsc --noEmit` EXIT=0,
+`npm run build`, `check_bundle_strings.mjs` 0 missing; `check_offers_openapi.mjs`
+**61 operations / 48 paths, schema matches**; stand **241/241**.
+
+New stand checks in section 18: positions do not change, the response has no
+`added`, the choice is stored, `title`/`composition` are returned, the bot path
+behaves the same, the chosen system's description reaches `word/document.xml`
+(unpacked, not searched in the compressed bytes) and its materials do **not**
+appear as positions.
+
+### Tests pinned to the old behaviour, and what happened to them
+
+Following rule 10 ("a test that pins the old behaviour is a decision to make,
+not an obstacle"): `TestItemForMaterial*` and `TestAppendComposition*` were
+**replaced** by `TestCountCompositionMaterials*`, `TestComposeSystemResponseHasNoPositions`
+and the four `TestCardsForOffer*` selection tests; `TestItemForMaterialCarriesFirstEkn`
+became `TestPrimaryEknTakesFirstNonEmpty` (the function is still used by
+`upload.go`). In `system.test.ts` the two `systemAddedMessage` tests asserting
+"added N positions" were rewritten to assert the new message. E2E assertions
+"ДОПИСАНЫ, а не заменены" / "бот дописал хотя бы одну позицию" became "позиции
+НЕ изменились" / "бот не добавил позиций".
+
+### Trap met while writing `stripReasoning`
+
+`` in Go is not Cyrillic-aware (known gotcha) **and it also matches between a
+Latin letter and a Cyrillic one**: `let me` matched "Let me сказать прямо",
+and the guard deleted a legitimate sentence. The final code does not rely on
+`` after English words - it decides per line by counting Cyrillic vs Latin
+letters (`mostlyCyrillic`), which is what actually separates the model's notes
+from the offer text.
+
+## ## STATE 2026-11-02 evening (0.4.5: released - plugin self-hosted, service deployed)
 
 This block is the one to read first; older STATE blocks below are history.
 Short version is in [HANDOFF.md](HANDOFF.md).

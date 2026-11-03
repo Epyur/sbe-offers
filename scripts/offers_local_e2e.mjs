@@ -6,7 +6,7 @@
  * Запуск: node scripts/offers_local_e2e.mjs [baseUrl]
  */
 import { createHmac } from 'node:crypto';
-import { crc32, deflateRawSync } from 'node:zlib';
+import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:18080';
 const SECRET = 'test-service-secret';
@@ -87,6 +87,20 @@ async function call(method, path, { token, body, headers = {} } = {}) {
 }
 
 const ownerToken = makeJwt('owner@tn.ru');
+
+/** Читает одну запись zip по имени; пусто — записи нет или архив битый. */
+function unzipEntrySafe(buf, name) {
+  // Central directory не нужен: сервис пишет записи подряд, и первое
+  // совпадение имени — это и есть файл.
+  const marker = Buffer.from(name, 'utf8');
+  const idx = buf.indexOf(marker);
+  if (idx < 0) return '';
+  try {
+    return inflateRawSync(buf.subarray(idx + marker.length)).toString('utf8');
+  } catch {
+    return '';
+  }
+}
 
 /** Минимальная запись zip: без неё сервис не отличит .xlsx от прочей мешанины. */
 function zipEntry(name, data) {
@@ -1130,23 +1144,52 @@ console.log('\n18. Таблица менеджера и системы в КП (
   ok('номер ЕКН из таблицы попал в позицию', (appliedItem?.ekn ?? '') === '068864',
     JSON.stringify(appliedItem?.ekn));
 
-  // --- Система: состав дописывается, состав со ссылкой разрешается --------
-  // Система ТН-Кровля Классик ссылается на MAT-МЕМБ-ПВХ-0001, который заведён
-  // в разделе 16 — вилка цен у него уже есть после предыдущей таблицы.
-  const beforeSystem = (applied.json?.offer?.items ?? []).length;
+  // --- Система: выбирается для КП, позиции НЕ добавляются (2026-11-03) ----
+  //
+  // Живая жалоба по КП 003/2026: выбор системы дописывал её состав к позициям
+  // из таблицы менеджера, и одни и те же продукты стояли в таблице дважды —
+  // с ценой из файла и с нулём из системы. Теперь выбор системы несёт только
+  // описание, обоснование и ссылки, а состав с ценами ведёт менеджер.
+  const beforeSystemItems = (applied.json?.offer?.items ?? []).length;
   const composed = await call('POST', `/offers/${offerId}/system`, {
     token: ownerToken,
     body: { sku: 'TN-ROOF-CLASSIC' },
   });
-  ok('система добавлена → 200', composed.status === 200, `получили ${composed.status} ${composed.text?.slice(0, 200)}`);
-  ok('позиции ДОПИСАНЫ, а не заменены', (composed.json?.offer?.items ?? []).length > beforeSystem,
-    `было ${beforeSystem}, стало ${(composed.json?.offer?.items ?? []).length}`);
-  ok('добавлена хотя бы одна позиция', (composed.json?.added ?? 0) >= 1, JSON.stringify(composed.json?.added));
-  ok('строка без материала названа в problems', (composed.json?.problems ?? []).length > 0,
-    JSON.stringify(composed.json?.problems));
-  ok('«Праймер битумный» назван, а не пропущен молча',
-    (composed.json?.problems ?? []).some((p) => p.includes('Праймер')),
-    JSON.stringify(composed.json?.problems));
+  ok('система выбрана → 200', composed.status === 200, `получили ${composed.status} ${composed.text?.slice(0, 200)}`);
+  ok('позиции НЕ изменились', (composed.json?.offer?.items ?? []).length === beforeSystemItems,
+    `было ${beforeSystemItems}, стало ${(composed.json?.offer?.items ?? []).length}`);
+  ok('в ответе нет поля «добавлено позиций»', composed.json?.added === undefined,
+    JSON.stringify({ added: composed.json?.added }));
+  ok('система запомнилась в предложении', Boolean(composed.json?.offer?.system?.sku || composed.json?.offer?.system?.noteId),
+    JSON.stringify(composed.json?.offer?.system));
+  ok('карточка системы возвращена', (composed.json?.system?.title ?? '') !== '',
+    JSON.stringify(composed.json?.system?.title));
+  ok('число основных продуктов посчитано', (composed.json?.composition ?? 0) >= 1,
+    JSON.stringify(composed.json?.composition));
+
+  // Система, выбранная ради обоснования, печатается в КП и при пустом
+  // составе (2026-11-03). До правки карточка попадала в документ, только если
+  // её материал нашёлся среди позиций, — а менеджер сначала выбирает систему
+  // и лишь потом заводит цены.
+  const docxWithSystem = await call('POST', `/offers/${offerId}/export`, { token: ownerToken });
+  ok('документ с выбранной системой собирается → 200', docxWithSystem.status === 200,
+    `получили ${docxWithSystem.status} ${docxWithSystem.text?.slice(0, 160)}`);
+  {
+    // Описание ищется в РАСПАКОВАННОМ word/document.xml: архив сжат, и поиск
+    // по сырым байтам нашёл бы случайное совпадение. Рука /export отдаёт
+    // файл байтами, поэтому body читаем как массив.
+    const bytes = await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    })).arrayBuffer();
+    const xml = unzipEntrySafe(Buffer.from(bytes), 'word/document.xml');
+    ok('описание выбранной системы попало в документ',
+      xml.includes('Классическая наплавляемая кровля для промышленных объектов'),
+      xml ? xml.slice(0, 300) : 'нет word/document.xml');
+    // Состав системы позициями в таблицу НЕ попадает: его ведёт менеджер.
+    ok('материалы системы не попали в таблицу как позиции',
+      !xml.includes('Праймер битумный'), xml.slice(0, 300));
+  }
 
   const unknownSystem = await call('POST', `/offers/${offerId}/system`, {
     token: ownerToken,
@@ -1161,8 +1204,8 @@ console.log('\n18. Таблица менеджера и системы в КП (
   const noteCard = pickList.find((s) => s.noteId > 0 && !(s.sku ?? '').trim()) ?? {};
   ok('в списке есть карточка без кода с номером заметки', noteCard.noteId > 0,
     JSON.stringify(pickList.map((s) => ({ noteId: s.noteId, sku: s.sku, title: s.title }))));
-  ok('у карточки без кода есть материал для добавления',
-    (noteCard.compositionLinks ?? []).some((c) => c.found), JSON.stringify(noteCard.compositionLinks));
+  ok('у карточки без кода есть состав', (noteCard.compositionLinks ?? []).some((c) => c.found),
+    JSON.stringify(noteCard.compositionLinks));
   // Выбор системы по заметке (2026-11-02, живая жалоба по КП 003).
   //
   // В живых карточках Базы знаний `system_sku` не заполнен ни у одной, поэтому
@@ -1173,10 +1216,12 @@ console.log('\n18. Таблица менеджера и системы в КП (
     token: ownerToken,
     body: { noteId: noteCard.noteId },
   });
-  ok('система без кода добавляется по заметке → 200', noteChosen.status === 200,
+  ok('система без кода выбирается по заметке → 200', noteChosen.status === 200,
     `получили ${noteChosen.status} ${noteChosen.text?.slice(0, 200)}`);
-  ok('по заметке дописана хотя бы одна позиция', (noteChosen.json?.added ?? 0) >= 1,
-    JSON.stringify(noteChosen.json?.added));
+  ok('по заметке система запомнилась', (noteChosen.json?.offer?.system?.noteId ?? 0) === noteCard.noteId,
+    JSON.stringify(noteChosen.json?.offer?.system));
+  ok('по заметке позиции не добавились', (noteChosen.json?.offer?.items ?? []).length === beforeSystemItems,
+    `ожидали ${beforeSystemItems}, получили ${(noteChosen.json?.offer?.items ?? []).length}`);
 
   const badNote = await call('POST', `/offers/${offerId}/system`, {
     token: ownerToken,
@@ -1195,10 +1240,12 @@ console.log('\n18. Таблица менеджера и системы в КП (
     headers: { 'X-Service-Secret': BOT_SECRET },
     body: { chat_id: String(linkedChatId), sku: 'TN-ROOF-CLASSIC' },
   });
-  ok('бот дописывает систему → 200', botComposed.status === 200,
+  ok('бот выбирает систему → 200', botComposed.status === 200,
     `получили ${botComposed.status} ${botComposed.text?.slice(0, 160)}`);
-  ok('бот дописал хотя бы одну позицию', (botComposed.json?.added ?? 0) >= 1,
-    JSON.stringify(botComposed.json?.added));
+  ok('бот не добавил позиций', (botComposed.json?.offer?.items ?? []).length === beforeSystemItems,
+    JSON.stringify((botComposed.json?.offer?.items ?? []).length));
+  ok('бот получил название системы для ответа', (botComposed.json?.title ?? '') !== '',
+    JSON.stringify(botComposed.json?.title));
 
   const foreign = await call('POST', `/bot/offers/${offerId}/system`, {
     headers: { 'X-Service-Secret': BOT_SECRET },

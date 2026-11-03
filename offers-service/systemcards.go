@@ -355,6 +355,14 @@ type SystemWithComposition struct {
 	Problems         []string          `json:"problems,omitempty"`
 }
 
+// IsEmpty — карточка без содержания: ни описания, ни состава.
+//
+// Метод, а не поле: у `SystemCard` уже есть поле `Empty`, и одноимённый метод
+// на нём не скомпилируется.
+func (c SystemCard) IsEmpty() bool {
+	return c.Empty
+}
+
 // SystemsWithCompositionFromKB — системы из Базы знаний с составом,
 // разрешённым против справочника материалов. Материальные карточки сюда не
 // попадают: у них свой раздел.
