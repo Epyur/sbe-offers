@@ -135,8 +135,9 @@ styles.css     13a62f1820d50c6683d184a94e6c0c057d1ce626016924ec97716be1917a03fe 
 | версия плагина | **0.5.1** (`manifest.json` = `package.json`) |
 | проверки 0.5.1 | `go test ./...` зелёный, `gofmt -l` пуст, `go vet` чисто; бот tsc + **90 тестов**; плагин `tsc --noEmit` EXIT=0, build, `check_bundle_strings` 0; OpenAPI **61/48**; стенд **242/242** |
 | **сервис и бот** | **0.5.1**, пересозданы 2026-11-05, health `ok`, поллер бота запущен; копии `offers-service.bak-0.5.0-20261105`, `offers-bot.bak-0.5.0-20261105` |
-| **самораздача** | **0.5.1, выложена 2026-11-05**, три суммы сверены по https и с `/registry.json` |
-| реестр | `sbe-apstore-registry` (см. ниже); `www/registry.json` заменён |
+| **самораздача** | **0.5.1, выложена 2026-11-05 13:10Z**, три суммы сверены по https и с `/registry.json` |
+| реестр | `sbe-apstore-registry` `9a68b2e`; `www/registry.json` заменён (копия прежнего `registry.json.bak-20261105-0.5.0`, sha256 обеих копий `7bbc0681…`) |
+| ветки | `backend` `59bce8d`, `main` `bf32d6d` — обе запушены; плагинная часть совпадает (`git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts` → 0) |
 | миграция | нет — 0.5.1 обходится без изменения схемы |
 | сборка 0.5.1 (локально) | `manifest.json` `f3fcc507…` 468 Б, `main.js` `aa97cfed…`, `styles.css` `13a62f18…` (**не менялись**, CSS не правился) |
 | живая проверка | стенд 242/242: состав карточки печатается описательным блоком и **не** попадает в таблицу цен |
