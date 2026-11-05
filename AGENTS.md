@@ -61,14 +61,16 @@ renamed accordingly.
   `{NNN}/{yyyy}` continuous through the year. Visibility: admin sees all,
   everyone else sees their own. Since 2026-11-01 the row is created at the
   **start** of the bot conversation with `items: []` (the REST path still
-  refuses an empty offer). Since 2026-11-03 it also carries the chosen system
-  (`system_choice`: `sku` and/or note id) - that is what prints the
-  justification, the advantages and the links.
+  refuses an empty offer). Since 2026-11-03 it also carries the chosen system;
+  **since 2026-11-05 systems are a list** (`system_choice` JSONB read as
+  `Offer.systems`, in order of choice) - that is what prints the justification,
+  the advantages, the links and the comparison table. The old object shape is
+  still read, so no migration was needed.
 - **Telegram bot** - sign-in by e-mail and code (self-request by mail or a code
   from the administrator). "Собрать КП" now **starts with context**: object,
   purpose, area, addressee, the deal, planned systems, terms - and only then
   positions. A file can be sent at any step. The `система <название>` command
-  chooses the system for the offer - it does **not** add positions (2026-11-03);
+  adds the system to the offer - it does **not** add positions (2026-11-03);
   DOCX arrives as a file in the chat or as a link on a button.
 - **Entry point** - the store: "Installed → Open" (`publishService('sbe-offers', {open})`).
 - **Legacy** `offers_catalog` remains for old offers only: materials were
@@ -133,6 +135,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `kb_image.go` (KB attachments as an `ImageSource`), `llmclient.go`,
 `docx.go`, `docx_media.go`, `docx_links.go` (link section + hyperlink rels),
 `docx_image.go` (`wp:anchor` + wrap), `docx_text.go` (prompt blocks + cache),
+`docx_compare.go` (`compare_table` node - system comparison),
 `s3.go`, `email.go`, `static.go`, `template.go`, `static/openapi.yaml`.
 Sub-packages: `model/` (domain types, plus `jsonrepair.go` - tolerant JSON
 extraction shared with `skills`), `skills/` (prompts, checklists, card and
