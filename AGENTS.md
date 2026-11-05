@@ -1000,6 +1000,32 @@ null/empty string, array on the way out, `Same`, `Add`, `Remove`),
 `compare_table` in the document, silent for one system), three new
 `cardsForOffer` cases, and five stand checks around add/remove/compare.
 
+### Released and deployed 2026-11-05
+
+| | value |
+|---|---|
+| plugin | **0.6.0** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `e2ac383` (feature) + `92bff5c` (release) - pushed |
+| `main` | `6419c50` (plugin part) - pushed |
+| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts` exits 0 |
+| server deploy | `git archive --format=tar 92bff5c` → `/tmp` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.5.1-20261105`, `offers-bot.bak-0.5.1-20261105`; `docker compose build` + `up -d --force-recreate`; both containers recreated 17:01 MSK, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https with `-OutFile` and against `/registry.json` |
+| registry | `sbe-apstore-registry` `8d16177`; `www/registry.json` replaced (backup `registry.json.bak-20261105-0.5.1`, sha256 `0f4ec4c4…` on both) |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `e43157360500c7e984799f9c3bb067ecef92b6c92f39af05101dc9ce908bd101` | 468 |
+| `main.js` | `13d5e8140710ba10db0368a3523c0c43f8aba00a1107eb2b6286090b02182824` | 120601 |
+| `styles.css` | `13a62f1820d50c6683d184a94e6c0c057d1ce626016924ec97716be1917a03fe` | 31633 |
+
+**Live check on the deployed service:** all 5 live offers store `system_choice`
+as `{}` (nobody has chosen a system on production yet), so the old-shape
+compatibility is covered by tests, not by live data. The new DELETE routes are
+registered and gated - they answer 401 without a token, as they should. The
+served `/api/offers/openapi.yaml` contains 7 `delete:` operations.
+
+`styles.css` did not change in this release (no CSS edits).
+
 ## 2026-11-05 - card composition printed; the brief reaches the model
 
 Version (manifest.json = package.json) = **0.5.1**, **released 2026-11-05**.
