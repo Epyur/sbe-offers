@@ -815,6 +815,37 @@ func (s *Server) handleBotAddSystem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleBotRemoveSystem — убрать систему из КП из чата (2026-11-05).
+//
+// Тот же разбор, что у добавления; отличается только действие. Ошибка «система
+// не найдена» здесь не нужна: убирают обычно именно ту, которой в Базе знаний
+// уже нет.
+func (s *Server) handleBotRemoveSystem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ChatID string `json:"chat_id"`
+		SKU    string `json:"sku"`
+		NoteID int64  `json:"noteId"`
+	}
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	offer, _, ok := s.botOfferForChatQ(w, r, id, req.ChatID)
+	if !ok {
+		return
+	}
+	choice := SystemChoice{SKU: req.SKU, NoteID: req.NoteID}
+	if choice.Handle() == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "не выбрана система"})
+		return
+	}
+	s.removeSystem(w, r, offer, choice)
+}
+
 // persistOfferFormValues пишет только form_values и двигает updated_at.
 //
 // Отдельно от handleSaveOffer: там правится всё предложение, а здесь — одна

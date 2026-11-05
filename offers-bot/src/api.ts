@@ -162,6 +162,20 @@ export async function addSystem(
   return call('POST', `/bot/offers/${offerId}/system`, { chat_id: chatId, ...choice });
 }
 
+/**
+ * Убрать систему из предложения (2026-11-05).
+ *
+ * Та же ручка, другое действие: менеджер может предложить несколько систем и
+ * сравнивать их, а лишнюю убрать прямо из чата.
+ */
+export async function removeSystem(
+  offerId: number,
+  chatId: string,
+  choice: SystemChoice,
+): Promise<SystemAddResponse> {
+  return call('DELETE', `/bot/offers/${offerId}/system`, { chat_id: chatId, ...choice });
+}
+
 export async function createOffer(payload: {
   chatId: string;
   client: { name: string; contact: string };

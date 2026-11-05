@@ -329,8 +329,10 @@ type renderCtx struct {
 	service map[string]string
 	offer   Offer
 	refs    []skills.CardRef
-	images  ImageSource
-	media   *docxMedia
+	// cards — карточки систем предложения: нужны узлу сравнения.
+	cards  []SystemCard
+	images ImageSource
+	media  *docxMedia
 }
 
 // text подставляет поля формы и служебные значения предложения в один кусок
@@ -404,6 +406,18 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			links, ok := renderLinkSection(node, rc.refs)
 			if ok {
 				sb.WriteString(links)
+				started = true
+			}
+			continue
+		case "compare_table":
+			// Сравниваются только ВЫБРАННЫЕ системы: карточки в rc — весь кеш
+			// раздела, и без отбора в таблицу попали бы все 375 систем.
+			if rows := compareSystemRows(cardsForOffer(rc.cards, rc.offer)); len(rows) > 0 {
+				if title := strings.TrimSpace(node.Text); title != "" {
+					sb.WriteString(headingXMLOpts(rc.text(title), node.Level, opts))
+					started = true
+				}
+				sb.WriteString(tableXML(rows))
 				started = true
 			}
 			continue
@@ -516,6 +530,7 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 		service: serviceValues(offer),
 		offer:   offer,
 		refs:    refs,
+		cards:   cards,
 		images:  images,
 		media:   media,
 	}

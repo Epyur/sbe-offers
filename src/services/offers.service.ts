@@ -374,13 +374,33 @@ export class OffersService {
    * обоснование и ссылки, а состав с ценами менеджер заводит сам.
    */
   async addSystem(offerId: number, choice: string): Promise<ComposeSystemResponse> {
+    return this.writeSystem(offerId, choice, 'POST');
+  }
+
+  /**
+   * Убрать систему из предложения (2026-11-05).
+   *
+   * Хэндл тот же, что у добавления (`sys-<noteId>` или код). Убирать можно и
+   * систему, которой больше нет в Базе знаний: сервер такую не ищет.
+   */
+  async removeSystem(offerId: number, choice: string): Promise<ComposeSystemResponse> {
+    return this.writeSystem(offerId, choice, 'DELETE');
+  }
+
+  /**
+   * Разбор хэндла системы — одна точка на добавление и удаление.
+   *
+   * `sys-<noteId>` — заметка, остальное — код. Держать это дважды значило бы
+   * разойтись в правиле: у живых карточек кода нет вовсе (2026-11-02).
+   */
+  private async writeSystem(
+    offerId: number,
+    choice: string,
+    method: 'POST' | 'DELETE',
+  ): Promise<ComposeSystemResponse> {
     const note = /^sys-(\d+)$/.exec(choice.trim());
-    if (note) {
-      return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, {
-        noteId: Number(note[1]),
-      });
-    }
-    return this.request<ComposeSystemResponse>('POST', `/offers/${offerId}/system`, { sku: choice });
+    const body = note ? { noteId: Number(note[1]) } : { sku: choice.trim() };
+    return this.request<ComposeSystemResponse>(method, `/offers/${offerId}/system`, body);
   }
 
   // --- Системы (2026-10-31) ---------------------------------------------

@@ -243,28 +243,66 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
             text: `${system.title}${broken ? ' (есть замечания к составу)' : ''}`,
           });
         }
-        // Отмечаем уже выбранную систему, чтобы человек видел текущую.
-        const chosen = current.system;
-        if (chosen && chosen.noteId) systemsSelect.value = `sys-${chosen.noteId}`;
-        else if (chosen?.sku) systemsSelect.value = chosen.sku;
+        // Отмечаем уже выбранные системы: человек должен видеть текущее
+        // состояние, а не пустой список.
+        const chosen = current.systems ?? [];
+        const chosenHandle = chosen[0]?.noteId ? `sys-${chosen[0].noteId}` : (chosen[0]?.sku ?? '');
+        if (chosenHandle) systemsSelect.value = chosenHandle;
       })
       .catch((e: unknown) => {
         systemsCard.createSpan({ cls: 'tn-offers-warn', text: ` Список систем: ${errorMessage(e)}` });
       });
-    const addSystemBtn = systemsCard.createEl('button', { text: '✔ Выбрать', cls: 'tn-btn tn-btn-ghost' });
+    const addSystemBtn = systemsCard.createEl('button', { text: '✔ Добавить', cls: 'tn-btn tn-btn-ghost' });
     addSystemBtn.addEventListener('click', () => {
       void addSystemPicked();
     });
-    const chosenLabel = systemsCard.createDiv({ cls: 'tn-offers-muted' });
 
-    function showChosen(offer: Offer, count: number): void {
-      chosenLabel.setText(
-        offer.system && (offer.system.noteId || offer.system.sku)
-          ? `Выбрана система: ${count} основных продуктов. Описание и ссылки попадут в документ; позиции добавьте файлом или руками.`
-          : 'Система не выбрана: КП соберётся без описания системы.',
-      );
+    // Выбранные системы списком (2026-11-05). Раньше была одна, и человек не
+    // видел даже её: подпись говорила только «выбрана». Теперь их может быть
+    // несколько — для сравнения в документе, как СТИЛОБАТ V1.0 и V2.0.
+    const chosenList = systemsCard.createDiv({ cls: 'tn-offers-chosen-systems' });
+
+    function renderChosen(offer: Offer): void {
+      chosenList.empty();
+      const systems = offer.systems ?? [];
+      if (systems.length === 0) {
+        chosenList.createDiv({
+          cls: 'tn-offers-muted',
+          text: 'Системы не выбраны: КП соберётся без описания системы.',
+        });
+        return;
+      }
+      for (const chosen of systems) {
+        const row = chosenList.createDiv({ cls: 'tn-offers-row tn-offers-chosen-system' });
+        // Название берём из того же ответа, что и удаление: у выбора есть код
+        // или заметка, а человеку нужно имя.
+        const handle = chosen.noteId ? `sys-${chosen.noteId}` : (chosen.sku ?? '');
+        const label = handle ? `Система: ${handleLabel(handle)}` : 'Система';
+        row.createSpan({ cls: 'tn-offers-grow', text: label });
+        const removeBtn = row.createEl('button', { text: 'Убрать', cls: 'tn-btn tn-btn-ghost' });
+        removeBtn.addEventListener('click', () => {
+          void removeSystem(handle, removeBtn);
+        });
+      }
+      if (systems.length === 1) {
+        chosenList.createDiv({
+          cls: 'tn-offers-muted',
+          text: 'Одна система: сравнивать нечего. Добавьте вторую, чтобы в документ попала таблица сравнения.',
+        });
+      } else {
+        chosenList.createDiv({
+          cls: 'tn-offers-muted',
+          text: `Выбрано систем: ${systems.length}. В документе они идут по порядку выбора, а сравнение — таблицей, если в форме есть этот блок.`,
+        });
+      }
     }
-    showChosen(current, 0);
+
+    // labelFor — подпись системы по хэндлу: имя из списка, иначе сам хэндл.
+    function handleLabel(handle: string): string {
+      const option = Array.from(systemsSelect.options).find((o) => o.value === handle);
+      return option?.textContent ?? handle;
+    }
+    renderChosen(current);
 
     async function addSystemPicked(): Promise<void> {
       const choice = systemsSelect.value;
@@ -277,14 +315,29 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         const res = await view.plugin.offersService.addSystem(current.id!, choice);
         // Позиции не трогаем: сервер их не меняет, а локальный список в
         // редакторе остаётся тем, что человек правил.
-        showChosen(res.offer, res.composition ?? 0);
+        current.systems = res.offer.systems ?? [];
+        renderChosen(current);
         new Notice(
-          `Система выбрана: «${res.system?.title ?? ''}». Позиции не добавлялись — их состав вы заводите сами.`,
+          `Система добавлена: «${res.system?.title ?? ''}». Позиции не добавлялись — их состав вы заводите сами.`,
         );
       } catch (e: unknown) {
-        new Notice(`Не удалось выбрать систему: ${errorMessage(e)}`);
+        new Notice(`Не удалось добавить систему: ${errorMessage(e)}`);
       } finally {
         addSystemBtn.removeAttribute('disabled');
+      }
+    }
+
+    async function removeSystem(handle: string, button: HTMLButtonElement): Promise<void> {
+      button.setAttr('disabled', 'true');
+      try {
+        const res = await view.plugin.offersService.removeSystem(current.id!, handle);
+        current.systems = res.offer.systems ?? [];
+        renderChosen(current);
+        new Notice('Система убрана из предложения.');
+      } catch (e: unknown) {
+        new Notice(`Не удалось убрать систему: ${errorMessage(e)}`);
+      } finally {
+        button.removeAttribute('disabled');
       }
     }
   }

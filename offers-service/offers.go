@@ -19,6 +19,7 @@ type Offer = model.Offer
 type OfferItem = model.OfferItem
 type OfferClient = model.OfferClient
 type OfferSystem = model.OfferSystem
+type OfferSystems = model.OfferSystems
 
 // roundMoney округляет до копеек без двоичных хвостов (0.1+0.2). Множитель
 // 1000 снимает артефакт представления: 1.005 * 100 = 100.49999999999999,
@@ -124,7 +125,7 @@ FROM offers_offer WHERE id = $1`, id).
 		_ = json.Unmarshal(values, &offer.FormValues)
 	}
 	if len(system) > 0 {
-		_ = json.Unmarshal(system, &offer.System)
+		_ = json.Unmarshal(system, &offer.Systems)
 	}
 	return offer, nil
 }
@@ -226,7 +227,7 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
 	}
-	systemJSON, err := json.Marshal(offer.System)
+	systemJSON, err := json.Marshal(offer.Systems)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
@@ -252,11 +253,13 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 		}
 		// Пустой выбор в запросе не стирает сохранённый (2026-11-03): плагин и
 		// бот присылают предложение без этого поля, и полное сохранение
-		// обнуляло бы систему, выбранную отдельной ручкой.
+		// обнуляло бы системы, выбранные отдельной ручкой. С 2026-11-05 пустой
+		// выбор — это `[]`, поэтому терпим оба вида.
 		_, err = s.pool.Exec(r.Context(), `
 UPDATE offers_offer SET client = $2, items = $3, form_values = $4, total = $5,
 	status = $6,
-	system_choice = CASE WHEN $7::jsonb = '{}'::jsonb THEN system_choice ELSE $7::jsonb END,
+	system_choice = CASE WHEN $7::jsonb IN ('{}'::jsonb, '[]'::jsonb)
+		THEN system_choice ELSE $7::jsonb END,
 	updated_at = now()
 WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status, systemJSON)
 		if err != nil {

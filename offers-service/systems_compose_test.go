@@ -64,7 +64,7 @@ func TestCardsForOfferWithoutChoice(t *testing.T) {
 // Выбранная система печатается даже в пустом КП: описание и обоснование нужны
 // менеджеру ДО того, как он завёл позиции (это и есть весь смысл выбора).
 func TestCardsForOfferByChoiceWithoutItems(t *testing.T) {
-	offer := Offer{System: OfferSystem{NoteID: 11}}
+	offer := Offer{Systems: OfferSystems{OfferSystem{NoteID: 11}}}
 	cards := []SystemCard{
 		{NoteID: 11, Title: "Кровля", Description: "Описание кровли"},
 		{NoteID: 12, Title: "Стена", Description: "Описание стены"},
@@ -77,7 +77,7 @@ func TestCardsForOfferByChoiceWithoutItems(t *testing.T) {
 
 // Система выбирается и по коду: код главнее заметки, правило одно с FindSystem.
 func TestCardsForOfferBySku(t *testing.T) {
-	offer := Offer{System: OfferSystem{SKU: " tn-roof "}}
+	offer := Offer{Systems: OfferSystems{OfferSystem{SKU: " tn-roof "}}}
 	cards := []SystemCard{{SKU: "TN-ROOF", Title: "Кровля", Description: "Описание"}}
 	if got := cardsForOffer(cards, offer); len(got) != 1 || got[0].SKU != "TN-ROOF" {
 		t.Fatalf("система по коду не выбрана: %#v", got)
@@ -87,10 +87,48 @@ func TestCardsForOfferBySku(t *testing.T) {
 // Выбранная система исчезла из Базы знаний — карточки нет, и это не падение:
 // документ собирается без описания, как раньше.
 func TestCardsForOfferUnknownChoice(t *testing.T) {
-	offer := Offer{System: OfferSystem{NoteID: 999}}
+	offer := Offer{Systems: OfferSystems{OfferSystem{NoteID: 999}}}
 	cards := []SystemCard{{NoteID: 11, Title: "Кровля", Description: "Описание"}}
 	if got := cardsForOffer(cards, offer); len(got) != 0 {
 		t.Fatalf("чужой номер заметки ничего не выбирает: %#v", got)
+	}
+}
+
+// Несколько систем в одном КП (2026-11-05): печатаются все выбранные, в
+// порядке выбора. Именно этого не хватало для сравнения двух решений —
+// образца конкурента с СТИЛОБАТ V1.0 и V2.0.
+func TestCardsForOfferSeveralSystems(t *testing.T) {
+	offer := Offer{Systems: OfferSystems{{NoteID: 12}, {NoteID: 11}}}
+	cards := []SystemCard{
+		{NoteID: 11, Title: "Кровля", Description: "Описание кровли"},
+		{NoteID: 12, Title: "Стена", Description: "Описание стены"},
+	}
+	got := cardsForOffer(cards, offer)
+	if len(got) != 2 {
+		t.Fatalf("ожидали две карточки, получили %d: %#v", len(got), got)
+	}
+	if got[0].Title != "Стена" || got[1].Title != "Кровля" {
+		t.Fatalf("порядок выбора не сохранён: %#v", got)
+	}
+}
+
+// Одна и та же система, выбранная и по заметке, и по коду, печатается один
+// раз: сопоставление в списке не должно давать дубль раздела.
+func TestCardsForOfferDeduplicatesCards(t *testing.T) {
+	offer := Offer{Systems: OfferSystems{{NoteID: 11}, {SKU: "TN-ROOF"}}}
+	cards := []SystemCard{{NoteID: 11, SKU: "TN-ROOF", Title: "Кровля", Description: "Описание"}}
+	if got := cardsForOffer(cards, offer); len(got) != 1 {
+		t.Fatalf("дубль не отсечён: %#v", got)
+	}
+}
+
+// Исчезнувшая из Базы знаний система не мешает печатать остальные.
+func TestCardsForOfferSkipsUnknownOne(t *testing.T) {
+	offer := Offer{Systems: OfferSystems{{NoteID: 999}, {NoteID: 11}}}
+	cards := []SystemCard{{NoteID: 11, Title: "Кровля", Description: "Описание"}}
+	got := cardsForOffer(cards, offer)
+	if len(got) != 1 || got[0].Title != "Кровля" {
+		t.Fatalf("живая система потерялась: %#v", got)
 	}
 }
 

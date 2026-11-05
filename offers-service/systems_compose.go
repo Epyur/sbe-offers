@@ -166,7 +166,10 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 	// Система запоминается в самом предложении: по ней печатаются описание,
 	// преимущества и ссылки, и по ней же ищется карточка, когда менеджер потом
 	// грузит таблицу — сопоставление позиций с системой больше не нужно.
-	offer.System = OfferSystem{SKU: card.SKU, NoteID: card.NoteID}
+	//
+	// Систем теперь может быть несколько (2026-11-05): чтобы предложить и
+	// сравнить два решения в одном КП. Add не дублирует и сохраняет порядок.
+	offer.Systems = offer.Systems.Add(OfferSystem{SKU: card.SKU, NoteID: card.NoteID})
 	resp := ComposeSystemResponse{
 		Offer:       offer,
 		System:      card,
@@ -255,7 +258,7 @@ func primaryEkn(m Material) string {
 // поле, и гонять через него validateOffer (состав, цены) значило бы отказать в
 // выборе из-за позиции, которую менеджер ещё не завёл.
 func (s *Server) persistOfferSystem(ctx context.Context, offer Offer) error {
-	raw, err := json.Marshal(offer.System)
+	raw, err := json.Marshal(offer.Systems)
 	if err != nil {
 		return err
 	}
@@ -267,6 +270,23 @@ UPDATE offers_offer SET system_choice = $2, updated_at = now() WHERE id = $1`,
 
 // handleAddSystem — «Добавить систему» в редакторе плагина.
 func (s *Server) handleAddSystem(w http.ResponseWriter, r *http.Request) {
+	s.systemWriteHandler(w, r, false)
+}
+
+// handleRemoveSystem — убрать систему из предложения (2026-11-05).
+//
+// Отдельная ручка, а не «сохранить весь список»: менеджер убирает одну систему,
+// и полное сохранение предложения отказало бы из-за незаконченных позиций.
+func (s *Server) handleRemoveSystem(w http.ResponseWriter, r *http.Request) {
+	s.systemWriteHandler(w, r, true)
+}
+
+// systemWriteHandler — общий разбор тела и ответ для добавления и удаления.
+//
+// Тело одно: `sku` и/или `noteId`. Ошибка «система не найдена» здесь не
+// проверяется: убрать можно и систему, которой больше нет в Базе знаний —
+// именно такой случай и заставляет человека её убрать.
+func (s *Server) systemWriteHandler(w http.ResponseWriter, r *http.Request, remove bool) {
 	offer, ok := s.offerForEditor(w, r)
 	if !ok {
 		return
@@ -279,10 +299,42 @@ func (s *Server) handleAddSystem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	_, resp, err := s.assembleSystem(r.Context(), offer, SystemChoice{SKU: req.SKU, NoteID: req.NoteID})
+	choice := SystemChoice{SKU: req.SKU, NoteID: req.NoteID}
+	if choice.Handle() == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "не выбрана система"})
+		return
+	}
+	if remove {
+		s.removeSystem(w, r, offer, choice)
+		return
+	}
+	_, resp, err := s.assembleSystem(r.Context(), offer, choice)
 	if err != nil {
 		writeComposeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// removeSystem убирает систему и отвечает тем же телом, что добавление, чтобы
+// клиент обновлял карточку одним разбором.
+func (s *Server) removeSystem(w http.ResponseWriter, r *http.Request, offer Offer, choice SystemChoice) {
+	before := len(offer.Systems)
+	offer.Systems = offer.Systems.Remove(OfferSystem{SKU: choice.SKU, NoteID: choice.NoteID})
+	if len(offer.Systems) == before {
+		// Системы не было — это не ошибка, но и обновлять нечего. Отвечаем
+		// 404: человек нажал «убрать» на строке, которой уже нет.
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "система не выбрана в предложении"})
+		return
+	}
+	if err := s.persistOfferSystem(r.Context(), offer); err != nil {
+		dbError(w, "remove system", err)
+		return
+	}
+	// Состав систем изменился — текст блоков «по промту» про него устарел.
+	offer.FormValues = dropStaleBlockTexts(offer.FormValues)
+	if err := s.persistOfferFormValues(r.Context(), offer); err != nil {
+		log.Printf("remove system: тексты блоков не сброшены у КП %s: %v", offer.Number, err)
+	}
+	writeJSON(w, http.StatusOK, ComposeSystemResponse{Offer: offer})
 }

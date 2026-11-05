@@ -128,6 +128,7 @@ func main() {
 	// «Добавить систему» в редакторе: состав собирает сервер, потому что цену
 	// позиции знает только он (вилка из таблиц менеджера), а не клиент.
 	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))
+	mux.HandleFunc("DELETE /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleRemoveSystem))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
@@ -171,6 +172,7 @@ func main() {
 	// «система <название>» в боте (2026-10-31): состав из Базы знаний
 	// дописывается позициями. Правило состава то же, что у плагина.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/system", s.requireServiceSecret(s.handleBotAddSystem))
+	mux.HandleFunc("DELETE /api/offers/bot/offers/{id}/system", s.requireServiceSecret(s.handleBotRemoveSystem))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/docx", s.requireServiceSecret(s.handleBotDocx))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/link", s.requireServiceSecret(s.handleBotOfferLink))
 	// Бриф-диалог (2026-10-29): вопросы менеджеру и текст секций пишет

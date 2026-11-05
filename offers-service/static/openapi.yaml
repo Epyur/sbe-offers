@@ -277,8 +277,10 @@ paths:
         с ценой из файла и с нулём из системы. Сопоставить их нечем: названия
         в карточке и в таблице пишутся по-разному.
 
-        Выбранная система запоминается в самом предложении (`Offer.system`)
-        и печатается в документе, даже если позиций ещё нет.
+        Выбранная система запоминается в самом предложении (`Offer.systems`)
+        и печатается в документе, даже если позиций ещё нет. Систем может быть
+        несколько (2026-11-05): так заказчику предлагают и сравнивают два
+        решения в одном КП, как СТИЛОБАТ V1.0 и V2.0 в образце.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -330,6 +332,41 @@ paths:
           description: Система с таким кодом или заметкой не найдена
         '400':
           description: В карточке системы нет ни описания, ни состава
+    delete:
+      summary: Убрать систему из предложения
+      description: |
+        Снимает систему с предложения (2026-11-05). Позиции не трогает: они
+        ведутся менеджером отдельно. Убирать можно и систему, которой больше нет
+        в Базе знаний — именно такой случай чаще всего и заставляет её убрать.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Та же пара `sku` / `noteId`, что и у добавления.
+              properties:
+                sku:
+                  type: string
+                noteId:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Система убрана; в ответе обновлённое предложение
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer:
+                    $ref: '#/components/schemas/Offer'
+        '404':
+          description: Такой системы в предложении нет
+        '400':
+          description: Не передан ни `sku`, ни `noteId`
   /api/offers/form:
     get:
       summary: Форма КП
@@ -1082,6 +1119,37 @@ paths:
                   type: integer
                   format: int64
                   description: Заметка Базы знаний, по которой выбрана система.
+    delete:
+      summary: Убрать систему из предложения (бот)
+      description: |
+        Снимает систему с предложения из чата (2026-11-05). Позиции не трогает.
+        Ответ тот же, что у ручки плагина — обновлённое предложение.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id]
+              properties:
+                chat_id:
+                  type: string
+                sku:
+                  type: string
+                noteId:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Система убрана
+        '404':
+          description: Такой системы в предложении нет
+        '400':
+          description: Не передан ни `sku`, ни `noteId`
 
   /api/offers/bot/offers/{id}/docx:
     post:
@@ -1936,18 +2004,21 @@ components:
           type: object
           additionalProperties:
             type: string
-        system:
-          type: object
+        systems:
+          type: array
           description: |
-            Выбранная система (2026-11-03). Пустой объект — система не выбрана.
-            По ней печатаются описание, преимущества и ссылки; позиций она не
-            добавляет.
-          properties:
-            sku:
-              type: string
-            noteId:
-              type: integer
-              format: int64
+            Выбранные системы в порядке выбора (2026-11-05). Пустой массив —
+            ни одна не выбрана. По ним печатаются описание, преимущества и
+            ссылки; позиций они не добавляют. Систем несколько — чтобы
+            предложить и сравнить два решения в одном КП.
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              noteId:
+                type: integer
+                format: int64
         total:
           type: number
         status:

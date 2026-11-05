@@ -62,14 +62,37 @@ func genKeyTextByID(blockID string, nodeIndex int) string {
 //
 // Пустой выбор — ни одной карточки: старые КП печатаются как раньше.
 func cardsForOffer(cards []SystemCard, offer Offer) []SystemCard {
-	if offer.System.Empty() {
+	if len(offer.Systems) == 0 {
 		return nil
 	}
-	choice := SystemChoice{SKU: offer.System.SKU, NoteID: offer.System.NoteID}
-	if card, found := FindSystem(cards, choice); found {
-		return []SystemCard{card}
+	out := make([]SystemCard, 0, len(offer.Systems))
+	for _, chosen := range offer.Systems {
+		choice := SystemChoice{SKU: chosen.SKU, NoteID: chosen.NoteID}
+		if card, found := FindSystem(cards, choice); found {
+			// Одна и та же карточка не печатается дважды, даже если менеджер
+			// выбрал её по коду и по заметке: это одна система.
+			if !containsCard(out, card) {
+				out = append(out, card)
+			}
+		}
 	}
-	return nil
+	return out
+}
+
+// containsCard — уже ли эта карточка в списке.
+func containsCard(cards []SystemCard, card SystemCard) bool {
+	for _, c := range cards {
+		if c.NoteID > 0 && card.NoteID > 0 {
+			if c.NoteID == card.NoteID {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(c.SKU), strings.TrimSpace(card.SKU)) {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeItemName — название для сравнения: регистр, ё и пробелы.

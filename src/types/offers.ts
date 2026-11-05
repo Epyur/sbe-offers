@@ -102,8 +102,11 @@ export interface Offer {
   client: { name?: string; contact?: string };
   items: OfferItem[];
   formValues: Record<string, string>;
-  /** Выбранная система; пусто — система не выбрана (2026-11-03). */
-  system?: OfferSystem;
+  /**
+   * Выбранные системы в порядке выбора (2026-11-05). Пусто — ни одной.
+   * Сервер отдаёт массив; старые КП с одной системой читаются так же.
+   */
+  systems?: OfferSystem[];
   total: number;
   status: 'draft' | 'final';
   docxKey: string;
