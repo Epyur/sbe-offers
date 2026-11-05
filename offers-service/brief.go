@@ -40,6 +40,52 @@ type BriefTurn struct {
 // loadBrief читает бриф предложения. Нет строки — возвращает pgx.ErrNoRows:
 // вызывающий решает, создавать ли (в отличие от формы КП, где «нет строки» —
 // штатное состояние «не настроено», здесь это «брифа ещё нет»).
+// briefFormValues — бриф в значениях формы под ключами `brief.<поле>`.
+//
+// Единственное место, где бриф попадает в form_values (2026-11-05). Бриф живёт
+// в отдельной таблице, а печать, сводка и промпт модели читают form_values. На
+// живом КП 003/2026 менеджер заполнил бриф целиком, а модель получила пустой
+// объект и написала «[НУЖНО: …]».
+//
+// Правила:
+//   - значения, уже лежащие в base, главнее: форму заполняет человек, и бриф не
+//     имеет права перебить его правку;
+//   - пустое поле брифа ничего не пишет — не затирает и не создаёт пустых
+//     строк, которые модель достроит догадкой;
+//   - списки печатаются через «; », как их читает человек в сводке.
+func briefFormValues(base map[string]string, p model.BriefPayload) map[string]string {
+	out := make(map[string]string, len(base)+len(briefPromptFields))
+	for k, v := range base {
+		out[k] = v
+	}
+	set := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if strings.TrimSpace(out["brief."+key]) != "" {
+			return
+		}
+		out["brief."+key] = value
+	}
+	joinList := func(values []string) string { return strings.Join(values, "; ") }
+
+	set("object_name", p.ObjectName)
+	set("object_purpose", p.ObjectPurpose)
+	set("object_area", p.ObjectArea)
+	set("customer_address", p.CustomerAddress)
+	set("customer_goals", joinList(p.CustomerGoals))
+	set("customer_pains", joinList(p.CustomerPains))
+	set("project_risks", joinList(p.ProjectRisks))
+	set("planned_systems", joinList(p.PlannedSystems))
+	set("budget_signal", p.BudgetSignal)
+	set("decision_maker", p.DecisionMaker)
+	set("timeline", p.Timeline)
+	set("why_us", joinList(p.WhyUs))
+	set("notes", p.Notes)
+	return out
+}
+
 func (s *Server) loadBrief(ctx context.Context, offerID int64) (Brief, error) {
 	var b Brief
 	var payload []byte

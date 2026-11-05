@@ -1065,20 +1065,44 @@ func renderCardSectionsWithMedia(sb *strings.Builder, offer Offer, cards []Syste
 		sb.WriteString(headingXML("Система: "+c.Title, 3))
 		sb.WriteString(paragraphXML(c.Description, ""))
 
-		if c.ImageKey == "" || images == nil {
-			continue
+		// Разрез системы — ДО состава (образец конкурента, 2026-11-05): сначала
+		// пирог, потом его расшифровка. Раньше картинка печаталась после текста
+		// и никак не была связана с составом.
+		writeCardImage(sb, c, images, media)
+
+		// Состав и характеристики — факты из карточки, а не текст модели.
+		// Клиент должен видеть, из чего состоит система; до 2026-11-05 состав
+		// уходил только в промпт и в документ не попадал.
+		if len(c.Composition) > 0 {
+			sb.WriteString(headingXML("Состав системы", 4))
+			for _, item := range c.Composition {
+				sb.WriteString(listItemXML(item))
+			}
 		}
-		data, err := images.Get(context.Background(), c.ImageKey)
-		if err != nil || len(data) == 0 {
-			// Картинка необязательна: документ важнее.
-			continue
+		if len(c.Specifications) > 1 {
+			sb.WriteString(headingXML("Свойства и преимущества", 4))
+			sb.WriteString(tableXML(c.Specifications))
 		}
-		ext, contentType := imageExt(c.ImageName)
-		drawing := media.addAnchored(data, ext, contentType, cardImageWidth, cardImageHeight,
-			imageWrapSpec{side: "right"}, "right")
-		if drawing != "" {
-			sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` + drawing + `</w:p>`)
-		}
+	}
+}
+
+// writeCardImage встраивает картинку карточки с обтеканием справа.
+//
+// Картинка необязательна: нет ключа, нет хранилища или файл не отдался —
+// просто ничего не печатаем. Документ важнее картинки.
+func writeCardImage(sb *strings.Builder, c SystemCard, images ImageSource, media *docxMedia) {
+	if c.ImageKey == "" || images == nil || media == nil {
+		return
+	}
+	data, err := images.Get(context.Background(), c.ImageKey)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	ext, contentType := imageExt(c.ImageName)
+	drawing := media.addAnchored(data, ext, contentType, cardImageWidth, cardImageHeight,
+		imageWrapSpec{side: "right"}, "right")
+	if drawing != "" {
+		sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` + drawing + `</w:p>`)
 	}
 }
 

@@ -112,7 +112,10 @@ func generatedTextFor(rc renderCtx, blockID string, nodeIndex int) string {
 	if rc.values[genKeySection] != hashOfferFacts(rc.offer) {
 		return ""
 	}
-	return strings.TrimSpace(rc.values[genKeyTextByID(blockID, nodeIndex)])
+	// documentText и здесь: КП, собранные до 2026-11-05, держат в кэше пометку
+	// [НУЖНО: …], и без чистки при чтении она уйдёт клиенту при следующем
+	// скачивании того же файла.
+	return documentText(strings.TrimSpace(rc.values[genKeyTextByID(blockID, nodeIndex)]))
 }
 
 // promptNodes — узлы `prompt_text` формы вместе с их местом.
@@ -194,11 +197,25 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 	}
 	system := skills.RenderBlockSystem(node.Instruction, node.Hint, maxWords)
 	user := buildBlockUserPrompt(offer, cards, refs)
-	raw, err := c.Complete(ctx, system, user, maxWords*4)
+	raw, err := c.Complete(ctx, system, user, blockMaxTokens(maxWords))
 	if err != nil {
 		return "", err
 	}
 	return cleanBlockText(raw), nil
+}
+
+// blockMaxTokens — бюджет ответа модели на текст блока.
+//
+// «Слово ×4» не работает: у русского слова бывает 2–3 токена, а модель ещё
+// и начинает с рассуждения, которое вырезается уже после. На живом КП
+// 003/2026 ответ кончился на «…закрывает подземную часть одним кон» — это
+// обрыв по токенам, а не по смыслу. Берём 6 токенов на слово (слово + запас)
+// и добавляем 400 на служебные рассуждения и пометки.
+func blockMaxTokens(maxWords int) int {
+	if maxWords <= 0 {
+		maxWords = genDefaultMaxWords
+	}
+	return maxWords*6 + 400
 }
 
 // cleanBlockText убирает то, что модель добавляет по привычке: маркеры кода,
@@ -224,7 +241,46 @@ func cleanBlockText(raw string) string {
 	if len(text) > 1 && strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) {
 		text = strings.TrimSpace(text[1 : len(text)-1])
 	}
-	return stripReasoning(text)
+	return documentText(stripReasoning(text))
+}
+
+// reNeedMarker — пометка «здесь не хватает факта», которую ставит модель.
+//
+// Внутри может быть всё что угодно, включая точку и запятую: на живом КП
+// 003/2026 модель написала «[НУЖНО: что за объект, какие грунтовые воды и
+// какой срок службы требуется]». Жадный `[^\]]*` берёт пометку целиком и не
+// оставляет обрывков.
+var reNeedMarker = regexp.MustCompile(`\[НУЖНО:[^\]]*\]`)
+
+// documentText — текст, готовый к печати клиенту.
+//
+// Убирает пометки [НУЖНО: …]. Пометку ставит модель, а читает документ
+// заказчик: в живом КП 003/2026 он увидел вопрос, адресованный менеджеру.
+// Пробел не должен оставаться: фраза, которая состояла только из пометки,
+// уходит целиком, вместе с висящей кавычкой или тире.
+//
+// Применяется в двух местах — при записи текста в кэш и при печати из кэша:
+// КП, собранные до этой правки, уже хранят пометку в form_values.
+func documentText(raw string) string {
+	if !strings.Contains(raw, "[НУЖНО:") {
+		return raw
+	}
+	var kept []string
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.Contains(line, "[НУЖНО:") {
+			kept = append(kept, line)
+			continue
+		}
+		cleaned := reNeedMarker.ReplaceAllString(line, " ")
+		cleaned = strings.Join(strings.Fields(cleaned), " ")
+		// От строки остались только кавычки, тире и точки — это мусор от
+		// убранной пометки, а не текст.
+		if strings.TrimSpace(strings.Trim(cleaned, `«»"'()[]{}.,;:—-– `)) == "" {
+			continue
+		}
+		kept = append(kept, strings.TrimRight(cleaned, " "))
+	}
+	return collapseBlankLines(strings.Join(kept, "\n"))
 }
 
 // reReasoningLine — строка-признак размышления модели, а не текста для клиента.
@@ -366,21 +422,17 @@ func mostlyCyrillic(s string) bool {
 // Ссылки идут как факты: модель может сказать «техдокументация приложена в
 // конце», но адреса в текст не вписывает — иначе в документе будут адреса,
 // которых нет в разделе ссылок.
+//
+// Бриф передаётся ЦЕЛИКОМ (2026-11-05). До этого модель видела четыре поля
+// (объект, назначение, площадь, адресат) и ключи без префикса, а бриф плагин
+// кладёт под `brief.` — поэтому на живом КП 003/2026, где менеджер всё
+// заполнил, модель писала «[НУЖНО: что за объект и какие грунтовые воды]».
+// Обоснование преимуществ без целей, болей и рисков писать не из чего.
 func buildBlockUserPrompt(offer Offer, cards []SystemCard, refs []skills.CardRef) string {
 	var b strings.Builder
 	b.WriteString("ДАННЫЕ ПРЕДЛОЖЕНИЯ:\n")
 	b.WriteString(offerFactsText(offer))
-	if offer.FormValues != nil {
-		line := func(label, key string) {
-			if v := strings.TrimSpace(offer.FormValues[key]); v != "" {
-				b.WriteString("- " + label + ": " + v + "\n")
-			}
-		}
-		line("Объект", "object_name")
-		line("Назначение", "object_purpose")
-		line("Площадь", "object_area")
-		line("Адресат", "customer_address")
-	}
+	b.WriteString(renderBriefForPrompt(offer.FormValues))
 	if len(cards) > 0 {
 		b.WriteString("\nСИСТЕМЫ И МАТЕРИАЛЫ В ПРЕДЛОЖЕНИИ:\n")
 		for _, card := range cards {
@@ -395,6 +447,60 @@ func buildBlockUserPrompt(offer Offer, cards []SystemCard, refs []skills.CardRef
 		}
 	}
 	b.WriteString("\nНапиши только текст этого блока.")
+	return b.String()
+}
+
+// briefPromptFields — что из брифа попадает в промпт, в каком порядке и под
+// каким ключом. Один список: печать сводки (renderBriefSummary) и промпт
+// модели должны называть одни и те же вещи одинаково.
+var briefPromptFields = []struct {
+	Key   string // ключ брифа (model.BriefPayload)
+	Label string
+}{
+	{"object_name", "Объект"},
+	{"object_purpose", "Назначение объекта"},
+	{"object_area", "Площадь"},
+	{"customer_address", "Адресат КП"},
+	{"customer_goals", "Задача заказчика"},
+	{"customer_pains", "Боли"},
+	{"project_risks", "Риски проекта"},
+	{"planned_systems", "Планируемые системы"},
+	{"timeline", "Сроки"},
+	{"budget_signal", "Бюджет"},
+	{"decision_maker", "Кто решает"},
+	{"why_us", "Почему мы"},
+	{"notes", "Прочее"},
+}
+
+// renderBriefForPrompt собирает раздел «БРИФ» для модели.
+//
+// Ключи понимаются в двух видах: `brief.<key>` (как их пишет плагин) и
+// `<key>` (КП, собранные до перехода на префикс). Префикс главнее: если оба
+// есть, берётся `brief.`.
+//
+// Пустые поля не печатаются: «Риски: » модель достроит догадкой, и это ровно
+// та выдумка, которую запрещает noInventDoc.
+func renderBriefForPrompt(values map[string]string) string {
+	if values == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range briefPromptFields {
+		v := strings.TrimSpace(values["brief."+f.Key])
+		if v == "" {
+			v = strings.TrimSpace(values[f.Key])
+		}
+		if v == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString("\nБРИФ (заполнил менеджер, это факты об объекте и сделке):\n")
+		}
+		b.WriteString("- " + f.Label + ": " + v + "\n")
+	}
+	if b.Len() == 0 {
+		return "\nБРИФ: не заполнен — пиши только по данным предложения и карточкам.\n"
+	}
 	return b.String()
 }
 

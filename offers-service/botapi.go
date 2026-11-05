@@ -313,8 +313,27 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 		return nil, err
 	}
 	cards, refs := s.systemCardsForOffer(r.Context(), offer)
+	offer = s.offerWithBrief(r.Context(), offer)
 	offer = s.refreshBlockTexts(r.Context(), form, offer, cards, refs)
 	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
+}
+
+// offerWithBrief доливает бриф в form_values предложения (2026-11-05).
+//
+// Бриф лежит отдельно (offers_brief) и в форму сам не попадал, поэтому модель
+// видела пустой объект и писала «[НУЖНО: …]» при заполненном брифе. Здесь
+// единственная точка, где они встречаются: печать, сводка и промпт дальше
+// читают одни и те же form_values.
+//
+// Бриф недоступен — предложение не меняется: его отсутствие не ошибка
+// экспорта (старые КП брифа не имеют вовсе).
+func (s *Server) offerWithBrief(ctx context.Context, offer Offer) Offer {
+	brief, err := s.loadBrief(ctx, offer.ID)
+	if err != nil {
+		return offer
+	}
+	offer.FormValues = briefFormValues(offer.FormValues, brief.Payload)
+	return offer
 }
 
 // systemCardsForOffer — карточки систем предложения и их ссылки.

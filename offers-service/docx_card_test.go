@@ -57,6 +57,90 @@ func TestDocxUsesCardDescription(t *testing.T) {
 	}
 }
 
+// Состав системы из карточки печатается списком (2026-11-05).
+//
+// До этого состав уходил только в промпт модели, и в документе его не было
+// вовсе. Образец конкурента («СТИЛОБАТ») даёт состав отдельным блоком сразу
+// под описанием — заказчик должен видеть, из чего состоит система, а не
+// догадываться по таблице цен.
+func TestDocxPrintsCardComposition(t *testing.T) {
+	offer := sampleOffer()
+	docx, err := renderOfferDocxWithCards(OfferForm{Title: "Коммерческое предложение"},
+		offer, []SystemCard{sampleCard()}, nil)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	if !strings.Contains(body, "Состав системы") {
+		t.Fatal("нет заголовка состава системы")
+	}
+	if !strings.Contains(body, "Плитка") || !strings.Contains(body, "Песок") {
+		t.Fatal("позиции состава не напечатаны")
+	}
+}
+
+// Пустого заголовка «Состав системы» без позиций быть не должно.
+func TestDocxSkipsEmptyCompositionHeading(t *testing.T) {
+	card := sampleCard()
+	card.Composition = nil
+	docx, err := renderOfferDocxWithCards(OfferForm{Title: "Коммерческое предложение"},
+		sampleOffer(), []SystemCard{card}, nil)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	if strings.Contains(body, "Состав системы") {
+		t.Fatal("заголовок состава без позиций")
+	}
+}
+
+// Таблица «Свойства и преимущества» из карточки печатается (2026-11-05).
+//
+// Это то, что просил пользователь: «нормальный текст обоснования преимуществ».
+// Данные уже разобраны в SystemCard.Specifications — их надо печатать, а не
+// просить модель сочинить то же самое.
+func TestDocxPrintsCardSpecifications(t *testing.T) {
+	card := sampleCard()
+	card.Specifications = [][]string{
+		{"Показатель", "Ед. изм.", "Значение"},
+		{"Водонепроницаемость", "-", "абсолютная"},
+	}
+	docx, err := renderOfferDocxWithCards(OfferForm{Title: "Коммерческое предложение"},
+		sampleOffer(), []SystemCard{card}, nil)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	if !strings.Contains(body, "Водонепроницаемость") {
+		t.Fatal("характеристики карточки не напечатаны")
+	}
+	if !strings.Contains(body, "<w:tbl>") {
+		t.Fatal("характеристики должны печататься таблицей")
+	}
+}
+
+// Картинка разреза стоит ДО состава, а не после описания: читателю нужно
+// сначала увидеть пирог, потом его расшифровку (образец СТИЛОБАТ).
+func TestDocxCardImageBeforeComposition(t *testing.T) {
+	images := &fakeImages{data: []byte("\x89PNG\r\n\x1a\n fake")}
+	card := sampleCard()
+	card.ImageKey = "kb/att/pic.png"
+	docx, err := renderOfferDocxWithCards(OfferForm{Title: "Коммерческое предложение"},
+		sampleOffer(), []SystemCard{card}, images)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, docx, "word/document.xml"))
+	img := strings.Index(body, "<w:drawing>")
+	comp := strings.Index(body, "Состав системы")
+	if img < 0 || comp < 0 {
+		t.Fatalf("нет картинки (%d) или состава (%d)", img, comp)
+	}
+	if img > comp {
+		t.Fatal("картинка стоит после состава, ожидали до")
+	}
+}
+
 // Согласованный менеджером текст важнее карточки: если секция принята, в
 // документе она, а не текст из Базы знаний.
 func TestDocxAcceptedCopyBeatsCard(t *testing.T) {
