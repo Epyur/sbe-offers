@@ -1015,6 +1015,37 @@ nesting-aware), and a second check asserts the new block exists.
 (`TLS handshake timeout`); images were pulled through `mirror.gcr.io` and
 retagged as `postgres:16-alpine`, `node:22-alpine`, `golang:1.24`.
 
+### Released and deployed 2026-11-05
+
+| | value |
+|---|---|
+| plugin | **0.5.1** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `505664c` (fix) + `59bce8d` (release) + `264b64a` (deploy docs) - pushed |
+| `main` | `bf32d6d` (plugin part) + `a720bff` (deploy docs) - pushed |
+| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts` exits 0 |
+| server deploy | `git archive --format=tar 59bce8d` → `/tmp` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.5.0-20261105`, `offers-bot.bak-0.5.0-20261105`; `docker compose build` + `up -d`; both containers recreated, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https with `-OutFile` and against `/registry.json` |
+| registry | `sbe-apstore-registry` `9a68b2e`; `www/registry.json` replaced (backup `registry.json.bak-20261105-0.5.0`, sha256 `7bbc0681…` on both) |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `f3fcc507c36997d3c687d84e0ff124c1fad2f9434297a56d30a80fb8e23e0e0c` | 468 |
+| `main.js` | `aa97cfed5c7cbcb56ecc67763212e187f3b5864771881cdd3a448a3ebada676a` | 118812 |
+| `styles.css` | `13a62f1820d50c6683d184a94e6c0c057d1ce626016924ec97716be1917a03fe` | 31633 |
+
+**A trap of this deploy, already known but met again:** `docker compose up -d
+offers` did **not** recreate the container (`Up 13 minutes` stayed). The fix is
+`docker rm -f` + `up -d`, or `--force-recreate`. Check `CREATED` moved; do not
+trust "Started" in the compose output.
+
+**A second trap:** `kb-selfhost.sh` writes the file sums but leaves the
+`version`/`hashes` in `/registry.json` untouched. After the upload the entry
+still said `0.5.0` while the files were `0.5.1`. Both the git copy and
+`/opt/mailers/www/registry.json` were updated separately, as the root rule
+requires.
+
+`styles.css` did not change in this release (no CSS edits).
+
 ## 2026-11-03 - system choice adds no positions; model reasoning kept out of the document
 
 Version (manifest.json = package.json) = **0.5.0**, **released 2026-11-03**:
