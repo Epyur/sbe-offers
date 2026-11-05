@@ -1191,8 +1191,10 @@ console.log('\n18. Таблица менеджера и системы в КП (
     `было ${beforeSystemItems}, стало ${(composed.json?.offer?.items ?? []).length}`);
   ok('в ответе нет поля «добавлено позиций»', composed.json?.added === undefined,
     JSON.stringify({ added: composed.json?.added }));
-  ok('система запомнилась в предложении', Boolean(composed.json?.offer?.system?.sku || composed.json?.offer?.system?.noteId),
-    JSON.stringify(composed.json?.offer?.system));
+  // Систем с 2026-11-05 может быть несколько: ответ несёт `systems`.
+  ok('система запомнилась в предложении',
+    (composed.json?.offer?.systems ?? []).some((s) => s.sku || s.noteId),
+    JSON.stringify(composed.json?.offer?.systems));
   ok('карточка системы возвращена', (composed.json?.system?.title ?? '') !== '',
     JSON.stringify(composed.json?.system?.title));
   ok('число основных продуктов посчитано', (composed.json?.composition ?? 0) >= 1,
@@ -1231,6 +1233,48 @@ console.log('\n18. Таблица менеджера и системы в КП (
       xml.includes('Состав системы'), xml.slice(0, 300));
   }
 
+  // Несколько систем в одном КП (2026-11-05). Менеджеру нужно предложить и
+  // сравнить два решения — как СТИЛОБАТ V1.0 и V2.0 в образце конкурента.
+  // Проверяем: вторая система добавляется, обе остаются, сравнение печатается
+  // таблицей и убрать можно ровно одну.
+  {
+    const second = await call('POST', `/offers/${offerId}/system`, {
+      token: ownerToken,
+      body: { noteId: 100 },
+    });
+    ok('вторая система добавлена → 200', second.status === 200,
+      `получили ${second.status} ${second.text?.slice(0, 160)}`);
+    const systemsAfterAdd = second.json?.offer?.systems ?? [];
+    ok('в предложении две системы', systemsAfterAdd.length === 2,
+      JSON.stringify(systemsAfterAdd));
+
+    // Повторное добавление той же системы не даёт дубль.
+    const again = await call('POST', `/offers/${offerId}/system`, {
+      token: ownerToken,
+      body: { noteId: 100 },
+    });
+    ok('повторное добавление не дублирует',
+      (again.json?.offer?.systems ?? []).length === 2,
+      JSON.stringify(again.json?.offer?.systems));
+
+    const removed = await call('DELETE', `/offers/${offerId}/system`, {
+      token: ownerToken,
+      body: { noteId: 100 },
+    });
+    ok('удаление системы → 200', removed.status === 200,
+      `получили ${removed.status} ${removed.text?.slice(0, 160)}`);
+    ok('в предложении снова одна система',
+      (removed.json?.offer?.systems ?? []).length === 1,
+      JSON.stringify(removed.json?.offer?.systems));
+
+    const removeMissing = await call('DELETE', `/offers/${offerId}/system`, {
+      token: ownerToken,
+      body: { noteId: 100 },
+    });
+    ok('удаление отсутствующей системы → 404', removeMissing.status === 404,
+      `получили ${removeMissing.status}`);
+  }
+
   const unknownSystem = await call('POST', `/offers/${offerId}/system`, {
     token: ownerToken,
     body: { sku: 'НЕТ-ТАКОГО' },
@@ -1258,8 +1302,9 @@ console.log('\n18. Таблица менеджера и системы в КП (
   });
   ok('система без кода выбирается по заметке → 200', noteChosen.status === 200,
     `получили ${noteChosen.status} ${noteChosen.text?.slice(0, 200)}`);
-  ok('по заметке система запомнилась', (noteChosen.json?.offer?.system?.noteId ?? 0) === noteCard.noteId,
-    JSON.stringify(noteChosen.json?.offer?.system));
+  ok('по заметке система запомнилась',
+    (noteChosen.json?.offer?.systems ?? []).some((s) => s.noteId === noteCard.noteId),
+    JSON.stringify(noteChosen.json?.offer?.systems));
   ok('по заметке позиции не добавились', (noteChosen.json?.offer?.items ?? []).length === beforeSystemItems,
     `ожидали ${beforeSystemItems}, получили ${(noteChosen.json?.offer?.items ?? []).length}`);
 
@@ -1477,6 +1522,70 @@ console.log('\n18. Таблица менеджера и системы в КП (
   });
   ok('сохранённое КП открывается на правку → 200', reopened.status === 200, `получили ${reopened.status}`);
   ok('у открытого КП есть номер', (reopened.json?.number ?? '') !== '', JSON.stringify(reopened.json?.number));
+}
+
+
+// 21. Сравнение систем в документе (2026-11-05).
+//
+// Стоит в конце нарочно: разделы 19 и 20 перезаписывают форму под свои нужды,
+// и проверка формы, поставленная раньше, проверяла бы не свой блок.
+{
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Сравнение', contact: 'Пётр' },
+      items: [{ name: 'Мембрана', unit: 'м2', qty: 10, price: 100 }],
+      formValues: {},
+    },
+  });
+  const cmpOfferId = created.json?.id;
+  ok('КП для сравнения создано → 200', created.status === 200 && Boolean(cmpOfferId),
+    `получили ${created.status}`);
+
+  // Карточка 101 — с характеристиками; 102 (TN-ROOF-CLASSIC) их не имеет,
+  // и сравнение из неё не построить.
+  await call('POST', `/offers/${cmpOfferId}/system`, { token: ownerToken, body: { noteId: 101 } });
+  await call('POST', `/offers/${cmpOfferId}/system`, { token: ownerToken, body: { noteId: 100 } });
+
+  const formed = await call('GET', '/form', { token: ownerToken });
+  const original = formed.json ?? {};
+  const withCompare = {
+    ...original,
+    blocks: [
+      {
+        id: 'compare',
+        title: 'Сравнение систем',
+        showInClient: true,
+        showInInternal: false,
+        spacingBefore: 0,
+        spacingAfter: 0,
+        content: [{ type: 'compare_table', text: 'Сравнение систем', level: 2 }],
+      },
+    ],
+  };
+  const saved = await call('PUT', '/form', { token: ownerToken, body: withCompare });
+  ok('форма со сравнением сохраняется → 200', saved.status === 200,
+    `получили ${saved.status} ${saved.text?.slice(0, 160)}`);
+
+  const docBytes = await (await fetch(`${BASE}/api/offers/offers/${cmpOfferId}/export`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const xml = unzipEntrySafe(Buffer.from(docBytes), 'word/document.xml');
+  ok('таблица сравнения попала в документ', xml.includes('Сравнение систем'),
+    xml ? xml.slice(0, 200) : 'нет word/document.xml');
+  // Названия берём из ответа сервера, а не пишем руками: рукописная строка с
+  // кириллицей уже один раз разошлась с карточкой (латинская «o» вместо
+  // русской) и проверка краснела не из-за дефекта.
+  const listForCompare = await call('GET', '/systems', { token: ownerToken });
+  const titles = (listForCompare.json?.systems ?? [])
+    .filter((s) => s.noteId === 100 || s.noteId === 101)
+    .map((s) => s.title);
+  ok('в сравнении есть обе системы',
+    titles.length === 2 && titles.every((t) => xml.includes(t)),
+    JSON.stringify({ titles, xml: xml.slice(0, 200) }));
+
+  await call('PUT', '/form', { token: ownerToken, body: original });
 }
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
