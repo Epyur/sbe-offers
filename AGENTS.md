@@ -929,6 +929,92 @@ copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNot
 red for the right reason). Assign first, append second. Same class as rule 4 in
 "Rules from the agent's own mistakes".
 
+## 2026-11-05 - card composition printed; the brief reaches the model
+
+Version (manifest.json = package.json) = **0.5.1**, **released 2026-11-05**.
+Both halves of one live complaint about offer 003/2026: the document was nearly
+empty in its descriptive part and the model wrote `[НУЖНО: что за объект и какие
+грунтовые воды]` even though the manager had filled the brief.
+
+### 1. Composition and characteristics of the card reach the document
+
+`Composition` and `Specifications` were parsed from the Knowledge Base card,
+fed to the model prompt and **never printed**. The document showed a paragraph
+of model text and a price table. Now `renderCardSectionsWithMedia` prints, in
+this order: the card image (the system section drawing), a "Состав системы"
+bullet list and a "Свойства и преимущества" table. The image moved **before**
+the composition: the drawing explains the list that follows it, which is how
+the competitor sample is laid out.
+
+Only the `Description` path is guarded by the accepted-copy check: a manager
+who agreed a section text still gets that text instead of the card.
+
+### 2. The brief never reached the model (`buildBlockUserPrompt`)
+
+Three separate breaks, each enough to empty the context on its own:
+
+- the brief lives in `offers_brief` (its own table) and **nothing** copied it
+  into `form_values`; the comment in `docx.go` claimed "the plugin writes them"
+  and no such code existed in the plugin, the bot or `handleSaveBrief`;
+- `buildBlockUserPrompt` read `object_name`/`object_purpose`/`object_area`/
+  `customer_address` **without** the `brief.` prefix, while the brief keys are
+  prefixed;
+- only four fields were offered to the model anyway - no goals, pains, risks,
+  timeline or decision maker, so no justification could be written at all.
+
+Now `briefFormValues` is the single place that maps a brief onto form values
+(`brief.<field>`, lists joined with `; `), and `offerWithBrief` calls it inside
+`renderOffer`, which every document path goes through (plugin export, bot DOCX,
+offer link). Precedence: a value already in `form_values` wins - the form is
+filled by a human and the brief must not overwrite his correction. Empty brief
+fields write nothing. `renderBriefForPrompt` gives the model the whole brief and
+accepts both key shapes, so offers created before the prefix still show their
+object.
+
+### 3. `[НУЖНО: …]` no longer reaches the customer
+
+The marker is written by the model and read by the customer. `documentText`
+drops it both when the text is stored in the cache and when it is read back, so
+offers built before this fix are cleaned at print time as well. A line that
+consisted only of the marker is dropped entirely, `«»` included.
+
+### 4. The answer was cut mid-word
+
+`maxTokens = maxWords*4` gave 800 tokens for a 200-word block, and the model
+spends part of it on reasoning that is stripped afterwards. The live text ended
+at "…закрывает подземную часть одним кон". `blockMaxTokens` now returns
+`maxWords*6 + 400` (1600 for the default block).
+
+### Verified
+
+`go test ./...` green (main/model/skills), `gofmt -l` empty, `go vet` clean; bot
+`tsc --noEmit` and **90 tests**; plugin `tsc --noEmit` EXIT=0, `npm run build`,
+`check_bundle_strings.mjs` 0 missing; `check_offers_openapi.mjs` **61 operations
+/ 48 paths, schema matches**; stand **242/242** (one check rewritten, one added).
+
+New tests: `docx_card_test.go` (composition printed, empty heading skipped,
+specifications printed as a table, image before composition),
+`docx_text_brief_test.go` (brief in the prompt, both key shapes, empty fields
+skipped, token budget, marker dropped from text and from legacy cache),
+`brief_values_test.go` (mapping, form wins over brief, nil map).
+
+### Test rewritten, not deleted
+
+`TestCleanBlockTextKeepsNeedMarker` pinned the old decision ("the marker stays,
+the manager reads it"). The decision changed, so the test now asserts the marker
+is gone and the useful text survives - rule 10 of "Rules from the agent's own
+mistakes".
+
+The stand check "материалы системы не попали в таблицу как позиции" searched
+the whole `word/document.xml`. While the composition was not printed that was a
+fair test; with the new block it went red although the price table was still
+untouched. It now looks only inside the composition table (`itemsTableXML`,
+nesting-aware), and a second check asserts the new block exists.
+
+**Environment note:** Docker Hub is unreachable from this machine
+(`TLS handshake timeout`); images were pulled through `mirror.gcr.io` and
+retagged as `postgres:16-alpine`, `node:22-alpine`, `golang:1.24`.
+
 ## 2026-11-03 - system choice adds no positions; model reasoning kept out of the document
 
 Version (manifest.json = package.json) = **0.5.0**, **released 2026-11-03**:

@@ -102,6 +102,37 @@ function unzipEntrySafe(buf, name) {
   }
 }
 
+/**
+ * Вырезает из word/document.xml таблицу состава предложения.
+ *
+ * Нужна, чтобы отличать «материал в таблице цен» от «материал в описательной
+ * части» (2026-11-05). Считает вложенность <w:tbl>: таблица характеристик может
+ * стоять рядом, и простой поиск до первого </w:tbl> захватил бы её.
+ */
+function itemsTableXML(xml) {
+  const marker = 'Состав предложения';
+  const at = xml.indexOf(marker);
+  if (at < 0) return '';
+  const start = xml.indexOf('<w:tbl>', at);
+  if (start < 0) return '';
+  let depth = 0;
+  let pos = start;
+  while (pos < xml.length) {
+    const open = xml.indexOf('<w:tbl>', pos);
+    const close = xml.indexOf('</w:tbl>', pos);
+    if (close < 0) break;
+    if (open >= 0 && open < close) {
+      depth += 1;
+      pos = open + '<w:tbl>'.length;
+      continue;
+    }
+    depth -= 1;
+    pos = close + '</w:tbl>'.length;
+    if (depth === 0) return xml.slice(start, pos);
+  }
+  return xml.slice(start);
+}
+
 /** Минимальная запись zip: без неё сервис не отличит .xlsx от прочей мешанины. */
 function zipEntry(name, data) {
   const nameBuf = Buffer.from(name, 'utf8');
@@ -1187,8 +1218,17 @@ console.log('\n18. Таблица менеджера и системы в КП (
       xml.includes('Классическая наплавляемая кровля для промышленных объектов'),
       xml ? xml.slice(0, 300) : 'нет word/document.xml');
     // Состав системы позициями в таблицу НЕ попадает: его ведёт менеджер.
+    //
+    // Проверка смотрит ИМЕННО таблицу состава, а не весь документ (2026-11-05):
+    // с этого выпуска состав карточки печатается отдельным блоком «Состав
+    // системы» (как в образце конкурента), и поиск по всему XML краснел на нём,
+    // хотя в таблицу цен материал так и не попадал.
+    const itemsTable = itemsTableXML(xml);
     ok('материалы системы не попали в таблицу как позиции',
-      !xml.includes('Праймер битумный'), xml.slice(0, 300));
+      !itemsTable.includes('Праймер битумный'), itemsTable.slice(0, 300));
+    // А в описательной части состав есть — это и требовалось.
+    ok('состав системы напечатан отдельным блоком',
+      xml.includes('Состав системы'), xml.slice(0, 300));
   }
 
   const unknownSystem = await call('POST', `/offers/${offerId}/system`, {
