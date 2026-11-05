@@ -929,6 +929,77 @@ copy with `layer: false` - the test caught it (`TestResolveCompositionLayerIsNot
 red for the right reason). Assign first, append second. Same class as rule 4 in
 "Rules from the agent's own mistakes".
 
+## 2026-11-05 (part 2) - several systems per offer, side-by-side comparison
+
+Version (manifest.json = package.json) = **0.6.0**, **released 2026-11-05**.
+Item C of the plan: the competitor sample offers СТИЛОБАТ V1.0 and V2.0 side by
+side and compares them in one table. Until now an offer could carry exactly one
+system, so that document could not be produced.
+
+### What changed
+
+- **`Offer.System` → `Offer.Systems`** (`[]OfferSystem`, in order of choice).
+  `OfferSystems.UnmarshalJSON` accepts the old shape as well: `{}`, `null`,
+  `""` and a single `{"sku":…}` object all read as an empty list or a list of
+  one. That is what makes the change migration-free - every live offer stores
+  `system_choice` as an object today. `MarshalJSON` always writes an array and
+  never `null`, so a client cannot meet an unfamiliar type on the way back.
+  `Add` skips duplicates and keeps the order (the order numbers the document
+  sections); `Remove` drops exactly one. `Same` compares by code first, case and
+  edge spaces ignored, then by note id - the same rule `FindSystem` uses.
+- **`DELETE /api/offers/offers/{id}/system`** and
+  **`DELETE /api/offers/api/offers/bot/offers/{id}/system`**. Both go through
+  `systemWriteHandler`/`removeSystem`; the body is the same `sku`/`noteId`
+  pair. Removing a system does **not** look it up in the Knowledge Base: the
+  usual reason to remove one is that it is gone from there. Removing a system
+  the offer does not carry answers 404 - the button was pressed on a stale row.
+- **`cardsForOffer`** maps every chosen system to its card, in choice order,
+  and prints each card once even if it was chosen both by code and by note.
+  A chosen system missing from the cache is skipped, the rest still print.
+- **New form node `compare_table`** (`docx_compare.go`): one table, a row per
+  indicator, a column per system. Rows come from the cards'
+  `## Свойства и преимущества` table; the first card fixes the indicator order,
+  the others are looked up by name. A missing value stays **empty** - an empty
+  cell is honest, "нет данных" would be an invention. The node prints nothing
+  for fewer than two systems: a one-column "comparison" misleads the reader.
+- **Plugin**: the offer card lists the chosen systems with a "Убрать" button
+  and says how many are chosen; `offersService.removeSystem` shares the handle
+  parsing with `addSystem` (`writeSystem`). **Bot**: `removeSystem` in `api.ts`.
+- **OpenAPI**: both DELETE routes documented, `Offer.systems` replaces
+  `Offer.system` (63 operations / 48 paths).
+
+### Traps met here, each one cost a red stand run
+
+1. **A header row is not an indicator.** `isSpecHeader` knew «Показатель» but
+   not «Параметр» - and «Параметр | Значение» is how live cards (and stub card
+   101) label the table. The compare table therefore contained a "Параметр"
+   row. Added, with `TestCompareSystemRowsSkipsParametrHeader`.
+2. **A check placed before a section that rewrites the form tests the wrong
+   thing.** The compare check sat in section 18; sections 19 and 20 save their
+   own form, so by export time the node was gone. Moved to the end, on its own
+   offer.
+3. **Do not hand-type a Cyrillic label in a check.** `ТН-СтилoБат` (Latin `o`)
+   went red against a correct document. The check now takes the titles from
+   `/systems`.
+4. **A card without specifications cannot be compared.** `TN-ROOF-CLASSIC`
+   (note 102) has none; the check compares 101 and 100 instead.
+5. **The systems cache hides stub edits.** The new `## Характеристики` of stub
+   card 100 did not reach the stand until `delete from offers_context where
+   mode='systems'` and a `kb-stub` restart - the rule from 2026-11-01 again.
+
+### Verified
+
+`go test ./...` green (main/model/skills), `gofmt -l` empty, `go vet` clean; bot
+`tsc --noEmit` and **90 tests**; plugin `tsc --noEmit` EXIT=0, `npm run build`,
+`check_bundle_strings.mjs` 0 missing; `check_offers_openapi.mjs` **63 operations
+/ 48 paths, schema matches**; stand **252/252**.
+
+New tests: `model/offer_systems_test.go` (old object shape, empty object, array,
+null/empty string, array on the way out, `Same`, `Add`, `Remove`),
+`docx_compare_test.go` (rows, missing value empty, one system, header rows,
+`compare_table` in the document, silent for one system), three new
+`cardsForOffer` cases, and five stand checks around add/remove/compare.
+
 ## 2026-11-05 - card composition printed; the brief reaches the model
 
 Version (manifest.json = package.json) = **0.5.1**, **released 2026-11-05**.
