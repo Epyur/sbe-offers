@@ -1008,8 +1008,8 @@ null/empty string, array on the way out, `Same`, `Add`, `Remove`),
 | | value |
 |---|---|
 | plugin | **0.6.0** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `e2ac383` (feature) + `92bff5c` (release) - pushed |
-| `main` | `6419c50` (plugin part) - pushed |
+| `backend` | `e2ac383` (feature) + `92bff5c` (release) + `8a3c02f` (docs) - pushed |
+| `main` | `6419c50` (plugin part) + `590c933` (docs) - pushed |
 | plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts` exits 0 |
 | server deploy | `git archive --format=tar 92bff5c` → `/tmp` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.5.1-20261105`, `offers-bot.bak-0.5.1-20261105`; `docker compose build` + `up -d --force-recreate`; both containers recreated 17:01 MSK, health `ok`, bot poller started |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https with `-OutFile` and against `/registry.json` |
