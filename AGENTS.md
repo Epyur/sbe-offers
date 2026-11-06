@@ -279,6 +279,14 @@ through the shared pipeline: superscripts, wiki links, glued-word repair, bold
 stripping. Rule 2026-11-05 ("one text pipeline") held for the block path only
 until now.
 
+**The model has two spellings of a degree, and both must be lifted.** The live
+answer of 0.7.5 wrote `4800 м²` with the ready-made U+00B2 character, not
+`м2`. `markSupsub` searched for an ASCII digit and left the character alone —
+Word shows `²` as an ordinary in-line glyph, which is exactly the "no
+superscripts for square metres" the user reported. `markSupsub` now replaces
+`²`/`³` with a digit plus the superscript marker, so both spellings produce
+byte-identical markup (`TestRunsLiftAsciiAndUnicodeAlike`).
+
 ### 3. Headings and lists have a kind
 
 The model could not be asked for structure, and the print could not produce it.
@@ -312,6 +320,7 @@ follows the paragraph and the text survives.
 |---|---|
 | `docx_layout_links_test.go` | every URL becomes a link, external rel, master rels kept, one rel per URL, no link without an URL |
 | `docx_layout_runs_test.go` | superscripts in the body and in field values, `V-SL 2 мм` untouched, wiki links, glued words, bold |
+| `docx_runs_degree_test.go` | the ready-made `²`/`³` sign is lifted into a real superscript; ASCII and Unicode forms produce identical markup |
 | `docx_layout_structure_test.go` | heading/bullet/numbered kinds, `[7]` stays a reference, plain start is not a heading, empty markers dropped |
 | `docx_layout_image_test.go` | marker prints a picture, silent without one, never sent to the model, text around it kept |
 | `docx_layout_image_material_test.go` | picture from a position's `PhotoKey`, by number, silent without a key; the phrase table |
@@ -366,9 +375,51 @@ untouched; `[[`, `**`, `##` = 0 in both.
 | | value |
 |---|---|
 | plugin | **0.7.5** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `-` (see the release block below) |
-| `main` | `-` |
-| local build | `manifest.json` `4ef8c1f8…` 468 B, `main.js` `12612a8d…` 145698 B, `styles.css` `50358b4a…` 34072 B (CSS unchanged since 0.7.0) |
+| `backend` | `c0ff8a6` (feature) + `16e5e42` (degree sign fix) — pushed |
+| `main` | `8c31c7a` (plugin part, copied from `c0ff8a6`) — pushed |
+| plugin part identical | `git diff --quiet c0ff8a6 -- main.js manifest.json styles.css src scripts AGENTS.md HANDOFF.md package.json` exits 0 |
+| server deploy | `git archive --format=tar --output … c0ff8a6 offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.4-20261106`, `offers-bot.bak-0.7.4-20261106`; `md5sum` of seven changed Go files compared BEFORE the build; `docker compose build` + `up -d --force-recreate`, both containers recreated 20:08 MSK, health `ok`, bot poller started |
+| second deploy | `16e5e42 offers-service` for the degree sign (`docx_runs.go`), md5 matched, `offers` recreated 20:21 MSK, health `ok` |
+| self-hosting | `sh /opt/mailers/kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
+| registry | `sbe-apstore-registry` `9909758`; `www/registry.json` replaced (backup `registry.json.bak-20261106-0.7.4`); **`version` was still 0.7.4 after the script** — the known trap, edited by hand |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `4ef8c1f850edb55554244dee3799e603d28770ce0df407b90c7fd47b85d4c67e` | 468 |
+| `main.js` | `12612a8d288efe8ef81f6a1638a653beae5592f5cfc6d41fee22116edcdedab6` | 145698 |
+| `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
+
+`styles.css` unchanged (no CSS edits).
+
+### Verified live on production, not on the stand
+
+The document was rebuilt through the live service
+(`POST /api/offers/bot/offers/8/docx`, `X-Service-Secret`, `chat_id` of the
+owner) after clearing `gen.section` so the cached text was not reused:
+
+| | before (0.7.4) | after (0.7.5) |
+|---|---|---|
+| `<w:hyperlink>` | 1 (TOC anchor) | **8** |
+| external relationships | 0 | **7** |
+| `w:vertAlign superscript` | 12 (table only) | **30** |
+| bare `²` characters left | — | **0** |
+| `[[`, `**`, `##` | 0 | 0 |
+| `Менеджер объекта` / `действительно до` | empty | **filled** |
+
+**The last row is a finding, not a fix.** `manager_name` and `valid_until` were
+reported as always empty in the 0.7.5 diagnostics; in the live offer they are
+present in `form_values`, and `layoutValues` copies every form value into the
+token map, so the labels fill by themselves. The earlier empty lines came from
+an offer whose `form_values` did not carry those keys — nothing in the code was
+broken there.
+
+**A trap met live, twice.** Rebuilding the document after a server-only change
+served the *previous* cached answer, because the cache key is the instruction
+hash and the section hash — neither of which changes when the server code does.
+`gen.section` must be cleared (or the instruction edited) before the model is
+asked again. The first attempt cleared `gen.layout.<hash>` instead and produced
+a document with 43 superscripts and **no links**, which looked like a
+regression and was a stale answer.
 
 ## The descriptive part vanished (2026-11-06, release 0.7.4)
 
