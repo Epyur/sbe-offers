@@ -444,6 +444,10 @@ export function renderBlockEditor(
         deps.onChange?.();
       });
 
+      // id блока — адрес для метки макета `{{block:N}}` (2026-11-06). Показ
+      // читаемый: администратор должен видеть, на какой блок ссылается макет.
+      head.createSpan({ cls: 'tn-offers-chip', text: `id: ${block.id}` });
+
       const upBtn = head.createEl('button', { text: '▲', cls: 'tn-btn tn-btn-ghost' });
       upBtn.disabled = blockIndex === 0;
       upBtn.addEventListener('click', () => {
@@ -467,6 +471,7 @@ export function renderBlockEditor(
 
       renderBlockFlags(card, block, deps);
       renderBlockPlacement(card, block, deps);
+      renderBlockRepeat(card, block, deps);
 
       const nodesWrap = card.createDiv();
       block.content.forEach((node, nodeIndex) => {
@@ -544,6 +549,33 @@ function renderBlockFlags(card: HTMLElement, block: Block, deps: BlockEditorDeps
     deps.onChange?.();
   });
   keepFlag.createSpan({ text: ' Не разрывать между страницами' });
+}
+
+/** Повтор блока в макете (2026-11-06, шаг D «генерация без модели»).
+ *
+ * Блок с повтором печатается по разу на систему или на позицию предложения —
+ * и это ТОЛЬКО ПЕЧАТЬ: модель не зовётся. Метка в макете — `{{block:<id>}}`. */
+function renderBlockRepeat(card: HTMLElement, block: Block, deps: BlockEditorDeps): void {
+  const row = card.createDiv({ cls: 'tn-offers-row' });
+  row.createSpan({ cls: 'tn-offers-muted', text: 'Повтор в макете:' });
+  const select = row.createEl('select', { cls: 'tn-offers-input' });
+  const options: Array<[string, string]> = [
+    ['', 'не повторять'],
+    ['systems', 'по каждой системе'],
+    ['materials', 'по каждой позиции'],
+  ];
+  for (const [value, label] of options) {
+    const option = select.createEl('option', { text: label });
+    option.value = value;
+    option.selected = (block.repeat ?? '') === value;
+  }
+  select.addEventListener('change', () => {
+    block.repeat = select.value === 'systems' ? 'systems' : select.value === 'materials' ? 'materials' : '';
+    deps.onChange?.();
+  });
+  if ((block.repeat ?? '') !== '') {
+    row.createSpan({ cls: 'tn-offers-muted', text: `Метка: {{block:${block.id}}}` });
+  }
 }
 
 /** Отступы блока в пунктах — «расположение на странице». */

@@ -1840,8 +1840,152 @@ async function sectionSystemTexts() {
   ok('КП убрано', true);
 }
 
+// 24. Метки данных в макете и повтор блока (2026-11-06, шаг C/D/E).
+//
+// Проверяется то, что пообещали пользователю: документ собирается БЕЗ вызова
+// модели там, где данные уже есть (система, состав, ссылки, характеристики,
+// сохранённые тексты), метка `{{block:N}}` печатает блок формы, а блок с
+// повтором печатается по разу на систему. И — образец макета, который сервис
+// отдаёт администратору.
+async function sectionServiceMarkers() {
+  console.log('\n24. Метки данных в макете и повтор блока (2026-11-06)');
+
+  // Образец макета отдаётся и содержит скобки меток (главное — файл есть и он
+  // документ Word, а не ошибка в JSON).
+  const example = await fetch(`${BASE}/api/offers/form/layout/example`, {
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  const exampleBytes = Buffer.from(await example.arrayBuffer());
+  ok('образец макета отдаётся → 200', example.status === 200, `получили ${example.status}`);
+  const exampleXML = unzipEntrySafe(exampleBytes, 'word/document.xml');
+  ok('образец содержит метку системы', exampleXML.includes('{{система}}'),
+    exampleXML.slice(0, 200));
+
+  // КП с одной системой (заметка 100 — есть в заглушке Базы знаний).
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Метки', contact: 'Пётр' },
+      items: [
+        { name: 'Мембрана', unit: 'м2', qty: 100, price: 50, sum: 5000 },
+        { name: 'Геотекстиль', unit: 'м2', qty: 100, price: 10, sum: 1000 },
+      ],
+      total: 6000,
+      status: 'draft',
+      formValues: { object_name: 'Объект меток' },
+    },
+  });
+  const offerId = created.json?.id;
+  ok('КП для меток создано', offerId > 0, `${created.status} ${created.text?.slice(0, 120)}`);
+  // Выбор системы пишет её тексты (шаг B) — их и прочитает метка текста.
+  await call('POST', `/offers/${offerId}/system`, { token: ownerToken, body: { noteId: 100 } });
+
+  // Блок формы берём по РЕАЛЬНОМУ id из формы, а не «1»: id назначает
+  // редактор, и проверка обязана адресовать существующий блок.
+  const formBefore = await call('GET', '/form', { token: ownerToken });
+  const blockID = formBefore.json?.blocks?.[0]?.id ?? 'intro';
+
+  const layoutDoc =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:r><w:t>{{система}}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{{текст: система: description}}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{{ссылки: система}}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{{характеристики: система}}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{{block:${blockID}}}</w:t></w:r></w:p>` +
+    `</w:body></w:document>`;
+  const layout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(layoutDoc, 'utf8')),
+  ]);
+  const up = await fetch(`${BASE}/api/offers/form/layout?name=Метки.docx`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: layout,
+  });
+  ok('макет с метками данных загружен → 200', up.status === 200, `получили ${up.status}`);
+
+  const doc = await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const xml = unzipEntrySafe(Buffer.from(doc), 'word/document.xml');
+
+  // Ни одной скобки метки: всё распознано и подставлено или снято.
+  for (const bad of ['{{', '}}']) {
+    ok(`скобки метки «${bad}» не дошли до документа`, !xml.includes(bad), xml.slice(0, 200));
+  }
+  // {{система}} — одна таблица без границ.
+  ok('система напечатана одной таблицей', (xml.match(/<w:tbl>/g) ?? []).length >= 1);
+  ok('у таблицы системы нет границ', xml.includes('<w:left w:val="none"'),
+    xml.slice(0, 200));
+  // {{характеристики}} и {{ссылки}} дали своё.
+  ok('характеристики карточки напечатаны', xml.includes('Класс нагрузки'),
+    'нет таблицы характеристик');
+  ok('ссылки карточки кликабельны', xml.includes('<w:hyperlink'),
+    'нет ни одной гиперссылки');
+  // {{block:N}} — блок формы напечатан со своим текстом (берём по реальному id).
+  const blockText = formBefore.json?.blocks?.[0]?.content?.[0]?.text ?? '';
+  ok('блок формы по id напечатан',
+    blockText !== '' && xml.includes(blockText.replace(/\{\{[^}]*\}\}/g, '').trim()),
+    `блок «${blockID}»: искали «${blockText}»`);
+
+  // Повтор по материалам: блок с repeat:"materials" печатается по позициям.
+  const form = await call('GET', '/form', { token: ownerToken });
+  const originalBlocks = form.json?.blocks ?? [];
+  const repeatForm = {
+    ...form.json,
+    blocks: [{
+      id: '99', title: 'Позиции', showInClient: true, showInInternal: false,
+      repeat: 'materials',
+      content: [{ type: 'paragraph', text: '{{материал}}' }],
+    }],
+  };
+  const savedForm = await call('PUT', '/form', { token: ownerToken, body: repeatForm });
+  ok('форма с повтором сохранена → 200', savedForm.status === 200,
+    `${savedForm.status} ${savedForm.text?.slice(0, 160)}`);
+
+  const layoutRepeatDoc =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:r><w:t>{{block:99}}</w:t></w:r></w:p>` +
+    `</w:body></w:document>`;
+  const repeatLayout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(layoutRepeatDoc, 'utf8')),
+  ]);
+  await fetch(`${BASE}/api/offers/form/layout?name=Повтор.docx`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: repeatLayout,
+  });
+  const repeatDoc = await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const repeatXML = unzipEntrySafe(Buffer.from(repeatDoc), 'word/document.xml');
+  ok('блок повторился по каждой позиции',
+    repeatXML.includes('Мембрана') && repeatXML.includes('Геотекстиль'),
+    repeatXML.slice(0, 300));
+
+  // Возвращаем форму, который был до проверки, и убираем макет.
+  await call('PUT', '/form', { token: ownerToken, body: { ...repeatForm, blocks: originalBlocks } });
+  await call('DELETE', '/form/layout', { token: ownerToken });
+  await call('DELETE', `/offers/${offerId}`, { token: ownerToken });
+  ok('КП меток убрано', true);
+}
+
 await sectionLayout();
 await sectionSystemTexts();
+await sectionServiceMarkers();
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);

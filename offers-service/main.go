@@ -139,6 +139,9 @@ func main() {
 	// чтение обратно для правки и удаление (печать снова по блокам формы).
 	mux.HandleFunc("POST /api/offers/form/layout", s.requirePerm("admin")(s.handleUploadLayout))
 	mux.HandleFunc("GET /api/offers/form/layout", s.requirePerm("admin")(s.handleDownloadLayout))
+	// Образец макета со всеми метками (2026-11-06, шаг E): администратор
+	// начинает с рабочего документа, а не со слов инструкции.
+	mux.HandleFunc("GET /api/offers/form/layout/example", s.requirePerm("admin")(s.handleExampleLayout))
 	mux.HandleFunc("DELETE /api/offers/form/layout", s.requirePerm("admin")(s.handleDeleteLayout))
 	// «Опиши блок словами» (2026-11-05): свободное описание → готовые узлы
 	// формы. Администратор пишет, ЧТО должно быть в блоке, а не как его

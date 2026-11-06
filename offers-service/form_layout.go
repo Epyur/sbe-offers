@@ -99,6 +99,81 @@ func (s *Server) handleDownloadLayout(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// handleExampleLayout отдаёт рабочий образец макета со всеми метками.
+//
+// Требование пользователя 2026-11-06 (шаг E): инструкция по разметке должна
+// начинаться с рабочего образца, а не со слов. Образец собирается ЗДЕСЬ, из
+// того же кода, что и печать, — поэтому он не разойдётся с системой: новая
+// метка добавляется в один список `layoutExampleMarkers`.
+func (s *Server) handleExampleLayout(w http.ResponseWriter, r *http.Request) {
+	data, err := exampleLayoutDocx()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	name := "образец-макета-КП.docx"
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(name))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// layoutExampleMarker — строка образца: подпись и сама метка.
+type layoutExampleMarker struct {
+	label  string
+	marker string
+}
+
+// layoutExampleMarkers — все метки, которые понимает печать.
+//
+// Один список на справку и на образец: метка, которой здесь нет, в образец не
+// попадёт, а новая метка попадает сюда в том же изменении, что и разбор.
+var layoutExampleMarkers = []layoutExampleMarker{
+	{"Номер предложения", "[Номер предложения]"},
+	{"Дата предложения", "[Дата предложения]"},
+	{"Имя менеджера", "[Имя менеджера]"},
+	{"Получатель", "[Получатель из КП]"},
+	{"Объект", "[Наименование объекта]"},
+	{"Картинка и состав системы одной таблицей", "{{система}}"},
+	{"Обоснование применения (текст сохранён при выборе системы)", "{{текст: система: description}}"},
+	{"Преимущества (текст сохранён при выборе системы)", "{{текст: система: advantages}}"},
+	{"Ссылки карточки", "{{ссылки: система}}"},
+	{"Характеристики карточки", "{{характеристики: система}}"},
+	{"Блок формы по его id", "{{block:1}}"},
+	{"Текст модели по подсказке", "{Опиши систему в двух абзацах}"},
+}
+
+// exampleLayoutDocx собирает минимальный .docx со всеми метками.
+//
+// Стили бланка не нужны: образец — про разметку, а не про оформление. Каждая
+// метка стоит отдельным абзацем, подпись жирным — человек видит, что к чему.
+func exampleLayoutDocx() ([]byte, error) {
+	var body strings.Builder
+	body.WriteString(paragraphXML("Образец макета КП — LogicTEAM.КП", paraOpts{}))
+	for _, item := range layoutExampleMarkers {
+		body.WriteString(paragraphXML(item.label+":", paraOpts{}))
+		body.WriteString(paragraphXML(item.marker, paraOpts{}))
+	}
+	doc := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+		`<w:body>` + body.String() + `</w:body></w:document>`
+	files := map[string][]byte{
+		"[Content_Types].xml": []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+			`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+			`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+			`<Default Extension="xml" ContentType="application/xml"/>` +
+			`<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+			`</Types>`),
+		"_rels/.rels": []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+			`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+			`</Relationships>`),
+		"word/document.xml": []byte(doc),
+	}
+	names := []string{"[Content_Types].xml", "_rels/.rels", "word/document.xml"}
+	return zipFiles(files, names)
+}
+
 // loadLayout читает макет формы. nil, nil — макета нет, печать по блокам.
 func (s *Server) loadLayout(r *http.Request) ([]byte, error) {
 	var data []byte
