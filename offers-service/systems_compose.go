@@ -37,6 +37,12 @@ type ComposeSystemResponse struct {
 	// Composition — сколько основных продуктов в составе системы. Позиций в
 	// КП это не прибавляет: число нужно, чтобы человек увидел, о чём система.
 	Composition int `json:"composition"`
+	// Texts — тексты, которые модель написала при выборе системы (2026-11-06):
+	// `description` и `advantages`. Сборка документа берёт их из таблицы.
+	Texts map[string]string `json:"texts,omitempty"`
+	// Missing — какие блоки не написались. Выбор при этом сохранён: пустой
+	// блок честнее черновика, а терять выбор из-за аварии модели нельзя.
+	Missing []string `json:"missing,omitempty"`
 }
 
 // composeError — отказ сборки, который вызывающий превращает в HTTP-статус.
@@ -162,6 +168,7 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 			text:   "в карточке системы нет ни описания, ни состава",
 		}
 	}
+	before := len(offer.Systems)
 
 	// Система запоминается в самом предложении: по ней печатаются описание,
 	// преимущества и ссылки, и по ней же ищется карточка, когда менеджер потом
@@ -176,10 +183,21 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 		Title:       card.Title,
 		Composition: countCompositionMaterials(card.CompositionLinks),
 	}
+	// Система уже выбрана — второй раз её не «добавляем».
+	//
+	// Это не только про дубли: тексты системы уже написаны и лежат в
+	// offers_system_text, и повторный вызов модели на каждое нажатие «Добавить»
+	// был бы ровно той тратой времени, ради устранения которой сделан шаг B
+	// (2026-11-06). Переписать текст — кнопка «Пересчитать».
+	alreadyChosen := len(offer.Systems) == before
 	if err := s.persistOfferSystem(ctx, offer); err != nil {
 		return offer, resp, composeError{
 			status: http.StatusInternalServerError, text: "не удалось сохранить предложение",
 		}
+	}
+	if alreadyChosen {
+		resp.Texts = s.storedTextsOf(ctx, card)
+		return offer, resp, nil
 	}
 	// Система сменилась — значит, текст блоков «по промту» про прежнюю систему
 	// больше не годится. Кэш стираем здесь, при записи, а не при печати:
@@ -189,6 +207,15 @@ func (s *Server) assembleSystem(ctx context.Context, offer Offer, choice SystemC
 		log.Printf("add system: тексты блоков не сброшены у КП %s: %v", offer.Number, err)
 	}
 	resp.Offer = offer
+	// Тексты системы — ПОСЛЕ сохранения выбора (2026-11-06, шаг B).
+	//
+	// Порядок обязателен: человек нажал «Добавить», система уже выбрана, и
+	// даже если модель не ответит, КП не потеряет выбор. Модель вызывается
+	// здесь один раз за жизнь системы (результат лежит в offers_system_text),
+	// и сборка документа больше не ждёт её вовсе.
+	texts, missing := s.reconcileSystemTexts(ctx, offer, card)
+	resp.Texts = texts
+	resp.Missing = missing
 	return offer, resp, nil
 }
 
@@ -314,6 +341,73 @@ func (s *Server) systemWriteHandler(w http.ResponseWriter, r *http.Request, remo
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleGetSystemTexts — сохранённые тексты систем предложения.
+//
+// Плагин показывает их человеку и по признаку `stale` решает, показать ли
+// кнопку «Пересчитать тексты системы»: карточку в Базе знаний могли изменить
+// после выбора.
+func (s *Server) handleGetSystemTexts(w http.ResponseWriter, r *http.Request) {
+	offer, ok := s.offerForReader(w, r)
+	if !ok {
+		return
+	}
+	cards, _ := s.systemCardsForOffer(r.Context(), offer)
+	writeJSON(w, http.StatusOK, map[string]any{"texts": s.systemTextsForSystems(r.Context(), cards)})
+}
+
+// handleRecalculateSystemTexts — кнопка «Пересчитать тексты системы».
+//
+// Пересчитывает ОДНУ систему: `noteId` в пути. Карточка читается из Базы
+// знаний, а не из кеша: пересчёт нажимают как раз тогда, когда карточку
+// поправили, и кеш мог не обновиться.
+func (s *Server) handleRecalculateSystemTexts(w http.ResponseWriter, r *http.Request) {
+	offer, ok := s.offerForEditor(w, r)
+	if !ok {
+		return
+	}
+	noteID, err := strconv.ParseInt(r.PathValue("noteId"), 10, 64)
+	if err != nil || noteID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid noteId"})
+		return
+	}
+	card, err := s.liveSystemCard(r.Context(), noteID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "База знаний недоступна: " + err.Error()})
+		return
+	}
+	// Пустая карточка и «нет такой системы» — разные ответы: IsEmpty истинно у
+	// карточки без содержания, а неизвестная заметка до этого места доходит с
+	// NoteID = 0. Раньше оба случая отвечали 404 одинаково, и на пустой карточке
+	// пересчёт молча «ничего не делал» вместо честного «нечего писать».
+	if card.NoteID == 0 || card.IsEmpty() {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "система не найдена в Базе знаний"})
+		return
+	}
+	texts, missing := s.recalculateSystem(r.Context(), offer, card)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"title":   card.Title,
+		"texts":   texts,
+		"missing": missing,
+	})
+}
+
+// liveSystemCard — одна карточка системы из Базы знаний по заметке.
+func (s *Server) liveSystemCard(ctx context.Context, noteID int64) (SystemCard, error) {
+	materials, err := s.listMaterials(ctx, false)
+	if err != nil {
+		return SystemCard{}, err
+	}
+	systems, err := SystemsFromKB(ctx, s.kb, materials)
+	if err != nil {
+		return SystemCard{}, err
+	}
+	card, found := FindSystem(systems, SystemChoice{NoteID: noteID})
+	if !found {
+		return SystemCard{}, nil
+	}
+	return card, nil
 }
 
 // removeSystem убирает систему и отвечает тем же телом, что добавление, чтобы

@@ -367,6 +367,81 @@ paths:
           description: Такой системы в предложении нет
         '400':
           description: Не передан ни `sku`, ни `noteId`
+  /api/offers/offers/{id}/system-texts:
+    get:
+      summary: Тексты систем, написанные при выборе
+      description: |
+        Обоснование применения и преимущества, которые модель написала ОДИН
+        раз при выборе системы (2026-11-06, шаг B плана «генерация без
+        модели»). Хранятся по карточке Базы знаний, а не по предложению:
+        одна и та же система получает один и тот же текст во всех КП.
+
+        stale: true — карточку изменили после того, как текст написали.
+        Пересчитать можно ручкой ecalculate.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Тексты выбранных систем
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  texts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemText'
+        '401':
+          description: нет токена
+        '403':
+          description: нет доступа к этому предложению
+
+  /api/offers/offers/{id}/system/{noteId}/recalculate:
+    post:
+      summary: Пересчитать тексты системы
+      description: |
+        Кнопка «Пересчитать тексты системы». Переписывает оба блока
+        (description, dvantages) по ТЕКУЩЕЙ карточке Базы знаний.
+        Вызывается вручную: модель отвечает десятки секунд, и делать это
+        автоматически при каждом открытии значило бы вернуть исходную
+        жалобу «система ушла думать».
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: noteId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: Заметка Базы знаний, по которой выбрана система.
+      responses:
+        '200':
+          description: Пересчёт выполнен (пустые блоки — модель не ответила)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+                    description: Название системы строкой.
+                  texts:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: Написанные блоки — description и dvantages.
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      Блоки, которые модель не написала. Выбор системы при
+                      этом сохранён: пустой текст честнее черновика.
+        '404':
+          description: системы нет в Базе знаний
+        '502':
+          description: База знаний недоступна
   /api/offers/form:
     get:
       summary: Форма КП
@@ -1698,6 +1773,31 @@ components:
         type: integer
         format: int64
   schemas:
+    SystemText:
+      type: object
+      description: |
+        Текст одного блока системы, написанный моделью при её выборе
+        (2026-11-06). Блоков ровно два — description и dvantages:
+        состав не генерируется, он уже есть в карточке.
+      properties:
+        noteId:
+          type: integer
+          format: int64
+          description: Заметка Базы знаний, к которой привязан текст.
+        block:
+          type: string
+          enum: [description, advantages]
+        text:
+          type: string
+        hash:
+          type: string
+          description: Хеш карточки и инструкции, по которым текст написан.
+        updatedAt:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+          description: Карточку изменили после того, как текст написали.
     SystemCard:
       type: object
       description: Карточка системы из Базы знаний (заметка с тегом commercial_propose).
