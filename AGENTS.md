@@ -66,7 +66,7 @@ The stand is unchanged - this is a client-only edit.
 | | value |
 |---|---|
 | plugin | **0.7.8** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` (code HEAD) | `2c92336` — pushed |
+| `backend` (code HEAD) | `7f4c67c` (feature) + `2c92336` (release) — pushed |
 | `main` (code HEAD) | `6a6c3f0` — pushed |
 | plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
 | server deploy | **not needed** — `git diff --stat <prev> <rel> -- offers-service offers-bot` is empty: this release is plugin-only (TS + CSS) |
