@@ -344,6 +344,8 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,
 		prompt: cache.text,
+		offer:  offer,
+		images: NewKBImageSource(s.kb),
 		// Таблицы собираются из данных предложения, а не моделью (2026-11-06):
 		// «предложение по материалам» — из позиций, «сравнение вариантов» — из
 		// характеристик карточек. См. layoutTableFor.

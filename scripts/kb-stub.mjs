@@ -74,6 +74,10 @@ const NOTES = [
     title: 'ТН-Гидроизоляция Фундамента',
     path: 'База знаний/Системы/ТН-Гидроизоляция Фундамента.md',
     updated_at: '2026-10-27T08:00:00Z',
+    // У этой карточки есть схема: метка «{картинка}» в макете и узел `image`
+    // в блоке печатают её изображение (2026-11-06, 0.7.5). Без карточки с
+    // картинкой на стенде нечем проверить, что картинка вообще вставляется.
+    withImage: true,
     content_md: [
       '---',
       'sbe_kb_id: 00000000-1111-2222-3333-444444444444',
@@ -170,6 +174,18 @@ http
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
 
+    // Байты изображения по ссылке: presigned-ссылка S3 не требует нашего токена,
+    // и настоящий клиент идёт по ней без заголовка. Проверка токена стоит ниже
+    // нарочно — иначе картинки не скачивались бы ни в тесте, ни на бою.
+    if (req.method === 'GET' && path.startsWith('/files/')) {
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64');
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length });
+      res.end(png);
+      return undefined;
+    }
+
     // Токен обязателен, как в настоящем сервисе: если клиент перестанет его
     // слать, стенд это заметит, а не промолчит.
     if (!(req.headers.authorization ?? '').startsWith('Bearer ')) {
@@ -205,8 +221,15 @@ http
 
     const attachMatch = path.match(/^\/api\/kb\/notes\/(\d+)\/attachments$/);
     if (req.method === 'GET' && attachMatch) {
-      // Вложений в заглушке нет: карточка без картинки — законное состояние,
-      // и DOCX должен собраться без неё.
+      // У части карточек есть схема — иначе картинка в КП не проверяется вовсе:
+      // пустые вложения на всех карточках означали бы «картинки не бывает», а
+      // это не то состояние, в котором живёт боевая система (2026-11-06).
+      const note = NOTES.find((n) => n.id === Number(attachMatch[1]));
+      if (note && note.withImage) {
+        return send(res, 200, {
+          attachments: [{ id: 1, filename: 'Схема.png', mime: 'image/png', key: 'kb/scheme.png' }],
+        });
+      }
       return send(res, 200, { attachments: [] });
     }
 

@@ -38,6 +38,7 @@ import (
 const (
 	layoutTokenField  = "field"  // [имя] или {{имя}} — жёсткая подстановка
 	layoutTokenPrompt = "prompt" // {текст}, {{текст}}, {{{текст}}} — промт модели
+	layoutTokenImage  = "image"  // {картинка}, {{картинка: система 1}} — изображение
 )
 
 // Пределы длины текста внутри метки, в рунах.
@@ -213,17 +214,83 @@ func scanLayoutTokens(text string, values map[string]string) []layoutToken {
 	}
 	for _, m := range reLayoutPrompt.FindAllStringSubmatchIndex(masked, -1) {
 		inner := promptInner(text[m[2]:m[3]])
+		kind := layoutTokenPrompt
+		// Метка картинки — тот же вид скобок, но вид решает СОДЕРЖИМОЕ
+		// (правило 2026-11-06): «{картинка}» — это просьба вставить
+		// изображение системы, а не текст модели. Без этой проверки метка
+		// уходила в модель как промт, и картинка в документ не попадала —
+		// хотя инструкция макета прямо просит «вставляй изображения».
+		if _, ok := parseLayoutImageSpec(inner); ok {
+			kind = layoutTokenImage
+		}
 		// Слишком длинный промт не выбрасываем: лишний раз человека не
 		// наказываем, а режем по пределу — метка всё равно должна заменить
 		// собой абзац, а не остаться литералом в документе.
 		inner = clampRunes(inner, layoutPromptMaxRunes)
 		tokens = append(tokens, layoutToken{
-			Kind: layoutTokenPrompt, Raw: text[m[0]:m[1]],
+			Kind: kind, Raw: text[m[0]:m[1]],
 			Inner: inner, Start: m[0], End: m[1],
 		})
 	}
 	sortLayoutTokens(tokens)
 	return tokens
+}
+
+// layoutImageSpec — что просит метка картинки.
+type layoutImageSpec struct {
+	// of: system или material.
+	of string
+	// index — номер системы/материала (1 = первый); 0 — первый.
+	index int
+}
+
+// parseLayoutImageSpec узнаёт метку картинки по содержимому.
+//
+// Понимает «картинка», «картинка: система», «картинка: материал 2»,
+// «картинка системы 1», «изображение», «image: material 2». Других слов не
+// требуется: администратор пишет по-русски и по-человечески.
+//
+// Отказ важнее согласия: «картинки нет», «не надо изображение» — обычный текст
+// инструкции, и подставить туда картинку значит выполнить противоположное
+// написанному. Поэтому отрицание и «нет» после слова-ключа — не метка.
+func parseLayoutImageSpec(inner string) (layoutImageSpec, bool) {
+	lower := strings.ToLower(strings.TrimSpace(inner))
+	if !startsWithImageWord(lower) {
+		return layoutImageSpec{}, false
+	}
+	if strings.Contains(lower, " нет") || strings.HasPrefix(lower, "не ") ||
+		strings.Contains(lower, "не надо") || strings.Contains(lower, "без ") {
+		return layoutImageSpec{}, false
+	}
+	spec := layoutImageSpec{of: imageOfSystem}
+	switch {
+	case strings.Contains(lower, "материал"), strings.Contains(lower, "material"):
+		spec.of = imageOfMaterial
+	case strings.Contains(lower, "систем"), strings.Contains(lower, "system"):
+		spec.of = imageOfSystem
+	}
+	// Номер — первая цифра в метке: «картинка: система 2», «картинка 2».
+	for _, r := range lower {
+		if r >= '0' && r <= '9' {
+			spec.index = int(r - '0')
+			break
+		}
+	}
+	return spec, true
+}
+
+// startsWithImageWord — строка начинается со слова-ключа картинки.
+//
+// Проверяется целое первое слово: «картинка», «картинки», «картинку» — это всё
+// про картинку, а «картинный» — нет. Хвост слова после основы разрешён только
+// в пределах русских окончаний.
+func startsWithImageWord(lower string) bool {
+	for _, stem := range []string{"картинк", "изображени", "рисунок", "рисунк", "image", "picture"} {
+		if strings.HasPrefix(lower, stem) {
+			return true
+		}
+	}
+	return false
 }
 
 // isLayoutFieldName — двойная скобка это имя поля формы?

@@ -357,33 +357,39 @@ func trimTruncatedTail(text string) string {
 		return text
 	}
 	lines := strings.Split(text, "\n")
-	// Последний непустой абзац — тот, что мог оборваться.
-	idx := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			idx = i
-			break
-		}
-	}
+	idx := lastNonEmptyLine(lines)
 	if idx < 0 {
 		return text
 	}
 	last := strings.TrimSpace(lines[idx])
-	if endsSentence(last) {
+	if paragraphIsFinished(last) {
 		return text
 	}
 	if cut := lastSentenceEnd(last); cut >= 0 {
-		finished := strings.TrimSpace(last[:cut+1])
-		lines[idx] = finished
+		lines[idx] = strings.TrimSpace(last[:cut+1])
 		return strings.TrimSpace(strings.Join(lines[:idx+1], "\n"))
 	}
-	// Законченных фраз в последнем абзаце нет. Обрыв приходится на последнее
-	// слово: снимаем его и закрываем фразу точкой — текст остаётся целым по
-	// смыслу, а «…одним кон» не превращается в «…одним кон.»
-	words := strings.Fields(last)
+	return dropUnfinishedParagraph(lines, idx)
+}
+
+// paragraphIsFinished — последний абзац не оборван.
+//
+// Два признака конца. Первый — знак конца фразы. Второй — адрес (2026-11-06):
+// обрыв режет ответ по последней точке, а в адресе точек сколько угодно
+// («nav.tn.ru»), поэтому строка «Технический лист: https://nav.tn.ru/pim/x.pdf»
+// считалась оборванной и превращалась в «Технический лист.» — адрес пропадал
+// из документа целиком. Ссылка — готовый факт, обрывать в ней нечего.
+func paragraphIsFinished(last string) bool {
+	return endsSentence(last) || hasLayoutURL(last)
+}
+
+// dropUnfinishedParagraph убирает абзац, у которого не нашлось законченной
+// фразы. Одно слово — обрывок, а не абзац: он снимается целиком. Из длинного
+// абзаца снимается последнее слово и ставится точка, чтобы текст не висел
+// («…одним кон» не превращается в «…одним кон.»).
+func dropUnfinishedParagraph(lines []string, idx int) string {
+	words := strings.Fields(strings.TrimSpace(lines[idx]))
 	if len(words) < 2 {
-		// Одно слово — это не абзац, а обрывок. Убираем абзац целиком, если
-		// есть предыдущие.
 		if idx == 0 {
 			return ""
 		}
@@ -392,6 +398,16 @@ func trimTruncatedTail(text string) string {
 	words = words[:len(words)-1]
 	lines[idx] = strings.TrimRight(strings.Join(words, " "), ",;:—-–") + "."
 	return strings.TrimSpace(strings.Join(lines[:idx+1], "\n"))
+}
+
+// lastNonEmptyLine — номер последнего непустого абзаца; -1 — пусто всё.
+func lastNonEmptyLine(lines []string) int {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			return i
+		}
+	}
+	return -1
 }
 
 // endsSentence — кончается ли текст знаком конца фразы, за которым допустимы
@@ -697,10 +713,26 @@ func cleanDraftLine(trimmed string) (string, bool) {
 		return "", false
 	}
 	trimmed = cutReasoningTail(trimmed)
-	if trimmed == "" || !mostlyCyrillic(trimmed) {
+	if trimmed == "" {
+		return "", false
+	}
+	// Строка со ссылкой — текст ответа, даже если в ней почти нет кириллицы
+	// (2026-11-06). Живой прогон на стенде: строка «Технический лист:
+	// https://nav.tn.ru/…» почти целиком латиница, проверка языка считала её
+	// английским рассуждением и выбрасывала — в документе пропадал адрес,
+	// который модель привела по просьбе макета. Адрес — факт, а не речь.
+	if hasLayoutURL(trimmed) {
+		return trimmed, true
+	}
+	if !mostlyCyrillic(trimmed) {
 		return "", false
 	}
 	return trimmed, true
+}
+
+// hasLayoutURL — в строке есть адрес. Адрес не бывает рассуждением модели.
+func hasLayoutURL(line string) bool {
+	return len(skills.FindURLs(line)) > 0
 }
 
 // withoutLayoutMarker снимает метку вёрстки с начала строки.

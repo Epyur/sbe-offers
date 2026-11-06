@@ -50,6 +50,21 @@ type layoutContext struct {
 	// «сравнения вариантов».
 	items func() [][]string
 	cards func() []SystemCard
+	// images — источник байтов картинки для метки «{картинка}» (2026-11-06).
+	// Без него (и без ключа у карточки) метка молчит: картинка необязательна,
+	// как и узел `image` в блоках формы.
+	images ImageSource
+	// offer — предложение: из него берётся картинка материала (PhotoKey позиции).
+	offer Offer
+	// layout — сборка пакета на время печати: сборщик картинок и его id.
+	// Указатель, потому что заполняется во время печати, а контекст передаётся
+	// значением; иначе картинка добавлялась бы в копию и терялась.
+	layout *layoutRuntime
+}
+
+// layoutRuntime — состояние одной сборки по макету.
+type layoutRuntime struct {
+	media *docxMedia
 }
 
 // renderLayoutDocx собирает КП по макету.
@@ -65,9 +80,159 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	if !ok {
 		return nil, composeError{status: 500, text: "в макете нет word/document.xml"}
 	}
+	// Метки картинок наполняют этот сборщик; картинки дописываются в пакет
+	// после тела — тогда id визуальных элементов читаются по всему пакету.
+	// Сборщик живёт в структуре печати, а не в копии контекста: fillLayoutDocument
+	// работает с копией, и наполнение копии потерялось бы.
+	if lc.layout == nil {
+		lc.layout = &layoutRuntime{media: newTemplateMedia()}
+	}
 	rendered := fillLayoutDocument(string(docXML), lc)
+	// Адреса в ответе модели делаются кликабельными (2026-11-06). Раньше этот
+	// шаг жил только в блочном пути, и при загруженном макете ссылки в КП не
+	// могли стать ссылками ни при каком ответе: читатель видел длинный адрес
+	// простым текстом.
+	rendered, links := linkLayoutDocument(rendered)
 	files["word/document.xml"] = []byte(rendered)
+	if len(links) > 0 {
+		// Отношения дописываются к тем, что уже есть в макете: замена файла
+		// целиком оставила бы документ без колонтитулов (та же ошибка, что со
+		// styles.xml в 2026-10-29).
+		rels, err := relsXMLWithLinks(files["word/_rels/document.xml.rels"], links)
+		if err != nil {
+			return nil, err
+		}
+		if _, existed := files["word/_rels/document.xml.rels"]; !existed {
+			names = append(names, "word/_rels/document.xml.rels")
+		}
+		files["word/_rels/document.xml.rels"] = rels
+	}
+	// Картинки метки «{картинка}»: файлы, связи и расширения — как у блока
+	// формы. Без единой найденной картинки applyMedia молчит и пакет не меняется.
+	if err := applyMedia(files, lc.layout.media); err != nil {
+		return nil, err
+	}
 	return zipFiles(files, names)
+}
+
+// linkLayoutDocument делает адреса макета кликабельными.
+//
+// Правило одно: кликабельным становится каждый адрес, попавший в текст абзаца,
+// — набранный в самом макете или пришедший из ответа модели. Это проще
+// правила блочного пути (там ссылки собираются из карточек и печатаются
+// отдельным узлом) и не может разойтись с печатью: превращается ровно то, что
+// видит читатель.
+func linkLayoutDocument(docXML string) (string, []renderedLink) {
+	paragraphs := reWordParagraph.FindAllString(docXML, -1)
+	if len(paragraphs) == 0 {
+		return docXML, nil
+	}
+	rewritten := make(map[int]string)
+	links := make([]renderedLink, 0, 8)
+	seen := make(map[string]bool, 8)
+	for i, paragraph := range paragraphs {
+		text := strings.Join(paragraphTexts(paragraph), "")
+		if !strings.Contains(text, "http") {
+			continue
+		}
+		newParagraph, found := linkParagraph(paragraph, text, seen)
+		if len(found) == 0 {
+			continue
+		}
+		rewritten[i] = newParagraph
+		links = append(links, found...)
+	}
+	if len(rewritten) == 0 {
+		return docXML, nil
+	}
+	return replaceLinkedParagraphs(docXML, paragraphs, rewritten), links
+}
+
+// linkParagraph переписывает абзац так, чтобы в нём была настоящая ссылка.
+//
+// Прогоны абзаца не трогаются: подменяется только `<w:t>` того прогона, в
+// котором начинается адрес, остальные чищатся — ровно как в rebuildParagraphText.
+// Абзац был собран нами (layoutAsParagraphs), поэтому прогон там один; если
+// макет напечатал адрес своими прогонами, оформление получает первый из них.
+func linkParagraph(paragraph, text string, seen map[string]bool) (string, []renderedLink) {
+	matches := skills.FindURLs(text)
+	if len(matches) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	var links []renderedLink
+	prev := 0
+	for _, m := range matches {
+		url := text[m[0]:m[1]]
+		sb.WriteString(escapeXML(text[prev:m[0]]))
+		relID := placeholderRelID(url)
+		sb.WriteString(`<w:hyperlink r:id="` + relID + `" w:history="1">`)
+		sb.WriteString(`<w:r><w:t xml:space="preserve">` + escapeXML(url) + `</w:t></w:r>`)
+		sb.WriteString(`</w:hyperlink>`)
+		prev = m[1]
+		if !seen[url] {
+			seen[url] = true
+			links = append(links, renderedLink{RelID: relID, URL: url})
+		}
+	}
+	sb.WriteString(escapeXML(text[prev:]))
+	return replaceLinkedText(paragraph, sb.String()), links
+}
+
+// replaceLinkedText кладёт готовую разметку в первый `<w:t>` абзаца, остальные
+// чистит. Оформление (стиль, шрифт) остаётся от абзаца — как у обычного текста.
+func replaceLinkedText(paragraph, markup string) string {
+	first := true
+	return reWordText.ReplaceAllStringFunc(paragraph, func(tag string) string {
+		if first {
+			first = false
+			return replaceWordRaw(tag, markup)
+		}
+		return replaceWordText(tag, "")
+	})
+}
+
+// replaceWordRaw — как replaceWordText, но значение уже разметка, а не текст.
+func replaceWordRaw(tag, markup string) string {
+	open := strings.Index(tag, ">")
+	close := strings.LastIndex(tag, "</w:t>")
+	if open < 0 || close < 0 {
+		return tag
+	}
+	head := tag[:open+1]
+	if !strings.Contains(head, `xml:space=`) {
+		head = strings.TrimSuffix(head, ">") + ` xml:space="preserve">`
+	}
+	return head + markup + tag[close:]
+}
+
+// replaceLinkedParagraphs подставляет переписанные абзацы в XML.
+//
+// Переписанные абзацы адресуются по НОМЕРУ исходного абзаца, а не по счётчику
+// изменённых: нумерация двух списков разошлась бы на первом же пропуске, и
+// ссылка встала бы не в тот абзац (та же ловушка, что у replaceParagraphsInDocument).
+func replaceLinkedParagraphs(docXML string, paragraphs []string, rewritten map[int]string) string {
+	var sb strings.Builder
+	last := 0
+	searchFrom := 0
+	for i, paragraph := range paragraphs {
+		at := strings.Index(docXML[searchFrom:], paragraph)
+		if at < 0 {
+			return docXML
+		}
+		at += searchFrom
+		searchFrom = at + len(paragraph)
+		if replacement, ok := rewritten[i]; ok {
+			sb.WriteString(docXML[last:at])
+			sb.WriteString(replacement)
+			last = searchFrom
+		}
+	}
+	if last == 0 {
+		return docXML
+	}
+	sb.WriteString(docXML[last:])
+	return sb.String()
 }
 
 // fillLayoutDocument подставляет метки в тело документа.
@@ -176,8 +341,20 @@ func splitReplacedByParagraph(spans struct {
 	// иначе одна инструкция вызовет модель столько раз, сколько абзацев она
 	// занимает.
 	replacement := make(map[int]string, len(tokens))
+	// imageMarkup — разметка картинок, которые печатаются разметкой абзаца.
+	// Отдельно от replacement: картинка — не текст абзаца, и склеивать одно с
+	// другим в одном значении нельзя (порядок склейки потерялся бы).
+	imageMarkup := make(map[int]string, len(tokens))
 	for i, token := range tokens {
 		switch token.Kind {
+		case layoutTokenImage:
+			spec, _ := parseLayoutImageSpec(token.Inner)
+			// В тексте абзаца метка картинки заменяется ПУСТОЙ строкой: сама
+			// картинка печатается разметкой абзаца (attachLayoutImages), а не
+			// текстом. Так «Разрез системы: {картинка}» даёт подпись и
+			// картинку, а не строку с разметкой картинки.
+			replacement[i] = ""
+			imageMarkup[i] = layoutImageMarkup(spec, lc)
 		case layoutTokenPrompt:
 			if table := layoutTableFor(token.Inner, lc); table != nil {
 				replacement[i] = tableMarkdown(table)
@@ -196,7 +373,133 @@ func splitReplacedByParagraph(spans struct {
 		newText, changed := replaceInSpan(spans.joined, span, tokens, replacement)
 		out[idx] = paragraphChange{text: newText, changed: changed}
 	}
+	// Картинка занимает абзац целиком: в живом макете метка стоит отдельной
+	// строкой в описании системы. Абзац, где метка картинки была единственным
+	// содержимым, печатается картинкой, а не пустым абзацем с подстановкой.
+	attachLayoutImages(out, spans.texts, spans.spans, tokens, imageMarkup)
 	return out
+}
+
+// attachLayoutImages переносит разметку картинки из текста абзаца в его поле.
+//
+// Метка картинки в макете стоит отдельной строкой, поэтому абзац, состоящий
+// только из неё, печатается картинкой: пустой абзац рядом с подстановкой
+// читался бы как сбой. Метка посреди текста даёт картинку в потоке — тогда
+// картинка ставится ВСЛЕД за абзацем, и текст абзаца сохраняется.
+func attachLayoutImages(changes []paragraphChange, texts []string,
+	spans []paragraphSpan, tokens []layoutToken, imageMarkup map[int]string) {
+	for i, token := range tokens {
+		markup, ok := imageMarkup[i]
+		if token.Kind != layoutTokenImage || !ok || markup == "" {
+			continue
+		}
+		idx := spanIndexAt(spans, token.Start)
+		if idx < 0 {
+			continue
+		}
+		if strings.TrimSpace(changes[idx].text) == "" && strings.TrimSpace(texts[idx]) == token.Raw {
+			// Абзац целиком был меткой: он и становится картинкой.
+			changes[idx].image = markup
+			changes[idx].changed = true
+			continue
+		}
+		// Метка стояла в тексте: текст абзаца печатается, картинка идёт следом.
+		changes[idx].imageAfter = markup
+		changes[idx].changed = true
+	}
+}
+
+// spanIndexAt — номер абзаца, в котором лежит позиция склейки.
+func spanIndexAt(spans []paragraphSpan, pos int) int {
+	for i, span := range spans {
+		if pos >= span.start && pos < span.end {
+			return i
+		}
+	}
+	return -1
+}
+
+// layoutImageMarkup — разметка картинки для подстановки.
+//
+// Пустая строка — картинки нет: метка молчит, как и узел `image` без файла.
+// Разметка добавляет файл в lc.media, и он уходит в пакет в renderLayoutDocx.
+func layoutImageMarkup(spec layoutImageSpec, lc layoutContext) string {
+	if lc.images == nil || lc.layout == nil || lc.layout.media == nil {
+		return ""
+	}
+	img, ok := layoutImageCard(spec, lc)
+	if !ok {
+		return ""
+	}
+	data, err := lc.images.Get(context.Background(), img.ImageKey)
+	if err != nil || len(data) == 0 {
+		// Картинка необязательна: документ важнее.
+		return ""
+	}
+	ext, contentType := imageExt(img.ImageName)
+	widthCm := layoutCardImageWidthCm
+	cx := int64(widthCm * 360000)
+	cy := int64(float64(widthCm) * 0.72 * 360000)
+	drawing := lc.layout.media.addAnchored(data, ext, contentType, cx, cy,
+		imageWrapSpec{side: "right"}, "center")
+	if drawing == "" {
+		return ""
+	}
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
+		`<w:jc w:val="center"/></w:pPr>` + drawing + `</w:p>`
+}
+
+// layoutCardImageWidthCm — ширина картинки в макете: 10 см.
+//
+// Уже, чем у блока формы (12 см): в макете рядом с картинкой идёт текст в два
+// столбца или подпись автора оформления, и 12 см сдвигало бы набор.
+const layoutCardImageWidthCm = 10
+
+// layoutImageCard — карточка, чью картинку просит метка.
+//
+// Номер системы считается в порядке выбора (cardsForOffer даёт тот же порядок,
+// что и остальная печать). Материал берётся из позиций предложения: картинка
+// материала — это `PhotoKey` позиции.
+func layoutImageCard(spec layoutImageSpec, lc layoutContext) (SystemCard, bool) {
+	if spec.of == imageOfMaterial {
+		// Картинка материала берётся из позиций: у материала в КП нет своего
+		// списка карточек, а PhotoKey позиции заполняется при синхронизации.
+		return layoutImageMaterial(spec, lc)
+	}
+	if lc.cards == nil {
+		return SystemCard{}, false
+	}
+	cards := lc.cards()
+	if len(cards) == 0 {
+		return SystemCard{}, false
+	}
+	idx := spec.index
+	if idx <= 0 || idx > len(cards) {
+		idx = 1
+	}
+	card := cards[idx-1]
+	return card, card.ImageKey != ""
+}
+
+// layoutImageMaterial — картинка материала из позиции предложения.
+//
+// Позиции — в самом предложении (lc.offer.Items), а не в карточках: `PhotoKey`
+// позиции заполняется при синхронизации материалов с Базой знаний. Пустой
+// список или позиция без ключа — картинки нет, метка молчит.
+func layoutImageMaterial(spec layoutImageSpec, lc layoutContext) (SystemCard, bool) {
+	items := lc.offer.Items
+	if len(items) == 0 {
+		return SystemCard{}, false
+	}
+	idx := spec.index
+	if idx <= 0 || idx > len(items) {
+		idx = 1
+	}
+	item := items[idx-1]
+	if strings.TrimSpace(item.PhotoKey) == "" {
+		return SystemCard{}, false
+	}
+	return SystemCard{ImageKey: item.PhotoKey, ImageName: item.ImageName, Title: item.Name}, true
 }
 
 // layoutTableKind — какую таблицу просит метка макета.
@@ -360,9 +663,17 @@ func tableMarkdown(rows [][]string) string {
 // Признак нужен отдельно от текста: абзац, который ЦЕЛИКОМ принадлежал
 // продолжению метки, должен стать ПУСТЫМ, и пустая строка здесь означает
 // «менялся», а не «не трогать».
+//
+// image — готовая разметка картинки (2026-11-06): метка «{картинка}» — это не
+// текст. Пустой текст при непустой картинке значит «текста нет, картинка есть»,
+// поэтому признак `changed` обязателен и здесь.
 type paragraphChange struct {
-	text    string
-	changed bool
+	text string
+	// image — картинка вместо всего абзаца (метка стояла отдельной строкой).
+	image string
+	// imageAfter — картинка после текста абзаца (метка стояла в тексте).
+	imageAfter string
+	changed    bool
 }
 
 // replaceInSpan собирает новый текст одного абзаца.
@@ -462,7 +773,15 @@ func replaceParagraphsInDocument(docXML string, paragraphs []string, replaced []
 			continue
 		}
 		sb.WriteString(docXML[last:at])
-		sb.WriteString(rebuildParagraph(paragraph, replaced[i].text))
+		change := replaced[i]
+		if change.image != "" {
+			sb.WriteString(change.image)
+		} else {
+			sb.WriteString(rebuildParagraph(paragraph, change.text))
+			if change.imageAfter != "" {
+				sb.WriteString(change.imageAfter)
+			}
+		}
 		last = at + len(paragraph)
 		searchFrom = last
 	}
@@ -516,7 +835,7 @@ func layoutAnswer(paragraph, text string) string {
 	blocks := splitAnswerTables(text)
 	if len(blocks) == 1 && blocks[0].table == nil {
 		// Таблицы нет — прежнее поведение, ни одного лишнего шага.
-		if lines := splitLayoutLines(text); len(lines) > 1 {
+		if lines := layoutLines(text); len(lines) > 1 {
 			return layoutAsParagraphs(paragraph, lines)
 		}
 		return rebuildParagraphText(paragraph, text)
@@ -527,7 +846,7 @@ func layoutAnswer(paragraph, text string) string {
 		case block.table != nil:
 			sb.WriteString(tableXML(block.table))
 		case strings.TrimSpace(block.text) != "":
-			sb.WriteString(layoutAsParagraphs(paragraph, splitLayoutLines(block.text)))
+			sb.WriteString(layoutAsParagraphs(paragraph, layoutLines(block.text)))
 		}
 	}
 	if sb.Len() == 0 {
@@ -543,12 +862,18 @@ type answerBlock struct {
 }
 
 // rebuildParagraphText пишет текст в первый `<w:t>` абзаца, остальные чистит.
+//
+// Одна строка тоже идёт через общий конвейер (plainText + runsXML): без него
+// значение поля формы и короткий ответ модели печатались бы без надстрочных
+// единиц, а многострочный — с ними (2026-11-06).
 func rebuildParagraphText(paragraph, text string) string {
+	baseRPr := runPropertiesInner(firstRunProperties(paragraph))
+	markup := runsXML(plainText(text), baseRPr)
 	first := true
 	return reWordText.ReplaceAllStringFunc(paragraph, func(tag string) string {
 		if first {
 			first = false
-			return replaceWordText(tag, text)
+			return replaceWordRaw(tag, markup)
 		}
 		return replaceWordText(tag, "")
 	})
@@ -623,18 +948,80 @@ func collectMarkdownTable(lines []string, i int) ([][]string, int) {
 	return rows, i
 }
 
-// splitLayoutLines режет текст на непустые строки, сохраняя краевые пробелы
-// абзаца в начале и в конце.
-func splitLayoutLines(text string) []string {
-	var out []string
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		if strings.TrimSpace(line) == "" {
+// layoutLineKind — вид строки ответа модели.
+//
+// Модель отвечает одним текстом, но читать его нужно тремя способами: абзац
+// тела, заголовок части и пункт списка. До 2026-11-06 у печати был один вид —
+// абзац, и в живом КП 003/2026 заголовки, написанные моделью, читались как
+// тело, а списки — как подряд идущие строки.
+//
+// Вид решается ЗДЕСЬ и только здесь: печать (layoutAsParagraphs) разбирает
+// ответ через layoutLines, и второй разбор структуры не заводится.
+type layoutLineKind int
+
+const (
+	layoutLineBody layoutLineKind = iota
+	layoutLineHeading
+	layoutLineBullet
+	layoutLineNumbered
+)
+
+// layoutLine — строка ответа с видом.
+type layoutLine struct {
+	kind layoutLineKind
+	text string
+}
+
+// layoutLines разбирает ответ модели на строки, убирая разметку Markdown.
+//
+// Заголовок — строка `## Текст` (по просьбе макета: «структурные разделы
+// помечай как заголовки»). Нумерованный пункт — только «1. текст» или «1) текст»
+// с точкой/скобкой сразу после цифры: «[7]» в тексте БИБЛИОГРАФИЧЕСКАЯ ссылка,
+// а не пункт, и в список она попадать не должна (правило из живого КП: в тексте
+// стоят [7], [8], [3], [5], [2], [4]).
+//
+// Строка из одних знаков разметки («##», «**») выбрасывается: в живом ответе
+// был такой хвост, и пустой абзац в документе читается как сбой.
+func layoutLines(text string) []layoutLine {
+	var out []layoutLine
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		out = append(out, line)
+		if line, ok := layoutLineOf(raw); ok {
+			out = append(out, line)
+		}
 	}
 	return out
 }
+
+// layoutLineOf — вид и текст одной строки. Ложь — печатать нечего.
+func layoutLineOf(raw string) (layoutLine, bool) {
+	trimmed := strings.TrimSpace(raw)
+	kind := layoutLineBody
+	if m := reMarkdownHeading.FindStringSubmatch(trimmed); m != nil {
+		trimmed = strings.TrimSpace(m[1])
+		kind = layoutLineHeading
+	} else if m := reMarkdownBullet.FindStringSubmatch(trimmed); m != nil {
+		trimmed = strings.TrimSpace(m[1])
+		kind = layoutLineBullet
+	} else if m := reListNumber.FindStringSubmatch(trimmed); m != nil {
+		trimmed = strings.TrimSpace(m[1])
+		kind = layoutLineNumbered
+	}
+	trimmed = stripInlineMarkdown(trimmed)
+	// От строки остались только знаки разметки — печатать нечего.
+	if strings.TrimSpace(strings.Trim(trimmed, `#*_-–—.,;: `)) == "" {
+		return layoutLine{}, false
+	}
+	return layoutLine{kind: kind, text: trimmed}, true
+}
+
+// reListNumber — начало нумерованного пункта: «1. » или «1) ».
+//
+// Требуется знак после цифры: «5520 м2» и «[7]» пунктами не становятся, а
+// «20 158 633,08» не начинается с цифры, после которой стоит точка с пробелом.
+var reListNumber = regexp.MustCompile(`^\d{1,3}[.)]\s+(.+)$`)
 
 // layoutAsParagraphs печатает строки отдельными абзацами с вёрсткой исходного.
 //
@@ -644,25 +1031,79 @@ func splitLayoutLines(text string) []string {
 // строку. Пустая строка исходного абзаца (он мог быть пустым) не теряется:
 // между строками абзацы не вставляются, потому что пустая строка в тексте
 // модели — разделитель абзацев, а не пустой абзац документа.
-func layoutAsParagraphs(paragraph string, lines []string) string {
-	pPr := reParagraphPr.FindString(paragraph)
-	if strings.TrimSpace(pPr) == "" {
-		// У абзаца нет правил — синтезируем минимум, чтобы Word не считал
-		// его отдельным «Normal по умолчанию».
-		pPr = `<w:pPr><w:jc w:val="both"/></w:pPr>`
-	}
-	rPr := firstRunProperties(paragraph)
+//
+// Текст строки идёт через ТОТ ЖЕ конвейер, что и у блоков формы (2026-11-06):
+// plainText (вики-ссылки, разметка, слипшиеся слова) + runsXML (надстрочные
+// единицы). До этой правки здесь стоял escapeXML, и живой КП 003/2026 печатал
+// «5520 м2» обычной двойкой, а `[[…]]` из карточки дошли бы до заказчика со
+// скобками — при том, что в блочном пути всё это работало. Правило 2026-11-05:
+// конвейер текста один, иначе два пути печати расходятся молча.
+func layoutAsParagraphs(paragraph string, lines []layoutLine) string {
+	pPr, baseRPr := layoutParagraphStyle(paragraph)
 	var sb strings.Builder
 	for _, line := range lines {
-		sb.WriteString(`<w:p>`)
-		sb.WriteString(pPr)
-		sb.WriteString(`<w:r>`)
-		sb.WriteString(rPr)
-		sb.WriteString(`<w:t xml:space="preserve">`)
-		sb.WriteString(escapeXML(line))
-		sb.WriteString(`</w:t></w:r></w:p>`)
+		sb.WriteString(layoutLineXML(line, pPr, baseRPr))
 	}
 	return sb.String()
+}
+
+// layoutLineXML — разметка одной строки ответа по её виду.
+//
+// Заголовок получает стиль бланка «heading 1» и выравнивание по центру —
+// оформление документов экосистемы (см. headingXML). Список — нумерацию
+// бланка: маркер и номер ставит Word, в тексте их нет.
+func layoutLineXML(line layoutLine, pPr, baseRPr string) string {
+	switch line.kind {
+	case layoutLineHeading:
+		return headingXMLOpts(plainText(line.text), 2, paraOpts{})
+	case layoutLineBullet:
+		return layoutListItemXML(plainText(line.text), styleListBullet, baseRPr)
+	case layoutLineNumbered:
+		return layoutListItemXML(plainText(line.text), styleListNumbered, baseRPr)
+	default:
+		return `<w:p>` + pPr + runsXML(plainText(line.text), baseRPr) + `</w:p>`
+	}
+}
+
+// layoutListItemXML — пункт списка с оформлением макета (шрифт строки).
+//
+// Отступ первой строки снят: он есть у пункта списка по определению, и красная
+// строка рядом с маркером выглядит сдвинутой.
+func layoutListItemXML(text, numID, baseRPr string) string {
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
+		`<w:spacing w:line="360" w:lineRule="auto"/>` +
+		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + numID + `"/></w:numPr></w:pPr>` +
+		runsXML(text, baseRPr) + `</w:p>`
+}
+
+// layoutParagraphStyle — правила абзаца и оформление прогонов исходного абзаца.
+//
+// У абзаца нет правил — синтезируется минимум, чтобы Word не считал его
+// отдельным «Normal по умолчанию».
+func layoutParagraphStyle(paragraph string) (pPr, baseRPr string) {
+	pPr = reParagraphPr.FindString(paragraph)
+	if strings.TrimSpace(pPr) == "" {
+		pPr = `<w:pPr><w:jc w:val="both"/></w:pPr>`
+	}
+	// Оформление прогонов макета (шрифт, размер) действует на все строки.
+	baseRPr = runPropertiesInner(firstRunProperties(paragraph))
+	return pPr, baseRPr
+}
+
+// runPropertiesInner — содержимое `<w:rPr>…</w:rPr>` без самого тега.
+//
+// runsXML оборачивает каждый прогон в свой `<w:rPr>`, поэтому внешние теги
+// исходного прогона нужно снять: иначе получилось бы `<w:rPr><w:rPr>…` и Word
+// отказался бы открывать файл. Пустая строка — у прогона макета своих правил
+// нет, копировать нечего.
+func runPropertiesInner(rPr string) string {
+	if strings.TrimSpace(rPr) == "" {
+		return ""
+	}
+	inner := strings.TrimSpace(rPr)
+	inner = strings.TrimPrefix(inner, "<w:rPr>")
+	inner = strings.TrimSuffix(inner, "</w:rPr>")
+	return strings.TrimSpace(inner)
 }
 
 // reParagraphPr — свойства абзаца (`<w:pPr>…</w:pPr>`) исходного абзаца.

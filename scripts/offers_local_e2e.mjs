@@ -1667,6 +1667,90 @@ async function sectionLayout() {
     token: ownerToken, body: { description: '  ' },
   });
   ok('пустое описание отклонено → 400', empty.status === 400);
+
+  await sectionLayoutText();
+}
+
+// Печать по макету: один конвейер текста, ссылки, картинка (2026-11-06, 0.7.5).
+//
+// Проверяется то, что увидит заказчик: адрес стал ссылкой Word, площадь
+// напечатана с надстрочной двойкой, метка картинки дала изображение, скобки
+// разметки до документа не дошли. Стенд гоняет это по HTTP — юнит-тесты
+// проверяют функции, а здесь проверяется вся сборка документа целиком.
+async function sectionLayoutText() {
+  console.log('\n22. Печать по макету: текст, ссылки, картинка (2026-11-06)');
+
+  const layoutDoc =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:r><w:t>{Опиши систему}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{картинка}</w:t></w:r></w:p>` +
+    `</w:body></w:document>`;
+  const layout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(layoutDoc, 'utf8')),
+  ]);
+  const up = await fetch(`${BASE}/api/offers/form/layout?name=Текст.docx`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: layout,
+  });
+  ok('макет с промтом и картинкой загружен → 200', up.status === 200);
+
+  // КП по макету: модель отвечает заглушкой стенда.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Текст', contact: 'Пётр' },
+      items: [{ name: 'Мембрана', unit: 'м2', qty: 4800, price: 100, sum: 480000 }],
+      total: 480000, status: 'draft',
+      formValues: { object_name: 'Дом по ул. Примерная' },
+    },
+  });
+  const offerId = created.json?.id;
+  // Система со схемой (карточка 100 в заглушке): без выбранной системы в
+  // документе нет карточки, и метка картинки молчит по определению. Выбор
+  // делается заметкой — код у живой карточки может отсутствовать (0.4.4).
+  const added = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken, body: { noteId: 100 },
+  });
+  ok('система со схемой выбрана', added.status === 200,
+    `${added.status} ${added.text?.slice(0, 120)}`);
+
+  const raw = await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const doc = Buffer.from(raw);
+  const xml = unzipEntrySafe(doc, 'word/document.xml');
+
+  ok('КП по макету с промтом собрано', xml.includes('<w:body>') && xml.length > 500,
+    xml.slice(0, 160));
+  // 1. Разметки модели в документе нет.
+  for (const bad of ['{{', '}}', '[[', '**']) {
+    ok(`в документе нет «${bad}»`, !xml.includes(bad));
+  }
+  // 2. Кликабельность: адрес из ответа модели стал ссылкой Word.
+  const rels = unzipEntrySafe(doc, 'word/_rels/document.xml.rels');
+  const links = (xml.match(/<w:hyperlink/g) ?? []).length;
+  const external = (rels.match(/TargetMode="External"/g) ?? []).length;
+  ok('ссылки в документе кликабельные', links > 0 && external >= links,
+    `ссылок ${links}, внешних отношений ${external}`);
+  // 3. Надстрочные единицы: заглушка модели содержит «м2».
+  ok('площади напечатаны с верхним индексом',
+    (xml.match(/<w:vertAlign w:val="superscript"\/>/g) ?? []).length > 0,
+    'ни одной надстрочной степени');
+  // 4. Картинка: у системы в стенде есть схема, метка её вставила.
+  ok('метка картинки дала изображение', xml.includes('<w:drawing'),
+    'в документе нет ни одного изображения');
+
+  await call('DELETE', '/form/layout', { token: ownerToken });
+  await call('DELETE', `/offers/${offerId}`, { token: ownerToken });
+  ok('макет и КП убраны', true);
 }
 
 await sectionLayout();

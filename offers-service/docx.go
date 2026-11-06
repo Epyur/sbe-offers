@@ -71,6 +71,9 @@ const (
 	// styleListBullet — маркированный список бланка. abstractNum 1 — bullet,
 	// numId 6 на него ссылается (нумерации 1..12 заняты бланком).
 	styleListBullet = "6"
+	// styleListNumbered — нумерованный список бланка (abstractNum 0 — decimal,
+	// numId 1). Заголовки/списки ответа модели печатаются им с 2026-11-06.
+	styleListNumbered = "1"
 	// styleHyperlink — стиль ссылки бланка (w:styleId="ab", имя "Hyperlink").
 	// Своего стиля не заводим: имена в бланке — часть его оформления.
 	styleHyperlink = "ab"
