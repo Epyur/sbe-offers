@@ -424,13 +424,100 @@ type renderCtx struct {
 	cards  []SystemCard
 	images ImageSource
 	media  *docxMedia
+	// systemCard — выбранная система повтора (шаг D): блок формы с repeat
+	// печатается по разу на систему, и служебные метки внутри блока обязаны
+	// брать ЕЁ карточку, а не первую. nil — обычная печать.
+	systemCard *SystemCard
+	// materialIndex — номер позиции повтора по материалам (1-based); 0 — нет.
+	materialIndex int
+	// materialSource — полный список позиций предложения для повтора: узлу
+	// отдаётся одна позиция, а метка `{{материал}}` ищет свою по номеру.
+	materialSource []OfferItem
+	// systemTexts — сохранённые тексты системы (шаг B): узлы блока читают их
+	// так же, как метки макета, и модель не зовут.
+	systemTexts func(card SystemCard) map[string]string
 }
 
 // text подставляет поля формы и служебные значения предложения в один кусок
 // текста. Одна точка на все виды узлов: иначе служебные поля доезжали бы до
 // таблицы и не доезжали до абзаца (или наоборот), и расхождение искали бы глазами.
 func (rc renderCtx) text(raw string) string {
-	return resolvePlaceholders(raw, rc.allValues())
+	// Сначала служебные метки, потом поля формы: resolvePlaceholders вычищает
+	// любые оставшиеся `{{…}}`, и служебная метка, не раскрытая до него,
+	// просто исчезла бы (2026-11-06).
+	return resolvePlaceholders(expandBlockServiceMarkers(raw, rc), rc.allValues())
+}
+
+// expandBlockServiceMarkers печатает служебные метки внутри блока формы.
+//
+// Правило 2026-11-06 (шаг C): метка макета и узел блока печатают одни и те же
+// данные одним кодом. Иначе `{{система}}` в блоке печатался бы скобками, а в
+// макете — таблицей, и заказчик получил бы разное от одной формы.
+//
+// Метки, которые печатают НЕ текст (таблица состава, таблица характеристик),
+// здесь остаются пустыми: узел абзаца не может принять полотно. Для таких
+// случаев администратор ставит метку в макет целиком, а не внутрь блока.
+func expandBlockServiceMarkers(text string, rc renderCtx) string {
+	if !strings.Contains(text, "{{") && !strings.Contains(text, "{") {
+		return text
+	}
+	tokens := scanLayoutTokens(text, rc.allValues())
+	if len(tokens) == 0 {
+		return text
+	}
+	lc := rc.layoutContext()
+	var sb strings.Builder
+	last := 0
+	for _, token := range tokens {
+		if !isServiceKind(token.Kind) {
+			continue
+		}
+		row := rc.serviceRow()
+		row.viaBlock = true
+		markup := renderLayoutService(token, lc, row)
+		switch token.Kind {
+		case layoutTokenText, layoutTokenMaterial:
+			// Текст системы и позиции — строки: узел абзаца печатает их как есть.
+		default:
+			// Таблица/картинка внутрь абзаца не встаёт: оставляем пусто.
+			markup = ""
+		}
+		sb.WriteString(text[last:token.Start])
+		sb.WriteString(markup)
+		last = token.End
+	}
+	sb.WriteString(text[last:])
+	return sb.String()
+}
+
+// layoutContext — контекст печати по макету из контекста блоков: один перевод,
+// чтобы служебные метки в блоке и в макете печатались одним кодом.
+func (rc renderCtx) layoutContext() layoutContext {
+	offer := rc.offer
+	// Внутри повтора по материалам `rc.offer.Items` сужен до текущей позиции,
+	// а номер позиции — исходный: метка `{{материал}}` обязана попасть в свою
+	// строку полного списка, иначе со второго прохода она молчит (2026-11-06).
+	if rc.materialIndex > 0 && rc.materialSource != nil {
+		offer = Offer{Number: rc.offer.Number, Items: rc.materialSource}
+	}
+	return layoutContext{
+		values:      rc.allValues(),
+		offer:       offer,
+		refs:        rc.refs,
+		service:     rc.service,
+		systemTexts: rc.systemTexts,
+		cards:       func() []SystemCard { return rc.cards },
+		images:      rc.images,
+	}
+}
+
+// serviceRow — проход повтора: своя система или своя позиция.
+func (rc renderCtx) serviceRow() layoutServiceRow {
+	row := layoutServiceRow{material: rc.materialIndex}
+	if rc.systemCard != nil {
+		row.system = rc.systemCard
+	}
+	return row
 }
 
 // allValues — значения формы плюс служебные, служебные не затирают форму.

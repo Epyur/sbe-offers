@@ -61,6 +61,16 @@ type layoutContext struct {
 	// Указатель, потому что заполняется во время печати, а контекст передаётся
 	// значением; иначе картинка добавлялась бы в копию и терялась.
 	layout *layoutRuntime
+	// form — блоки формы для служебной метки `{{block:N}}` (шаг C, 2026-11-06).
+	// nil — блоков нет, метка молчит.
+	form func() OfferForm
+	// refs / service — ссылки карточек и служебные поля: нужны блокам формы,
+	// напечатанным по метке, и метке `{{ссылки: …}}`.
+	refs    []skills.CardRef
+	service map[string]string
+	// systemTexts — сохранённые тексты системы (шаг B): метка `{{текст: …}}`
+	// только печатает их и модель не зовёт.
+	systemTexts func(card SystemCard) map[string]string
 }
 
 // layoutRuntime — состояние одной сборки по макету.
@@ -346,6 +356,9 @@ func splitReplacedByParagraph(spans struct {
 	// Отдельно от replacement: картинка — не текст абзаца, и склеивать одно с
 	// другим в одном значении нельзя (порядок склейки потерялся бы).
 	imageMarkup := make(map[int]string, len(tokens))
+	// serviceMarkup — готовая разметка служебных меток (шаг C): таблица,
+	// список, блок формы. Печатается как XML, а не как текст абзаца.
+	serviceMarkup := make(map[int]string, len(tokens))
 	for i, token := range tokens {
 		switch token.Kind {
 		case layoutTokenImage:
@@ -368,6 +381,17 @@ func splitReplacedByParagraph(spans struct {
 			if lc.prompt != nil {
 				replacement[i] = lc.prompt(token.Inner)
 			}
+		case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
+			layoutTokenSpecs, layoutTokenText, layoutTokenMaterial:
+			// Служебные метки (шаг C, 2026-11-06): печатают данные предложения
+			// и карточки, модель не зовут вовсе. Их разметка — готовый XML
+			// (таблица, список, картинка), поэтому она идёт полем `blockMarkup`,
+			// а не текстом: в тексте `<w:tbl>` был бы экранирован и клиент
+			// увидел бы теги. Метка в тексте абзаца заменяется пустой строкой.
+			replacement[i] = ""
+			if markup := renderLayoutService(token, lc, layoutServiceRow{}); markup != "" {
+				serviceMarkup[i] = markup
+			}
 		default:
 			replacement[i] = layoutFieldValue(token.Inner, lc.values)
 		}
@@ -382,7 +406,37 @@ func splitReplacedByParagraph(spans struct {
 	// строкой в описании системы. Абзац, где метка картинки была единственным
 	// содержимым, печатается картинкой, а не пустым абзацем с подстановкой.
 	attachLayoutImages(out, spans.texts, spans.spans, tokens, imageMarkup)
+	// Служебные метки печатаются разметкой абзаца: таблица, список состава,
+	// блок формы — это XML, а не текст (в `<w:t>` он был бы экранирован).
+	attachServiceMarkup(out, spans.spans, tokens, serviceMarkup)
 	return out
+}
+
+// attachServiceMarkup кладёт готовую разметку служебной метки вместо абзаца.
+//
+// Правила те же, что у картинки (attachLayoutImages): метка отдельной строкой
+// печатается вместо абзаца; метка посреди текста даёт разметку ПОСЛЕ текста
+// абзаца, и текст сохраняется. Пустая разметка — метка молчит, абзац остаётся
+// пустым (иначе на его месте остался бы литерал метки).
+func attachServiceMarkup(changes []paragraphChange, spans []paragraphSpan,
+	tokens []layoutToken, markup map[int]string) {
+	for i, token := range tokens {
+		value, ok := markup[i]
+		if !ok || !isServiceKind(token.Kind) {
+			continue
+		}
+		idx := spanIndexAt(spans, token.Start)
+		if idx < 0 {
+			continue
+		}
+		if strings.TrimSpace(changes[idx].text) == "" {
+			changes[idx].image = value
+			changes[idx].changed = true
+			continue
+		}
+		changes[idx].imageAfter = value
+		changes[idx].changed = true
+	}
 }
 
 // attachLayoutImages переносит разметку картинки из текста абзаца в его поле.

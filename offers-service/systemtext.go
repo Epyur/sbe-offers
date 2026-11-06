@@ -248,6 +248,32 @@ func (s *Server) storedTextsOf(ctx context.Context, card SystemCard) map[string]
 	return texts
 }
 
+// systemTextsByNote — сохранённые тексты систем по номеру заметки: карта
+// «заметка → блок → текст».
+//
+// Нужна печати документа (шаг C): метки `{{текст: …}}` берут готовое и модель
+// не зовут. Читается один раз на сборку и раздаётся по карточкам; отдельный
+// запрос на каждую систему был бы лишним хождением в БД на каждой метке.
+func (s *Server) systemTextsByNote(ctx context.Context, cards []SystemCard) map[int64]map[string]string {
+	ids := make([]int64, 0, len(cards))
+	for _, card := range cards {
+		if card.NoteID > 0 {
+			ids = append(ids, card.NoteID)
+		}
+	}
+	out := make(map[int64]map[string]string, len(ids))
+	for noteID, stored := range s.storedSystemTexts(ctx, ids) {
+		texts := make(map[string]string, len(stored))
+		for block, item := range stored {
+			if strings.TrimSpace(item.Text) != "" {
+				texts[block] = item.Text
+			}
+		}
+		out[noteID] = texts
+	}
+	return out
+}
+
 // systemTextsForSystems — сохранённые тексты выбранных систем с признаком
 // устаревания: по нему плагин решает, показывать ли кнопку пересчёта.
 func (s *Server) systemTextsForSystems(ctx context.Context, cards []SystemCard) []SystemText {

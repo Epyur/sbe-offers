@@ -325,7 +325,7 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 	// документ собирается по нему, со своими стилями и колонтитулами. Блоки
 	// формы при этом остаются — вернуться к ним можно, удалив макет.
 	if layout, err := s.loadLayout(r); err == nil && len(layout) > 0 {
-		return s.renderLayoutOffer(r, layout, offer, cards, refs, report)
+		return s.renderLayoutOffer(r, layout, form, offer, cards, refs, report)
 	}
 	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
 }
@@ -335,7 +335,7 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 // Тексты модели для `{…}` пишутся здесь же, как и тексты блоков: печать нужна
 // одной точкой, а кэш — в form_values предложения (правило 2026-11-01: один
 // и тот же КП не должен давать разный документ при каждом скачивании).
-func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
+func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferForm, offer Offer,
 	cards []SystemCard, refs []skills.CardRef, report *buildReport) ([]byte, error) {
 	values := layoutValues(offer)
 	cache := &layoutPromptCache{
@@ -348,6 +348,9 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
 		completed: llmCompleter{},
 		report:    report,
 	}
+	// Сохранённые тексты систем (шаг B) — читаются один раз на сборку: метки
+	// `{{текст: …}}` печатают их и модель не зовут (шаг C).
+	texts := s.systemTextsByNote(r.Context(), cards)
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,
 		prompt: cache.text,
@@ -358,6 +361,12 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
 		// характеристик карточек. См. layoutTableFor.
 		items: func() [][]string { return layoutOfferTable(offer) },
 		cards: func() []SystemCard { return cards },
+		// Служебные метки (шаг C): блоки формы по id, ссылки карточек и тексты
+		// систем — всё из данных, без модели.
+		form:        func() OfferForm { return form },
+		refs:        refs,
+		service:     serviceValues(offer),
+		systemTexts: func(card SystemCard) map[string]string { return texts[card.NoteID] },
 	})
 	if err != nil {
 		return nil, err

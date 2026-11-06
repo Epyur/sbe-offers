@@ -35,11 +35,257 @@ import (
 // по значению формы, а не по числу скобок: см. scanLayoutTokens.
 
 // Виды меток макета.
+//
+// Служебные виды (с 2026-11-06, шаг C плана «генерация без модели») печатают
+// ДАННЫЕ предложения и карточки Базы знаний и модель не зовут вовсе:
+//
+//	{{block:1}}                     — блок формы целиком, по id;
+//	{{система}}                     — картинка и состав карточки одной таблицей;
+//	{{ссылки: система}}             — `## Ссылки` карточки;
+//	{{характеристики: система}}     — `## Свойства и преимущества` таблицей;
+//	{{текст: система: description}} — сохранённый текст системы (шаг B).
+//
+// Это главный смысл шага: администратор правит макет сколько угодно, а экспорт
+// по-прежнему укладывается в секунды, потому что модель для этих меток не
+// нужна.
 const (
-	layoutTokenField  = "field"  // [имя] или {{имя}} — жёсткая подстановка
-	layoutTokenPrompt = "prompt" // {текст}, {{текст}}, {{{текст}}} — промт модели
-	layoutTokenImage  = "image"  // {картинка}, {{картинка: система 1}} — изображение
+	layoutTokenField    = "field"    // [имя] или {{имя}} — жёсткая подстановка
+	layoutTokenPrompt   = "prompt"   // {текст}, {{текст}}, {{{текст}}} — промт модели
+	layoutTokenImage    = "image"    // {картинка}, {{картинка: система 1}} — изображение
+	layoutTokenBlock    = "block"    // {{block:1}} — блок формы по id
+	layoutTokenSystem   = "system"   // {{система}}, {{система: таблица}}
+	layoutTokenLinks    = "links"    // {{ссылки: система}}
+	layoutTokenSpecs    = "specs"    // {{характеристики: система}}
+	layoutTokenText     = "text"     // {{текст: система: description|advantages}}
+	layoutTokenMaterial = "material" // {{материал}} — строка состава по позиции
 )
+
+// serviceLayoutMarkers — слова-ключи служебных меток.
+//
+// Порядок важен: «характеристики» начинается не с «систем», поэтому проверка
+// по списку не путается. Все они, кроме «block», сами по себе НЕ метка: слово
+// должно стоять в НАЧАЛЕ метки или сразу после «имя=», иначе живая инструкция
+// администратора («опиши систему: состав, преимущества, ссылки») приняла бы
+// вид служебной и потеряла бы текст модели.
+var serviceLayoutMarkers = []struct {
+	kind string
+	key  string
+}{
+	{layoutTokenLinks, "ссылки"},
+	{layoutTokenSpecs, "характеристик"},
+	{layoutTokenText, "текст"},
+	{layoutTokenBlock, "block"},
+	{layoutTokenSystem, "систем"},
+	{layoutTokenMaterial, "материал"},
+}
+
+// parseLayoutServiceSpec узнаёт служебную метку по содержимому.
+//
+// Понимает:
+//
+//	block:1                      → блок формы с ID «1»
+//	система / система: таблица   → карточка системы (таблица или блок)
+//	ссылки: система              → ссылки карточки
+//	характеристики: система      → характеристики карточки
+//	текст: система: description  → сохранённый текст системы
+//	система name="S"             → то же плюс повтор по системам (шаг D)
+//
+// Второе значение — вид метки; ложь значит «не служебная», и метка уходит в
+// модель обычным промтом.
+func parseLayoutServiceSpec(inner string) (layoutServiceSpec, bool) {
+	trimmed := strings.TrimSpace(inner)
+	if trimmed == "" {
+		return layoutServiceSpec{}, false
+	}
+	key, rest := splitLayoutMarkerKey(trimmed)
+	name := layoutMarkerName(rest)
+	rest = stripLayoutMarkerName(rest)
+	normalized := normalizeFieldKey(markerHead(rest))
+	spec, ok := layoutServiceSpec{name: name}.withKind(serviceLayoutKindOf(key, normalized), rest)
+	if !ok {
+		return layoutServiceSpec{}, false
+	}
+	return spec, true
+}
+
+// splitLayoutMarkerKey отделяет слово-ключ метки от остатка.
+//
+// Ключ — ПЕРВОЕ слово метки, а не всё до двоеточия: живая инструкция
+// администратора «Опиши систему: состав, преимущества, ссылки» тоже содержит
+// двоеточие, и разбор по нему принял бы её за служебную метку с ключом
+// «опиши систему» — текст модели потерялся бы вовсе.
+//
+// «текст системы» и «ссылки системы» при этом понимаются: остаток начинается
+// со слова «системы», и вид метки решает serviceLayoutKindOf.
+func splitLayoutMarkerKey(s string) (key, rest string) {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	// Первое слово может нести двоеточие: «block:1», «система: таблица».
+	// Тогда ключ — до двоеточия, а остаток — после него вместе с хвостом.
+	first := fields[0]
+	if at := strings.Index(first, ":"); at >= 0 {
+		// Остаток — всё после двоеточия: и хвост первого слова (`block:1`),
+		// и слова за ним (`ссылки: система`).
+		tail := strings.TrimSpace(first[at+1:] + " " + strings.Join(fields[1:], " "))
+		return strings.ToLower(strings.TrimSpace(first[:at])), strings.TrimSpace(tail)
+	}
+	return strings.ToLower(first), strings.TrimSpace(strings.TrimPrefix(s, first))
+}
+
+// markerHead — первые два слова остатка: «система: description» → «система».
+//
+// Нужен, чтобы «текст: система: description» и «текст системы: преимущества»
+// привели к одному виду метки.
+func markerHead(rest string) string {
+	if at := strings.Index(rest, ":"); at >= 0 {
+		return strings.TrimSpace(rest[:at])
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+// serviceLayoutKindOf решает вид по слову-ключу и первому слову остатка.
+func serviceLayoutKindOf(key, head string) string {
+	switch key {
+	case "block", "блок":
+		return layoutTokenBlock
+	case "текст", "text":
+		return layoutTokenText
+	}
+	for _, marker := range serviceLayoutMarkers {
+		if !strings.HasPrefix(key, marker.key) {
+			continue
+		}
+		switch marker.kind {
+		// «система …» — картинка и состав.
+		case layoutTokenSystem:
+			return layoutTokenSystem
+		// «материал …» — строка состава позиции.
+		case layoutTokenMaterial:
+			return layoutTokenMaterial
+		}
+		// Прочие слова-ключи требуют, чтобы речь шла о системе: иначе
+		// «картинки» сюда не попадут.
+		if isSystemWord(head) {
+			return marker.kind
+		}
+		return ""
+	}
+	return ""
+}
+
+// layoutServiceSpec — разобранная служебная метка.
+type layoutServiceSpec struct {
+	// kind — вид метки: block, system, links, specs, text. Пусто — не служебная.
+	kind string
+	// blockID — id блока формы для `{{block:1}}`.
+	blockID string
+	// textBlock — какой текст системы просит метка: description | advantages.
+	textBlock string
+	// variant — «таблица» у `{{система: таблица}}`: печатать друг под другом.
+	variant string
+	// name — имя повтора (`name="S"`), по нему связываются метка и её блок.
+	name string
+}
+
+// withKind доделывает разбор: id блока, блок текста и вариант.
+func (s layoutServiceSpec) withKind(kind, rest string) (layoutServiceSpec, bool) {
+	if kind == "" {
+		return layoutServiceSpec{}, false
+	}
+	s.kind = kind
+	switch kind {
+	case layoutTokenBlock:
+		if id := strings.TrimSpace(strings.TrimPrefix(rest, ":")); id != "" {
+			// `block:1` и `block 1` — одно и то же; дополнительно снимаются
+			// кавычки, если id в них завёрнут.
+			if space := strings.IndexAny(id, " \t;,"); space >= 0 {
+				id = id[:space]
+			}
+			s.blockID = strings.Trim(id, `"'«» `)
+		}
+		if s.blockID == "" {
+			return layoutServiceSpec{}, false
+		}
+	case layoutTokenText:
+		// `{{текст системы: обоснование}}`: после слова «текст» первым стоит
+		// «системы», и вид блока лежит во ВТОРОМ остатке.
+		textRest := rest
+		if isSystemWord(markerHead(rest)) {
+			textRest = rest[strings.Index(rest, markerHead(rest))+len(markerHead(rest)):]
+		}
+		s.textBlock = systemTextBlockOf(textRest)
+		if s.textBlock == "" {
+			return layoutServiceSpec{}, false
+		}
+		// `{{текст: S: description}}` — имя повтора стоит первым остатком, а
+		// `{{текст: система: description}}` — словом «система», то есть
+		// повтора нет и печатается первая система.
+		if s.name == "" {
+			if head := markerHead(rest); head != "" && !isSystemWord(head) {
+				s.name = strings.Trim(head, `"'«» `)
+			}
+		}
+	case layoutTokenSystem:
+		if strings.Contains(normalizeFieldKey(rest), "таблиц") {
+			s.variant = "table"
+		}
+	}
+	return s, true
+}
+
+// systemTextBlockOf — какой блок системы просит метка текста.
+//
+// Понимает и английские ключи (`description`/`advantages`), и русские слова
+// администратора: «обоснование», «преимущества». Непонятное слово — не метка
+// текста вовсе: подставить вместо него описание значило бы напечатать не то,
+// что просили.
+func systemTextBlockOf(rest string) string {
+	lower := strings.ToLower(rest)
+	switch {
+	case strings.Contains(lower, systemTextDescription), strings.Contains(lower, "обоснован"),
+		strings.Contains(lower, "описани"):
+		return systemTextDescription
+	case strings.Contains(lower, systemTextAdvantages), strings.Contains(lower, "преимуществ"),
+		strings.Contains(lower, "advantage"):
+		return systemTextAdvantages
+	}
+	return ""
+}
+
+// isSystemWord — слово «система»/«system» в любом падеже.
+func isSystemWord(word string) bool {
+	normalized := normalizeFieldKey(word)
+	return strings.HasPrefix(normalized, "систем") || strings.HasPrefix(normalized, "system")
+}
+
+// layoutMarkerName — имя повтора из метки: `система name="S"` → S.
+func layoutMarkerName(rest string) string {
+	at := strings.Index(rest, `name=`)
+	if at < 0 {
+		return ""
+	}
+	value := strings.TrimSpace(rest[at+len(`name=`):])
+	value = strings.Trim(value, `"'«» `)
+	if space := strings.IndexAny(value, " \t"); space >= 0 {
+		value = value[:space]
+	}
+	return strings.Trim(value, `"'«» `)
+}
+
+// stripLayoutMarkerName убирает имя повтора из остатка метки.
+func stripLayoutMarkerName(rest string) string {
+	at := strings.Index(rest, `name=`)
+	if at < 0 {
+		return rest
+	}
+	return strings.TrimSpace(rest[:at])
+}
 
 // Пределы длины текста внутри метки, в рунах.
 //
@@ -58,6 +304,9 @@ type layoutToken struct {
 	Inner string // что внутри скобок
 	Start int
 	End   int
+	// Service — разбор служебной метки (шаг C). Заполнен только у служебных
+	// видов: второй раз те же слова в печати не разбираются.
+	Service layoutServiceSpec
 }
 
 var (
@@ -198,10 +447,11 @@ func scanLayoutTokens(text string, values map[string]string) []layoutToken {
 		if !isLayoutFieldName(inner, values) {
 			continue
 		}
-		tokens = append(tokens, layoutToken{
+		token := layoutToken{
 			Kind: layoutTokenField, Raw: text[m[0]:m[1]],
 			Inner: inner, Start: m[0], End: m[1],
-		})
+		}
+		tokens = append(tokens, token)
 		// Затираем найденное одинаковым по длине мусором: индексы остальных
 		// совпадений не сдвинутся, а фигурная скобка внутри уже не найдётся.
 		masked = replaceRange(masked, m[0], m[1])
@@ -214,23 +464,30 @@ func scanLayoutTokens(text string, values map[string]string) []layoutToken {
 	}
 	for _, m := range reLayoutPrompt.FindAllStringSubmatchIndex(masked, -1) {
 		inner := promptInner(text[m[2]:m[3]])
-		kind := layoutTokenPrompt
-		// Метка картинки — тот же вид скобок, но вид решает СОДЕРЖИМОЕ
-		// (правило 2026-11-06): «{картинка}» — это просьба вставить
-		// изображение системы, а не текст модели. Без этой проверки метка
-		// уходила в модель как промт, и картинка в документ не попадала —
-		// хотя инструкция макета прямо просит «вставляй изображения».
+		token := layoutToken{Raw: text[m[0]:m[1]], Start: m[0], End: m[1]}
+		// Вид метки решает СОДЕРЖИМОЕ, а не число скобок (правило 2026-11-06):
+		//
+		//	{картинка}     — картинка (проверяется первой: «картинка: система»
+		//	                 обычный текст инструкции про картинку не ломает);
+		//	{система}      — карточка системы одной таблицей;
+		//	{block:1}      — блок формы по id;
+		//	{ссылки: …}    — ссылки карточки и т.д.
+		//
+		// Всё прочее — промт модели.
 		if _, ok := parseLayoutImageSpec(inner); ok {
-			kind = layoutTokenImage
+			token.Kind = layoutTokenImage
+		} else {
+			token.Kind = layoutTokenPrompt
+			if service, ok := parseLayoutServiceSpec(inner); ok {
+				token.Kind = service.kind
+				token.Service = service
+			}
 		}
 		// Слишком длинный промт не выбрасываем: лишний раз человека не
 		// наказываем, а режем по пределу — метка всё равно должна заменить
 		// собой абзац, а не остаться литералом в документе.
-		inner = clampRunes(inner, layoutPromptMaxRunes)
-		tokens = append(tokens, layoutToken{
-			Kind: kind, Raw: text[m[0]:m[1]],
-			Inner: inner, Start: m[0], End: m[1],
-		})
+		token.Inner = clampRunes(inner, layoutPromptMaxRunes)
+		tokens = append(tokens, token)
 	}
 	sortLayoutTokens(tokens)
 	return tokens
@@ -295,14 +552,25 @@ func startsWithImageWord(lower string) bool {
 
 // isLayoutFieldName — двойная скобка это имя поля формы?
 //
-// values == nil — проверять не по чему (описание макета), считаем полем: так
-// администратор видит, что метку система распознала.
+// values == nil — проверять не по чему (описание макета), считаем полем, НО
+// только если это не служебная метка: `{{система}}` — не имя поля, хотя поля
+// с таким именем нет; без этой проверки описание макета считало бы её полем и
+// администратор не увидел бы, что метка распознана как карточка.
 func isLayoutFieldName(inner string, values map[string]string) bool {
-	if values == nil {
-		return true
-	}
 	if inner == "" {
 		return false
+	}
+	if _, ok := parseLayoutServiceSpec(inner); ok {
+		return false
+	}
+	if values == nil {
+		// Описание макета для администратора: значения формы unknown, поэтому
+		// полем считаем только то, что ПОХОЖЕ на имя поля, — короткий
+		// идентификатор без пробелов. Длинную инструкцию с двоеточием
+		// (`{{Опиши систему: состав…}}`) описываем как промт: иначе описание
+		// макета показало бы её полем и человек решил бы, что текст модели из
+		// макета потерян.
+		return looksLikeFieldName(inner)
 	}
 	if _, ok := values[strings.TrimSpace(inner)]; ok {
 		return true
@@ -352,6 +620,28 @@ func layoutFieldValue(inner string, values map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// isServiceKind — метка печатает данные, а не модель (шаг C).
+func isServiceKind(kind string) bool {
+	switch kind {
+	case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
+		layoutTokenSpecs, layoutTokenText, layoutTokenMaterial:
+		return true
+	}
+	return false
+}
+
+// looksLikeFieldName — строка похожа на имя поля: одно слово, без пробелов и
+// знаков конца фразы.
+func looksLikeFieldName(inner string) bool {
+	if inner == "" || len([]rune(inner)) > 64 {
+		return false
+	}
+	if strings.ContainsAny(inner, " \t\n.,;:!?") {
+		return false
+	}
+	return true
 }
 
 // fallbackAlias — второй ключ для служебного поля.
