@@ -14,6 +14,7 @@ import type {
   Offer,
   OfferForm,
   RefreshSystemCardsResponse,
+  RichNode,
   Role,
   SheetApplyRow,
   SheetPreview,
@@ -45,6 +46,25 @@ export interface MeResponse {
   email: string;
   role: Role | '';
   hasAccess: boolean;
+}
+
+/** Что система поняла из загруженного макета .docx (2026-11-05). */
+export interface LayoutResponse {
+  hasLayout: boolean;
+  layoutName: string;
+  /** Метки `[…]` — жёсткие подстановки значений. */
+  layoutFields: string[];
+  /** Метки `{…}` — подсказки модели. */
+  layoutPrompts: string[];
+  bytes: number;
+}
+
+/** Ответ «опиши блок словами»: готовые узлы формы. */
+export interface DescribeBlockResponse {
+  title: string;
+  nodes: RichNode[];
+  /** Чего система не поняла — показывается администратору. */
+  notes?: string[];
 }
 
 /**
@@ -203,6 +223,69 @@ export class OffersService {
 
   async saveForm(form: OfferForm): Promise<OfferForm> {
     return this.request<OfferForm>('PUT', '/form', form);
+  }
+
+  /**
+   * Загрузка макета .docx (2026-11-05).
+   *
+   * Телом запроса идут байты файла, а не JSON: макет — это документ Word
+   * целиком, со стилями и картинками. Имя передаётся в query, чтобы сервер
+   * мог показать его в форме.
+   */
+  async uploadLayout(data: ArrayBuffer, name: string): Promise<LayoutResponse> {
+    return this.withTokenRetry(async (token) => {
+      const res = await requestUrl({
+        url: `${this.base()}/api/offers/form/layout?name=${encodeURIComponent(name)}`,
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          Authorization: `Bearer ${token}`,
+        },
+        body: data,
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return JSON.parse(res.text) as LayoutResponse;
+    });
+  }
+
+  /** Удалить макет: печать снова пойдёт по блокам формы. */
+  async deleteLayout(): Promise<void> {
+    await this.request<unknown>('DELETE', '/form/layout');
+  }
+
+  /** Скачать загруженный макет, чтобы поправить метки в Word. */
+  async downloadLayout(): Promise<ArrayBuffer> {
+    return this.withTokenRetry(async (token) => {
+      const res = await requestUrl({
+        url: `${this.base()}/api/offers/form/layout`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return res.arrayBuffer;
+    });
+  }
+
+  /**
+   * Опиши блок словами — модель предлагает структуру блоков (2026-11-05).
+   *
+   * Возвращает готовые узлы формы: администратор описывает, что должно быть в
+   * блоке, а редактор перестраивает его. Дальше человек дооформляет руками.
+   */
+  async describeBlock(description: string, placeholders: string[]): Promise<DescribeBlockResponse> {
+    return this.request<DescribeBlockResponse>('POST', '/form/describe', {
+      description,
+      placeholders,
+    });
   }
 
   async listOffers(): Promise<Offer[]> {

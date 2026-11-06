@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Интеграционный прогон offers-service через HTTP на живом контейнере
  * (локальный docker-compose.local.yml). Проверяет поведение, а не реализацию:
  * те же запросы, что делает плагин и бот.
@@ -151,52 +151,8 @@ function zipEntry(name, data) {
   return { name: nameBuf, data, body, crc, offset: 0 };
 }
 
-/**
- * Собирает .xlsx с одним листом. Строки таблицы превращаются в inline-строки
- * (без sharedStrings): сервис читает оба вида ячеек, а такой файл короче.
- *
- * Записи пишутся вручную, включая центральный каталог: без него zip нечитаем,
- * а Go не прощает ни одного несовпавшего поля.
- */
-function makeXlsx(rows) {
-  const colName = (i) => String.fromCharCode(65 + i);
-  const sheetRows = rows.map((row, r) => {
-    const cells = row.map((value, c) => {
-      const ref = `${colName(c)}${r + 1}`;
-      if (value === '' || value === null || value === undefined) return '';
-      if (/^-?\d+(?:[.,]\d+)?$/.test(String(value))) {
-        return `<c r="${ref}"><v>${String(value).replace(',', '.')}</v></c>`;
-      }
-      return `<c r="${ref}" t="inlineStr"><is><t>${String(value)}</t></is></c>`;
-    }).join('');
-    return `<row r="${r + 1}">${cells}</row>`;
-  }).join('');
-
-  const entries = [
-    zipEntry('[Content_Types].xml', Buffer.from(
-      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-      '<Default Extension="xml" ContentType="application/xml"/>' +
-      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
-      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
-      '</Types>', 'utf8')),
-    zipEntry('_rels/.rels', Buffer.from(
-      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
-      '</Relationships>', 'utf8')),
-    zipEntry('xl/workbook.xml', Buffer.from(
-      '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
-      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-      '<sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/></sheets></workbook>', 'utf8')),
-    zipEntry('xl/_rels/workbook.xml.rels', Buffer.from(
-      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
-      '</Relationships>', 'utf8')),
-    zipEntry('xl/worksheets/sheet1.xml', Buffer.from(
-      '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-      `<sheetData>${sheetRows}</sheetData></worksheet>`, 'utf8')),
-  ];
-
+/** Записи xlsx/makeLayout копятся, потом упаковываются одним проходом. */
+function packZip(entries) {
   const locals = [];
   const central = [];
   let offset = 0;
@@ -246,6 +202,55 @@ function makeXlsx(rows) {
   end.writeUInt16LE(0, 20);
 
   return Buffer.concat([...locals, centralBuf, end]);
+}
+
+/**
+ * Собирает .xlsx с одним листом. Строки таблицы превращаются в inline-строки
+ * (без sharedStrings): сервис читает оба вида ячеек, а такой файл короче.
+ *
+ * Записи пишутся вручную, включая центральный каталог: без него zip нечитаем,
+ * а Go не прощает ни одного несовпавшего поля.
+ */
+function makeXlsx(rows) {
+  const colName = (i) => String.fromCharCode(65 + i);
+  const sheetRows = rows.map((row, r) => {
+    const cells = row.map((value, c) => {
+      const ref = `${colName(c)}${r + 1}`;
+      if (value === '' || value === null || value === undefined) return '';
+      if (/^-?\d+(?:[.,]\d+)?$/.test(String(value))) {
+        return `<c r="${ref}"><v>${String(value).replace(',', '.')}</v></c>`;
+      }
+      return `<c r="${ref}" t="inlineStr"><is><t>${String(value)}</t></is></c>`;
+    }).join('');
+    return `<row r="${r + 1}">${cells}</row>`;
+  }).join('');
+
+  const entries = [
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      '</Types>', 'utf8')),
+    zipEntry('_rels/.rels', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+      '</Relationships>', 'utf8')),
+    zipEntry('xl/workbook.xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/></sheets></workbook>', 'utf8')),
+    zipEntry('xl/_rels/workbook.xml.rels', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+      '</Relationships>', 'utf8')),
+    zipEntry('xl/worksheets/sheet1.xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      `<sheetData>${sheetRows}</sheetData></worksheet>`, 'utf8')),
+  ];
+
+  return packZip(entries);
 }
 
 console.log('\n1. Здоровье и Swagger');
@@ -1587,6 +1592,84 @@ console.log('\n18. Таблица менеджера и системы в КП (
 
   await call('PUT', '/form', { token: ownerToken, body: original });
 }
+
+// 21. Макет .docx и «опишите блок словами» (2026-11-05).
+async function sectionLayout() {
+  console.log('\n21. Макет .docx и описание блока (2026-11-05)');
+  const layoutDoc =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr>` +
+    `<w:t>ТКП № [Номер]</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>Объект: [Наименование объекта]</w:t></w:r></w:p>` +
+    `</w:body></w:document>`;
+  const layout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(layoutDoc, 'utf8')),
+  ]);
+  const up = await fetch(`${BASE}/api/offers/form/layout?name=ТКП.docx`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: layout,
+  });
+  const upJson = await up.json().catch(() => undefined);
+  ok('макет загружен → 200', up.status === 200, `${up.status} ${JSON.stringify(upJson)?.slice(0, 160)}`);
+  ok('найдено поле «Номер»', (upJson?.layoutFields ?? []).includes('Номер'),
+    JSON.stringify(upJson?.layoutFields));
+  ok('найдено поле «Наименование объекта»',
+    (upJson?.layoutFields ?? []).includes('Наименование объекта'));
+
+  const formWithLayout = await call('GET', '/form', { token: ownerToken });
+  ok('форма сообщает о макете', formWithLayout.json?.hasLayout === true);
+
+  // Печать по макету: метки подставлены, вёрстка макета сохранена.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Макет', contact: 'Иван' },
+      items: [{ name: 'Мембрана', unit: 'м2', qty: 1, price: 100, sum: 100 }],
+      total: 100, status: 'draft',
+      formValues: { object_name: 'Дом по ул. Примерная' },
+    },
+  });
+  const layoutOfferId = created.json?.id;
+  const doc = await (await fetch(`${BASE}/api/offers/offers/${layoutOfferId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const layoutXML = unzipEntrySafe(Buffer.from(doc), 'word/document.xml');
+  ok('КП по макету собрано', layoutXML.includes('ТКП №'), layoutXML.slice(0, 200));
+  ok('метка [Наименование объекта] подставлена',
+    layoutXML.includes('Дом по ул. Примерная') && !layoutXML.includes('[Наименование объекта]'));
+  ok('вёрстка макета сохранена', layoutXML.includes('<w:jc w:val="center"/>'));
+
+  const del = await call('DELETE', '/form/layout', { token: ownerToken });
+  ok('макет удалён → 200', del.status === 200);
+  const formAfter = await call('GET', '/form', { token: ownerToken });
+  ok('после удаления макета нет', formAfter.json?.hasLayout !== true);
+
+  await call('DELETE', `/offers/${layoutOfferId}`, { token: ownerToken });
+
+  // «Опишите блок словами»: стенд отвечает заглушкой модели.
+  const described = await call('POST', '/form/describe', {
+    token: ownerToken,
+    body: { description: 'заголовок и список условий', placeholders: ['object_name'] },
+  });
+  ok('описание блока разобрано → 200', described.status === 200,
+    `${described.status} ${described.text?.slice(0, 160)}`);
+  ok('модель вернула узлы', Array.isArray(described.json?.nodes) && described.json.nodes.length > 0);
+
+  const empty = await call('POST', '/form/describe', {
+    token: ownerToken, body: { description: '  ' },
+  });
+  ok('пустое описание отклонено → 400', empty.status === 400);
+}
+
+await sectionLayout();
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);

@@ -15,7 +15,18 @@ export interface Placeholder {
  * - `image` — картинка с обтеканием текстом (не разрывает абзацы).
  */
 export interface RichNode {
-  type: 'paragraph' | 'heading' | 'bullet_list' | 'table' | 'page_break' | 'links' | 'prompt_text' | 'image';
+  type:
+    | 'paragraph'
+    | 'heading'
+    | 'bullet_list'
+    | 'table'
+    | 'page_break'
+    | 'links'
+    | 'prompt_text'
+    | 'image'
+    /** Таблица сравнения выбранных систем (2026-11-05): строки — показатели
+     *  из характеристик карточек, столбцы — системы. Молчит при одной системе. */
+    | 'compare_table';
   level?: 2 | 3 | 4;
   align?: 'center' | 'right' | 'justify' | 'left';
   text?: string;
@@ -30,6 +41,16 @@ export interface RichNode {
   /** Ключ картинки в хранилище Базы знаний (узел `image`). */
   imageKey?: string;
   imageName?: string;
+  /**
+   * Откуда брать картинку (2026-11-05). `system` — выбранная система КП,
+   * `material` — материал из позиций. Форма общая, поэтому в ней хранится
+   * источник, а конкретную карточку даёт само предложение.
+   */
+  imageOf?: 'system' | 'material';
+  /** Номер выбранной системы (1 — первая в порядке выбора). */
+  systemIndex?: number;
+  /** Номер позиции предложения (1 — первая). */
+  itemIndex?: number;
   /** Ширина в сантиметрах; 0 — серверное значение по умолчанию (8). */
   widthCm?: number;
   /** Сторона обтекания: текст потечёт с противоположной. */
@@ -63,6 +84,12 @@ export interface OfferForm {
   blocks: Block[];
   requiredFields: string[];
   updatedAt: string;
+  /** Загружен ли макет .docx (2026-11-05): печать идёт по нему, а не по блокам. */
+  hasLayout?: boolean;
+  layoutName?: string;
+  /** Какие метки `[…]`/`{…}` система нашла в макете. */
+  layoutFields?: string[];
+  layoutPrompts?: string[];
 }
 
 /** Карточка системы/материала/работы в каталоге. */
