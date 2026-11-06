@@ -1674,6 +1674,37 @@ kept, no leftover `[...]`/`{...}`.
 the administrator had typed into the form. Fixed - service values fill only
 empty places, the same precedence the form blocks use.
 
+### Released and deployed 2026-11-06
+
+| | value |
+|---|---|
+| plugin | **0.7.0** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `9181978` (release) - pushed |
+| `main` | `957bfbf` (plugin part copied from `backend`, whole `src`/`scripts`) - pushed |
+| plugin part identical | build sums are the same on both branches |
+| server deploy | `git archive --format=tar 9181978 offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.6.0-20261105`, `offers-bot.bak-0.6.0-20261105`; `md5sum` of eight new files matched the local blobs before the build; `docker compose build` + `up -d --force-recreate`, containers recreated 07:38 UTC, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
+| registry | `sbe-apstore-registry` `7caf6c9`; `www/registry.json` replaced (backup `registry.json.bak-20261106-0.6.0`, sha256 `6cb291a9…`); local and server copies equal (`57f99fca…`), 22 entries |
+| migration | checked on the live DB: `offers_form.layout_docx`, `layout_name` and `offers_material.photo_key` all present |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `9b3a3724d38543ec21e769d152e6cbc8225c9110653fa5d6043498373cf1d684` | 468 |
+| `main.js` | `b3262b36ab6cab3653409703a52e6c2efa4e144eeb8b59bb59d931f019c0f2d6` | 145384 |
+| `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
+
+**Live check after the deploy:** `/api/offers/health` → `{"status":"ok"}`; the
+served `/api/offers/openapi.yaml` contains `form/layout` and `form/describe`;
+`GET /form/layout` without a token answers 401.
+
+**Not done in this release: the CUP news.** `data.json` still reads
+`lastAnnouncedVersion: 0.6.0`. `announceOnce` runs in `onload`, and hot-reload
+does not watch files on Windows (`watchNeeded = !Platform.isWin`), so touching
+`main.js` does not reload the plugin. The news publishes by itself on the next
+Obsidian restart or when the plugin is toggled off/on in Settings. Do not
+"fix" this by calling the endpoint by hand: the rule is one call per version
+driven by the plugin itself.
+
 ### Traps met here
 
 1. **Go's RE2 has no lookarounds** - `(?![0-9])` in a unit-degree regex panics
