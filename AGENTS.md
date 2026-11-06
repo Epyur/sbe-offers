@@ -322,6 +322,63 @@ an empty string.
 - `docx_text_plan_test.go`, `docx_text_brief_test.go`, `docx_truncate_test.go`
   rewritten to the new decision (the budget tests pinned the old policy).
 
+### Released and deployed 2026-11-06
+
+| | value |
+|---|---|
+| plugin | **0.7.4** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `029a88f` — pushed |
+| `main` | `c4c0f01` — pushed (plugin part taken with `git checkout 029a88f -- main.js manifest.json styles.css src scripts AGENTS.md HANDOFF.md package.json`) |
+| server deploy | `git archive --format=tar 029a88f offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.3-20261106`, `offers-bot.bak-0.7.3-20261106`; `md5sum` of the three changed Go files compared BEFORE the build; containers recreated 16:26 MSK, health `ok`, bot poller started |
+| self-hosting | `sh /opt/mailers/kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
+| registry | `sbe-apstore-registry` `06e4c37`; `www/registry.json` replaced (backup `registry.json.bak-20261106-0.7.3`); **`version` is edited by hand** — the script writes sums only |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `2e4c34c04ce0d997e5b03d867ba697ef56f81cfb4eaf2f4f09a9f28d4f8a3bf8` | 468 |
+| `main.js` | `82de41ed624a24f6505b143ac7f6263bae2fde445d487298bbc79a8a935a3d6a` | 144840 |
+| `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
+
+`styles.css` unchanged in this release (no CSS edits).
+
+### Verified live on production, not on the stand
+
+1. The text cache of offer 003/2026 was cleared (`gen.section` and both
+   `gen.layout.*`), so the model was called afresh.
+2. The document was rebuilt through the live service
+   (`POST /api/offers/bot/offers/8/docx`, `X-Service-Secret`, owner's
+   `chat_id`).
+3. The document now has **307 paragraphs with text** (287 before, ten of them
+   EMPTY where the description belongs). The descriptive part carries the
+   sections «Что входит в систему», «Мембрана LOGICBASE V-SL…», «Гидрошпонки
+   делят гидроизоляцию на карты», «Инъекционная система…», «Утеплитель
+   CARBON PROF…», «Геотекстиль и дренаж…», «Монтаж в зимних условиях…»,
+   «Стоимость», «Ссылки».
+4. In the XML: `<w:tbl>` exactly **1**, `Заголовок:` **0**, `Brief says` **0**,
+   `##` **0**, `НУЖНО` **0**.
+5. `form_values` of the offer now holds `gen.layout.fc4c53b1…` at **6575**
+   characters (it held 1967 characters of draft before).
+
+**The lesson worth keeping:** the answer was in the database the whole time and
+it was correct. Three releases in a row were spent tuning the prompt while the
+defect sat downstream of it — in the post-processing and in our own token cap.
+Read the cached `form_values` before touching the prompt.
+
+### Left open after 0.7.4
+
+- **The table prompt still reaches the model.** `layoutTableFor` builds the
+  table from data, but `splitReplacedByParagraph` calls `lc.prompt` for the
+  table tag first and only then discards the answer. One wasted model call per
+  document build. The live answer to it (`Brief says: … Ugly.`) is now filtered
+  out, but the call should not happen at all.
+- **The 0.7.4 CUP news is not published yet.** `data.json` is not rewritten;
+  `announceOnce` runs on the next Obsidian start (hot-reload does not watch
+  files on Windows).
+- **The numbers in the description come from the offer positions.** The model
+  writes «5520 м²» and «20 158 633,08 руб.»; editing prices requires a
+  regeneration — the cache invalidates by itself because those facts are part of
+  `hashOfferFacts`.
+
 ## The .docx layout placeholders and model answers (2026-11-06, release 0.7.3)
 
 Version (manifest.json = package.json) = **0.7.3**.
