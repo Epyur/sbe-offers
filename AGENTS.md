@@ -270,6 +270,13 @@ that day. They overrule anything written earlier that contradicts them.
    a literal. **Never bound these with a byte count again** - the live defect
    of 2026-11-06 was a 364-character Russian prompt against a 400-**byte**
    limit, so it matched nothing and reached the customer verbatim.
+   **The model's answer is cleaned before printing and printed as paragraphs**
+   (2026-11-06, part 2): `cleanBlockText` strips Markdown (`#`, `**`, `- `),
+   drops reasoning lines and lines carrying English speech (brands and article
+   codes are not speech), and cuts a truncated tail. `layoutAsParagraphs` emits
+   one `<w:p>` per non-empty line, copying the placeholder's `<w:pPr>` and
+   `<w:rPr>` - otherwise Word shows the answer as one undifferentiated block
+   because it does not render `\n` inside `<w:t>`.
 
 Supporting files: `docx_runs.go` (text runs), `docx_card_images.go` +
 `card_images.go` (images of systems and materials, `imageOf` on the `image`
@@ -1604,6 +1611,105 @@ this cycle).
 | a block is missing from the DOCX | model down (`prompt_text` is silent by design), image key not in the store, or `showInClient` off |
 | links absent in the document | the card has no `## Ссылки` section, or `cardsForOffer` did not match the system to the composition |
 | old prompt text in a new document | `form_values["gen.section"]` hash matched; adding a system drops it, editing an item directly does not |
+## 2026-11-06 (part 2) - the model's answer reached the customer raw
+
+Version (manifest.json = package.json) = **0.7.2**. The live export of offer
+003/2026 (11:21, after the 0.7.1 deploy) showed that the prompt was now
+recognised, but its *answer* went into the document untouched. Three defects,
+all visible in one paragraph.
+
+### 1. Markdown headings printed as `##`
+
+The layout instruction says "помечай заголовки второго уровня в разметке
+ворда". The model read that as Markdown and wrote fourteen lines of
+`## Отмостка`. `fillLayoutParagraph` prints text as is, so the customer got the
+hashes. `stripMarkdownHeadings` now removes `#{1,6}`, `-`/`*`/`+` bullets and
+`**`/`__` while keeping the words, and drops a line left with nothing but
+punctuation (the live answer ended with a bare `##.`).
+
+The system prompt also gained an explicit rule: a heading is a plain line, no
+markup. The code rule is the guarantee; the prompt merely stops producing it.
+
+### 2. An English sentence survived inside Russian text
+
+`Given the risk, I'll frame group 3 as "Конструкция отмостки и примыканий."`
+reached the document. `mostlyCyrillic` counted **letters**, and the Russian in
+the quotes outnumbered the Latin in the English clause. It now counts **words**
+of English speech, recognised by an explicit list of function words (`the`,
+`and`, `for`, `with`, `from`, `given`, `risk`, `group`, …). A first attempt
+sized words instead ("shorter than five letters is a brand") and failed on the
+live line: `risk`, `frame`, `group` are ordinary English words of brand length.
+
+**Order matters inside `isLatinBrandWord`:** the function-word list is checked
+**first**. Checking "starts with a capital letter" first passed `Given` and
+`The` as brands and let the whole line through.
+
+**Order matters in `stripReasoning`:** the reasoning tail is cut **before** the
+language test. The useful half of `ПВХ мембрана — …; сварка швов… hmm, "сварка"
+is not in the brief` carries all its Latin in the tail, so testing the whole
+line dropped a perfectly good sentence.
+
+### 3. The whole answer became one paragraph
+
+Every line of the answer was written into a single `<w:t>`. Word does not
+render `\n` inside `<w:t>`, so the document showed one continuous block with no
+paragraphs, no headings, no indents — "problems with the formatting" in the
+user's words.
+
+`layoutAsParagraphs` now emits one `<w:p>` per non-empty line, copying the
+placeholder's `<w:pPr>` (justification, 1.25 cm first line, style) and its
+`<w:rPr>` (font) onto every one. The layout's formatting therefore applies to
+the whole answer, not just its first line.
+
+### Tests
+
+- `docx_layout_answer_test.go` - the live answer verbatim: no `##`, no English
+  line, no punctuation-only line, paragraphs preserved.
+- `TestLayoutPromptPrintsParagraphs` - three-line answer gives three `<w:p>`,
+  each carrying `jc=both` and `firstLine=709`.
+- `docx_layout_e2e_test.go` - `cleanBlockText` then `renderLayoutDocx` on the
+  real answer: no markup, no English, at least five paragraphs. Runs against a
+  master layout when `OFFERS_LIVE_LAYOUT` is set.
+- `layout_live_test.go` gained `TestLiveExportIsClean` (`OFFERS_LIVE_EXPORT`):
+  **red on the current export**, which is the defect, and green after the fix.
+
+### Verified
+
+`go test ./...` green (`main` 50.3 %, `model` 82.6 %, `skills` 81.9 %),
+`gofmt -l` empty, `go vet` clean; `crapper` no function at or above CRAP 10
+(`mostlyCyrillic` was 11 and was split into `countCyrillicLetters` +
+`countSpeechLatinWords`); `dryer` no new duplicate pairs.
+
+### Trap met in this change
+
+Writing `manifest.json`/`package.json` with a **bare relative path** after a
+`cd` that the shell tool does not honour (`workdir` is the parameter, `cd`
+inside the command does not persist) created two empty files at the plugins
+root and left the real ones untouched. `npm run build` then failed with
+`../package.json: Unexpected end of file in JSON`, because esbuild walks up
+from the entry point and found the empty file. The two files did not exist
+before (both were *created* at the moment of the mistake), so deleting them
+restored the tree. **Use absolute paths for every file write**, and after a
+bulk edit check `git status` before building.
+
+### Released and deployed 2026-11-06
+
+| | value |
+|---|---|
+| plugin | **0.7.2** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `86130a4` — pushed |
+| `main` | `0e68b9e` — pushed |
+| plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
+| server deploy | `git archive --format=tar 86130a4 offers-service offers-bot` -> `scp` -> `tar xf`; backups `offers-service.bak-0.7.1-20261106`, `offers-bot.bak-0.7.1-20261106`; `md5sum` of the three changed Go files matched before the build; containers recreated 2026-11-06 12:22 MSK, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
+| registry | `sbe-apstore-registry` `8c56195`; `www/registry.json` replaced separately (backup `registry.json.bak-20261106-0.7.1`, sha256 `6e186098…`); **`version` set by hand** - the script writes sums only |
+| sums | `manifest 6d032c19…` 468 B, `main 21301b26…` 145047 B, `styles 50358b4a…` 34072 B (CSS unchanged since 0.7.0) |
+
+**Not done on purpose: the CUP news.** `data.json` still reads
+`lastAnnouncedVersion: 0.7.1`. `announceOnce` runs in `onload`, and hot-reload
+does not watch files on Windows, so it publishes on the next Obsidian restart
+or when the plugin is toggled off/on in Settings.
+
 ## 2026-11-06 - long model prompts in the .docx layout were silently lost
 
 Version (manifest.json = package.json) = **0.7.1**. The user's own layout for
@@ -1686,8 +1792,8 @@ interpolated is interpolated rather than typed twice.
 | | value |
 |---|---|
 | plugin | **0.7.1** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `1dbc10f` — pushed |
-| `main` | `bdfb65c` — pushed |
+| `backend` | `1dbc10f` (release) + `cea457e` (docs) — pushed |
+| `main` | `bdfb65c` (plugin part) + `0294a18` (docs) — pushed |
 | plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
 | server deploy | `git archive --format=tar 1dbc10f offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.0-20261106`, `offers-bot.bak-0.7.0-20261106`; `md5sum` of the three changed Go files matched the local ones before the build; `docker compose build` + `up -d --force-recreate`, containers recreated 2026-11-06 11:08 MSK, health `ok`, `registerApp: offers registered`, bot poller started |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
