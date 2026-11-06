@@ -227,6 +227,149 @@ docker restart offers-local-app
 - Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
   the root `AGENTS.md`.
 
+## The layout print ran on its own path (2026-11-06, release 0.7.5)
+
+Version (manifest.json = package.json) = **0.7.5**.
+
+The user's report on the exported `Коммерческое предложение 003-2026 (2).docx`:
+the text did not read as one technical-sales piece, images were not placed in
+the text, the text was choppy, the skill did not seem applied, there were no
+superscripts for square metres, the links were not clickable, one link was
+missing entirely, and "the model's answer does not follow the prompt".
+
+**The skill was applied.** `skills.RenderBlockSystem` (salesDoc + copyDoc +
+noInventDoc) reaches the model on this path too. What was missing is that the
+layout branch of the print bypassed **everything else** the block path does.
+`renderLayoutDocx` only substituted text: it never ran `plainText`/`runsXML`,
+never made hyperlinks, never turned a model heading into a Word heading, and had
+no way to insert a picture at all. Every complaint traced back to that one
+structural fact, not to the prompt.
+
+### 1. Links were structurally impossible on the layout path
+
+`docx_layout.go` contained **zero** occurrences of `hyperlink` or
+`relsXMLWithLinks`; `applyHyperlinks` lived only in `renderOfferDocxFull`. With a
+`.docx` master loaded, no model answer — however good — could produce a clickable
+link. `linkLayoutDocument` now walks the assembled body, turns every URL in a
+paragraph into `<w:hyperlink r:id=…>`, and appends the relationships **to the
+master's own rels** (replacing that file wholesale is the same mistake that lost
+the footers with `styles.xml` in 2026-10-29). The URL rule is shared:
+`skills.FindURLs`, so card parsing and printing agree on what an address is.
+
+**The missing link was a separate defect.** The model wrote it, and the cleaning
+dropped it twice over:
+- `hasReasoningLine` fired because the line is nearly all Latin, and
+  `cleanDraftLine` keeps only `mostlyCyrillic` lines — a pure URL line was
+  classified as English reasoning;
+- `trimTruncatedTail` cut the answer at the last sentence end, treating the dots
+  in `nav.tn.ru` as the end of the text: `«Технический лист: https://nav.tn.ru/…pdf»`
+  became `«Технический лист.»`.
+
+Both rules now say the same thing in one place: **a line carrying an address is
+content, not reasoning, and a line ending in an address is finished, not
+truncated** (`hasLayoutURL`, `paragraphIsFinished`).
+
+### 2. One text pipeline, finally
+
+`layoutAsParagraphs` and `rebuildParagraphText` wrote `<w:t>` through
+`escapeXML`, bypassing `plainText` + `runsXML`. That is why the body printed
+`4800 м2` while the table printed `м²` — the superscripts existed only because
+the table is built by `tableXML` on the block path. Both functions now go
+through the shared pipeline: superscripts, wiki links, glued-word repair, bold
+stripping. Rule 2026-11-05 ("one text pipeline") held for the block path only
+until now.
+
+### 3. Headings and lists have a kind
+
+The model could not be asked for structure, and the print could not produce it.
+`layoutLines`/`layoutLineOf` now decide the kind of every line in one place:
+`## Заголовок` → the brand's `heading 1`, `- пункт` → the brand's bullet list,
+`1. пункт` → the brand's numbered list. `[7]`/`[8]` stay bibliographic
+references: the numbered-list rule demands a dot or bracket **after the digit**,
+so a source reference cannot become a list item.
+
+The prompt changed with it: the old "no markup" instruction (added in 0.7.2 to
+stop `##` reaching the customer) was treating the symptom and forbidding the
+admin's main tool. `RenderBlockSystem` now asks for `## `, `- ` and `1. `, and
+the print understands all three.
+
+### 4. Pictures in the layout
+
+`layoutContext` gained `images` and a per-build `layoutRuntime` (the context is
+passed by value, so the media collector has to be a pointer — otherwise the
+picture is registered in a copy and lost). The marker is
+`{картинка}`, `{картинка: система 2}`, `{картинка: материал}`, or
+`{картинка: материал 2}`. **The value decides, not the brace count** (rule
+2026-11-06); `parseLayoutImageSpec` rejects negatives («картинки нет», «не
+вставляй изображение») because the model's instruction text contains such
+phrases and substituting a picture there is the opposite of what was written.
+Alone in a paragraph the marker becomes the picture; inside text the picture
+follows the paragraph and the text survives.
+
+### Tests
+
+| file | what it pins |
+|---|---|
+| `docx_layout_links_test.go` | every URL becomes a link, external rel, master rels kept, one rel per URL, no link without an URL |
+| `docx_layout_runs_test.go` | superscripts in the body and in field values, `V-SL 2 мм` untouched, wiki links, glued words, bold |
+| `docx_layout_structure_test.go` | heading/bullet/numbered kinds, `[7]` stays a reference, plain start is not a heading, empty markers dropped |
+| `docx_layout_image_test.go` | marker prints a picture, silent without one, never sent to the model, text around it kept |
+| `docx_layout_image_material_test.go` | picture from a position's `PhotoKey`, by number, silent without a key; the phrase table |
+| `docx_layout_live_test.go` | the REAL master + REAL answer + REAL PNG (`OFFERS_LIVE_*`) |
+| `docx_text_links_test.go` | link lines survive cleaning and truncation; reasoning with a URL is still dropped |
+
+### The stand found what the unit tests could not
+
+Section 22 of `offers_local_e2e.mjs` prints through the layout over HTTP. It
+caught **two** defects that every unit test had passed:
+
+1. **The LLM stub answered the wrong prompt.** Its matcher tested
+   «БЛОК КОММЕРЧЕСКОГО ПРЕДЛОЖЕНИЯ», and the describe prompt carries those same
+   words — so the layout print received form nodes instead of text, and the
+   block was empty. Every unit test passed because the tests inject the answer
+   directly. The specific marker now comes first.
+2. **The KB stub had no pictures at all.** `attachments: []` on every card means
+   "a picture is impossible", which is not the live state (card 5874 carries a
+   289797-byte PNG). One stub card now has `withImage`, and `/files/…` serves
+   bytes **before** the token gate — a presigned S3 link is fetched without our
+   bearer, exactly as on production.
+
+Rules that came out of this:
+
+- **A path that prints the same artefact must share the pipeline, or it will
+  rot.** The layout branch was written later and did a quarter of what the block
+  branch did; nobody saw it because both produce a `.docx`.
+- **An exit check that injects its own input cannot see a wrong answer.** The
+  stub matcher defect is invisible to any test that passes `prompt: func() string`.
+- **A stub that cannot express the live data shape proves nothing.** The second
+  time in this plugin (first: `system_sku`, 2026-11-02).
+
+### Verified
+
+`go test ./...` green (main 54.6 %, model 82.6 %, skills 79.3 %), `gofmt -l`
+empty, `go vet` clean; `crapper`: every touched function under CRAP 10
+(`trimTruncatedTail` was 10.3 after the change and was split into
+`paragraphIsFinished` + `dropUnfinishedParagraph` + `lastNonEmptyLine`);
+`dryer`: no new duplicate pairs (the `escapeXML`/`unescapeXML` pair is a known
+false positive — they are inverses). Plugin `tsc --noEmit` EXIT=0, `npm run
+build` OK, `check_bundle_strings.mjs` 0 missing, `check_offers_openapi.mjs`
+67 operations / 50 paths, schema matches; stand **275/275** (section 22 grew
+from 0 to 13 checks).
+
+**Live run on the real master and the real cached answer**: hyperlinks 1 (the
+TOC anchor) → **7**; external relationships 0 → **6**; superscripts 12
+(table only) → **30** (table + body); pictures 0 → **1** plus the brand's three
+untouched; `[[`, `**`, `##` = 0 in both.
+
+### Released and deployed 2026-11-06
+
+| | value |
+|---|---|
+| plugin | **0.7.5** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `-` (see the release block below) |
+| `main` | `-` |
+| local build | `manifest.json` `4ef8c1f8…` 468 B, `main.js` `12612a8d…` 145698 B, `styles.css` `50358b4a…` 34072 B (CSS unchanged since 0.7.0) |
+
 ## The descriptive part vanished (2026-11-06, release 0.7.4)
 
 Version (manifest.json = package.json) = **0.7.4**.
