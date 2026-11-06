@@ -30,6 +30,158 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Steps A and B shipped (2026-11-06, release 0.7.6)
+
+Version (manifest.json = package.json) = **0.7.6**. The first two steps of the
+"generation without the model" plan are in; C, D and E are still open.
+
+**The complaint that started it:** the administrator edited the prompt
+structure of the master and the system "went to think and never came back" -
+no error, no message, silence in the bot. Measured cause: the model was called
+at EVERY document build, the model is allowed 180 s per attempt with 3
+attempts, and the HTTP server cut the response at 90 s while the bot cut it at
+60 s. **A long answer could not reach the user at all.**
+
+### Step A - honest timeouts and a visible generation log
+
+- **WriteTimeout 90 s removed** (main.go). One server-wide number was the
+  whole reason the bot stayed silent. Each long route now has its own limit in
+  writeTimeoutFor (gentrace.go): document build 600 s, system choice and
+  recalculation 420 s, everything else 60 s. enderOffer derives its own
+  context from withWorkTimeout, so cancellation reaches the model client.
+- **Generation log** (gentrace.go): one line per model call
+  (gen: block:cover key=... instr=25 6ms ok) and one summary per document
+  build (gen: build offer=307/2026 cached=0 generated=1 failed=0 19ms).
+  The prompt text and the answer are NOT logged - they carry customer data.
+  generateBlockTexts grew a ailed return so the summary can say how many
+  blocks the model did not write; layoutPromptCache.report does the same for
+  layout prompts.
+- **Bot** (pi.ts): LONG_TIMEOUT_MS 300 s for docx and ddSystem, an
+  explicit message before the system choice, and an AbortError translated
+  into "сервер не ответил за N секунд" instead of the transport text.
+- **Plugin** (offers.service.ts): withTimeout wraps exportDocx,
+  ddSystem and ecalculateSystemTexts at 300 s with a readable message -
+  equestUrl has no limit of its own and waited forever.
+
+### Step B - system texts are written once, at selection
+
+- **New table offers_system_text(note_id, block, text, hash, updated_at)**
+  (main.go migration). The key is the Knowledge Base NOTE, not the offer: the
+  same system chosen in ten offers gets the same text, and no model call is
+  spent again.
+- **Two blocks, not three:** description and dvantages. composition is
+  deliberately not generated - the card already carries the list, and a model
+  summary would be a second truth beside it (user decision).
+- **generateSystemTexts** (systemtext.go) writes only what is stale, reuses
+  skills.RenderBlockSystem and cleanBlockText (one text pipeline - rule
+  2026-11-05), and never fails the choice: a model failure leaves the text
+  empty and the block's name in missing.
+- **ssembleSystem** persists the choice FIRST, then generates. Re-adding an
+  already chosen system returns the stored texts and calls no model at all.
+- **Routes:** GET /api/offers/offers/{id}/system-texts (stored texts with a
+  stale flag) and POST /api/offers/offers/{id}/system/{noteId}/recalculate
+  (the «Пересчитать тексты системы» button).
+- **Plugin:** progress Notes on both long calls, the written texts shown under
+  the chosen systems, and a «↻ Пересчитать» button per system. **Bot:** says
+  "Пишу описание и преимущества — это может занять до минуты", then reports
+  which blocks were written.
+- **Wasted table model call removed** (splitReplacedByParagraph): the table
+  is now checked BEFORE lc.prompt, so a table marker makes zero model calls.
+
+### The effect, measurable in the log
+
+Before: every export called the model once per {…} marker plus a wasted call
+for each table. After: an export calls the model **zero** times - the stand
+proves it ("сборка документа не переписала тексты системы"). The model runs
+once per system choice.
+
+### Verified
+
+go test ./... green, gofmt -l empty, go vet clean; bot 	sc --noEmit
+clean and **90 tests**; plugin 	sc --noEmit EXIT=0, 
+pm run build,
+check_bundle_strings.mjs 0 missing, check_offers_openapi.mjs **69 operations
+/ 52 paths, schema matches**; stand **291/291** (section 23 is new, 16 checks).
+The stand found one real defect: recalculating an unknown note answered 200
+because IsEmpty and "no such card" were the same condition - both now answer
+404, and they are told apart by NoteID == 0.
+
+crapper: the new pure functions are under CRAP 10 (writeSystemTextWith 5.3,
+systemCardHash 3.0, writeTimeoutFor 3.0). **generateSystemTexts and
+ssembleSystem are still high (72.0)** - both are DB-bound (pgxpool + model
+call), the same class of debt as handleDraftText, measured only by the stand.
+dryer: no new duplicates (the four pre-existing pairs remain, including the
+orm_values/system_choice persist pair, which are different columns).
+
+**Still open (steps C, D, E of the plan):** the data markers {{block:N}},
+{{система}}, {{ссылки: система}}, {{характеристики: система}},
+{{текст: система: …}}; block epeat/source attributes; the layout markup
+guide. Until C lands, the document still prints the card through the existing
+block path - the texts are stored but the layout markers cannot read them yet.
+## Next stage: generation without the model (steps A+B shipped in 0.7.6; C, D, E open)
+
+**Full plan:** [`docs/superpowers/plans/2026-11-06-sbe-offers-generation-without-model-plan.md`](../../../docs/superpowers/plans/2026-11-06-sbe-offers-generation-without-model-plan.md).
+**Steps A and B are shipped (see the section above). Steps C, D and E are not started.** The decisions below are final and are
+already reflected in the plan.
+
+**Why.** The user edited the prompt structure of the layout master
+(`C:\Obsidian\mailers\temple.docx`) and the system "went to think and never came
+back" - no error, no message. Measured: the model is allowed 180 s per attempt
+with 3 attempts, the HTTP server cuts at `WriteTimeout` 90 s (`main.go:203`),
+the bot cuts at 60 s (`offers-bot/src/api.ts:5`), the plugin waits forever
+(`src/services/offers.service.ts:117`). A long answer therefore **cannot reach
+the user at all**, and editing the master resets the cache (key = instruction
+hash), so the model is called afresh and the request dies. The defect is not
+model speed; it is calling the model for data that already exists.
+
+**Decisions (all confirmed by the user 2026-11-06):**
+
+1. **Images come from the Knowledge Base card, without the model.** Even
+   finding the note needs no model - the chosen system identifies the card.
+2. **System texts are generated once, when the system is chosen**, after the
+   object context (name, pains, goals, decision makers) is collected, and stored
+   **per block**; the DOCX build only inserts them.
+3. **Hyperlinks are built without the model** - from the card's `## Ссылки`
+   section (`skills.ParseCardRefs`, already in use).
+4. **Rule: wherever the model can be avoided, avoid it.** The layout markup
+   guide must describe this in detail.
+5. **Form blocks get attributes so whole blocks can be inserted into the
+   layout:** `{{block:1}}`, `{{block:2}}`, ... Block id, not position. This
+   also answers the recursion question.
+6. Storage: a **separate table**
+   `offers_system_text(note_id, block, text, hash, updated_at)`.
+7. **Two generated blocks, not three:** `description` and `advantages`.
+   **`composition` is NOT generated** - the card already carries the list, and
+   a model summary would be a second truth next to it. The administrator does
+   not edit these blocks.
+8. **The image and the composition print as ONE borderless table** - marker
+   `{{система}}`: an image cell and a composition cell inside one `<w:tbl>`
+   with `<w:tblBorders none>`. Keeps them from being split by a page break and
+   replaces three hand-placed markers with one.
+9. **A changed card is recalculated by the button «Пересчитать тексты
+   системы»**, not automatically.
+10. **Marker syntax:** `{{block:1}}`.
+11. **Recursion:** `{{block:1}}` without an attribute prints once;
+   `{{block:1}}` for a block with `repeat: "systems"` prints once per chosen
+    system.
+
+**Effect:** export 180-550 s -> under 1 s; model calls go from "N per every
+download" to "N per system choice, once"; model calls per system 3 -> 2;
+layout markers per system 3 -> 1.
+
+**Steps:** A (honest timeouts + generation log) and B (system texts at
+selection) = release 0.7.6; C (data markers), D (block attributes and repeat),
+E (layout markup guide) = the release after. Any data write must move
+`updated_at`; a model failure must never fail the system choice.
+
+**Still open (minor, decide before step D):** where the generation progress is
+shown for a system choice; the material repeat limit (proposed 10); whether
+`{{система}}` takes a picture width (`{{система: 6}}`) or keeps
+`layoutCardImageWidthCm` = 10.
+
+**Not in the plan:** `<picture:system>` inside a prompt; async job + polling
+for export; human approval of model texts.
+
 ## Purpose (current)
 
 The catalogue split into two entities on 2026-10-31 and the sections were
@@ -145,7 +297,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 the user's `.docx` master), `layout_tokens.go` (`[…]` / `{…}` scanner and the
 human field names), `form_layout.go` (layout upload/read/delete),
 `form_describe.go` ("describe a block in words"),
-`s3.go`, `email.go`, `static.go`, `template.go`, `static/openapi.yaml`.
+`s3.go`, `email.go`, `static.go`, `template.go`, `static/openapi.yaml`, `gentrace.go` (honest per-route timeouts + the generation log), `systemtext.go` (system texts: `offers_system_text`, `generateSystemTexts`, recalculation).
 Sub-packages: `model/` (domain types, plus `jsonrepair.go` - tolerant JSON
 extraction shared with `skills`), `skills/` (prompts, checklists, card and
 attachment parsing, `cardrefs.go` = `## Ссылки` parser, `filecontext*.go` =

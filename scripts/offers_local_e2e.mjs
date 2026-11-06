@@ -1753,7 +1753,95 @@ async function sectionLayoutText() {
   ok('макет и КП убраны', true);
 }
 
+/**
+ * 23. Тексты системы пишутся при выборе и НЕ пишутся при сборке (2026-11-06).
+ *
+ * Шаг B плана «генерация без модели». Повод — живая жалоба: администратор
+ * поменял структуру промтов в макете, и система «ушла думать и не вернулась».
+ * Причина была в том, что модель звали при КАЖДОЙ сборке документа, а ждать
+ * её не мог никто: бот 60 с, сервер 90 с, модель 180 с на попытку.
+ *
+ * Проверяем наблюдаемое поведение: тексты находятся после выбора системы,
+ * повторный выбор не дублирует их, экспорт документа с уже выбранной системой
+ * не возвращает новых текстов, а кнопка пересчёта переписывает оба блока.
+ */
+async function sectionSystemTexts() {
+  console.log('\n23. Тексты системы: пишутся при выборе, не при сборке (2026-11-06)');
+
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Тексты', contact: 'Анна' },
+      items: [{ name: 'Мембрана', unit: 'м2', qty: 100, price: 50, sum: 5000 }],
+      total: 5000,
+      status: 'draft',
+      formValues: { object_name: 'Объект текстов' },
+    },
+  });
+  const offerId = created.json?.id;
+  ok('КП для проверки текстов создано', offerId > 0, `${created.status} ${created.text?.slice(0, 120)}`);
+
+  // Выбор системы: тексты должны прийти сразу в ответе, и их должно быть два.
+  const added = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken, body: { noteId: 100 },
+  });
+  ok('система выбрана → 200', added.status === 200, `${added.status} ${added.text?.slice(0, 160)}`);
+  const texts = added.json?.texts ?? {};
+  ok('обоснование применения написано', (texts.description ?? '').trim().length > 20,
+    JSON.stringify(Object.keys(texts)));
+  ok('преимущества написаны', (texts.advantages ?? '').trim().length > 20,
+    JSON.stringify(Object.keys(texts)));
+  ok('состав НЕ генерируется (два блока, не три)',
+    !Object.prototype.hasOwnProperty.call(texts, 'composition'),
+    JSON.stringify(Object.keys(texts)));
+
+  // Сохранённые тексты читаются отдельной ручкой и связаны с заметкой.
+  const stored = await call('GET', `/offers/${offerId}/system-texts`, { token: ownerToken });
+  ok('тексты читаются из хранилища → 200', stored.status === 200, `получили ${stored.status}`);
+  const storedTexts = stored.json?.texts ?? [];
+  ok('оба блока сохранены у заметки',
+    storedTexts.filter((t) => t.noteId === 100 && (t.text ?? '').trim() !== '').length === 2,
+    JSON.stringify(storedTexts));
+  ok('сохранённый текст не помечен устаревшим',
+    storedTexts.every((t) => t.stale === false), JSON.stringify(storedTexts.map((t) => t.stale)));
+
+  // Повторный выбор той же системы не дублирует её и не трогает тексты:
+  // модель на это нажатие не вызывается вовсе (тексты уже написаны).
+  const again = await call('POST', `/offers/${offerId}/system`, {
+    token: ownerToken, body: { noteId: 100 },
+  });
+  ok('повторный выбор → 200', again.status === 200, `получили ${again.status}`);
+  ok('повторный выбор отдал тот же текст',
+    (again.json?.texts?.description ?? '') === (texts.description ?? ''),
+    'текст переписан без просьбы');
+  ok('система в КП по-прежнему одна', (again.json?.offer?.systems ?? []).length === 1,
+    JSON.stringify(again.json?.offer?.systems));
+
+  // Экспорт документа не должен менять тексты системы: модели там больше нет.
+  await call('POST', `/offers/${offerId}/export`, { token: ownerToken });
+  const afterExport = await call('GET', `/offers/${offerId}/system-texts`, { token: ownerToken });
+  ok('сборка документа не переписала тексты системы',
+    JSON.stringify(afterExport.json?.texts ?? []) === JSON.stringify(storedTexts),
+    'тексты изменились при экспорте');
+
+  // Кнопка «Пересчитать» переписывает оба блока.
+  const recalc = await call('POST', `/offers/${offerId}/system/100/recalculate`, { token: ownerToken });
+  ok('пересчёт текстов → 200', recalc.status === 200, `${recalc.status} ${recalc.text?.slice(0, 160)}`);
+  ok('пересчёт вернул оба блока',
+    (recalc.json?.texts?.description ?? '').trim() !== '' &&
+      (recalc.json?.texts?.advantages ?? '').trim() !== '',
+    JSON.stringify(recalc.json?.texts));
+
+  // Неизвестная заметка — честный отказ, а не пустой ответ.
+  const badNote = await call('POST', `/offers/${offerId}/system/999999/recalculate`, { token: ownerToken });
+  ok('пересчёт неизвестной системы → 404', badNote.status === 404, `получили ${badNote.status}`);
+
+  await call('DELETE', `/offers/${offerId}`, { token: ownerToken });
+  ok('КП убрано', true);
+}
+
 await sectionLayout();
+await sectionSystemTexts();
 
 console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
 process.exit(failed === 0 ? 0 : 1);
