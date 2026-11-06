@@ -262,6 +262,14 @@ that day. They overrule anything written earlier that contradicts them.
    values and `{промт}` for model text; they are recognised inside a paragraph
    even when Word split the text across several `<w:t>`, because it always
    does. Labels in headers/footers are deliberately not replaced.
+   **The prompt may be written with one, two or three braces** and may contain
+   braces of its own (`{{модуль {параметр}}}`). The selector is the *value*,
+   not the brace count: a doubled brace is a field only if the name is known
+   (`isLayoutFieldName`), otherwise it is a prompt. Length limits are in runes
+   (prompt 3000, field 200) and a too-long prompt is truncated, never left as
+   a literal. **Never bound these with a byte count again** - the live defect
+   of 2026-11-06 was a 364-character Russian prompt against a 400-**byte**
+   limit, so it matched nothing and reached the customer verbatim.
 
 Supporting files: `docx_runs.go` (text runs), `docx_card_images.go` +
 `card_images.go` (images of systems and materials, `imageOf` on the `image`
@@ -1596,6 +1604,83 @@ this cycle).
 | a block is missing from the DOCX | model down (`prompt_text` is silent by design), image key not in the store, or `showInClient` off |
 | links absent in the document | the card has no `## Ссылки` section, or `cardsForOffer` did not match the system to the composition |
 | old prompt text in a new document | `form_values["gen.section"]` hash matched; adding a system drops it, editing an item directly does not |
+## 2026-11-06 - long model prompts in the .docx layout were silently lost
+
+Version (manifest.json = package.json) = **0.7.1**. The user's own layout for
+offer 003/2026 carried the descriptive block as a 364-character instruction
+inside **double** braces. Nothing was replaced: the instruction text went to
+the customer verbatim, braces included.
+
+### Root cause, measured on the live file
+
+`layout_tokens.go` recognised exactly two shapes:
+
+- `{…}` — a prompt, but with a limit of **400 bytes** in the regex;
+- `{{…}}` — only ever a form field name, on the assumption that a doubled
+  brace could only mean `{{object_name}}`.
+
+The live instruction is 364 *characters* = **823 bytes** of Russian, and it is
+not a field name. So it matched neither rule, and `scanLayoutTokens` returned
+no token at all — `fillLayoutParagraph` found nothing to replace and printed
+the paragraph as it stood. The limit was a unit mistake, not a threshold to
+raise slightly: the regex counts bytes, the person counts letters.
+
+### What changed
+
+- `reLayoutPrompt` now accepts **one to three braces**, in any mix, and does
+  not forbid braces inside the instruction (`{{модуль {параметр}}}` parses as
+  one prompt). Go's RE2 has no backreferences, so the pattern allows an
+  arbitrary nesting depth up to three braces at each edge and `promptInner`
+  strips whatever braces ended up adjacent to the edges.
+- **The value decides, not the brace count.** `reLayoutBraceField` still runs
+  first, but a doubled-brace match is accepted as a field only when
+  `isLayoutFieldName` finds it in the form values, in `fieldAliases` or in
+  `builtinFieldAliases`. Everything else falls through to the prompt pass.
+  With `values == nil` (the admin's "what did the system see" view) every
+  doubled brace counts as a field, as before.
+- **Limits are in runes and generous**: `layoutFieldMaxRunes` 200,
+  `layoutPromptMaxRunes` 3000. A prompt over the limit is truncated, not
+  dropped — leaving a literal in the document is worse than a long instruction
+  that lost its tail. The field limit is fed into the regex through
+  `fmt.Sprintf` so the two cannot drift.
+- `layoutPlainText` (`form.go`) now joins paragraphs **with no separator**. It
+  used to insert `\n` between `<w:t>` groups, which broke any prompt spanning
+  two paragraphs and made the admin view disagree with what gets printed.
+
+Plugin: the layout card names all three accepted forms and states that the
+prompt list below is "how this pass understood the document".
+
+### Tests
+
+- `layout_tokens_test.go` rewritten for the new contract: doubled-brace prompt
+  (the live case, full text compared), tripled braces, nested braces, runes
+  vs bytes (800-character prompt), doubled-brace field by id and by Russian
+  alias, field limit boundary.
+- `layout_user_docx_test.go` reproduces the live paragraph exactly, including
+  Word splitting it into five runs around two `{` and two `}` — the shape that
+  made the old code fail — and asserts the model receives the full instruction
+  and the document contains neither the instruction text nor a stray brace.
+  `TestLiveLayoutRendersPrompt` runs the same check against the real file when
+  `OFFERS_LIVE_LAYOUT` points at it (verification only; the customer document
+  is never committed).
+
+### Verified
+
+`go test ./...` green (`main` 49.5 %, `model` 82.6 %, `skills` 82.3 %),
+`gofmt -l` empty, `go vet` clean; live layout test passes on
+`Коммерческое предложение 003-2026.docx` (439 runes of instruction, model text
+printed, no literal left); plugin `tsc --noEmit` EXIT=0, `npm run build`,
+`check_bundle_strings.mjs` 0 missing; `crapper` every new function under CRAP 10
+(`scanLayoutTokens` 5.0, `isLayoutFieldName` 6.0, `promptInner` 3.0,
+`clampRunes` 3.3); `dryer` no new duplicate pairs.
+
+### Trap met in this change
+
+The first regex draft used `{1,3000}` and **panicked at `MustCompile`** — Go
+does not accept a repeat count above 1000. The length limit therefore lives in
+code (`clampRunes`), not in the pattern, and the field limit that *can* be
+interpolated is interpolated rather than typed twice.
+
 ## STATE 2026-11-05 (part 3) - the document became readable; the form became visual
 
 Version (manifest.json = package.json) = **0.7.0**, **not committed and not

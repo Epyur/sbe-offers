@@ -258,7 +258,7 @@ func describeLayout(layout []byte) (fields, prompts []string) {
 	doc := string(files["word/document.xml"])
 	seenField := map[string]bool{}
 	seenPrompt := map[string]bool{}
-	for _, token := range scanLayoutTokens(layoutPlainText(doc)) {
+	for _, token := range scanLayoutTokens(layoutPlainText(doc), nil) {
 		if token.Kind == layoutTokenPrompt {
 			if !seenPrompt[token.Inner] {
 				seenPrompt[token.Inner] = true
@@ -277,11 +277,15 @@ func describeLayout(layout []byte) (fields, prompts []string) {
 // layoutPlainText — весь текст документа одной строкой: метки в макете
 // считаются по нему, а не по отдельным абзацам, чтобы «что система увидела»
 // совпадало с тем, что она будет подставлять.
+//
+// Абзацы склеиваются ВПЛОТНУЮ (`""`, а не `"\n"`): маркер конца строки —
+// служебный символ, а не текст документа, и перенос, вставленный между
+// абзацами, разорвал бы промт, набранный в двух соседних абзацах. Поля
+// макета абзац не пересекают — это и ограничивает склейку безвредной.
 func layoutPlainText(docXML string) string {
 	var sb strings.Builder
 	for _, m := range reWordText.FindAllStringSubmatch(docXML, -1) {
 		sb.WriteString(unescapeXML(m[1]))
-		sb.WriteString("\n")
 	}
 	return sb.String()
 }

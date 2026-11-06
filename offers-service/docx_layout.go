@@ -89,7 +89,7 @@ func fillLayoutParagraph(paragraph string, lc layoutContext) string {
 		joined.WriteString(unescapeXML(m[1]))
 	}
 	plain := joined.String()
-	tokens := scanLayoutTokens(plain)
+	tokens := scanLayoutTokens(plain, lc.values)
 	if len(tokens) == 0 {
 		return paragraph
 	}
