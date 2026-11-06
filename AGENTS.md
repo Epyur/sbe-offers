@@ -231,6 +231,8 @@ docker restart offers-local-app
 
 Version (manifest.json = package.json) = **0.7.3**.
 
+Release branches: `backend` `8dbb0bd` (release) + `1c10d7d` (fix), `main` `f981e24` (plugin part); both pushed, build sums identical on both branches.
+
 
 
 Six live defects of offer 003/2026, found by running the REAL service prompt

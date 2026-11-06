@@ -317,11 +317,11 @@ styles.css     13a62f1820d50c6683d184a94e6c0c057d1ce626016924ec97716be1917a03fe 
 
 | | значение |
 |---|---|
-| `backend` | `__BACKEND__` — запушен |
-| `main` | `__MAIN__` — плагинная часть (весь `src`/`scripts` + сборка), запушена |
-| сервер | `__SERVER__` |
-| самораздача | `__SELFHOST__` |
-| реестр | `__REGISTRY__` |
+| `backend` | `8dbb0bd` (релиз) + `1c10d7d` (правка) — запушен |
+| `main` | `f981e24` — плагинная часть (`src`, `scripts`, сборка); запушена; суммы `manifest`/`main.js`/`styles.css` совпадают с `backend` побайтово |
+| сервер | контейнеры пересозданы 2026-11-06 15:20 MSK (`--force-recreate`, `CREATED` сдвинулся), health `ok`, `registerApp: offers registered`, поллер бота запущен; копии `offers-service.bak-0.7.2-20261106b`, `offers-bot.bak-0.7.2-20261106b`; `md5sum` шести исходников на сервере = локальным ДО сборки |
+| самораздача | выложена 2026-11-06 12:21Z; три суммы сверены по https (`-OutFile` + `sha256sum` по файлу) и с `/registry.json`; версия на https `0.7.3` |
+| реестр | `sbe-apstore-registry` `5d44347`; серверный `www/registry.json` заменён (копия прежнего `registry.json.bak-20261106-0.7.2`); версия в реестре поправлена ВРУЧНУЮ — `kb-selfhost.sh` пишет только суммы |
 | сборка | `manifest.json` `06f3e68f6c52aa1255047e9ca83978c55bd014858ba6318328ac5043ab27e987` 468 Б; `main.js` `c298fd360d4fc566ecbd45bdccae5151f990c99ca5f05556807c2b36ff86ce9d` 145500 Б; `styles.css` `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` 34072 Б |
 | **не сделано** | новость ЦУП 0.7.3 публикуется сама при перезагрузке Obsidian или выключении/включении плагина (`announceOnce` в `onload`, hot-reload на Windows файлы не следит) |
 
