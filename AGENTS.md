@@ -1686,8 +1686,8 @@ interpolated is interpolated rather than typed twice.
 | | value |
 |---|---|
 | plugin | **0.7.1** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `1dbc10f` — pushed |
-| `main` | `bdfb65c` — pushed |
+| `backend` | `1dbc10f` (release) + `cea457e` (docs) — pushed |
+| `main` | `bdfb65c` (plugin part) + `0294a18` (docs) — pushed |
 | plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
 | server deploy | `git archive --format=tar 1dbc10f offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.0-20261106`, `offers-bot.bak-0.7.0-20261106`; `md5sum` of the three changed Go files matched the local ones before the build; `docker compose build` + `up -d --force-recreate`, containers recreated 2026-11-06 11:08 MSK, health `ok`, `registerApp: offers registered`, bot poller started |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
