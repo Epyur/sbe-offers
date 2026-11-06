@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"mailers/offers/skills"
 )
@@ -42,6 +43,13 @@ type layoutContext struct {
 	values map[string]string
 	// prompt — текст модели для промта макета. nil — модели нет, блок молчит.
 	prompt func(instruction string) string
+	// items / cards — данные для меток-ТАБЛИЦ (2026-11-06). Модель таблицу не
+	// пишет: на просьбе о таблице она рассуждает о группировке, и таблицей это
+	// не становится. Строки собираются из того, что уже есть у предложения:
+	// позиции для «предложения по материалам», характеристики карточек для
+	// «сравнения вариантов».
+	items func() [][]string
+	cards func() []SystemCard
 }
 
 // renderLayoutDocx собирает КП по макету.
@@ -62,64 +70,557 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	return zipFiles(files, names)
 }
 
-// fillLayoutDocument подставляет метки во все абзацы документа.
+// fillLayoutDocument подставляет метки в тело документа.
 //
 // Метки вне абзацев (колонтитулы, сноски) не трогаются: макет — образец
 // вёрстки, а метки ставят в теле документа. Если человек поставил метку в
 // колонтитул, она останется как есть — это лучше, чем молча её съесть.
+//
+// Метка может пересекать границу абзаца (2026-11-06). Живой макет 003/2026
+// набран так: `{{` в первом абзаце инструкции, `}}` — в девятом, потому что
+// человек писал промт списком и нажимал Enter. Разбор по одному абзацу
+// (раньше так и было) не находил метку ни в одном из них, и девять абзацев
+// инструкции уходили клиенту литералом. Поэтому теперь:
+//
+//  1. метки ищутся в СКЛЕЙКЕ текста всех абзацев — так же, как их ищет
+//     описание макета для администратора (layoutPlainText, form.go);
+//  2. подстановка идёт по абзацам, но с общим списком найденных меток: часть
+//     метки, попавшая в абзац, заменяется текстом модели, а остатки скобок в
+//     соседних абзацах вычищаются.
 func fillLayoutDocument(docXML string, lc layoutContext) string {
-	return reWordParagraph.ReplaceAllStringFunc(docXML, func(paragraph string) string {
-		return fillLayoutParagraph(paragraph, lc)
-	})
+	paragraphs := reWordParagraph.FindAllString(docXML, -1)
+	if len(paragraphs) == 0 {
+		return docXML
+	}
+	spans := paragraphSpans(paragraphs)
+	// Метки ищутся ровно по ТОЙ ЖЕ склейке, по которой размечены спаны:
+	// позиции меток и границы абзацев должны жить в одной системе координат.
+	tokens := scanLayoutTokens(spans.joined, lc.values)
+	if len(tokens) == 0 {
+		return docXML
+	}
+	// Какой текст получить каждому абзацу: подстановка раскладывается по
+	// абзацам, в которых лежала метка, остальные абзацы не меняются.
+	replaced := splitReplacedByParagraph(spans, tokens, lc)
+	return replaceParagraphsInDocument(docXML, paragraphs, replaced)
 }
 
-// fillLayoutParagraph — один абзац с метками.
+// paragraphSpan — абзац и место его текста в склейке.
+type paragraphSpan struct {
+	// start / end — границы текста абзаца в общей склейке.
+	start, end int
+	// texts — содержимое `<w:t>` абзаца по порядку.
+	texts []string
+}
+
+// paragraphTexts — склейка текста абзаца из его `<w:t>`.
+func paragraphTexts(paragraph string) []string {
+	matches := reWordText.FindAllStringSubmatch(paragraph, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, unescapeXML(m[1]))
+	}
+	return out
+}
+
+// paragraphSpans собирает склейку и место каждого абзаца в ней.
 //
-// Текст абзаца собирается из всех `<w:t>` подряд, метки ищутся в собранном
-// тексте, результат пишется в ПЕРВЫЙ `<w:t>` абзаца, остальные очищаются.
-// Вёрстка абзаца (стиль, выравнивание, отступы) при этом не меняется — она
-// живёт в `<w:pPr>`, который не трогается.
-func fillLayoutParagraph(paragraph string, lc layoutContext) string {
-	texts := reWordText.FindAllStringSubmatch(paragraph, -1)
-	if len(texts) == 0 {
-		return paragraph
+// Абзацы склеиваются ЧЕРЕЗ ПЕРЕВОД СТРОКИ, и это существенно (2026-11-06).
+//
+// Метка обязана находиться, даже если человек писал промт в девяти абзацах:
+// склейка без разделителей находила её, но ПОРТИЛА текст инструкции — на
+// живом КП 003/2026 модель получила «…входящих в состав решения;- преимущества
+// применения…» и «…технического решенияОписания найди в базе знаний…»: слова
+// склеились вплотную, а пункты списка потеряли друг друга. Инструкция,
+// написанная списком, доходила до модели как одна строка без разделителей.
+//
+// Перевод строки внутри метки для сканера безопасен: в промт он попадает как
+// обычный символ (`[^{}]` его не исключает), а чтобы края не «съедались»,
+// промт дополнительно чистит разметку строк — см. promptInner и
+// normalizePromptText.
+func paragraphSpans(paragraphs []string) struct {
+	texts  []string
+	spans  []paragraphSpan
+	joined string
+} {
+	var out struct {
+		texts  []string
+		spans  []paragraphSpan
+		joined string
 	}
-	var joined strings.Builder
-	for _, m := range texts {
-		joined.WriteString(unescapeXML(m[1]))
+	for _, paragraph := range paragraphs {
+		texts := paragraphTexts(paragraph)
+		out.texts = append(out.texts, strings.Join(texts, ""))
 	}
-	plain := joined.String()
-	tokens := scanLayoutTokens(plain, lc.values)
-	if len(tokens) == 0 {
-		return paragraph
+	out.joined = strings.Join(out.texts, "\n")
+	pos := 0
+	for _, text := range out.texts {
+		out.spans = append(out.spans, paragraphSpan{start: pos, end: pos + len(text)})
+		// +1 — сам разделитель: он принадлежит склейке, но не абзацу.
+		pos += len(text) + 1
 	}
-	replaced := applyLayoutTokens(plain, tokens, lc)
-	// Многострочный ответ модели печатается НЕСКОЛЬКИМИ абзацами (2026-11-06).
-	//
-	// Раньше весь текст писался в один `<w:t>`, а переводы строк внутри
-	// `<w:t>` Word не показывает: заголовки и абзацы слипались в один
-	// полотнище-абзац, и «оформления» в документе не было вовсе. Теперь каждая
-	// непустая строка ответа становится отдельным абзацем с вёрсткой метки —
-	// её `<w:pPr>` (стиль, выравнивание, отступ) копируется каждому.
-	//
-	// Строки модели-заголовки (`## Заголовок`) уходят без знаков разметки
-	// (чатка — `stripMarkdownHeadings`), но остаются отдельными абзацами:
-	// читаются как подзаголовки, даже если макет своим стилем их не выделит.
-	lines := splitLayoutLines(replaced)
-	if len(lines) > 1 {
-		return layoutAsParagraphs(paragraph, lines)
+	return out
+}
+
+// splitReplacedByParagraph раскладывает подстановку меток по абзацам.
+//
+// Пустой элемент — абзац не меняется. Непустой — новый текст абзаца целиком;
+// многострочный ответ модели печатается абзацами внутри одного___абзаца метки
+// (layoutAsParagraphs), поэтому возвращается уже готовый XML.
+func splitReplacedByParagraph(spans struct {
+	texts  []string
+	spans  []paragraphSpan
+	joined string
+}, tokens []layoutToken, lc layoutContext) []paragraphChange {
+	// Что подставить вместо каждой метки — один раз на метку, а не на абзац:
+	// иначе одна инструкция вызовет модель столько раз, сколько абзацев она
+	// занимает.
+	replacement := make(map[int]string, len(tokens))
+	for i, token := range tokens {
+		switch token.Kind {
+		case layoutTokenPrompt:
+			if table := layoutTableFor(token.Inner, lc); table != nil {
+				replacement[i] = tableMarkdown(table)
+				continue
+			}
+			if lc.prompt != nil {
+				replacement[i] = lc.prompt(token.Inner)
+			}
+		default:
+			replacement[i] = layoutFieldValue(token.Inner, lc.values)
+		}
 	}
-	// Пишем результат в первый w:t и очищаем остальные. Содержимое первого
-	// может быть разбито на несколько прогонов — тогда просто его заменяем.
+
+	out := make([]paragraphChange, len(spans.spans))
+	for idx, span := range spans.spans {
+		newText, changed := replaceInSpan(spans.joined, span, tokens, replacement)
+		out[idx] = paragraphChange{text: newText, changed: changed}
+	}
+	return out
+}
+
+// layoutTableKind — какую таблицу просит метка макета.
+type layoutTableKind int
+
+const (
+	layoutTableNone    layoutTableKind = iota // таблица не просится
+	layoutTableItems                          // предложение по материалам
+	layoutTableCompare                        // сравнение вариантов решений
+)
+
+// layoutTableKindOf — вид таблицы по тексту инструкции (2026-11-06).
+//
+// Два смысла метки `{{Вставь таблицу …}}` требуют РАЗНЫХ данных:
+//
+//	«предложение по материалам, ЕКН, цена, объём, стоимость» — позиции КП;
+//	«сравнение вариантов решений / сравни системы»          — характеристики
+//	                                                          карточек.
+//
+// Сравнение проверяется ПЕРВЫМ: промт сравнения часто упоминает и материалы
+// («сравни варианты по материалам»), и проверка по слову «материала» увела бы
+// его к позициям.
+func layoutTableKindOf(instruction string) layoutTableKind {
+	lower := strings.ToLower(instruction)
+	if !strings.Contains(lower, "таблиц") && !strings.Contains(lower, "table") {
+		return layoutTableNone
+	}
+	for _, marker := range []string{"сравн", "вариант", "альтернатив", "compare"} {
+		if strings.Contains(lower, marker) {
+			return layoutTableCompare
+		}
+	}
+	return layoutTableItems
+}
+
+// layoutTableFor — строки таблицы для метки: nil, если метка не про таблицу
+// или данных для неё нет.
+//
+// nil возвращается и тогда, когда модель должна написать текст как обычно:
+// «таблица сравнения» при одной системе — не сравнение, и печатать таблицу из
+// одного столбца нельзя (см. compareSystemRows).
+func layoutTableFor(instruction string, lc layoutContext) [][]string {
+	switch layoutTableKindOf(instruction) {
+	case layoutTableItems:
+		if lc.items == nil {
+			return nil
+		}
+		return lc.items()
+	case layoutTableCompare:
+		if lc.cards == nil {
+			return nil
+		}
+		return layoutCompareTable(lc.cards())
+	}
+	return nil
+}
+
+// layoutOfferTable — таблица предложения по позициям.
+//
+// Колонки повторяют то, что просит живой макет 003/2026: наименование, ЕКН,
+// единица, количество, цена, сумма. Пустые колонки не печатаются: колонка
+// «ЕКН» без единого номера выглядит как потеря данных, а не как «нет номеров».
+// Внизу — строка «Итого», если позиции есть.
+func layoutOfferTable(offer Offer) [][]string {
+	if len(offer.Items) == 0 {
+		return nil
+	}
+	withEkn := false
+	for _, item := range offer.Items {
+		if strings.TrimSpace(item.EKN) != "" {
+			withEkn = true
+			break
+		}
+	}
+	header := []string{"№", "Наименование материала"}
+	if withEkn {
+		header = append(header, "ЕКН")
+	}
+	header = append(header, "Единица поставки", "Объём поставки", "Цена за единицу, руб", "Стоимость, руб")
+
+	rows := [][]string{header}
+	for i, item := range offer.Items {
+		row := []string{strconv.Itoa(i + 1), item.Name}
+		if withEkn {
+			row = append(row, item.EKN)
+		}
+		row = append(row,
+			item.Unit,
+			formatQtyValue(item.Qty),
+			formatMoney(item.Price),
+			formatMoney(item.Sum),
+		)
+		rows = append(rows, row)
+	}
+	// Итог — внизу, в колонке стоимости: читатель ищет сумму там же, где суммы
+	// строк, а не в отдельной строке под таблицей.
+	total := make([]string, len(header))
+	total[0] = ""
+	total[1] = "Итого"
+	for i := 2; i < len(total); i++ {
+		total[i] = ""
+	}
+	total[len(total)-1] = formatMoney(offer.Total)
+	rows = append(rows, total)
+	return rows
+}
+
+// layoutCompareTable — таблица сравнения систем по характеристикам карточек.
+//
+// Обёртка над compareSystemRows: та возвращает nil при одной системе, и это
+// правильно — «сравнение» из одного столбца обманывает читателя.
+func layoutCompareTable(cards []SystemCard) [][]string {
+	return compareSystemRows(cards)
+}
+
+// tableCell готовит ячейку к markdown-таблице.
+//
+// Переводы строки внутри названия — не редкость: в живом КП 003/2026 так
+// записаны утеплители («Утеплитель ХPS Carbon Prof толщиной 100 мм, на
+// глубину промерзания»), и пришли они из таблицы менеджера. Markdown-строка
+// таблицы не может содержать перевод строки: таблица рвалась на две, и вместо
+// 41 позиции в документе было пять обрывков (проверено на живой выгрузке).
+// Черта внутри названия — тоже ломает разбор, её заменяем на косую.
+func tableCell(cell string) string {
+	cleaned := strings.Join(strings.Fields(strings.ReplaceAll(cell, "|", "/")), " ")
+	return cleaned
+}
+
+// tableMarkdown печатает строки таблицей Markdown.
+//
+// Не ради формата: `layoutAnswer` уже умеет превращать markdown-таблицу в
+// настоящий `<w:tbl>` с вёрсткой документа — один разбор на две дороги.
+// Здесь только сборка строки; печать остаётся в одном месте.
+func tableMarkdown(rows [][]string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, row := range rows {
+		sb.WriteString("|")
+		for _, cell := range row {
+			sb.WriteString(" ")
+			sb.WriteString(tableCell(cell))
+			sb.WriteString(" |")
+		}
+		sb.WriteString("\n")
+		if i == 0 {
+			// Разделитель шапки: столько же колонок, сколько в первой строке.
+			sb.WriteString("|")
+			for range row {
+				sb.WriteString("---|")
+			}
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+// paragraphChange — новый текст абзаца и признак, что он менялся.
+//
+// Признак нужен отдельно от текста: абзац, который ЦЕЛИКОМ принадлежал
+// продолжению метки, должен стать ПУСТЫМ, и пустая строка здесь означает
+// «менялся», а не «не трогать».
+type paragraphChange struct {
+	text    string
+	changed bool
+}
+
+// replaceInSpan собирает новый текст одного абзаца.
+//
+// Правило простое: идём по тексту абзаца слева направо и на каждой позиции
+// смотрим, не начинается ли здесь метка.
+//
+//   - метка начинается в этом абзаце — пишем подстановку и перепрыгиваем на
+//     её конец (или на конец абзаца, если она кончается дальше);
+//   - позиция попала ВНУТРЬ метки, начавшейся раньше (хвост `}}` в последнем
+//     абзаце многоабзацной инструкции) — эти символы выбрасываются: остаток
+//     метки не текст документа;
+//   - обычный символ — пишется как есть.
+//
+// Второе значение — менялся ли абзац: нетронутый абзац печатается исходным
+// XML со всей его вёрсткой.
+func replaceInSpan(joined string, span paragraphSpan, tokens []layoutToken, replacement map[int]string) (string, bool) {
+	var sb strings.Builder
+	changed := false
+	pos := span.start
+	for pos < span.end {
+		i, token, inside := tokenAt(tokens, pos)
+		if token == nil {
+			// Выводим ЦЕЛЫЙ символ: кириллица в UTF-8 занимает два байта, и
+			// побайтовый шаг порвал бы её на половинки. Через границу абзаца
+			// символ не выходит: спаны режутся по её концам.
+			r, size := utf8.DecodeRuneInString(joined[pos:])
+			if pos+size > span.end {
+				// Последний символ абзаца не влез целиком — этого не должно
+				// быть (спаны строятся по байтам текста), но лучше его
+				// пропустить, чем напечатать половину буквы.
+				break
+			}
+			sb.WriteRune(r)
+			pos += size
+			continue
+		}
+		changed = true
+		if inside {
+			// Хвост метки, начавшейся в предыдущем абзаце: его символы —
+			// остаток инструкции, а не текст документа.
+			pos = minInt(token.End, span.end)
+			continue
+		}
+		sb.WriteString(replacement[i])
+		pos = minInt(token.End, span.end)
+	}
+	if !changed {
+		return "", false
+	}
+	return sb.String(), true
+}
+
+// tokenAt — метка, которая начинается в pos или накрывает её.
+//
+// inside = true, если положение оказалось строго внутри метки: тогда её
+// символы — остаток инструкции, а не текст для клиента.
+func tokenAt(tokens []layoutToken, pos int) (int, *layoutToken, bool) {
+	for i := range tokens {
+		token := &tokens[i]
+		if pos >= token.End {
+			continue
+		}
+		if pos < token.Start {
+			return 0, nil, false
+		}
+		return i, token, pos > token.Start
+	}
+	return 0, nil, false
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// replaceParagraphsInDocument подставляет новые тексты абзацев в XML.
+//
+// Абзац, у которого текст не менялся, остаётся байт-в-байт: вёрстка, прогоны
+// и служебные пометки Word в нём не трогаются.
+func replaceParagraphsInDocument(docXML string, paragraphs []string, replaced []paragraphChange) string {
+	var sb strings.Builder
+	last := 0
+	searchFrom := 0
+	for i, paragraph := range paragraphs {
+		at := strings.Index(docXML[searchFrom:], paragraph)
+		if at < 0 {
+			// Абзац не находится байтово (не должно случаться) — оставляем
+			// исходный документ, чем портим разметку.
+			return docXML
+		}
+		at += searchFrom
+		if i >= len(replaced) || !replaced[i].changed {
+			searchFrom = at + len(paragraph)
+			continue
+		}
+		sb.WriteString(docXML[last:at])
+		sb.WriteString(rebuildParagraph(paragraph, replaced[i].text))
+		last = at + len(paragraph)
+		searchFrom = last
+	}
+	if last == 0 {
+		return docXML
+	}
+	sb.WriteString(docXML[last:])
+	return sb.String()
+}
+
+// rebuildParagraph печатает абзац с новым текстом.
+//
+// Многострочный ответ модели печатается НЕСКОЛЬКИМИ абзацами (2026-11-06).
+//
+// Раньше весь текст писался в один `<w:t>`, а переводы строк внутри `<w:t>`
+// Word не показывает: заголовки и абзацы слипались в один полотнище-абзац, и
+// «оформления» в документе не было вовсе. Теперь каждая непустая строка
+// ответа становится отдельным абзацем с вёрсткой метки  её `<w:pPr>` (стиль,
+// выравнивание, отступ) копируется каждому.
+//
+// Строки модели-заголовки (`## Заголовок`) уходят без знаков разметки (чистка
+// — `stripMarkdownHeadings`), но остаются отдельными абзацами: читаются как
+// подзаголовки, даже если макет своим стилем их не выделит.
+// rebuildParagraph печатает абзац с новым текстом.
+//
+// Многострочный ответ модели печатается НЕСКОЛЬКИМИ абзацами (2026-11-06).
+//
+// Раньше весь текст писался в один `<w:t>`, а переводы строк внутри `<w:t>`
+// Word не показывает: заголовки и абзацы слипались в один полотнище-абзац, и
+// «оформления» в документе не было вовсе. Теперь каждая непустая строка
+// ответа становится отдельным абзацем с вёрсткой метки — её `<w:pPr>` (стиль,
+// выравнивание, отступ) копируется каждому.
+//
+// Ответ может содержать markdown-таблицу: её печатает `layoutAnswer` настоящей
+// таблицей Word, остальное — абзацами.
+func rebuildParagraph(paragraph, text string) string {
+	return layoutAnswer(paragraph, text)
+}
+
+// layoutAnswer печатает ответ модели с учётом таблицы.
+//
+// Модель по промту таблицы возвращает её разметкой Markdown (так просит
+// tableDoc в skills/prompt.go). Разметку нельзя печатать текстом: в живом КП
+// 003/2026 клиент увидел бы строки с вертикальными чертами. Здесь ответ
+// раскладывается на куски: обычный текст — абзацами, таблица — настоящим
+// `<w:tbl>` вёрстки документа (tableXML из docx.go).
+//
+// Пустая таблица (шапка без строк) печатается как текст: пустой `<w:tbl>` в
+// Word выглядит сломанным, и лучше показать то, что пришло.
+func layoutAnswer(paragraph, text string) string {
+	blocks := splitAnswerTables(text)
+	if len(blocks) == 1 && blocks[0].table == nil {
+		// Таблицы нет — прежнее поведение, ни одного лишнего шага.
+		if lines := splitLayoutLines(text); len(lines) > 1 {
+			return layoutAsParagraphs(paragraph, lines)
+		}
+		return rebuildParagraphText(paragraph, text)
+	}
+	var sb strings.Builder
+	for _, block := range blocks {
+		switch {
+		case block.table != nil:
+			sb.WriteString(tableXML(block.table))
+		case strings.TrimSpace(block.text) != "":
+			sb.WriteString(layoutAsParagraphs(paragraph, splitLayoutLines(block.text)))
+		}
+	}
+	if sb.Len() == 0 {
+		return rebuildParagraphText(paragraph, text)
+	}
+	return sb.String()
+}
+
+// answerBlock — кусок ответа: либо текст, либо готовая таблица.
+type answerBlock struct {
+	text  string
+	table [][]string
+}
+
+// rebuildParagraphText пишет текст в первый `<w:t>` абзаца, остальные чистит.
+func rebuildParagraphText(paragraph, text string) string {
 	first := true
-	out := reWordText.ReplaceAllStringFunc(paragraph, func(tag string) string {
+	return reWordText.ReplaceAllStringFunc(paragraph, func(tag string) string {
 		if first {
 			first = false
-			return replaceWordText(tag, replaced)
+			return replaceWordText(tag, text)
 		}
 		return replaceWordText(tag, "")
 	})
+}
+
+// splitAnswerTables делит ответ модели на текст и markdown-таблицы.
+func splitAnswerTables(text string) []answerBlock {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var out []answerBlock
+	var textLines []string
+	flush := func() {
+		if len(textLines) > 0 {
+			out = append(out, answerBlock{text: strings.Join(textLines, "\n")})
+			textLines = nil
+		}
+	}
+	for i := 0; i < len(lines); {
+		if !isMarkdownRow(lines[i]) {
+			textLines = append(textLines, lines[i])
+			i++
+			continue
+		}
+		rows, next := collectMarkdownTable(lines, i)
+		flush()
+		out = append(out, answerBlock{table: rows})
+		i = next
+	}
+	flush()
 	return out
+}
+
+// isMarkdownRow — строка таблицы Markdown: начинается и кончается чертой.
+func isMarkdownRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return len(trimmed) >= 2 && strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") &&
+		strings.Count(trimmed, "|") >= 3
+}
+
+// markdownCells разбивает строку таблицы на ячейки.
+func markdownCells(line string) []string {
+	trimmed := strings.Trim(strings.TrimSpace(line), "|")
+	parts := strings.Split(trimmed, "|")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, strings.TrimSpace(part))
+	}
+	return out
+}
+
+// isMarkdownSeparator — строка-разделитель `|---|---|`.
+func isMarkdownSeparator(line string) bool {
+	for _, cell := range markdownCells(line) {
+		if strings.Trim(cell, "-: ") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// collectMarkdownTable читает строки таблицы начиная с i.
+//
+// Возвращает строки (первая — шапка, разделитель выброшен) и индекс, с
+// которого продолжается текст.
+func collectMarkdownTable(lines []string, i int) ([][]string, int) {
+	var rows [][]string
+	for ; i < len(lines) && isMarkdownRow(lines[i]); i++ {
+		if isMarkdownSeparator(lines[i]) {
+			continue
+		}
+		rows = append(rows, markdownCells(lines[i]))
+	}
+	return rows, i
 }
 
 // splitLayoutLines режет текст на непустые строки, сохраняя краевые пробелы
@@ -192,29 +693,6 @@ func replaceWordText(tag, value string) string {
 		head = strings.TrimSuffix(head, ">") + ` xml:space="preserve">`
 	}
 	return head + escapeXML(value) + tag[close:]
-}
-
-// applyLayoutTokens собирает текст абзаца из кусков между метками.
-func applyLayoutTokens(text string, tokens []layoutToken, lc layoutContext) string {
-	var sb strings.Builder
-	prev := 0
-	for _, token := range tokens {
-		if token.Start < prev {
-			continue
-		}
-		sb.WriteString(text[prev:token.Start])
-		switch token.Kind {
-		case layoutTokenPrompt:
-			if lc.prompt != nil {
-				sb.WriteString(lc.prompt(token.Inner))
-			}
-		default:
-			sb.WriteString(layoutFieldValue(token.Inner, lc.values))
-		}
-		prev = token.End
-	}
-	sb.WriteString(text[prev:])
-	return sb.String()
 }
 
 // unescapeXML — обратный к escapeXML для текста из документа.
@@ -334,6 +812,18 @@ func layoutPromptText(ctx context.Context, instruction string, offer Offer,
 		return ""
 	}
 	maxWords := genDefaultMaxWords
+	// Объём, заданный в самом промте, главнее умолчания (2026-11-06). Живой
+	// макет 003/2026 просит «не менее 4000 знаков на одну систему» — около 600
+	// слов. С бюджетом 150 модель в него не укладывалась и отдавала план
+	// разделов вместо текста.
+	if requested := skills.RequestedWords(instruction); requested > 0 {
+		maxWords = requested
+		// Верхняя граница — предел, которым живёт `prompt_text` в блоках: выше
+		// 800 слов ответ режется провайдером и приходит обрывком.
+		if maxWords > 800 {
+			maxWords = 800
+		}
+	}
 	// Тот же системный промпт, что у блока «по промту»: правила «пиши для
 	// заказчика, не рассуждай» уже выведены там, и второй их набор разошёлся
 	// бы с первым.

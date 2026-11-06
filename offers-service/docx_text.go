@@ -270,7 +270,12 @@ func cleanBlockText(raw string) string {
 		text = strings.TrimSpace(text[1 : len(text)-1])
 	}
 	text = stripMarkdownHeadings(text)
-	return trimTruncatedTail(documentText(stripReasoning(text)))
+	cleaned := trimTruncatedTail(documentText(stripReasoning(text)))
+	// План - не текст: пустой блок честнее оглавления (см. looksLikePlan).
+	if looksLikePlan(cleaned) {
+		return ""
+	}
+	return cleaned
 }
 
 // reMarkdownHeading — строка-заголовок в разметке Markdown: `## Заголовок`.
@@ -461,7 +466,74 @@ func documentText(raw string) string {
 //
 // Проверяется начало строки: «Мембрана защищает…» в абзаце КП не совпадёт ни
 // с одним признаком.
-var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|let me\b|let's\b|i need\b|i should\b|i will\b|i'll\b|i have\b|i am\b|i'm\b|hmm\b|okay\b|ok,|first,\s+i\b|so,?\s+i\b|word limit\b|advantages that are\b|is a fact\b|that's a real\b|better to be\b|is not in the brief|it's fair to say|header:|format says|this is fine|so no heading|need paragraphs|считаю допустимым|считаю,? что допустимо|осторожн)`)
+var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|let me\b|let's\b|i need\b|i should\b|i will\b|i'll\b|i have\b|i am\b|i'm\b|hmm\b|okay\b|ok,|first,\s+i\b|so,?\s+i\b|word limit\b|advantages that are\b|is a fact\b|that's a real\b|better to be\b|is not in the brief|it's fair to say|header:|format says|this is fine|so no heading|need paragraphs|считаю допустимым|считаю,? что допустимо|осторожн|задача:|решение:|попробуем|сделаю проще|думаю|может,?\s|пометка|прочерк|не выдумыват|гуппа)`)
+
+// reReasoningHeadingMarker — строка, которой модель ОПИСЫВАЕТ вёрстку вместо
+// того, чтобы её написать.
+//
+// Живой прогон КП 003/2026 на макете (2026-11-06) принёс и такое:
+// «Heading 2: "Гидроизоляционный слой: …"», «Text: геотекстиль 500 г/м²…»,
+// «Ссылки (Heading 1)», «Заголовок 2: …». Модель перечисляла, из каких блоков
+// будет документ, вместо того чтобы написать сам текст — в документе это
+// читается как черновик редактора, а не как абзац КП.
+// Строка-описание вёрстки распознаётся в двух видах: с меткой в НАЧАЛЕ
+// («Heading 2: …») и со ссылкой на неё в СКОБКАХ («Ссылки (Heading 1)»).
+// Второй вид — тоже план, а не текст: в КП попадали строки «Ссылки (Heading 1)»
+// и «Цена» без единого предложения для заказчика.
+// Строка-описание вёрстки распознаётся с меткой в НАЧАЛЕ («Heading 2: …»)
+// и со ссылкой на неё в СКОБКАХ в конце («Ссылки (Heading 1)»). Второй вид —
+// тоже план: в КП попадали строки «Ссылки (Heading 1)» и «Цена» без единого
+// предложения для заказчика.
+//
+// Якорь `^` стоит В КАЖДОЙ ветке: общий якорь перед группой альтернатив
+// привязывал к началу только первую, и скобочный вид не находился вовсе.
+var reReasoningHeadingMarker = regexp.MustCompile(
+	`(?i)^(heading|paragraph|section|bullets?|table|list|заголовок|абзац|раздел|список|таблица|текст|title|цена)\s*(\d+|h[1-6])?\s*[:(]` +
+		`|^[^(]*\((?:heading|заголовок|paragraph|абзац|section|раздел|text|текст)\s*(?:\d+|h[1-6])?\)\s*$` +
+		`|^Цена$`,
+)
+var reSelfQuestion = regexp.MustCompile(`^[^.!?]{0,80}\?$`)
+
+// looksLikePlan - ответ модели это ОГЛАВЛЕНИЕ, а не текст.
+//
+// Живой прогон КП 003/2026 (2026-11-06): на просьбу описать систему модель
+// отвечала "1. Intro (задача объекта, что предлагаем, цена). 2. h2 \"Состав
+// решения\" - перечень слоёв. 3. h2 \"Мембрана LOGICBASE V-SL: ...\"". Это план
+// будущего текста: заказчику он не говорит ничего.
+//
+// ЧТО ЗДЕСЬ НЕ ПРИЗНАК (решение пользователя 2026-11-06): сам по себе
+// нумерованный список. Состав конструкции в КП - как раз честный нумерованный
+// список слоёв ("1. Подготовка основания", "2. Грунтовка битумная",
+// "3. Мембрана V-SL 2 мм"), и принимать его за план нельзя: получился бы пустой
+// документ на самом нужном месте.
+//
+// Признак - СЛУЖЕБНЫЕ МАРКЕРЫ вёрстки, которых в тексте для заказчика не
+// бывает: "h2 ...", "Heading 2:", "Section:", "Intro ...". Один такой маркер
+// уже говорит, что модель перечисляет блоки документа, а не пишет документ.
+func looksLikePlan(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if rePlanMarker.MatchString(trimmed) || reReasoningHeadingMarker.MatchString(trimmed) ||
+			reHeadingWord.MatchString(trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
+// rePlanMarker - маркер оглавления в начале строки: "h2 ...", "Intro:",
+// "Section ...", "Глава 1". Это названия блоков документа, а не текст, и в
+// готовом КП их быть не может.
+// Маркер оглавления стоит в начале строки или в начале пункта списка:
+// "h2 ...", "Intro:", "2. h2 \"Состав решения\"", "3. Section: ...".
+var rePlanMarker = regexp.MustCompile(`(?i)^(\d{1,2}[.)]\s*)?(h[1-6]\b|intro\b|outro\b|section\b|chapter\b|part\b|глава\s|вступление\b)`)
+
+// reHeadingWord - слово-метка вёрстки само по себе, без двоеточия:
+// "Heading \"...\"", "Paragraph \"...\"". Модель пишет так, описывая блоки.
+var reHeadingWord = regexp.MustCompile(`(?i)^(heading|paragraph|заголовок|абзац)\s*[:(\"]`)
 
 // stripReasoning выбрасывает размышление модели из ответа.
 //
@@ -493,6 +565,20 @@ func stripReasoning(text string) string {
 			continue
 		}
 		if reReasoningLine.MatchString(trimmed) {
+			dropped++
+			continue
+		}
+		// Строка-описание вёрстки («Heading 2: "…"», «Text: …»): модель
+		// перечисляет блоки вместо текста. Содержимое после двоеточия тоже
+		// выбрасывается — это не абзац КП, а план редактора.
+		if reReasoningHeadingMarker.MatchString(trimmed) {
+			dropped++
+			continue
+		}
+		// Риторический вопрос модели к себе («ЕКН — артикул?») — тот же
+		// черновик, только в одну строку: в тексте для клиента вопросов к
+		// самому себе быть не может.
+		if reSelfQuestion.MatchString(trimmed) {
 			dropped++
 			continue
 		}
@@ -544,6 +630,9 @@ func hasReasoningLine(text string) bool {
 			continue
 		}
 		if reReasoningLine.MatchString(trimmed) || !mostlyCyrillic(trimmed) {
+			return true
+		}
+		if reReasoningHeadingMarker.MatchString(trimmed) || reSelfQuestion.MatchString(trimmed) {
 			return true
 		}
 		if reReasoningTail.MatchString(trimmed) {

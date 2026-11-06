@@ -104,7 +104,65 @@ func promptInner(inner string) string {
 	for strings.HasPrefix(inner, "{") && strings.HasSuffix(inner, "}") {
 		inner = strings.TrimSpace(inner[1 : len(inner)-1])
 	}
-	return strings.TrimSpace(inner)
+	return normalizePromptText(inner)
+}
+
+// normalizePromptText приводит многоабзацный промт к виду, пригодному для
+// модели.
+//
+// Промт в макете человек набирает как удобно: списком, абзацами, с пустыми
+// строками между частями. Через метку такой текст обязан дойти до модели
+// связным — на живом КП 003/2026 (2026-11-06) до неё доходило
+// «…входящих в состав решения;- преимущества применения…», где пункты списка
+// слиплись в одну строку, а перенос строки между абзацами потерялся вовсе.
+//
+// Что делается:
+//   - пустые строки убираются (разделитель абзацев в макете — вёрстка
+//     документа, а не часть инструкции);
+//   - строка сохраняет свою роль: пункт списка (`- `, `• `, `1. `) остаётся
+//     пунктом и начинается с новой строки, обычный абзац продолжает
+//     предыдущий через пробел.
+//
+// Смысл: модель получает ровно тот текст, который человек набрал, — с
+// дефисами списков и без склеенных слов.
+func normalizePromptText(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var out []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if isPromptListItem(trimmed) {
+			out = append(out, trimmed)
+			continue
+		}
+		// Продолжение предыдущего — через пробел.
+		if n := len(out); n > 0 && !isPromptListItem(out[n-1]) {
+			out[n-1] = strings.TrimRight(out[n-1], " ") + " " + trimmed
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, "\n")
+}
+
+// isPromptListItem — строка выглядит пунктом списка: маркер или номер.
+func isPromptListItem(line string) bool {
+	for _, marker := range []string{"- ", "– ", "— ", "• ", "* "} {
+		if strings.HasPrefix(line, marker) {
+			return true
+		}
+	}
+	// «1. », «2)» — номер пункта: до трёх цифр и точка или скобка.
+	i := 0
+	for i < len(line) && i < 3 && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i == 0 || i >= len(line) {
+		return false
+	}
+	return (line[i] == '.' || line[i] == ')') && (i+1 == len(line) || line[i+1] == ' ')
 }
 
 // clampRunes обрезает строку до n рун.
