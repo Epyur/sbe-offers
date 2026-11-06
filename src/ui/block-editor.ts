@@ -1,4 +1,6 @@
-﻿import type { Block, Placeholder, RichNode } from '../types/offers';
+﻿import { Notice } from 'obsidian';
+import type { Block, Placeholder, RichNode } from '../types/offers';
+import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
  * Блок-редактор формы КП — по образцу конфигуратора протоколов в ЛИМС
@@ -446,7 +448,10 @@ export function renderBlockEditor(
 
       // id блока — адрес для метки макета `{{block:N}}` (2026-11-06). Показ
       // читаемый: администратор должен видеть, на какой блок ссылается макет.
-      head.createSpan({ cls: 'tn-offers-chip', text: `id: ${block.id}` });
+      // Копируется САМА МЕТКА, вместе со скобками: администратор вставляет её в
+      // Word и не должен помнить синтаксис и не набирать id руками (просьба
+      // пользователя 2026-11-07).
+      renderBlockIDChip(head, block);
 
       const upBtn = head.createEl('button', { text: '▲', cls: 'tn-btn tn-btn-ghost' });
       upBtn.disabled = blockIndex === 0;
@@ -551,6 +556,42 @@ function renderBlockFlags(card: HTMLElement, block: Block, deps: BlockEditorDeps
   keepFlag.createSpan({ text: ' Не разрывать между страницами' });
 }
 
+/** Чип с id блока: копирует в буфер метку макета `{{block:<id>}}`.
+ *
+ * Просьба пользователя 2026-11-07: id нужен только ради этой метки, и набирать
+ * `{{block:` + id + `}}` руками в Word — лишний труд и источник опечаток.
+ * Копируется вместе со скобками, чтобы вставить в макет одним движением.
+ */
+function renderBlockIDChip(head: HTMLElement, block: Block): void {
+  copyMarkerChip(head, blockMarker(block));
+}
+
+/** Метка макета для блока: адрес блока в документе Word. */
+function blockMarker(block: Block): string {
+  return `{{block:${block.id}}}`;
+}
+
+/** Чип-кнопка: по клику копирует текст в буфер и говорит об этом.
+ *
+ * Одна точка копирования на редактор: вторая копия разошлась бы с первой —
+ * точно так же, как разошлись когда-то два пути печати документа.
+ */
+function copyMarkerChip(parent: HTMLElement, marker: string): HTMLElement {
+  const chip = parent.createSpan({ cls: 'tn-offers-chip tn-offers-chip-copy', text: marker });
+  chip.title = 'Скопировать метку для вставки в макет .docx';
+  chip.addEventListener('click', () => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(marker);
+        new Notice(`Метка ${marker} скопирована`);
+      } catch (e: unknown) {
+        new Notice(`Не удалось скопировать: ${errorMessage(e)}`);
+      }
+    })();
+  });
+  return chip;
+}
+
 /** Повтор блока в макете (2026-11-06, шаг D «генерация без модели»).
  *
  * Блок с повтором печатается по разу на систему или на позицию предложения —
@@ -574,7 +615,10 @@ function renderBlockRepeat(card: HTMLElement, block: Block, deps: BlockEditorDep
     deps.onChange?.();
   });
   if ((block.repeat ?? '') !== '') {
-    row.createSpan({ cls: 'tn-offers-muted', text: `Метка: {{block:${block.id}}}` });
+    // Повторяется блок, а не метка: в макет идёт `{{block:<id>}}`, и его
+    // удобно скопировать здесь же, а не искать чип в заголовке блока.
+    row.createSpan({ cls: 'tn-offers-muted', text: 'Метка: ' });
+    copyMarkerChip(row, blockMarker(block));
   }
 }
 
