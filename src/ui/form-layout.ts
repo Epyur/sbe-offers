@@ -36,7 +36,8 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
       cls: 'tn-offers-muted',
       text: 'Если макет загружен, КП собирается по вашему документу Word: свои стили, ' +
         'шрифты и колонтитулы. Метки в макете: [Название объекта] — подставить значение, ' +
-        '{Опиши систему} — пусть текст напишет модель.',
+        '{Опиши систему} — пусть текст напишет модель. Промт можно писать одним, двумя ' +
+        'или тремя фигурными скобками: {…}, {{…}}, {{{…}}} — любая из форм понимается одинаково.',
     });
   }
 
@@ -113,6 +114,11 @@ function renderLayoutTokens(card: HTMLElement, form: OfferForm): void {
     box.createDiv({ cls: 'tn-offers-muted', text: 'Текст модели { … }:' });
     const list = box.createDiv({ cls: 'tn-offers-row tn-offers-chip-row' });
     for (const prompt of prompts) list.createSpan({ cls: 'tn-offers-chip', text: `{${prompt}}` });
+    box.createDiv({
+      cls: 'tn-offers-muted',
+      text: 'Так систему поняла эта сборка. Промт можно писать и в {{…}}, и в {{{…}}}: ' +
+        'главное — чтобы внутри были ваши слова, а не только имя поля формы.',
+    });
   }
 }
 
