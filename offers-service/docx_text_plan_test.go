@@ -24,16 +24,34 @@ func TestCleanBlockTextDropsPlan(t *testing.T) {
 	}
 }
 
+// Решение изменено 2026-11-06 (живой разбор «куда делась описательная часть»):
+// метку вёрстки снимаем, а ТЕКСТ за ней печатаем. Прежняя версия выбрасывала
+// строку целиком, и ответ модели, начинавшийся с «Заголовок: …», уходил в
+// документ пустым. Тест переписан под новое поведение, а не удалён.
 func TestCleanBlockTextDropsHeadingMarker(t *testing.T) {
-	for _, answer := range []string{
-		"Heading 2: \"Гидроизоляционный слой: мембрана сваривается в двойной шов\"",
-		"Heading \"Геотекстиль и плёнка разделяют слои\"\nText: геотекстиль 500 г/м2",
-		"Section: Задача на объекте\n\nSection: Состав решения",
-		"Intro: коротко о системе\n\nOutro: вывод",
-	} {
-		if got := cleanBlockText(answer); got != "" {
-			t.Errorf("маркер вёрстки не отсечён (%q), осталось:\n%s", answer, got)
+	cases := map[string]string{
+		"Heading 2: \"Гидроизоляционный слой: мембрана сваривается в двойной шов\"":   "Гидроизоляционный слой",
+		"Heading \"Геотекстиль и плёнка разделяют слои\"\nText: геотекстиль 500 г/м2": "геотекстиль 500",
+		"Section: Задача на объекте.\n\nSection: Состав решения.":                     "Состав решения.",
+	}
+	for answer, want := range cases {
+		got := cleanBlockText(answer)
+		if strings.TrimSpace(got) == "" {
+			t.Errorf("текст после метки вёрстки выброшен (%q)", answer)
+			continue
 		}
+		if !strings.Contains(got, want) {
+			t.Errorf("текст %q потерян (%q), осталось:\n%s", want, answer, got)
+		}
+		// Сама метка снята. Слово в кавычках после неё — уже текст, и его
+		// печатать нужно: «Heading "Геотекстиль…"» — заголовок раздела.
+		if reLayoutMarkerPrefix.MatchString(got) {
+			t.Errorf("метка вёрстки осталась в начале строки (%q):\n%s", answer, got)
+		}
+	}
+	// Ответ из одних перечислений вёрстки — черновик и по-прежнему молчит.
+	if got := cleanBlockText("Intro: коротко о системе\n\nOutro: вывод"); got != "" {
+		t.Errorf("оглавление принято за текст:\n%s", got)
 	}
 }
 

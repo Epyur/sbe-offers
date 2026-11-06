@@ -81,15 +81,19 @@ func TestBlockPromptSkipsEmptyBriefFields(t *testing.T) {
 	}
 }
 
-// Запас токенов ответа не режется по «словам»: 200 слов — это больше 800
-// токенов, и ответ обрывался на полуслове («…одним кон», КП 003/2026).
+// Оценка бюджета (blockMaxTokens) осталась, но печать её больше не применяет:
+// ответ обрывался на полуслове («…одним кон», КП 003/2026) именно из-за неё.
+// Проверяем обе половины решения: оценка положительна, а запрос идёт без неё.
 func TestBlockTokenBudgetCoversWords(t *testing.T) {
 	const words = 200
 	if got := blockMaxTokens(words); got < words*4 {
-		t.Fatalf("бюджет токенов %d при %d словах", got, words)
+		t.Fatalf("оценка бюджета %d при %d словах", got, words)
 	}
 	if got := blockMaxTokens(0); got <= 0 {
-		t.Fatalf("бюджет по умолчанию не положительный: %d", got)
+		t.Fatalf("оценка по умолчанию не положительная: %d", got)
+	}
+	if got := documentTextMaxTokens(); got != 0 {
+		t.Fatalf("текст документа просится с пределом %d — предел должен давать провайдер", got)
 	}
 }
 

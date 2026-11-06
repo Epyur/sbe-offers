@@ -42,14 +42,41 @@ var errLLMNotConfigured = errors.New("llm not configured")
 const (
 	llmDefaultURL        = "http://llm:3000"
 	llmDefaultTimeoutMS  = 180000
-	llmDefaultMaxTokens  = 800
 	llmBodyPreviewLength = 200
+	// llmRetryAttempts — сколько раз пробуем ОДИН И ТОТ ЖЕ запрос. Аварии,
+	// которые повтор не лечит (нет ключа, 400), сюда не попадают.
+	llmRetryAttempts = 3
+	// llmRetryBackoff — пауза перед повтором; растёт линейно.
+	llmRetryBackoff = 2 * time.Second
+	// llmRetryBackoffEnv — переопределение паузы в миллисекундах. Нужно тестам:
+	// ждать настоящие секунды незачем, а поведение повтора проверять надо.
+	llmRetryBackoffEnv = "OFFERS_LLM_RETRY_BACKOFF_MS"
 )
+
+// retryBackoff — пауза перед повтором с учётом переопределения из окружения.
+func retryBackoff() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(llmRetryBackoffEnv))
+	if raw == "" {
+		return llmRetryBackoff
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 {
+		return llmRetryBackoff
+	}
+	return time.Duration(ms) * time.Millisecond
+}
 
 // Complete отправляет system+user в llm-service и возвращает текст ответа.
 //
 // Цепочка: offers-service → POST /internal/llm/complete (X-Service-Secret) →
 // llm-service берёт ключ (общий или пользовательский) → провайдер.
+//
+// maxTokens НЕ передаётся, когда он нулевой или отрицательный: тогда предел
+// ответа назначает провайдер (2026-11-06). Своё число резать ответ не должно —
+// ровно на этом КП 003/2026 теряла описательную часть: бюджет кончался раньше,
+// чем модель дописывала текст, и в `content` оставалось вступление-рассуждение
+// («Заголовок: …», «1. "…"»). Так же работает плагин 007 — он `max_tokens` не
+// шлёт вовсе (`sbe-llm/src/services/llm-center.ts`).
 func Complete(ctx context.Context, system, user string, maxTokens int) (string, error) {
 	secret := strings.TrimSpace(os.Getenv("LLM_SERVICE_SECRET"))
 	if secret == "" {
@@ -58,9 +85,6 @@ func Complete(ctx context.Context, system, user string, maxTokens int) (string, 
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("LLM_SERVICE_URL")), "/")
 	if base == "" {
 		base = llmDefaultURL
-	}
-	if maxTokens <= 0 {
-		maxTokens = llmDefaultMaxTokens
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -72,6 +96,29 @@ func Complete(ctx context.Context, system, user string, maxTokens int) (string, 
 		return "", fmt.Errorf("собрать запрос к модели: %w", err)
 	}
 
+	client := &http.Client{Timeout: llmTimeout()}
+	var lastErr error
+	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
+		if attempt > 1 {
+			// Пауза до повтора, отменяемая вместе с запросом.
+			if err := sleepCtx(ctx, time.Duration(attempt-1)*retryBackoff()); err != nil {
+				return "", err
+			}
+		}
+		content, err := llmOnce(ctx, client, base, secret, payload)
+		if err == nil {
+			return content, nil
+		}
+		if !llmRetryable(err) {
+			return "", err
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// llmOnce — один запрос к llm-service.
+func llmOnce(ctx context.Context, client *http.Client, base, secret string, payload []byte) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/internal/llm/complete", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("собрать запрос к модели: %w", err)
@@ -79,9 +126,11 @@ func Complete(ctx context.Context, system, user string, maxTokens int) (string, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Service-Secret", secret)
 
-	client := &http.Client{Timeout: llmTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
+		// Таймаут и обрыв связи — та же авария, что 504: ответа нет, запрос
+		// можно повторить. Живой случай 2026-11-06 — длинный текст КП,
+		// который модель пишет дольше, чем длится один заход.
 		return "", fmt.Errorf("модель недоступна: %w", err)
 	}
 	defer resp.Body.Close()
@@ -105,6 +154,44 @@ func Complete(ctx context.Context, system, user string, maxTokens int) (string, 
 		return "", errors.New("модель вернула пустой ответ")
 	}
 	return content, nil
+}
+
+// errLLMTimeout — ответа не дождались. Своя метка, потому что текст ошибки
+// клиента http содержит подробности транспорта, а не ответ сервиса.
+var errLLMTimeout = errors.New("модель не ответила вовремя")
+
+// llmRetryable — стоит ли повторять запрос.
+//
+// Повторяем то, что не зависит от нашего запроса: нет ответа (таймаут,
+// обрыв), 502/504 (шлюз и провайдер не успели), 429 (лимит частоты, как в
+// `llm-center.ts` плагина 007). Не повторяем «ключа нет» и 400/403: второй
+// такой же запрос даст тот же ответ, а ждать придётся человеку.
+func llmRetryable(err error) bool {
+	if errors.Is(err, errLLMTimeout) {
+		return true
+	}
+	if errors.Is(err, errLLMNotConfigured) {
+		return false
+	}
+	msg := err.Error()
+	for _, marker := range []string{"504", "502", "429", "timeout", "deadline exceeded", "connection reset", "EOF"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// sleepCtx ждёт паузу, прерываясь вместе с контекстом запроса.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // llmStatusError различает «ключа нет» (деградация) и остальные аварии

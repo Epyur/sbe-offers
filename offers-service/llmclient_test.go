@@ -100,21 +100,61 @@ func TestCompleteNoSecret(t *testing.T) {
 	}
 }
 
-// Таймаут берётся из окружения: провайдер лагает 60 с, шлюз обрывает раньше.
+// Таймаут берётся из окружения, и такой запрос ПОВТОРЯЕТСЯ (2026-11-06).
+//
+// Прежняя версия утверждала «одна попытка и конец». Решение изменено: один
+// медленный ответ оставлял блок модели пустым, поэтому теперь три попытки с
+// паузой — как `retryWithBackoff` в `llm-center.ts` плагина 007. Тест проверяет
+// обе половины: отказ всё равно возвращается ошибкой, и попыток было ровно
+// столько, сколько объявлено.
 func TestCompleteTimeout(t *testing.T) {
-	os.Setenv("OFFERS_LLM_TIMEOUT_MS", "80")
+	os.Setenv("OFFERS_LLM_TIMEOUT_MS", "60")
 	t.Cleanup(func() { os.Unsetenv("OFFERS_LLM_TIMEOUT_MS") })
+	os.Setenv(llmRetryBackoffEnv, "0")
+	t.Cleanup(func() { os.Unsetenv(llmRetryBackoffEnv) })
+	var calls int
 	stubLLM(t, func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(300 * time.Millisecond)
+		calls++
+		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write([]byte(`{"content":"поздно"}`))
 	})
-	start := time.Now()
 	_, err := Complete(context.Background(), "s", "u", 100)
 	if err == nil {
 		t.Fatal("ожидали ошибку таймаута")
 	}
-	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
-		t.Fatalf("клиент ждал %v — таймаут не сработал", elapsed)
+	if calls != llmRetryAttempts {
+		t.Fatalf("попыток %d, ожидалось %d", calls, llmRetryAttempts)
+	}
+}
+
+// Один таймаут, второй заход успешен — текст возвращается.
+//
+// Это и есть живой сценарий 2026-11-06: длинный ответ КП не успевал за один
+// заход, и человек получал пустой блок.
+func TestCompleteRetriesAfterTimeout(t *testing.T) {
+	os.Setenv("OFFERS_LLM_TIMEOUT_MS", "100")
+	t.Cleanup(func() { os.Unsetenv("OFFERS_LLM_TIMEOUT_MS") })
+	os.Setenv(llmRetryBackoffEnv, "0")
+	t.Cleanup(func() { os.Unsetenv(llmRetryBackoffEnv) })
+	var calls int
+	stubLLM(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			time.Sleep(300 * time.Millisecond)
+			_, _ = w.Write([]byte(`{"content":"поздно"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"content":"Готовый текст описания."}`))
+	})
+	got, err := Complete(context.Background(), "s", "u", 100)
+	if err != nil {
+		t.Fatalf("повтор не спас: %v", err)
+	}
+	if got != "Готовый текст описания." {
+		t.Fatalf("получен не тот текст: %q", got)
+	}
+	if calls != 2 {
+		t.Fatalf("попыток %d, ожидалось 2", calls)
 	}
 }
 
@@ -141,5 +181,75 @@ func TestCompleteEmptyContent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "пуст") && !strings.Contains(fmt.Sprint(err), "empty") {
 		t.Fatalf("непонятная ошибка для пустого ответа: %v", err)
+	}
+}
+
+// Повтор запроса к модели (2026-11-06).
+//
+// Живой случай: длинный текст КП модель пишет дольше одного захода, запрос
+// обрывается — и блок молчит, потому что второго захода не было вовсе.
+// Плагин 007 в этом месте повторяет (`retryWithBackoff` в `llm-center.ts`).
+// Повторяем только то, что от нашего запроса не зависит; «нет ключа» и 400
+// повторять бессмысленно — ответ на тот же запрос будет тем же.
+func TestLLMRetryableOnTimeout(t *testing.T) {
+	if !llmRetryable(errLLMTimeout) {
+		t.Fatal("таймаут должен повторяться")
+	}
+}
+
+func TestLLMRetryableOnGatewayAndLimit(t *testing.T) {
+	for _, msg := range []string{
+		"модель ответила 504: upstream timeout",
+		"модель ответила 502: upstream request failed",
+		"модель ответила 429: too many requests, try later",
+		"модель недоступна: context deadline exceeded",
+		"модель недоступна: connection reset by peer",
+	} {
+		if !llmRetryable(errors.New(msg)) {
+			t.Errorf("авария %q не повторяется, хотя должна", msg)
+		}
+	}
+}
+
+// Нет ключа модели — не авария сети: второй такой же запрос даст тот же отказ,
+// а человек будет ждать три паузы.
+func TestLLMNotRetryableWhenNotConfigured(t *testing.T) {
+	if llmRetryable(errLLMNotConfigured) {
+		t.Fatal("отсутствие ключа повторяется, хотя повтор не поможет")
+	}
+	wrapped := fmt.Errorf("модель недоступна: %w", errLLMNotConfigured)
+	if llmRetryable(wrapped) {
+		t.Fatal("незаданный ключ в обёртке считается повторяемой аварией")
+	}
+}
+
+func TestLLMNotRetryableOnBadRequest(t *testing.T) {
+	if llmRetryable(errors.New("модель ответила 400: invalid json")) {
+		t.Fatal("400 повторяется, хотя ответ на тот же запрос будет тот же")
+	}
+}
+
+// Пауза уважает контекст: отменённый запрос не ждёт впустую.
+func TestSleepCtxStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleepCtx(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ожидалась отмена контекста, получено %v", err)
+	}
+}
+
+// Пауза перед повтором настраивается: тесты не ждут настоящих секунд.
+func TestRetryBackoffOverride(t *testing.T) {
+	if got := retryBackoff(); got != llmRetryBackoff {
+		t.Fatalf("без переопределения пауза %v, ожидалась %v", got, llmRetryBackoff)
+	}
+	os.Setenv(llmRetryBackoffEnv, "7")
+	t.Cleanup(func() { os.Unsetenv(llmRetryBackoffEnv) })
+	if got := retryBackoff(); got != 7*time.Millisecond {
+		t.Fatalf("переопределённая пауза %v, ожидалось 7ms", got)
+	}
+	os.Setenv(llmRetryBackoffEnv, "мусор")
+	if got := retryBackoff(); got != llmRetryBackoff {
+		t.Fatalf("мусор в переопределении дал %v, ожидалось умолчание", got)
 	}
 }

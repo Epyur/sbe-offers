@@ -227,6 +227,101 @@ docker restart offers-local-app
 - Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
   the root `AGENTS.md`.
 
+## The descriptive part vanished (2026-11-06, release 0.7.4)
+
+Version (manifest.json = package.json) = **0.7.4**.
+
+The user's report, verbatim: *"посмотри новый вариант генерации
+`Коммерческое предложение 003-2026.docx` — куда делась описательная часть?"*
+The exported document had **ten empty paragraphs** with correct formatting where
+the description belonged. The placeholder had been found and substituted — with
+an empty string.
+
+### Three defects, all live at the same time
+
+1. **A layout marker blanked the whole block.** `form_values` of offer 003/2026
+   held the model answer under `gen.layout.46f1df42…` (1967 characters) and it
+   was a **draft**:
+
+   ```
+   1. "Гидроизоляция фундамента: одна система на горизонталь, вертикаль и отмостку".
+
+   Заголовок: "Система ТН-ФУНДАМЕНТ Дренаж Проф закрывает весь подземный контур дома"
+   Текст: задача объекта — новый многоквартирный дом …
+   ```
+
+   `reReasoningHeadingMarker` matched `Заголовок: …`, `looksLikePlan` returned
+   `true`, `cleanBlockText` returned `""`, and the empty string went into the
+   cache. **One marker line killed 4000 characters of real text underneath.**
+   A second live answer (`Brief says: … Alternative grouping: … Ugly.`) was
+   dropped wholesale by `stripReasoning`.
+
+2. **Our own `max_tokens` truncated the answer.** `blockMaxTokens(666)` = 7260
+   tokens; the model did not fit, the answer ended mid-sentence, and `content`
+   carried what the model said *before* answering — its reasoning. **Plugin 007
+   never hits this because it sends no `max_tokens` at all**
+   (`sbe-llm/src/services/llm-center.ts:239-246`): the provider picks the limit.
+
+3. **No retry.** One slow answer = a silent block. `llm-center.ts` retries
+   (`retryWithBackoff`, 3 attempts on 429/504/timeout).
+
+### What changed
+
+- **`docx_text.go`** — the fate of one line is decided in one place:
+  `cleanDraftLine` → `withoutLayoutMarker` / `isDraftSentence` /
+  `cutReasoningTail`. A layout marker is stripped as a **prefix and the text
+  after it is printed**; only an orphan marker («Цена», «Ссылки (Heading 1)»,
+  «Heading 2: "…"» — where nothing but layout is left) is dropped.
+  `looksLikePlan` now compares the number of outline lines with the number of
+  real prose lines (`outline > prose`) instead of «any marker means plan».
+  `documentTextMaxTokens()` returns **0** — the provider sets the limit
+  (`buildChatBody` omits `max_tokens` when it is zero).
+- **`docx_layout.go`** — the layout print path asks for the text with the same
+  zero.
+- **`llmclient.go`** — `llmOnce` (one request) plus a loop of
+  `llmRetryAttempts` = 3 with `llmRetryBackoff` between them. `llmRetryable`:
+  timeout, 502, 504, 429 and connection loss are retried; «no key» and 400 are
+  not (the same request would get the same answer while the person waits).
+- **`src/main.ts`** — the CUP news text rewritten for 0.7.4.
+
+### Verified
+
+- `go test ./...` green (main 51.4 %, model 82.6 %, skills 79.7 %),
+  `gofmt -l` empty, `go vet` clean.
+- `crapper`: every touched function under CRAP 10 (`cleanDraftLine` 5.0,
+  `withoutLayoutMarker` 8.0, `looksLikePlan` 6.0, `stripReasoning` 8.0,
+  `llmRetryable` 5.0). `dryer`: no new duplicate pairs (four pre-existing stay).
+- **Live run on the real data**: `temple.docx` plus the answer pulled from
+  `form_values` of offer 003/2026 through the whole pipeline → **1851
+  characters of clean text in 38 paragraphs**, no `Заголовок:`, no `Brief says`,
+  no `Alternative grouping`. Before the fix: **0 characters**.
+  (Checked with a throwaway test that was deleted afterwards; the live customer
+  document is never committed.)
+- Stand `offers_local_e2e.mjs` — **264/264**.
+
+### Rules that came out of this
+
+- **A layout marker describes the FORMAT, not the content.** Strip it, keep the
+  text. Never let a single marker decide the fate of the whole answer.
+- **Do not impose your own answer length on a document print.** The provider
+  already caps it, and a wrong cap is indistinguishable from a broken model —
+  this cost three releases of «the model answers with its reasoning».
+- **When a screen loses a block, read the cached `form_values` first.** The
+  answer was there and correct the whole time; the defect was downstream of it.
+- **Compare with `sbe-agent` (007) before inventing a mechanism.** It has solved
+  the same problem (long answers, no truncation) for a year — by not setting
+  `max_tokens` and by retrying.
+
+### New tests
+
+- `docx_text_live_draft_test.go` — the verbatim live answer: text after
+  `Заголовок:`/`Текст:` survives and the marker itself is gone; an orphan marker
+  still gives an empty block.
+- `llmclient_test.go` — retryable (timeout, 504, 429, reset) versus
+  non-retryable (no key, 400), and that the pause honours the context.
+- `docx_text_plan_test.go`, `docx_text_brief_test.go`, `docx_truncate_test.go`
+  rewritten to the new decision (the budget tests pinned the old policy).
+
 ## The .docx layout placeholders and model answers (2026-11-06, release 0.7.3)
 
 Version (manifest.json = package.json) = **0.7.3**.

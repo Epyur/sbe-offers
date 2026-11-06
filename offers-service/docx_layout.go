@@ -829,7 +829,7 @@ func layoutPromptText(ctx context.Context, instruction string, offer Offer,
 	// бы с первым.
 	system := skills.RenderBlockSystem(instruction, "", maxWords)
 	user := buildBlockUserPrompt(offer, cards, refs)
-	raw, err := c.Complete(ctx, system, user, blockMaxTokens(maxWords))
+	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return ""
 	}

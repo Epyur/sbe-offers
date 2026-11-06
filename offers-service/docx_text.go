@@ -220,7 +220,7 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 	}
 	system := skills.RenderBlockSystem(node.Instruction, node.Hint, maxWords)
 	user := buildBlockUserPrompt(offer, cards, refs)
-	raw, err := c.Complete(ctx, system, user, blockMaxTokens(maxWords))
+	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return "", err
 	}
@@ -229,21 +229,30 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 
 // blockMaxTokens — бюджет ответа модели на текст блока.
 //
-// «Слово ×4» не работает: у русского слова бывает 2–3 токена, а модель ещё
-// и начинает с рассуждения, которое вырезается уже после. На живом КП
-// 003/2026 ответ кончился на «…закрывает подземную часть одним кон» — это
-// обрыв по токенам, а не по смыслу. Берём 6 токенов на слово (слово + запас)
-// и добавляем 400 на служебные рассуждения и пометки.
+// **Больше не применяется к тексту документа** (2026-11-06). Свой `max_tokens`
+// у КП означал, что предел ответа назначаем мы, а не провайдер, — и на живом
+// КП 003/2026 бюджет кончался раньше, чем модель дописывала описание: в
+// документ уходило вступление-рассуждение, а дальше пусто. Плагин 007 этого
+// не знает вовсе, потому что `max_tokens` не шлёт (`llm-center.ts`).
 //
-// 2026-11-05: бюджет увеличен повторно. Живой текст показал, что 6×150+400 =
-// 1300 всё ещё обрывается на 150-словном ответе с длинным рассуждением. Теперь
-// 10 токенов на слово плюс 600 — ответ влезает с запасом, а лишние токены
-// стоят дешевле повторного скачивания документа менеджером.
+// Функция оставлена как оценка «хватит ли ответа» для тестов бюджета и как
+// запасная цифра, если когда-нибудь понадобится ограничение по смыслу.
+// Печать текста документа вызывает Complete с нулём — предел даёт провайдер.
 func blockMaxTokens(maxWords int) int {
 	if maxWords <= 0 {
 		maxWords = genDefaultMaxWords
 	}
 	return maxWords*10 + 600
+}
+
+// documentTextMaxTokens — предел ответа для текста документа.
+//
+// Ноль значит «предел назначает провайдер»: `buildChatBody` в llm-service не
+// кладёт `max_tokens` в тело при нуле, и ответ не режется нашим числом. Одно
+// решение в одном месте — здесь, чтобы печать блока и печать макета не
+// разошлись (2026-11-06).
+func documentTextMaxTokens() int {
+	return 0
 }
 
 // cleanBlockText убирает то, что модель добавляет по привычке: маркеры кода,
@@ -466,7 +475,16 @@ func documentText(raw string) string {
 //
 // Проверяется начало строки: «Мембрана защищает…» в абзаце КП не совпадёт ни
 // с одним признаком.
-var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|let me\b|let's\b|i need\b|i should\b|i will\b|i'll\b|i have\b|i am\b|i'm\b|hmm\b|okay\b|ok,|first,\s+i\b|so,?\s+i\b|word limit\b|advantages that are\b|is a fact\b|that's a real\b|better to be\b|is not in the brief|it's fair to say|header:|format says|this is fine|so no heading|need paragraphs|считаю допустимым|считаю,? что допустимо|осторожн|задача:|решение:|попробуем|сделаю проще|думаю|может,?\s|пометка|прочерк|не выдумыват|гуппа)`)
+// «решение:» из списка убрано 2026-11-06: это не признак рассуждения, а
+// обычное начало заголовка («Решение: дренаж по периметру»), и живой ответ
+// КП 003/2026 терял из-за него строку «Состав решения». Рассуждение модели
+// распознаётся по «Задача:», «Считаю…», «думаю» — там оно и живёт.
+//
+// «Brief says:» и «Alternative grouping:» добавлены 2026-11-06 по второму
+// живому ответу того же КП: английские вводные строки, а за ними русский текст
+// в кавычках — счёт по языку их пропускал, потому что русских слов в строке
+// больше, чем английских. В документ заказчику это попадать не должно.
+var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|brief says\b|alternative\b|option\b|let me\b|let's\b|i need\b|i should\b|i will\b|i'll\b|i have\b|i am\b|i'm\b|hmm\b|okay\b|ok,|first,\s+i\b|so,?\s+i\b|word limit\b|advantages that are\b|is a fact\b|that's a real\b|better to be\b|is not in the brief|it's fair to say|header:|format says|this is fine|so no heading|need paragraphs|считаю допустимым|считаю,? что допустимо|осторожн|задача:|попробуем|сделаю проще|думаю|может,?\s|пометка|прочерк|не выдумыват|гуппа)`)
 
 // reReasoningHeadingMarker — строка, которой модель ОПИСЫВАЕТ вёрстку вместо
 // того, чтобы её написать.
@@ -487,11 +505,74 @@ var reReasoningLine = regexp.MustCompile(`(?i)^(the task\b|task:|brief info\b|le
 //
 // Якорь `^` стоит В КАЖДОЙ ветке: общий якорь перед группой альтернатив
 // привязывал к началу только первую, и скобочный вид не находился вовсе.
+//
+// МАРКЕР И ТЕКСТ — РАЗНЫЕ ВЕЩИ (2026-11-06, разбор «куда делась описательная
+// часть»). Первая версия считала весь ответ планом, если в нём была хоть одна
+// строка «Заголовок: …», и cleanBlockText возвращал пустую строку: настоящий
+// текст, стоявший следующими строками, в документ не попадал вовсе. Живой
+// ответ КП 003/2026 на этом и пропал — в макете осталось десять пустых
+// абзацев. Поэтому решается СУДЬБА ОДНОЙ СТРОКИ:
+//
+//   - метка с содержимым («Заголовок: "…"», «Text: геотекстиль…») — метку
+//     снимаем, содержимое печатаем (stripLayoutMarker);
+//   - метка без содержимого и ссылка на вёрстку в скобках («Ссылки
+//     (Heading 1)», «Цена») — строка-черновик, выбрасывается целиком
+//     (isLayoutMarkerLine).
+//
+// План как ответ целиком по-прежнему отсекается — но по нескольким маркерам
+// вёстки сразу, см. looksLikePlan.
 var reReasoningHeadingMarker = regexp.MustCompile(
-	`(?i)^(heading|paragraph|section|bullets?|table|list|заголовок|абзац|раздел|список|таблица|текст|title|цена)\s*(\d+|h[1-6])?\s*[:(]` +
+	`(?i)^(heading|paragraph|section|bullets?|table|list|заголовок|абзац|раздел|список|таблица|текст|text|title|цена)\s*(\d+|h[1-6])?\s*(?:[:(]|[«"])` +
 		`|^[^(]*\((?:heading|заголовок|paragraph|абзац|section|раздел|text|текст)\s*(?:\d+|h[1-6])?\)\s*$` +
 		`|^Цена$`,
 )
+
+// reLayoutMarkerPrefix — метка вёрстки в начале строки: «Заголовок: …»,
+// «Текст: …», «Heading 2: …», «Heading "…"». Снимается как префикс, а остаток
+// строки — обычный текст для заказчика. Кавычка тоже годится как разделитель:
+// модель пишет название и без двоеточия.
+var reLayoutMarkerPrefix = regexp.MustCompile(
+	`(?i)^(heading|paragraph|section|bullets?|table|list|text|title|заголовок|абзац|раздел|список|таблица|текст)\s*(\d+|h[1-6])?\s*(?:[:(]|[«"])\s*`,
+)
+
+// stripLayoutMarker снимает метку вёрстки с начала строки, оставляя текст.
+//
+// «Заголовок: "Горизонтальная часть: мембрана 2 мм"» → «Горизонтальная часть:
+// мембрана 2 мм». Второй результат — была ли метка: по нему вызывающий отличает
+// строку с текстом от сироты-черновика.
+func stripLayoutMarker(line string) (string, bool) {
+	if !reLayoutMarkerPrefix.MatchString(line) {
+		return line, false
+	}
+	rest := reLayoutMarkerPrefix.ReplaceAllString(line, "")
+	return strings.TrimSpace(strings.Trim(rest, `"«»`)), true
+}
+
+// isLayoutMarkerLine — строка целиком является черновиком вёрстки: ссылка на
+// вёрстку вместо текста («Ссылки (Heading 1)», «Цена»).
+//
+// Метка с содержимым сюда НЕ относится — она снимается как префикс, а
+// содержимое остаётся текстом (см. stripLayoutMarker).
+func isLayoutMarkerLine(line string) bool {
+	if !reReasoningHeadingMarker.MatchString(line) {
+		return false
+	}
+	if _, ok := stripLayoutMarker(line); ok {
+		return false
+	}
+	return line == "Цена" || strings.HasSuffix(line, ")")
+}
+
+// reDraftTitleLine — строка-название, которое модель написала вместо абзаца.
+//
+// Живой ответ КП 003/2026 открывался строкой `1. "Гидроизоляция фундамента:
+// одна система на горизонталь, вертикаль и отмостку".` — это название будущего
+// раздела в кавычках, а не фраза для заказчика; ниже модель пишет то же самое
+// уже нормальным заголовком. Признак узкий: вся строка — пункт списка, целиком
+// в кавычках, и в ней нет глагола-сказуемого, то есть это не предложение с
+// цитатой внутри.
+var reDraftTitleLine = regexp.MustCompile(`^(\d{1,2}[.)]\s*)?["«][^"»]{10,200}["»]\.?$`)
+
 var reSelfQuestion = regexp.MustCompile(`^[^.!?]{0,80}\?$`)
 
 // looksLikePlan - ответ модели это ОГЛАВЛЕНИЕ, а не текст.
@@ -510,18 +591,40 @@ var reSelfQuestion = regexp.MustCompile(`^[^.!?]{0,80}\?$`)
 // Признак - СЛУЖЕБНЫЕ МАРКЕРЫ вёрстки, которых в тексте для заказчика не
 // бывает: "h2 ...", "Heading 2:", "Section:", "Intro ...". Один такой маркер
 // уже говорит, что модель перечисляет блоки документа, а не пишет документ.
+// План — это ОГЛАВЛЕНИЕ, а не строка с заголовком (2026-11-06).
+//
+// Два разбора подряд упирались в одно и то же. Сначала «есть хоть одна
+// метка — весь ответ план»: живой ответ КП 003/2026 начинался с «Заголовок:
+// "…"» и пропадал целиком. Затем «служебных строк не меньше половины»: тогда
+// ответ ИЗ ОДНОЙ строки «Heading 2: "Гидроизоляционный слой…"» — это одна
+// служебная строка из одной, то есть снова план.
+//
+// Отличие плана от заголовка не в количестве, а в том, ЧТО в строке. Заголовок
+// несёт текст для заказчика, план — только название будущего блока («h2
+// "Состав решения" — перечень слоёв», «Section:», «Цена»). Поэтому план — это
+// когда метка НЕ ОСТАВЛЯЕТ текста (cleanDraftLine её выбросил) в двух и более
+// строках подряд.
 func looksLikePlan(text string) bool {
+	outline, prose := 0, 0
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		if rePlanMarker.MatchString(trimmed) || reReasoningHeadingMarker.MatchString(trimmed) ||
-			reHeadingWord.MatchString(trimmed) {
-			return true
+		// Признак оглавления главнее признака текста: «2. h2 "Состав
+		// решения" - перечень слоёв» несёт слова, но описывает БУДУЩИЙ
+		// раздел, а не документ. Такую строку заказчику печатать нельзя.
+		if rePlanMarker.MatchString(trimmed) || reHeadingWord.MatchString(trimmed) {
+			outline++
+			continue
+		}
+		if _, keep := cleanDraftLine(trimmed); keep {
+			prose++
 		}
 	}
-	return false
+	// Оглавления в ответе БОЛЬШЕ, чем настоящих строк, — это план.
+	// Одна строка-заголовок в ответе ничего не значит.
+	return outline > prose
 }
 
 // rePlanMarker - маркер оглавления в начале строки: "h2 ...", "Intro:",
@@ -560,53 +663,91 @@ func stripReasoning(text string) string {
 	dropped := 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		clean, keep := cleanDraftLine(trimmed)
+		if keep {
+			kept = append(kept, clean)
+			// Строка осталась, но изменилась (снята метка вёрстки) — это тоже
+			// правка ответа, иначе возврат `text` вернул бы метку назад.
+			if clean != trimmed {
+				dropped++
+			}
+			continue
+		}
 		if trimmed == "" {
+			// Пустая строка — разделитель абзацев, не черновик.
 			kept = append(kept, "")
-			continue
 		}
-		if reReasoningLine.MatchString(trimmed) {
-			dropped++
-			continue
-		}
-		// Строка-описание вёрстки («Heading 2: "…"», «Text: …»): модель
-		// перечисляет блоки вместо текста. Содержимое после двоеточия тоже
-		// выбрасывается — это не абзац КП, а план редактора.
-		if reReasoningHeadingMarker.MatchString(trimmed) {
-			dropped++
-			continue
-		}
-		// Риторический вопрос модели к себе («ЕКН — артикул?») — тот же
-		// черновик, только в одну строку: в тексте для клиента вопросов к
-		// самому себе быть не может.
-		if reSelfQuestion.MatchString(trimmed) {
-			dropped++
-			continue
-		}
-		// Хвост отрезаем ДО проверки языка: в строке «ПВХ мембрана — …;
-		// сварка швов… hmm, "сварка" is not in the brief. Better to be careful»
-		// английские слова стоят только в хвосте, и проверка по всей строке
-		// ошибла бы полезную её часть за черновик (2026-11-06).
-		if cleaned := reReasoningTail.ReplaceAllString(trimmed, ""); cleaned != trimmed {
-			dropped++
-			trimmed = strings.TrimSpace(reasoningTailSeparators.ReplaceAllString(cleaned, ""))
-			if trimmed == "" {
-				continue
-			}
-			// Хвост отрезан — точку в конце ставим, иначе строка висит.
-			if !strings.HasSuffix(trimmed, ".") {
-				trimmed += "."
-			}
-		}
-		if !mostlyCyrillic(trimmed) {
-			dropped++
-			continue
-		}
-		kept = append(kept, trimmed)
+		dropped++
 	}
 	if dropped == 0 {
 		return text
 	}
 	return collapseBlankLines(strings.Join(kept, "\n"))
+}
+
+// cleanDraftLine — судьба ОДНОЙ строки ответа модели (2026-11-06).
+//
+// Второй результат — оставлять ли строку. Первый — что именно печатать: та же
+// строка либо без метки вёрстки («Заголовок: "…"» → «…»), либо без хвоста
+// рассуждения. Одно решение в одном месте: раньше судьбу строки решали три
+// разных места в stripReasoning, и правка одного расходилась с другим.
+func cleanDraftLine(trimmed string) (string, bool) {
+	trimmed, ok := withoutLayoutMarker(trimmed)
+	if !ok || isDraftSentence(trimmed) {
+		return "", false
+	}
+	trimmed = cutReasoningTail(trimmed)
+	if trimmed == "" || !mostlyCyrillic(trimmed) {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// withoutLayoutMarker снимает метку вёрстки с начала строки.
+//
+// Второй результат — false, если строку печатать нельзя вовсе: пустая,
+// строка-рассуждение, сирота-метка или метка, за которой осталась только
+// вёрстка («Heading 2: "…"» — сам заголовок клиенту не нужен, структура
+// документа его и так задаёт).
+func withoutLayoutMarker(trimmed string) (string, bool) {
+	if trimmed == "" || reReasoningLine.MatchString(trimmed) || isLayoutMarkerLine(trimmed) {
+		return "", false
+	}
+	stripped, wasMarker := stripLayoutMarker(trimmed)
+	if !wasMarker {
+		return trimmed, true
+	}
+	if stripped == "" || reReasoningHeadingMarker.MatchString(stripped) || reHeadingWord.MatchString(stripped) {
+		return "", false
+	}
+	return stripped, true
+}
+
+// isDraftSentence — строка, которая выглядит как текст, но им не является:
+// название раздела в кавычках вместо абзаца или вопрос модели к себе.
+func isDraftSentence(trimmed string) bool {
+	return reDraftTitleLine.MatchString(trimmed) || reSelfQuestion.MatchString(trimmed)
+}
+
+// cutReasoningTail отрезает рассуждение, начавшееся с середины строки.
+//
+// Отрезать нужно ДО проверки языка: в строке «ПВХ мембрана — …; сварка швов…
+// hmm, "сварка" is not in the brief» английские слова стоят только в хвосте, и
+// проверка по всей строке ошибла бы её полезную часть.
+func cutReasoningTail(trimmed string) string {
+	cleaned := reReasoningTail.ReplaceAllString(trimmed, "")
+	if cleaned == trimmed {
+		return trimmed
+	}
+	trimmed = strings.TrimSpace(reasoningTailSeparators.ReplaceAllString(cleaned, ""))
+	if trimmed == "" {
+		return ""
+	}
+	// Хвост отрезан — точку в конце ставим, иначе строка висит.
+	if !strings.HasSuffix(trimmed, ".") {
+		trimmed += "."
+	}
+	return trimmed
 }
 
 // reReasoningTail — рассуждение, начавшееся с середины строки.
@@ -615,7 +756,11 @@ func stripReasoning(text string) string {
 // hmm, "сварка" is not in the brief», «…после сдачи. That's a real property».
 // Берём от этого места до конца строки: всё, что после рассуждения, — тоже
 // рассуждение, а не ответ.
-var reReasoningTail = regexp.MustCompile(`(?i)\s*(?:\.\.\.\s*)?(?:hmm\b|\bthat's a real\b|\bis a fact about\b|\bit's fair to say\b|\bbetter to be\b|\bis not in the brief\b|\bi should\b|\bi need\b|\blet me\b|\bword limit\b).*$`)
+// Короткое английское суждение после русского текста в кавычках («…"Секция
+// 1 (по расчёту: 5 520 м² мембраны)..." Ugly.») — тоже хвост: модель оценивает
+// свой же черновик. Слово узнаётся по короткому списку оценочных, а не по
+// языку строки: русских слов в строке больше, и счёт по языку её пропускает.
+var reReasoningTail = regexp.MustCompile(`(?i)\s*(?:\.\.\.\s*)?(?:hmm\b|\bthat's a real\b|\bis a fact about\b|\bit's fair to say\b|\bbetter to be\b|\bis not in the brief\b|\bi should\b|\bi need\b|\blet me\b|\bword limit\b|\bugly\b|\bnice\b|\btoo vague\b|\btoo long\b|\bnot bad\b).*$`)
 
 // reasoningTailSeparators — то, что остаётся на месте отрезанного хвоста:
 // лишние точки, запятые и пробелы.
@@ -632,6 +777,10 @@ func hasReasoningLine(text string) bool {
 		if reReasoningLine.MatchString(trimmed) || !mostlyCyrillic(trimmed) {
 			return true
 		}
+		// Метка вёрстки (с содержимым или без) — тоже причина пройтись
+		// по строкам: stripReasoning её снимает, а текст за ней оставляет
+		// (2026-11-06). Без этой строки ответ, начинавшийся с «Заголовок: …»,
+		// проходил мимо разбора целиком.
 		if reReasoningHeadingMarker.MatchString(trimmed) || reSelfQuestion.MatchString(trimmed) {
 			return true
 		}
