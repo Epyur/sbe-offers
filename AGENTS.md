@@ -1692,6 +1692,24 @@ before (both were *created* at the moment of the mistake), so deleting them
 restored the tree. **Use absolute paths for every file write**, and after a
 bulk edit check `git status` before building.
 
+### Released and deployed 2026-11-06
+
+| | value |
+|---|---|
+| plugin | **0.7.2** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `86130a4` — pushed |
+| `main` | `0e68b9e` — pushed |
+| plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
+| server deploy | `git archive --format=tar 86130a4 offers-service offers-bot` -> `scp` -> `tar xf`; backups `offers-service.bak-0.7.1-20261106`, `offers-bot.bak-0.7.1-20261106`; `md5sum` of the three changed Go files matched before the build; containers recreated 2026-11-06 12:22 MSK, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
+| registry | `sbe-apstore-registry` `8c56195`; `www/registry.json` replaced separately (backup `registry.json.bak-20261106-0.7.1`, sha256 `6e186098…`); **`version` set by hand** - the script writes sums only |
+| sums | `manifest 6d032c19…` 468 B, `main 21301b26…` 145047 B, `styles 50358b4a…` 34072 B (CSS unchanged since 0.7.0) |
+
+**Not done on purpose: the CUP news.** `data.json` still reads
+`lastAnnouncedVersion: 0.7.1`. `announceOnce` runs in `onload`, and hot-reload
+does not watch files on Windows, so it publishes on the next Obsidian restart
+or when the plugin is toggled off/on in Settings.
+
 ## 2026-11-06 - long model prompts in the .docx layout were silently lost
 
 Version (manifest.json = package.json) = **0.7.1**. The user's own layout for
