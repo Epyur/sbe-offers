@@ -37,6 +37,10 @@ export interface SystemOption {
 export interface SystemAddResult {
   title?: string;
   composition?: number;
+  /** Написанные тексты системы: `description`, `advantages` (2026-11-06). */
+  texts?: Record<string, string>;
+  /** Что модель не написала. Выбор при этом сохранён. */
+  missing?: string[];
 }
 
 export function newDraft(): OfferDraft {
@@ -156,6 +160,18 @@ export function systemAddedMessage(result: SystemAddResult): string {
   const count = result.composition ?? 0;
   if (count > 0) {
     parts.push(`В её составе основных продуктов: ${count}.`);
+  }
+  // Тексты системы — написанные один раз при выборе (2026-11-06). Человеку
+  // важен не сам факт, а будет ли описательная часть в документе.
+  const ready = Object.keys(result.texts ?? {}).filter((k) => (result.texts?.[k] ?? '').trim() !== '');
+  if (ready.length > 0) {
+    parts.push('Описание системы и преимущества написаны — в документ они попадут сразу.');
+  }
+  for (const block of result.missing ?? []) {
+    parts.push(
+      `Не удалось написать: ${block === 'advantages' ? 'преимущества' : 'обоснование применения'}. ` +
+        'Это не мешает собрать документ — текста в этом месте просто не будет.',
+    );
   }
   parts.push(
     'Позиции не добавлены: описание системы, обоснование применения и ссылки попадут в документ, ' +

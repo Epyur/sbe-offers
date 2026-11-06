@@ -25,6 +25,19 @@ import type {
 const TIMEOUT_MS = 20000;
 
 /**
+ * Сколько ждём сборку документа и выбор системы (2026-11-06).
+ *
+ * У `requestUrl` нет своего предела вовсе — запрос при ошибке сети ждал бы
+ * бесконечно, и человек видел только «ничего не происходит». Сборка документа
+ * под макетом поднимает модель, а модели разрешено до 180 с на попытку; сервер
+ * теперь ждёт столько же (шаг A плана «генерация без модели»), значит и клиент
+ * обязан. Это не «таймаут на потерю»: 30–60 секунд на системе — нормальный
+ * ответ модели, и обрывать его на 20-й секунде значило бы воспроизводить
+ * исходную жалобу.
+ */
+const LONG_TIMEOUT_MS = 300000;
+
+/**
  * Текст для 401 после повтора: это уже не «токен устарел», а проблема входа.
  *
  * Сказать «ключ недействителен» здесь было бы неправдой: чаще всего ключ
@@ -41,11 +54,48 @@ export class OffersError extends Error {
   }
 }
 
+/**
+ * Ждать обещание не дольше ms; по истечении — понятная ошибка.
+ *
+ * `requestUrl` не принимает сигнал отмены, и без предела долгий запрос висел
+ * бы бесконечно — именно это человек видит как «система ушла думать и не
+ * вернулась» (2026-11-06). Отменить уже отправленный запрос мы не можем, но
+ * перестать его ждать и сказать, что произошло, — обязаны.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new OffersError(message, 0)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (reason: unknown) => {
+        window.clearTimeout(timer);
+        reject(reason);
+      },
+    );
+  });
+}
+
 /** Кто я в приложении: роль, выданная сервером. */
 export interface MeResponse {
   email: string;
   role: Role | '';
   hasAccess: boolean;
+}
+
+/** Текст одного блока системы (2026-11-06). */
+export interface SystemText {
+  noteId: number;
+  /** `description` — обоснование применения, `advantages` — преимущества. */
+  block: string;
+  text: string;
+  /** Хеш карточки, из которой текст написан. */
+  hash: string;
+  updatedAt: string;
+  /** Карточку изменили после того, как текст написали: есть смыл пересчитать. */
+  stale: boolean;
 }
 
 /** Что система поняла из загруженного макета .docx (2026-11-05). */
@@ -323,15 +373,26 @@ export class OffersService {
     return this.request<BriefResponse>('PUT', `/offers/${id}/brief`, { payload, status });
   }
 
-  /** Скачивание DOCX байтами: сервер отдаёт файл, а не JSON. */
+  /**
+   * Скачивание DOCX байтами: сервер отдаёт файл, а не JSON.
+   *
+   * У запроса свой предел (`LONG_TIMEOUT_MS`): сборка документа может ждать
+   * модель, и общий 20-секундный `requestUrl` оборвал бы её. `requestUrl` не
+   * принимает сигнал отмены, поэтому предел здесь — гонка с таймером: долгий
+   * ответ не повиснет навсегда, а ошибка будет понятной (2026-11-06).
+   */
   async exportDocx(id: number): Promise<Uint8Array> {
     return this.withTokenRetry(async (token) => {
-      const res = await requestUrl({
-        url: `${this.base()}/api/offers/offers/${id}/export?format=docx`,
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        throw: false,
-      });
+      const res = await withTimeout(
+        requestUrl({
+          url: `${this.base()}/api/offers/offers/${id}/export?format=docx`,
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          throw: false,
+        }),
+        LONG_TIMEOUT_MS,
+        'Сборка документа не закончилась вовремя: сервер не ответил за 5 минут.',
+      );
       if (res.status === 401) throw new OffersError('unauthorized', 401);
       if (res.status < 200 || res.status >= 300) {
         throw new OffersError(this.extractError(res.text, res.status), res.status);
@@ -483,7 +544,75 @@ export class OffersService {
   ): Promise<ComposeSystemResponse> {
     const note = /^sys-(\d+)$/.exec(choice.trim());
     const body = note ? { noteId: Number(note[1]) } : { sku: choice.trim() };
-    return this.request<ComposeSystemResponse>(method, `/offers/${offerId}/system`, body);
+    // Выбор системы ДОЛГО ждёт ответа: модель пишет её тексты один раз
+    // (2026-11-06). Общий 20-секундный предел обрывал бы именно этот вызов.
+    if (method === 'DELETE') {
+      return this.request<ComposeSystemResponse>(method, `/offers/${offerId}/system`, body);
+    }
+    return this.withTokenRetry(async (token) => {
+      const res = await withTimeout(
+        requestUrl({
+          url: `${this.base()}/api/offers/offers/${offerId}/system`,
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+          throw: false,
+        }),
+        LONG_TIMEOUT_MS,
+        'Тексты системы не закончили писаться: сервер не ответил за 5 минут.',
+      );
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return JSON.parse(res.text) as ComposeSystemResponse;
+    });
+  }
+
+  /**
+   * Сохранённые тексты систем предложения (2026-11-06).
+   *
+   * `stale: true` — карточку в Базе знаний изменили после того, как текст
+   * написали. По этому признаку редактор показывает кнопку пересчёта.
+   */
+  async getSystemTexts(offerId: number): Promise<{ texts: SystemText[] }> {
+    return this.request<{ texts: SystemText[] }>('GET', `/offers/${offerId}/system-texts`);
+  }
+
+  /**
+   * Пересчитать тексты одной системы — кнопка «Пересчитать тексты системы».
+   *
+   * Применяется вручную и только когда карточку в Базе знаний поправили:
+   * автоматический пересчёт означал бы новый вызов модели при каждом открытии.
+   */
+  async recalculateSystemTexts(
+    offerId: number,
+    noteId: number,
+  ): Promise<{ title: string; texts: Record<string, string>; missing?: string[] }> {
+    return this.withTokenRetry(async (token) => {
+      const res = await withTimeout(
+        requestUrl({
+          url: `${this.base()}/api/offers/offers/${offerId}/system/${noteId}/recalculate`,
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          throw: false,
+        }),
+        LONG_TIMEOUT_MS,
+        'Пересчёт текстов не закончился вовремя: сервер не ответил за 5 минут.',
+      );
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return JSON.parse(res.text) as {
+        title: string;
+        texts: Record<string, string>;
+        missing?: string[];
+      };
+    });
   }
 
   // --- Системы (2026-10-31) ---------------------------------------------

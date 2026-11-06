@@ -416,11 +416,23 @@ async function addPickedSystem(ctx: CallbackCtx, system: api.SystemItem): Promis
     await ctx.deps.send(ctx.chatId, 'Черновик не найден — начните заново.', MAIN_KEYBOARD);
     return;
   }
+  // Тексты системы пишет модель — разговор об этом честно предупреждает, иначе
+  // в чате четверть минуты не происходит ничего видимого (2026-11-06).
+  await ctx.deps.send(
+    ctx.chatId,
+    `Система «${system.title}» добавляется. Пишу описание и преимущества — это может занять до минуты.`,
+  );
   try {
     const res = await api.addSystem(draft.offerId, ctx.chatId, systemChoice(system));
     await ctx.deps.send(ctx.chatId, systemAddedMessage(res), MAIN_KEYBOARD);
   } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось выбрать систему: ${(e as Error).message}`);
+    // Выбор системы мог сохраниться, а тексты — нет: так и говорим, чтобы
+    // менеджер не выбирал её повторно (2026-11-06).
+    await ctx.deps.send(
+      ctx.chatId,
+      `Система выбрана, но тексты не записались: ${(e as Error).message}. ` +
+        'Повторять выбор не нужно — нажмите «Собрать КП» ещё раз или скачайте документ из плагина.',
+    );
   }
 }
 

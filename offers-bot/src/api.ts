@@ -3,6 +3,15 @@
 export const API_URL = (process.env.OFFERS_API_URL ?? 'http://offers:3000').replace(/\/+$/, '');
 const BOT_SECRET = process.env.OFFERS_BOT_SECRET ?? '';
 const TIMEOUT_MS = 60000;
+/**
+ * Сборка документа и выбор системы ждут модель (2026-11-06).
+ *
+ * Было одно ожидание на все ручки — 60 секунд, и оно было меньше, чем модели
+ * разрешено на ответ (180 с на попытку). Длинный текст не мог дойти до
+ * человека вовсе: бот бросал запрос, и в чате не появлялось ни файла, ни
+ * ошибки. Предел сервера и модели теперь больше, и ждать надо столько же.
+ */
+const LONG_TIMEOUT_MS = 300000;
 
 export interface CatalogItem {
   id: number;
@@ -38,7 +47,7 @@ export interface SystemChoice {
   noteId?: number;
 }
 
-/** Ответ выбора системы (2026-11-03). */
+/** Ответ выбора системы (2026-11-03; тексты — 2026-11-06). */
 export interface SystemAddResponse {
   /** Название выбранной системы — его бот показывает в ответе. */
   title: string;
@@ -47,6 +56,10 @@ export interface SystemAddResponse {
    * прибавляет: состав с ценами менеджер заводит сам.
    */
   composition: number;
+  /** Названия написанных текстов системы: `description`, `advantages`. */
+  texts?: Record<string, string>;
+  /** Какие тексты модель написать не смогла. Выбор при этом сохранён. */
+  missing?: string[];
 }
 
 export interface OfferItemPayload {
@@ -78,9 +91,14 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  timeoutMs = TIMEOUT_MS,
+): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_URL}/api/offers${path}`, {
       method,
@@ -103,6 +121,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
       throw new ApiError(message, res.status);
     }
     return (text ? JSON.parse(text) : undefined) as T;
+  } catch (e) {
+    // Отмена по таймауту приходит как AbortError без текста — человеку нужен
+    // понятный срок, а не «The operation was aborted» (2026-11-06).
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new ApiError(`сервер не ответил за ${Math.round(timeoutMs / 1000)} секунд`, 0);
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -159,7 +184,13 @@ export async function addSystem(
   chatId: string,
   choice: SystemChoice,
 ): Promise<SystemAddResponse> {
-  return call('POST', `/bot/offers/${offerId}/system`, { chat_id: chatId, ...choice });
+  // При выборе системы модель пишет её тексты — это долго (2026-11-06).
+  return call(
+    'POST',
+    `/bot/offers/${offerId}/system`,
+    { chat_id: chatId, ...choice },
+    LONG_TIMEOUT_MS,
+  );
 }
 
 /**
@@ -211,7 +242,13 @@ export async function docx(
   id: number,
   chatId: string,
 ): Promise<{ docx_base64: string; file_name: string }> {
-  return call('POST', `/bot/offers/${id}/docx?chat_id=${encodeURIComponent(chatId)}`);
+  // Сборка может ждать модель: свой предел, не общий 60 секунд (2026-11-06).
+  return call(
+    'POST',
+    `/bot/offers/${id}/docx?chat_id=${encodeURIComponent(chatId)}`,
+    undefined,
+    LONG_TIMEOUT_MS,
+  );
 }
 
 export async function offerLink(id: number, chatId: string): Promise<{ url: string; expiresAt: string }> {
