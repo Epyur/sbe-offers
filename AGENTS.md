@@ -227,6 +227,100 @@ docker restart offers-local-app
 - Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
   the root `AGENTS.md`.
 
+## The .docx layout placeholders and model answers (2026-11-06, release 0.7.3)
+
+Version (manifest.json = package.json) = **0.7.3**.
+
+
+
+Six live defects of offer 003/2026, found by running the REAL service prompt
+through the REAL model on live offer data (pulled from the production DB,
+executed inside `golang:1.24` on the `mailers_internal` network). None of them
+showed up in a unit test. **Do the same for the next complaint: the model
+provider answers differently from what a fixture assumes.**
+
+1. **A placeholder may span several Word paragraphs.** The live master
+   (`temple.docx`) carries the description instruction as NINE paragraphs: `{{`
+   opens in the first, `}}` closes in the ninth. The old code scanned each
+   paragraph separately (`reWordParagraph`), found the tag in none, and printed
+   all nine paragraphs of instruction to the customer verbatim. `fillLayoutDocument`
+   now scans the JOINED body text (`paragraphSpans`) and distributes the
+   substitution back over paragraphs (`replaceInSpan` → `paragraphChange`).
+   **Never bound placeholder scanning to one paragraph again.**
+2. **Paragraphs join through a line break.** Joined without separators, the
+   instruction reached the model as "…входящих в состав решения;- преимущества…"
+   and "…технического решенияОписания найди в базе знаний…": list items and
+   words glued together. `paragraphSpans` joins with `
+`, and
+   `normalizePromptText` (`layout_tokens.go`) keeps list items on their own line
+   while ordinary paragraphs continue through a space.
+3. **A table is NEVER written by the model.** The layout asks for a table, the
+   general block prompt forbade lists — the model spent its answer arguing with
+   itself ("ЕКН — артикул? … Хм … Сделаю проще"). Now `layoutTableFor` builds
+   the rows from offer data: positions for "предложение по материалам"
+   (`layoutOfferTable`), card specifications for "сравнение вариантов"
+   (`layoutCompareTable` → `compareSystemRows`). `layoutTableKindOf` picks the
+   kind from the instruction text, and **compare is checked first** — a compare
+   prompt usually mentions materials too. `tableMarkdown` renders the rows and
+   `splitAnswerTables` + `tableXML` print a real `<w:tbl>`. The model is not
+   called at all for a table.
+4. **A cell with a line break tears the table apart.** Live offer item names
+   contain `\n` ("Утеплитель ХPS Carbon Prof 100 мм, на глубину промерзания").
+   A markdown row cannot contain `\n`: 41 positions produced **5 tables**. `tableCell`
+   collapses a cell to one line and replaces `|`.
+5. **A plan is not text.** The model answers with an outline ("2. h2 \"Состав
+   решения\"…"), with layout descriptions ("Heading 2: …", "Ссылки (Heading 1)"),
+   with reasoning ("Задача: …", "Хм…") or with questions to itself ("ЕКН —
+   артикул?"). `reReasoningHeadingMarker`, `reHeadingWord`, `rePlanMarker`,
+   `reSelfQuestion` and `looksLikePlan` drop those. **The plan marker is ONLY a
+   layout marker (`h1`…`h6`, `Heading`, `Section`, `Intro`)** — a numbered list
+   on its own is NOT a plan (user decision 2026-11-06): the composition of a
+   system in an offer is exactly an honest numbered list of layers, and
+   discarding it would empty the most needed section. A detected plan makes the
+   block silent: an empty block is more honest than an outline.
+6. **The answer volume comes from the instruction.** The live master asks for
+   "не менее 4000 знаков на одну систему", while the budget stayed at
+   `genDefaultMaxWords` = 150 words. `skills.RequestedWords` reads the volume out
+   of the instruction (characters / 6, capped at 800 words).
+
+### The real cause of "the model answered with its reasoning": the timeout
+
+`llmDefaultTimeoutMS` in `llmclient.go` was **45 000 ms**, while a 4000-character
+answer takes **58 seconds** (measured). The client aborted the request and the
+document received whatever the model had said BEFORE answering — its reasoning.
+Raised to **180 000 ms**; the provider itself allows 190 s
+(`doProviderRequest` in llm-service). **When an answer looks like a draft, check
+the timeout first, not the prompt.**
+
+### Model substitution: checked, there is none
+
+Suspicion: the DB says `deepseek-v4.1-flash`, the model says "I am ChatGPT".
+Checked four ways:
+
+- our service sends `model="deepseek-v4.1-flash"` (temporary logging in
+  `internal.go`, removed after the check);
+- the provider ACCEPTS the name, echoes `"model":"deepseek-v4.1-flash"` in the
+  response, and rejects an unknown name with HTTP 400 — it cannot silently pick
+  the first model of the list;
+- the provider catalogue (`GET /api/v1/models`, 93 entries) contains
+  `deepseek-v4.1-flash`, `owned_by=deepseek`, `is_old_model=false`;
+- behaviourally the models differ: on one question DeepSeek produced 810
+  characters, `gpt-4.1` 458, `gpt-4.1-nano` 384, in different voices.
+
+The model says "ChatGPT" because it was trained on ChatGPT dialogues, not
+because it was substituted. If reasoning returns after 0.7.3, look at the
+shared-model configuration in `sbe-llm`, not at this client.
+
+Supporting files: `docx_layout.go` (`paragraphSpans`, `replaceInSpan`,
+`layoutTableFor`, `layoutOfferTable`, `layoutCompareTable`, `tableMarkdown`,
+`tableCell`, `layoutAnswer`, `splitAnswerTables`), `docx_text.go`
+(`looksLikePlan`, `rePlanMarker`, `reSelfQuestion`), `layout_tokens.go`
+(`normalizePromptText`), `skills/prompt.go` (`tableDoc`, `asksForTable`,
+`RequestedWords`), `llmclient.go` (timeout), `botapi.go` (`items`/`cards` wired
+into `layoutContext`). Tests: `docx_layout_multiparagraph_test.go`,
+`docx_layout_table_prompt_test.go`, `docx_layout_table_test.go`,
+`docx_text_plan_test.go`.
+
 ## Document text, formatting and the .docx layout (2026-11-05)
 
 Four rules that came out of the live offer 003/2026 and the user's requests of
@@ -1697,8 +1791,8 @@ bulk edit check `git status` before building.
 | | value |
 |---|---|
 | plugin | **0.7.2** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `86130a4` — pushed |
-| `main` | `0e68b9e` — pushed |
+| `backend` | `86130a4` (release) + `18dedf5` (docs) — pushed |
+| `main` | `0e68b9e` (plugin part) + `0c1b144` (docs) — pushed |
 | plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
 | server deploy | `git archive --format=tar 86130a4 offers-service offers-bot` -> `scp` -> `tar xf`; backups `offers-service.bak-0.7.1-20261106`, `offers-bot.bak-0.7.1-20261106`; `md5sum` of the three changed Go files matched before the build; containers recreated 2026-11-06 12:22 MSK, health `ok`, bot poller started |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
