@@ -317,6 +317,14 @@ func splitSupsub(text string) []textRun {
 // на байте, которого в исходном тексте не было (поймано тестом).
 func markSupsub(text string) string {
 	s := rePowerOfTen.ReplaceAllString(text, "$1-\x00$2")
+	// Готовые знаки степени, которые модель уже прислала (2026-11-06).
+	// Живой ответ КП 003/2026 после 0.7.5 написал «4800 м²» символом U+00B2,
+	// а не «м2»: правила ниже ищут АСКИ-цифру и такой текст не трогали. Word
+	// показывает `²` строчным символом того же размера — заказчик и просил
+	// «правильные верхние индексы». Знак заменяется на цифру с маркером, чтобы
+	// у степени было настоящее оформление, а не «похожий символ».
+	s = strings.ReplaceAll(s, "²", "\x00"+"2")
+	s = strings.ReplaceAll(s, "³", "\x00"+"3")
 	s = insertSupBeforeLastDigit(s, rePerUnitDegree)
 	s = insertSupBeforeLastDigit(s, reUnitDegree)
 	return s
