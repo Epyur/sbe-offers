@@ -1697,8 +1697,8 @@ bulk edit check `git status` before building.
 | | value |
 |---|---|
 | plugin | **0.7.2** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `86130a4` — pushed |
-| `main` | `0e68b9e` — pushed |
+| `backend` | `86130a4` (release) + `18dedf5` (docs) — pushed |
+| `main` | `0e68b9e` (plugin part) + `0c1b144` (docs) — pushed |
 | plugin part identical | `main.js`/`manifest.json`/`styles.css` have the same SHA-256 on both branches |
 | server deploy | `git archive --format=tar 86130a4 offers-service offers-bot` -> `scp` -> `tar xf`; backups `offers-service.bak-0.7.1-20261106`, `offers-bot.bak-0.7.1-20261106`; `md5sum` of the three changed Go files matched before the build; containers recreated 2026-11-06 12:22 MSK, health `ok`, bot poller started |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-OutFile` + hash of the file) |
