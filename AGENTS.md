@@ -125,9 +125,36 @@ id, repeat over positions).
 | `main.js` | `7d0bb82a0c6cf8279c85e926eeabc07b1e6745bab597e673b0cefe805e2f29f4` | 165753 |
 | `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
 
-`styles.css` unchanged (no CSS edits). **Not released:** the commit, the deploy
-and the self-host wait for the user's command. The live master has not been
-walked by a human (the agent has no device key).
+`styles.css` unchanged (no CSS edits).
+
+### Released and deployed 2026-11-06 23:50 MSK
+
+| | value |
+|---|---|
+| plugin | **0.7.7** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` (code HEAD) | `8abbd7c` — pushed |
+| `main` (code HEAD) | `979babf` — pushed |
+| plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
+| server deploy | `git archive 8abbd7c` -> `scp` -> `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.6-20261106`, `offers-bot.bak-0.7.6-20261106`; `md5sum` of nine Go files compared BEFORE the build (via `git cat-file`, because the server folders are `.gitignore`d on `main`); containers recreated 23:48 MSK, health `ok`, bot poller started |
+| routes | `recalculate`, `system-texts`, `form/layout/example` answer 401 without a token; the served OpenAPI contains all three |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https and against the on-disk `www/registry.json` |
+| registry | `sbe-apstore-registry` `27a1030`; `www/registry.json` patched surgically (version + two sums + `uploadedAt`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums |
+
+**Traps met during this deploy:**
+
+1. **`kb-selfhost.sh` updates `registry_file_overrides` but not `www/registry.json`.**
+   Over https the sums were already 0.7.7 while the on-disk entry still carried
+   0.7.6 sums and `version`. Patched surgically (two hashes + `version` +
+   `uploadedAt`), never by re-serialising the JSON.
+2. **Caddy re-serialises `registry.json`** when serving, so a file downloaded
+   over https is not byte-identical to the one on disk - compare fields, not hashes.
+3. **md5 of the server files must be checked against `backend` blobs** with
+   `git cat-file`, not against the working tree: on `main` the server folders
+   still exist on disk but belong to another version.
+
+**Not done:** the live master has not been walked by a human (the agent has no
+device key); the 0.7.7 CUP news publishes on the next Obsidian start.
 
 ## Steps A and B shipped (2026-11-06, release 0.7.6 — deployed and self-hosted)
 
