@@ -65,8 +65,8 @@
 | | значение |
 |---|---|
 | plugin | **0.7.6** (`manifest.json` = `package.json`), суффикса `b` нет |
-| `backend` | `e9163fb` — запушен |
-| `main` | `43f791b` — запушен (плагинная часть из `e9163fb`) |
+| `backend` | `dd4b66c` — запушен |
+| `main` | `6643438` — запушен (плагинная часть из `e9163fb`) |
 | плагинная часть совпадает | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` → 0 |
 | сервер | `git archive e9163fb` → `scp` → `tar xf` в `/opt/mailers`; резервные копии `offers-service.bak-0.7.5-20261106`, `offers-bot.bak-0.7.5-20261106`; `md5sum` десяти файлов сверены ДО сборки; контейнеры пересозданы 22:45 MSK, health `ok`, поллер бота запущен |
 | миграция | `offers_system_text` создана на боевой БД: PK `(note_id, block)`, индекс `offers_system_text_note`; строк 0 — новых выборов ещё не было |
