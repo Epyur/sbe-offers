@@ -23,6 +23,12 @@ type OfferItem struct {
 	Qty   float64 `json:"qty"`
 	Price float64 `json:"price"`
 	Sum   float64 `json:"sum"`
+	// PhotoKey/ImageName — картинка материала из карточки Базы знаний
+	// (2026-11-05). Снимок, как и цена: в документе должна быть картинка того
+	// материала, который был в предложении на момент сборки, а карточку потом
+	// могут переписать. Пусто — картинки нет, документ собирается без неё.
+	PhotoKey  string `json:"photoKey,omitempty"`
+	ImageName string `json:"imageName,omitempty"`
 }
 
 // OfferClient — данные клиента в предложении.

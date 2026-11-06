@@ -234,11 +234,16 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 // 003/2026 ответ кончился на «…закрывает подземную часть одним кон» — это
 // обрыв по токенам, а не по смыслу. Берём 6 токенов на слово (слово + запас)
 // и добавляем 400 на служебные рассуждения и пометки.
+//
+// 2026-11-05: бюджет увеличен повторно. Живой текст показал, что 6×150+400 =
+// 1300 всё ещё обрывается на 150-словном ответе с длинным рассуждением. Теперь
+// 10 токенов на слово плюс 600 — ответ влезает с запасом, а лишние токены
+// стоят дешевле повторного скачивания документа менеджером.
 func blockMaxTokens(maxWords int) int {
 	if maxWords <= 0 {
 		maxWords = genDefaultMaxWords
 	}
-	return maxWords*6 + 400
+	return maxWords*10 + 600
 }
 
 // cleanBlockText убирает то, что модель добавляет по привычке: маркеры кода,
@@ -264,7 +269,100 @@ func cleanBlockText(raw string) string {
 	if len(text) > 1 && strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) {
 		text = strings.TrimSpace(text[1 : len(text)-1])
 	}
-	return documentText(stripReasoning(text))
+	return trimTruncatedTail(documentText(stripReasoning(text)))
+}
+
+// reSentenceEnd — конец законченной фразы: знак, за которым идёт пробел, перевод
+// строки или конец текста. «г/м2» и «V-SL» сюда не относятся: там цифра, а не
+// знак конца.
+var reSentenceEnd = regexp.MustCompile(`[.!?](?:\s|$)`)
+
+// trimTruncatedTail снимает обрыв ответа модели (2026-11-05).
+//
+// Ответ, оборванный бюджетом токенов, кончается посреди слова: «…часть одним
+// кон». Печатать его клиенту нельзя — это видно и читается как сбой. Правило:
+//
+//   - последний абзац кончается знаком конца фразы — не трогаем ничего;
+//   - внутри последнего абзаца есть законченные фразы — оставляем их, дописав
+//     точку, если эта фраза стояла посреди абзаца;
+//   - законченных фраз в последнем абзаце нет — абзац снимается целиком
+//     (лучше пусто, чем огрызок). Предыдущие абзацы остаются как были.
+//
+// Точку в конце дописываем, чтобы строка не висела: «…одним контуром» без
+// знака конца читается как та же недописанная фраза.
+func trimTruncatedTail(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	// Последний непустой абзац — тот, что мог оборваться.
+	idx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return text
+	}
+	last := strings.TrimSpace(lines[idx])
+	if endsSentence(last) {
+		return text
+	}
+	if cut := lastSentenceEnd(last); cut >= 0 {
+		finished := strings.TrimSpace(last[:cut+1])
+		lines[idx] = finished
+		return strings.TrimSpace(strings.Join(lines[:idx+1], "\n"))
+	}
+	// Законченных фраз в последнем абзаце нет. Обрыв приходится на последнее
+	// слово: снимаем его и закрываем фразу точкой — текст остаётся целым по
+	// смыслу, а «…одним кон» не превращается в «…одним кон.»
+	words := strings.Fields(last)
+	if len(words) < 2 {
+		// Одно слово — это не абзац, а обрывок. Убираем абзац целиком, если
+		// есть предыдущие.
+		if idx == 0 {
+			return ""
+		}
+		return strings.TrimSpace(strings.Join(lines[:idx], "\n"))
+	}
+	words = words[:len(words)-1]
+	lines[idx] = strings.TrimRight(strings.Join(words, " "), ",;:—-–") + "."
+	return strings.TrimSpace(strings.Join(lines[:idx+1], "\n"))
+}
+
+// endsSentence — кончается ли текст знаком конца фразы, за которым допустимы
+// закрывающие кавычки и скобки.
+func endsSentence(s string) bool {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	for len(runes) > 0 {
+		switch runes[len(runes)-1] {
+		case '"', '»', ')', ']':
+			runes = runes[:len(runes)-1]
+			continue
+		}
+		break
+	}
+	if len(runes) == 0 {
+		return false
+	}
+	switch runes[len(runes)-1] {
+	case '.', '!', '?', '…':
+		return true
+	}
+	return false
+}
+
+// lastSentenceEnd — индекс последнего знака конца фразы (байтовый), после
+// которого идёт пробел или конец текста. -1 — законченных фраз нет.
+func lastSentenceEnd(s string) int {
+	all := reSentenceEnd.FindAllStringIndex(s, -1)
+	if len(all) == 0 {
+		return -1
+	}
+	return all[len(all)-1][0]
 }
 
 // reNeedMarker — пометка «здесь не хватает факта», которую ставит модель.

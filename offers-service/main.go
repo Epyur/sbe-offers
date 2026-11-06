@@ -130,6 +130,15 @@ func main() {
 	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))
 	mux.HandleFunc("DELETE /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleRemoveSystem))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
+	// Макет документа (2026-11-05): загрузка .docx с метками `[…]` и `{…}`,
+	// чтение обратно для правки и удаление (печать снова по блокам формы).
+	mux.HandleFunc("POST /api/offers/form/layout", s.requirePerm("admin")(s.handleUploadLayout))
+	mux.HandleFunc("GET /api/offers/form/layout", s.requirePerm("admin")(s.handleDownloadLayout))
+	mux.HandleFunc("DELETE /api/offers/form/layout", s.requirePerm("admin")(s.handleDeleteLayout))
+	// «Опиши блок словами» (2026-11-05): свободное описание → готовые узлы
+	// формы. Администратор пишет, ЧТО должно быть в блоке, а не как его
+	// разложить по узлам; правку он всё равно делает руками.
+	mux.HandleFunc("POST /api/offers/form/describe", s.requirePerm("admin")(s.handleDescribeBlock))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
 	mux.HandleFunc("GET /api/offers/offers/{id}", s.requirePerm("viewer")(s.handleGetOffer))
@@ -377,6 +386,14 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		// и ссылка его не найдёт; это законное состояние, не ошибка.
 		`ALTER TABLE offers_material ADD COLUMN IF NOT EXISTS note_title TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE offers_material ADD COLUMN IF NOT EXISTS note_id BIGINT NOT NULL DEFAULT 0`,
+
+		// Макет документа (2026-11-05). Пользователь загружает свой .docx с
+		// метками `[…]` и `{…}`, и КП печатается по нему: свои стили, шрифты
+		// и колонтитулы. Байты лежат в БД, а не в S3: макет один на форму
+		// (десятки килобайт), и читается он при каждой сборке документа —
+		// лишний поход в хранилище на печати не нужен.
+		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS layout_docx BYTEA`,
+		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS layout_name TEXT NOT NULL DEFAULT ''`,
 
 		// Вариации материала: один SKU — много ЕКН (толщина, цвет, размер).
 		// Уникальность по паре, а не по одному ЕКН: один и тот же материал

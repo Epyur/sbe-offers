@@ -244,23 +244,74 @@ function renderPromptBody(body: HTMLElement, node: RichNode, deps: BlockEditorDe
   renderPlaceholderPicker(deps.placeholders, instruction);
 }
 
-/** Картинка: выбор файла, ширина, сторона обтекания, подпись. */
+/**
+ * Картинка: откуда брать (система / материал / файл), ширина, обтекание, подпись.
+ *
+ * Источник «система» и «материал» (2026-11-05): форма общая для всех КП, поэтому
+ * в ней хранится именно источник, а карточку даёт само предложение. Админ
+ * пишет «сюда картинку системы» — и не выбирает файл руками в каждом КП.
+ */
 function renderImageBody(body: HTMLElement, node: RichNode, deps: BlockEditorDeps): void {
-  const pickRow = body.createDiv({ cls: 'tn-offers-row' });
-  const pick = pickRow.createEl('button', {
-    text: node.imageKey ? `🖼 ${node.imageName ?? node.imageKey}` : '🖼 Выбрать картинку',
-    cls: 'tn-btn tn-btn-ghost',
+  const sourceRow = body.createDiv({ cls: 'tn-offers-row' });
+  sourceRow.createSpan({ cls: 'tn-offers-muted', text: 'Картинка:' });
+  const source = sourceRow.createEl('select', { cls: 'tn-offers-input' });
+  for (const [value, label] of [
+    ['', 'своя картинка (файл)'],
+    ['system', 'системы из КП'],
+    ['material', 'материала из КП'],
+  ]) {
+    source.createEl('option', { value, text: label });
+  }
+  source.value = node.imageOf ?? '';
+  source.addEventListener('change', () => {
+    node.imageOf = (source.value || undefined) as RichNode['imageOf'];
+    deps.onChange?.();
+    nodeSourceHint(body, node);
   });
-  pick.addEventListener('click', () => {
-    void (async () => {
-      const picked = await deps.pickImage?.();
-      if (!picked) return;
-      node.imageKey = picked.key;
-      node.imageName = picked.name;
+
+  if (node.imageOf === 'system') {
+    const row = body.createDiv({ cls: 'tn-offers-row' });
+    row.createSpan({ cls: 'tn-offers-muted', text: 'Какая система (номер по порядку):' });
+    const idx = row.createEl('input', {
+      cls: 'tn-offers-input tn-offers-num-input',
+      attr: { type: 'number', min: '1', max: '20', step: '1' },
+    });
+    idx.value = String(node.systemIndex ?? 1);
+    idx.addEventListener('input', () => {
+      node.systemIndex = Number(idx.value) || 1;
       deps.onChange?.();
-      pick.setText(`🖼 ${picked.name}`);
-    })();
-  });
+    });
+    row.createSpan({ cls: 'tn-offers-muted', text: '1 — первая выбранная в КП' });
+  } else if (node.imageOf === 'material') {
+    const row = body.createDiv({ cls: 'tn-offers-row' });
+    row.createSpan({ cls: 'tn-offers-muted', text: 'Какая позиция (номер по порядку):' });
+    const idx = row.createEl('input', {
+      cls: 'tn-offers-input tn-offers-num-input',
+      attr: { type: 'number', min: '1', max: '500', step: '1' },
+    });
+    idx.value = String(node.itemIndex ?? 1);
+    idx.addEventListener('input', () => {
+      node.itemIndex = Number(idx.value) || 1;
+      deps.onChange?.();
+    });
+    row.createSpan({ cls: 'tn-offers-muted', text: 'из таблицы состава КП' });
+  } else {
+    const pickRow = body.createDiv({ cls: 'tn-offers-row' });
+    const pick = pickRow.createEl('button', {
+      text: node.imageKey ? `🖼 ${node.imageName ?? node.imageKey}` : '🖼 Выбрать картинку',
+      cls: 'tn-btn tn-btn-ghost',
+    });
+    pick.addEventListener('click', () => {
+      void (async () => {
+        const picked = await deps.pickImage?.();
+        if (!picked) return;
+        node.imageKey = picked.key;
+        node.imageName = picked.name;
+        deps.onChange?.();
+        pick.setText(`🖼 ${picked.name}`);
+      })();
+    });
+  }
 
   const sizeRow = body.createDiv({ cls: 'tn-offers-row' });
   sizeRow.createSpan({ cls: 'tn-offers-muted', text: 'Ширина, см:' });
@@ -302,6 +353,21 @@ function renderImageBody(body: HTMLElement, node: RichNode, deps: BlockEditorDep
     cls: 'tn-offers-muted',
     text: 'Картинка плавающая: текст идёт рядом с ней, строка не разрывается.',
   });
+  nodeSourceHint(body, node);
+}
+
+/** Пояснение под источником картинки: что именно попадёт в документ. */
+function nodeSourceHint(body: HTMLElement, node: RichNode): void {
+  const old = body.querySelector('.tn-offers-image-hint');
+  old?.remove();
+  let text = '';
+  if (node.imageOf === 'system') {
+    text = 'В документ пойдёт фотография системы, выбранной в КП. «Картинка системы» берётся из карточки Базы знаний; если у системы её нет — узел ничего не печатает.';
+  } else if (node.imageOf === 'material') {
+    text = 'В документ пойдёт фотография материала из позиций КП. Она берётся из карточки материала в Базе знаний; нет картинки — узел ничего не печатает.';
+  }
+  if (!text) return;
+  body.createDiv({ cls: 'tn-offers-muted tn-offers-image-hint', text });
 }
 
 function onNodeKindChanged(node: RichNode): void {
@@ -323,6 +389,11 @@ function onNodeKindChanged(node: RichNode): void {
     case 'image':
       node.widthCm = node.widthCm ?? 8;
       node.wrap = node.wrap ?? 'both';
+      // Источник по умолчанию — файл: уже существующие формы, где выбран
+      // файл явно, не должны превратиться в «картинку системы».
+      node.imageOf = node.imageOf;
+      if (node.imageOf === 'system') node.systemIndex = node.systemIndex ?? 1;
+      if (node.imageOf === 'material') node.itemIndex = node.itemIndex ?? 1;
       break;
     default:
       node.text = node.text ?? '';

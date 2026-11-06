@@ -118,14 +118,36 @@ type paraOpts struct {
 	KeepLines bool
 	// PageBreakBefore — начать с новой страницы.
 	PageBreakBefore bool
+	// Align — выравнивание абзаца. Пусто — «по ширine» (оформление документа).
+	Align string
+	// NoIndent — без отступа первой строки (заголовки, картинки, подписи).
+	NoIndent bool
 }
 
+// Оформление документа (2026-11-05).
+//
+// Живой КП 003/2026 вышел без выравнивания: стиль Normal бланка (`a0`) —
+// Arial 11pt, прижат влево, без отступа первой строки. Пользователь ждал
+// обычного печатного текста: по ширине, с красной строкой 1,25 см.
+//
+// Стиль бланка править нельзя — в нём колонтитулы, нумерация и остальное
+// оформление фирменного листа (2026-10-29, грабля с потерей номеров страниц).
+// Поэтому оформление задаётся в pPr КАЖДОГО абзаца; так же сформулировано
+// правило документов агента (sbe-agent, «Стандартное оформление Word»).
+const (
+	// bodyFirstLine — отступ первой строки 1,25 см = 709 twips.
+	bodyFirstLine = "709"
+	// bodyLine — полуторный интервал (240 × 1,5).
+	bodyLineRule = `<w:spacing w:line="360" w:lineRule="auto"/>`
+	// bodyAlign — выравнивание основного текста.
+	bodyAlign = "both"
+)
+
 func (o paraOpts) spacingXML() string {
-	if o.Before <= 0 && o.After <= 0 {
-		return ""
-	}
 	var sb strings.Builder
 	sb.WriteString("<w:spacing")
+	// Полуторный интервал — оформление документа; отступы блока его дополняют.
+	sb.WriteString(` w:line="360" w:lineRule="auto"`)
 	if o.Before > 0 {
 		sb.WriteString(` w:before="` + strconv.Itoa(o.Before*20) + `"`)
 	}
@@ -134,6 +156,25 @@ func (o paraOpts) spacingXML() string {
 	}
 	sb.WriteString("/>")
 	return sb.String()
+}
+
+// alignXML — выравнивание абзаца: явное из блока формы или оформление
+// документа (по ширине) для основного текста.
+func (o paraOpts) alignXML() string {
+	align := o.Align
+	if jcVal(align) == "" {
+		align = bodyAlign
+	}
+	return `<w:jc w:val="` + jcVal(align) + `"/>`
+}
+
+// indentXML — отступ первой строки. Красная строка нужна основному тексту и
+// вредна заголовку, картинке и подписи под ней.
+func (o paraOpts) indentXML() string {
+	if o.NoIndent {
+		return `<w:ind w:firstLine="0"/>`
+	}
+	return `<w:ind w:firstLine="` + bodyFirstLine + `"/>`
 }
 
 // flagXML — элемент разметки Word по флагу. Два одинаковых «если включено —
@@ -153,23 +194,57 @@ func (o paraOpts) pageBreakXML() string {
 	return flagXML(o.PageBreakBefore, "<w:pageBreakBefore/>")
 }
 
-func paragraphXML(text, align string) string {
+func paragraphAligned(text, align string) string {
 	return paragraphXMLOpts(text, align, paraOpts{})
 }
 
 // paragraphXMLOpts — абзац с размещением. Порядок элементов в w:pPr задан
 // схемой: стиль, отступы/разрыв, выравнивание.
+//
+// Текст проходит через plainText и runsXML: вики-ссылки из заметок убираются,
+// потерянные пробелы возвращаются, степени в единицах измерения становятся
+// надстрочными (2026-11-05 — живые дефекты КП 003/2026).
 func paragraphXMLOpts(text, align string, opts paraOpts) string {
+	// Выравнивание — из аргумента или блока формы; пусто значит «оформление
+	// документа» (по ширине), а не «как получится».
+	opts.Align = align
+	return paragraphXML(text, opts)
+}
+
+// paragraphXML — абзац по опциям. Одна точка сборки pPr: порядок элементов
+// задан схемой (стиль, отступы/разрыв, интервал, отступ строки, выравнивание).
+func paragraphXML(text string, opts paraOpts) string {
 	var pPr strings.Builder
 	pPr.WriteString(`<w:pStyle w:val="` + styleNormal + `"/>`)
 	pPr.WriteString(opts.pageBreakXML())
 	pPr.WriteString(opts.spacingXML())
-	if j := jcVal(align); j != "" {
-		pPr.WriteString(`<w:jc w:val="` + j + `"/>`)
-	}
+	pPr.WriteString(opts.indentXML())
+	pPr.WriteString(opts.alignXML())
 	pPr.WriteString(opts.keepXML())
-	return `<w:p><w:pPr>` + pPr.String() + `</w:pPr><w:r><w:t xml:space="preserve">` +
-		escapeXML(text) + `</w:t></w:r></w:p>`
+	return `<w:p><w:pPr>` + pPr.String() + `</w:pPr>` + runsXML(plainText(text), "") + `</w:p>`
+}
+
+// paragraphsXML — текст с переносами строк как НЕСКОЛЬКО абзацев.
+//
+// До 2026-11-05 описание карточки с переносами печаталось одним абзацем с
+// символами \n внутри: Word их не показывает, и целые строки («Особенности
+// системы:») слипались с соседними. Пустые строки пропускаются — абзацев-
+// пустышек в документе быть не должно.
+func paragraphsXML(text, align string, opts paraOpts) string {
+	var sb strings.Builder
+	first := true
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		o := paraOpts{}
+		if first {
+			o = opts
+			first = false
+		}
+		sb.WriteString(paragraphXMLOpts(strings.TrimSpace(line), align, o))
+	}
+	return sb.String()
 }
 
 // pageBreakRunXML — разрыв страницы как узел содержимого: отдельный пустой
@@ -183,7 +258,7 @@ func pageBreakRunXML() string {
 // только разметка, чтобы печать ссылок не разъезжалась с печатью текста.
 func hyperlinkXML(relID, text, url string) string {
 	if relID == "" {
-		return paragraphXML(url, "")
+		return paragraphAligned(url, "")
 	}
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` +
 		`<w:hyperlink r:id="` + escapeXML(relID) + `" w:history="1">` +
@@ -200,7 +275,7 @@ func listItemXMLOpts(text string, opts paraOpts) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
 		opts.spacingXML() +
 		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
-		`<w:r><w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
+		runsXML(plainText(text), "") + `</w:p>`
 }
 
 func headingXML(text string, level int) string {
@@ -218,10 +293,15 @@ func headingXMLOpts(text string, level int, opts paraOpts) string {
 	case 4:
 		size = "24" // 12pt
 	}
+	const headingRPr = `<w:b/>`
+	// Заголовок — по центру, без красной строки: так оформлены документы
+	// экосистемы (sbe-agent) и так их читают в КП.
+	opts.NoIndent = true
+	opts.Align = "center"
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/>` +
-		opts.pageBreakXML() + opts.spacingXML() + opts.keepXML() + `</w:pPr>` +
-		`<w:r><w:rPr><w:b/><w:sz w:val="` + size + `"/><w:szCs w:val="` + size + `"/></w:rPr>` +
-		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:p>`
+		opts.pageBreakXML() + opts.spacingXML() + opts.indentXML() + opts.alignXML() + opts.keepXML() + `</w:pPr>` +
+		runsXML(plainText(text), headingRPr+`<w:sz w:val="`+size+`"/><w:szCs w:val="`+size+`"/>`) +
+		`</w:p>`
 }
 
 func tableCellXML(text string, header bool) string {
@@ -238,8 +318,7 @@ func tableCellXML(text string, header bool) string {
 		shading = `<w:shd w:val="clear" w:color="auto" w:fill="DCE6F1"/>`
 	}
 	return `<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/>` + shading + `</w:tcPr>` +
-		`<w:p><w:pPr>` + pPr + `</w:pPr><w:r><w:rPr>` + rPr + `</w:rPr><w:t xml:space="preserve">` +
-		escapeXML(text) + `</w:t></w:r></w:p></w:tc>`
+		`<w:p><w:pPr>` + pPr + `</w:pPr>` + runsXML(plainText(text), rPr) + `</w:p></w:tc>`
 }
 
 func tableXML(rows [][]string) string {
@@ -316,6 +395,15 @@ type blockNode struct {
 	WidthCm   int    `json:"widthCm"`
 	Wrap      string `json:"wrap"`
 	Caption   string `json:"caption"`
+	// ImageOf — откуда брать картинку (2026-11-05): пусто/static — по ключу
+	// ImageKey; system — картинка выбранной системы КП; material — картинка
+	// материала из позиций. Форма общая для всех предложений, и «какая
+	// система» знает только само предложение.
+	ImageOf string `json:"imageOf,omitempty"`
+	// SystemIndex — номер выбранной системы (1 = первая в порядке выбора).
+	SystemIndex int `json:"systemIndex,omitempty"`
+	// ItemIndex — номер позиции предложения (1 = первая).
+	ItemIndex int `json:"itemIndex,omitempty"`
 }
 
 // renderCtx — что нужно содержимому блока, кроме значений формы.
@@ -430,8 +518,9 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			continue
 		case "image":
 			// Плавающая картинка с обтеканием: текст идёт рядом, строка не
-			// разрывается (2026-11-01).
-			if markup, ok := imageNodeXML(node, rc.media, rc.images); ok {
+			// разрывается (2026-11-01). Источник — ключ узла или карточка
+			// системы/материала (2026-11-05).
+			if markup, ok := showCardImages(context.Background(), node, rc.media, rc.images, rc); ok {
 				sb.WriteString(markup)
 				started = true
 			}
@@ -557,7 +646,7 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 	// могли сохранить пустой (админ удалил титульный лист), а документ без
 	// названия читать невозможно. Не повторяем, если такой заголовок уже есть.
 	if !documentHasTitle(blocks, form.Title) {
-		sb.WriteString(paragraphXML(titleOr(form.Title), ""))
+		sb.WriteString(paragraphAligned(titleOr(form.Title), ""))
 	}
 
 	// Согласованный менеджером текст секций (2026-10-29). Идёт после блоков
@@ -584,18 +673,21 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 	if len(offer.Items) == 0 {
 		// Состав передаётся отдельно — так и говорим, без нулевой таблицы и
 		// без «итого 0,00»: ноль в счёте читается как «бесплатно».
-		sb.WriteString(paragraphXML(
+		sb.WriteString(paragraphAligned(
 			"Состав и стоимость материалов передаются отдельным документом.", ""))
 	} else {
 		sb.WriteString(tableXML(offerItemsTable(offer.Items)))
-		sb.WriteString(paragraphXML("Итого: "+formatMoney(offer.Total)+" руб.", "right"))
+		// Итог — отдельной строкой справа, без красной строки: отступ первой
+		// строки на короткой сумме выглядит как сдвинутая вправо колонка.
+		sb.WriteString(paragraphXMLOpts("Итого: "+formatMoney(offer.Total)+" руб.", "right",
+			paraOpts{NoIndent: true, Before: 6}))
 	}
 
 	// Подпись — только если её нет в блоке формы: форму легко испортить
 	// шаблонной подписью, и вторая строка «Менеджер» выглядела бы как сбой.
 	if !formBlocksMention(form, "{{manager}}") {
-		sb.WriteString(paragraphXML("", ""))
-		sb.WriteString(paragraphXML("Менеджер: "+offer.OwnerEmail, ""))
+		sb.WriteString(paragraphAligned("", ""))
+		sb.WriteString(paragraphXMLOpts("Менеджер: "+offer.OwnerEmail, "", paraOpts{NoIndent: true}))
 	}
 
 	// Ссылки раздела `links` превращаются в кликабельные: отношение на каждую.
@@ -792,12 +884,12 @@ func writeOfferHead(sb *strings.Builder, form OfferForm, offer Offer) {
 	if len(offer.CreatedAt) >= 10 {
 		dateLine += " от " + offer.CreatedAt[:10]
 	}
-	sb.WriteString(paragraphXML(dateLine, "right"))
+	sb.WriteString(paragraphAligned(dateLine, "right"))
 	if offer.Client.Name != "" {
-		sb.WriteString(paragraphXML("Клиент: "+offer.Client.Name, ""))
+		sb.WriteString(paragraphAligned("Клиент: "+offer.Client.Name, ""))
 	}
 	if offer.Client.Contact != "" {
-		sb.WriteString(paragraphXML("Контактное лицо: "+offer.Client.Contact, ""))
+		sb.WriteString(paragraphAligned("Контактное лицо: "+offer.Client.Contact, ""))
 	}
 }
 
@@ -890,7 +982,16 @@ func buildDocxWithMediaAndLinks(bodyXML string, media *docxMedia, links []render
 		}
 		files["word/_rels/document.xml.rels"] = rels
 	}
+	return zipFiles(files, names)
+}
 
+// zipFiles складывает пакет обратно в .docx: сначала части в исходном порядке,
+// потом добавленные (картинки, новые связи).
+//
+// Вынесено из сборки по бланку, чтобы печать по макету пользователя не
+// заводила второй такой же цикл: порядок частей в zip — часть контракта Word,
+// и две копии этого правила разошлись бы молча.
+func zipFiles(files map[string][]byte, names []string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	// Новые части (word/media/*) в names отсутствуют — пишем их следом.
@@ -952,7 +1053,7 @@ func renderAcceptedSections(sb *strings.Builder, offer Offer) {
 		return strings.TrimSpace(offer.FormValues[key])
 	}
 	if text := section(SectionKey(skills.SectionIntro, 0)); text != "" {
-		sb.WriteString(paragraphXML(text, ""))
+		sb.WriteString(paragraphAligned(text, ""))
 	}
 	// Системы: идём по порядку, пока ключи есть. Количество систем сервер не
 	// хранит отдельно — оно живёт в составе предложения и в тексте формы.
@@ -962,7 +1063,7 @@ func renderAcceptedSections(sb *strings.Builder, offer Offer) {
 			continue
 		}
 		sb.WriteString(headingXML("Система "+strconv.Itoa(i), 3))
-		sb.WriteString(paragraphXML(text, ""))
+		sb.WriteString(paragraphAligned(text, ""))
 	}
 	if text := section(SectionKey(skills.SectionAdvantages, 0)); text != "" {
 		for _, line := range strings.Split(text, "\n") {
@@ -974,7 +1075,7 @@ func renderAcceptedSections(sb *strings.Builder, offer Offer) {
 		}
 	}
 	if text := section(SectionKey(skills.SectionConditions, 0)); text != "" {
-		sb.WriteString(paragraphXML(text, ""))
+		sb.WriteString(paragraphAligned(text, ""))
 	}
 }
 
@@ -1029,7 +1130,7 @@ func renderBriefSummary(sb *strings.Builder, values map[string]string) {
 			sb.WriteString(headingXML("Бриф", 2))
 			printed = true
 		}
-		sb.WriteString(paragraphXML(item.label+": "+text, ""))
+		sb.WriteString(paragraphAligned(item.label+": "+text, ""))
 	}
 }
 
@@ -1078,7 +1179,10 @@ func renderCardSectionsWithMedia(sb *strings.Builder, offer Offer, cards []Syste
 			continue
 		}
 		sb.WriteString(headingXML("Система: "+c.Title, 3))
-		sb.WriteString(paragraphXML(c.Description, ""))
+		// Описание карточки — несколько абзацев, а не один с \n: живая заметка
+		// содержит строки («Особенности системы:») между пустыми строками, и
+		// Word символ \n не показывает — строки слипались в кашу (2026-11-05).
+		sb.WriteString(paragraphsXML(c.Description, "", paraOpts{}))
 
 		// Разрез системы — ДО состава (образец конкурента, 2026-11-05): сначала
 		// пирог, потом его расшифровка. Раньше картинка печаталась после текста

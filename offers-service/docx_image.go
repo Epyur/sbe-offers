@@ -155,7 +155,7 @@ func imageNodeXML(node blockNode, media *docxMedia, images ImageSource) (string,
 	var sb strings.Builder
 	sb.WriteString(`<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` + drawing + `</w:p>`)
 	if caption := strings.TrimSpace(node.Caption); caption != "" {
-		sb.WriteString(paragraphXMLOpts(caption, "center", paraOpts{After: 6}))
+		sb.WriteString(paragraphXMLOpts(caption, "center", paraOpts{After: 6, NoIndent: true}))
 	}
 	return sb.String(), true
 }

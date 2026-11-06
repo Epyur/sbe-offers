@@ -3,6 +3,9 @@ import type { OffersView } from './offers-view';
 import type { Block, OfferForm, Placeholder } from '../types/offers';
 import { renderBlockEditor } from './block-editor';
 import { pickAndUploadImage } from './image-picker';
+import { renderFormPreview } from './form-preview';
+import { DescribeBlockModal, applyDescribedBlock } from './describe-block-modal';
+import { pickLayoutFile, renderLayoutCard } from './form-layout';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
@@ -79,13 +82,58 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
   });
 
   const blocksCard = container.createDiv({ cls: 'tn-offers-card' });
-  blocksCard.createDiv({ cls: 'tn-offers-muted', text: 'Блоки документа' });
+  const blocksHeader = blocksCard.createDiv({ cls: 'tn-offers-row-between' });
+  blocksHeader.createDiv({ cls: 'tn-offers-muted', text: 'Блоки документа' });
   renderDraftHints(blocksCard, blocks);
-  renderBlockEditor(blocksCard, blocks, {
-    placeholders,
-    // Картинку можно выбрать прямо в блоке: файл из вольта уходит во вложения
-    // Базы знаний, в блоке остаётся ключ (2026-11-01).
-    pickImage: () => pickAndUploadImage(view),
+
+  const editorWrap = blocksCard.createDiv();
+  const previewCard = container.createDiv({ cls: 'tn-offers-card tn-offers-preview-card' });
+  const previewHead = previewCard.createDiv({ cls: 'tn-offers-row-between' });
+  previewHead.createDiv({ cls: 'tn-offers-muted', text: 'Предпросмотр (как увидит клиент)' });
+  const previewBody = previewCard.createDiv({ cls: 'tn-offers-preview-body' });
+
+  /** Предпросмотр перерисовывается при каждой правке: смысл его в том, что
+   *  человек видит последствие правки сразу, а не в готовом DOCX. */
+  const redrawPreview = (): void => {
+    renderFormPreview(previewBody, blocks, { placeholders });
+  };
+
+  const redrawBlocks = (): void => {
+    editorWrap.empty();
+    renderBlockEditor(editorWrap, blocks, {
+      placeholders,
+      // Картинку можно выбрать прямо в блоке: файл из вольта уходит во вложения
+      // Базы знаний, в блоке остаётся ключ (2026-11-01).
+      pickImage: () => pickAndUploadImage(view),
+      onChange: redrawPreview,
+    });
+    redrawPreview();
+  };
+  redrawBlocks();
+
+  // «Опишите блок словами» (2026-11-05): настройка блока руками — это выбор
+  // типа узла, таблицы через «|» и отступы. Администратор же знает, ЧТО должно
+  // быть в блоке; описание превращается в узлы, а руками он дооформляет.
+  const describeBtn = blocksHeader.createEl('button', {
+    text: '✨ Опишите блок словами',
+    cls: 'tn-btn tn-btn-primary',
+  });
+  describeBtn.addEventListener('click', () => {
+    new DescribeBlockModal(view, placeholders, (title, nodes) => {
+      applyDescribedBlock(blocks, `blk_${Date.now().toString(36)}`, title, nodes);
+      redrawBlocks();
+      new Notice('Блок добавлен в форму — поправьте его и сохраните');
+    }).open();
+  });
+
+  // Макет .docx (2026-11-05): если он загружен, документ печатается по нему,
+  // а блоки остаются в форме для возврата. Поэтому карточка стоит перед
+  // блоками и говорит прямо, что сейчас печатается.
+  renderLayoutCard(view, container, form, {
+    onChanged: () => {
+      void load(view, container);
+    },
+    onPickFile: pickLayoutFile,
   });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });

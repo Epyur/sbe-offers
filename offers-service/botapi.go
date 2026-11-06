@@ -315,7 +315,80 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 	cards, refs := s.systemCardsForOffer(r.Context(), offer)
 	offer = s.offerWithBrief(r.Context(), offer)
 	offer = s.refreshBlockTexts(r.Context(), form, offer, cards, refs)
+	// Макет пользователя главнее блоков формы (2026-11-05): если он загружен,
+	// документ собирается по нему, со своими стилями и колонтитулами. Блоки
+	// формы при этом остаются — вернуться к ним можно, удалив макет.
+	if layout, err := s.loadLayout(r); err == nil && len(layout) > 0 {
+		return s.renderLayoutOffer(r, layout, offer, cards, refs)
+	}
 	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
+}
+
+// renderLayoutOffer печатает предложение по макету администратора.
+//
+// Тексты модели для `{…}` пишутся здесь же, как и тексты блоков: печать нужна
+// одной точкой, а кэш — в form_values предложения (правило 2026-11-01: один
+// и тот же КП не должен давать разный документ при каждом скачивании).
+func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
+	cards []SystemCard, refs []skills.CardRef) ([]byte, error) {
+	values := layoutValues(offer)
+	cache := &layoutPromptCache{
+		values:    map[string]string{},
+		previous:  offer.FormValues,
+		section:   hashOfferFacts(offer),
+		offer:     offer,
+		cards:     cards,
+		refs:      refs,
+		completed: llmCompleter{},
+	}
+	data, err := renderLayoutDocx(layout, layoutContext{
+		values: values,
+		prompt: cache.text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Новые тексты сохраняются, чтобы следующее скачивание взяло их же.
+	if changed := cache.changed(); len(changed) > 0 {
+		offer.FormValues = mergeFormValues(offer.FormValues, changed)
+		if err := s.persistOfferFormValues(r.Context(), offer); err != nil {
+			log.Printf("макет: тексты не сохранены у КП %s: %v", offer.Number, err)
+		}
+	}
+	return data, nil
+}
+
+// layoutValues — все значения, доступные меткам макета.
+//
+// Служебные поля предложения главнее формы (как и в блоках), плюс название
+// выбранной системы и список систем: администратор ставит `[Название системы]`
+// и `[Выбранные системы]`, а не пишет их руками в каждом КП.
+func layoutValues(offer Offer) map[string]string {
+	values := make(map[string]string, len(offer.FormValues)+8)
+	for k, v := range offer.FormValues {
+		values[k] = v
+	}
+	// Служебные значения главнее формы — но только там, где человек не вписал
+	// своё. Обратный порядок значил бы «номенклатура в макете печатает номер
+	// предложения вместо того, что администратор написал руками», а пустое
+	// место номера в документе хуже ошибки в нём.
+	for k, v := range serviceValues(offer) {
+		if v != "" && strings.TrimSpace(values[k]) == "" {
+			values[k] = v
+		}
+	}
+	if values[fieldObjectName] == "" && offer.FormValues != nil {
+		values[fieldObjectName] = offer.FormValues["object_name"]
+	}
+	// Системы: название первой и перечень всех. Узлы макета не умеют
+	// повторяться, поэтому «по системам» печатается списком одной строкой —
+	// это честнее, чем молча потерять вторую систему.
+	titles := offerSystemTitles(offer)
+	if len(titles) > 0 {
+		values["system_title"] = titles[0]
+		values["systems_list"] = strings.Join(titles, "; ")
+	}
+	return values
 }
 
 // offerWithBrief доливает бриф в form_values предложения (2026-11-05).

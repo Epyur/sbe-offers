@@ -397,7 +397,23 @@ func SystemsWithCompositionFromKB(ctx context.Context, kb KBReader, materials []
 		card.CompositionLinks, card.Problems = resolveComposition(parsed, materials)
 		cards = append(cards, card)
 	}
+	// Картинки — так же, как в SystemCardsFromKB: раздел «Системы» показывает
+	// карточку с картинкой, и ключ должен быть уже разрешён.
+	withKeys := attachImageKeys(ctx, kb, systemCardsOf(cards))
+	for i := range cards {
+		cards[i].SystemCard = withKeys[i]
+	}
 	return cards, nil
+}
+
+// systemCardsOf — карточки из списка систем с составом (для общей привязки
+// картинок, которая знает только SystemCard).
+func systemCardsOf(cards []SystemWithComposition) []SystemCard {
+	out := make([]SystemCard, len(cards))
+	for i, card := range cards {
+		out[i] = card.SystemCard
+	}
+	return out
 }
 
 // systemCardFromParsed собирает карточку для плагина из разобранной заметки.
@@ -465,7 +481,10 @@ func SystemCardsFromKB(ctx context.Context, kb KBReader, catalog []CatalogItem) 
 		card.CatalogID = linkCatalogID(card.SKU, catalog)
 		cards = append(cards, card)
 	}
-	return cards, nil
+	// Картинки карточек (2026-11-05): по имени файла из `![[…]]` находим
+	// вложение и запоминаем его ключ. Без этого узел «картинка системы» не
+	// нашёл бы байтов: ключ вложения — не имя файла в заметке.
+	return attachImageKeys(ctx, kb, cards), nil
 }
 
 // linkCatalogID ищет систему каталога по коду. Только по коду, не по имени:

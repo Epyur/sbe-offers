@@ -395,6 +395,98 @@ paths:
         '200':
           description: Сохранённая форма
 
+  /api/offers/form/layout:
+    post:
+      summary: Загрузить макет КП (.docx) — admin
+      description: |
+        Тело — байты документа Word с метками `[Наименование объекта]` и
+        `{Опиши систему}` (2026-11-05). При загруженном макете документ
+        собирается по нему, блоки формы не печатаются.
+      parameters:
+        - name: name
+          in: query
+          description: Имя файла для показа в форме
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Что система поняла из макета
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LayoutInfo'
+        '400':
+          description: Файл не .docx или пустой
+        '413':
+          description: Больше 12 МБ
+    get:
+      summary: Скачать загруженный макет — admin
+      responses:
+        '200':
+          description: Файл .docx
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Макет не загружен
+    delete:
+      summary: Удалить макет — admin
+      description: Печать возвращается к блокам формы.
+      responses:
+        '200':
+          description: '`{hasLayout: false}`'
+
+  /api/offers/form/describe:
+    post:
+      summary: Опишите блок словами — admin
+      description: |
+        Свободное описание блока («заголовок и список условий») → готовые узлы
+        формы. Человек дооформляет их в редакторе (2026-11-05).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                placeholders:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Готовый блок
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                  notes:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: Пустое описание
+        '502':
+          description: Модель недоступна
+
   /api/offers/context/cards:
     get:
       summary: Карточки систем из Базы знаний
@@ -1954,6 +2046,38 @@ components:
             type: string
         updatedAt:
           type: string
+        hasLayout:
+          type: boolean
+          description: Загружен макет .docx (2026-11-05) — печать идёт по нему
+        layoutName:
+          type: string
+        layoutFields:
+          type: array
+          description: Найденные в макете метки `[…]`
+          items:
+            type: string
+        layoutPrompts:
+          type: array
+          description: Найденные в макете метки `{…}`
+          items:
+            type: string
+    LayoutInfo:
+      type: object
+      properties:
+        hasLayout:
+          type: boolean
+        layoutName:
+          type: string
+        layoutFields:
+          type: array
+          items:
+            type: string
+        layoutPrompts:
+          type: array
+          items:
+            type: string
+        bytes:
+          type: integer
     OfferClient:
       type: object
       properties:

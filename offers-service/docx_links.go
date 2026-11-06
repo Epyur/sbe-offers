@@ -75,8 +75,8 @@ func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
 		}
 	}
 	if len(refs) >= maxLinkRefs {
-		sb.WriteString(paragraphXML(
-			fmt.Sprintf("Ссылок в карточках больше — остальные есть в Базе знаний."), ""))
+		sb.WriteString(paragraphAligned(
+			"Ссылок в карточках больше — остальные есть в Базе знаний.", ""))
 	}
 	return sb.String(), true
 }

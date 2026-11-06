@@ -1030,3 +1030,130 @@
   margin: 8px 0;
   font-weight: 500;
 }
+
+/* --- Предпросмотр формы КП и макет .docx (2026-11-05) ------------------ */
+
+.tn-offers-preview-card {
+  margin-top: 12px;
+}
+
+.tn-offers-preview-page {
+  background: var(--background-primary);
+  color: var(--content-primary-a-enabled);
+  border: 1px solid var(--background-modifier-border);
+  padding: 18px 22px;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 14pt;
+  line-height: 1.5;
+}
+
+.tn-offers-preview-block {
+  margin: 0;
+}
+
+.tn-offers-preview-para {
+  text-align: justify;
+  text-indent: 1.25cm;
+  margin: 0;
+}
+
+.tn-offers-preview-heading {
+  text-align: center;
+  font-weight: 700;
+  text-indent: 0;
+  margin: 12px 0 6px;
+}
+
+.tn-offers-preview-h2 { font-size: 16pt; }
+.tn-offers-preview-h3 { font-size: 13pt; }
+.tn-offers-preview-h4 { font-size: 12pt; }
+
+.tn-offers-preview-list {
+  margin: 4px 0 4px 1.25cm;
+  padding-left: 18px;
+}
+
+.tn-offers-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+  margin: 8px 0;
+}
+
+.tn-offers-preview-table td,
+.tn-offers-preview-table th {
+  border: 1px solid var(--background-modifier-border);
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tn-offers-preview-thead th {
+  background: var(--background-secondary);
+  text-align: center;
+  font-weight: 600;
+}
+
+.tn-offers-preview-break {
+  text-align: center;
+  color: var(--content-muted-a-enabled);
+  font-size: 0.8em;
+  margin: 14px 0;
+  border-top: 1px dashed var(--background-modifier-border);
+  padding-top: 6px;
+}
+
+.tn-offers-preview-note {
+  font-family: var(--font-interface);
+  font-size: 0.85em;
+  color: var(--content-muted-a-enabled);
+  font-style: italic;
+  margin: 6px 0;
+  text-indent: 0;
+}
+
+.tn-offers-preview-field {
+  color: var(--content-muted-a-enabled);
+  font-style: italic;
+}
+
+.tn-offers-preview-sup {
+  font-size: 0.7em;
+  vertical-align: super;
+}
+
+.tn-offers-preview-image {
+  border: 1px dashed var(--background-modifier-border);
+  padding: 8px;
+  margin: 8px 0;
+  text-indent: 0;
+}
+
+.tn-offers-preview-image-name {
+  font-family: var(--font-interface);
+  font-size: 0.85em;
+}
+
+.tn-offers-preview-caption {
+  font-family: var(--font-interface);
+  font-size: 0.85em;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.tn-offers-layout-card {
+  margin-bottom: 12px;
+}
+
+.tn-offers-layout-tokens {
+  margin: 8px 0;
+}
+
+.tn-offers-describe-input {
+  width: 100%;
+  min-height: 100px;
+}
+
+.tn-offers-describe-result:empty {
+  display: none;
+}

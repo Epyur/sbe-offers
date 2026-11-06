@@ -47,6 +47,15 @@ type OfferForm struct {
 	Blocks         []Block       `json:"blocks"`
 	RequiredFields []string      `json:"requiredFields"`
 	UpdatedAt      string        `json:"updatedAt"`
+	// HasLayout/LayoutName — загружен ли макет .docx (2026-11-05). Сами байты
+	// в JSON формы не отдаются: клиенту нужно знать, есть ли макет, а не
+	// тащить десятки килобайт в каждом ответе `/form`.
+	HasLayout  bool   `json:"hasLayout"`
+	LayoutName string `json:"layoutName,omitempty"`
+	// LayoutFields/LayoutPrompts — какие метки найдены в макете: администратор
+	// должен видеть, что система поняла из его документа, ещё до первой сборки.
+	LayoutFields  []string `json:"layoutFields,omitempty"`
+	LayoutPrompts []string `json:"layoutPrompts,omitempty"`
 }
 
 // maxBlockSpacing — предел отступа блока в пунктах. Свыше 200 пт блок
@@ -197,11 +206,13 @@ func (s *Server) loadForm(ctx context.Context, mode string) (OfferForm, error) {
 	}
 	var form OfferForm
 	var placeholders, blocks, required []byte
+	var layoutDocx []byte
 	err := s.pool.QueryRow(ctx, `
 SELECT id, mode, title, placeholders, blocks, required_fields,
-	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), layout_docx, layout_name
 FROM offers_form WHERE mode = $1`, mode).
-		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &form.UpdatedAt)
+		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &form.UpdatedAt,
+			&layoutDocx, &form.LayoutName)
 	if err != nil {
 		// Строки нет вовсе — форма не настроена, показываем поля по умолчанию.
 		// Пустые массивы в БД — это НАСТРОЕННАЯ пустая форма, и подменять её
@@ -227,7 +238,52 @@ FROM offers_form WHERE mode = $1`, mode).
 			return form, err
 		}
 	}
+	form.HasLayout = len(layoutDocx) > 0
+	form.LayoutFields, form.LayoutPrompts = describeLayout(layoutDocx)
 	return form, nil
+}
+
+// describeLayout — какие метки есть в макете, для показа администратору.
+//
+// Разбор терпимый: испорченный макет не должен ломать загрузку формы — иначе
+// один неудачный файл скрыл бы от человека весь конфигуратор.
+func describeLayout(layout []byte) (fields, prompts []string) {
+	if len(layout) == 0 {
+		return nil, nil
+	}
+	files, _, err := readZipEntries(layout)
+	if err != nil {
+		return nil, nil
+	}
+	doc := string(files["word/document.xml"])
+	seenField := map[string]bool{}
+	seenPrompt := map[string]bool{}
+	for _, token := range scanLayoutTokens(layoutPlainText(doc)) {
+		if token.Kind == layoutTokenPrompt {
+			if !seenPrompt[token.Inner] {
+				seenPrompt[token.Inner] = true
+				prompts = append(prompts, token.Inner)
+			}
+			continue
+		}
+		if !seenField[token.Inner] {
+			seenField[token.Inner] = true
+			fields = append(fields, token.Inner)
+		}
+	}
+	return fields, prompts
+}
+
+// layoutPlainText — весь текст документа одной строкой: метки в макете
+// считаются по нему, а не по отдельным абзацам, чтобы «что система увидела»
+// совпадало с тем, что она будет подставлять.
+func layoutPlainText(docXML string) string {
+	var sb strings.Builder
+	for _, m := range reWordText.FindAllStringSubmatch(docXML, -1) {
+		sb.WriteString(unescapeXML(m[1]))
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 func (s *Server) handleGetForm(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +345,17 @@ ON CONFLICT (mode) DO UPDATE SET
 		dbError(w, "save form", err)
 		return
 	}
+	// Макет в JSON формы не приходит и здесь не трогается: его загружают и
+	// удаляют отдельными ручками. Сохранение формы не должно его стирать —
+	// человек правит блоки чаще, чем макет, и терять загруженный файл при
+	// каждом «Сохранить» нельзя.
+	var layoutDocx []byte
+	var layoutName string
+	_ = s.pool.QueryRow(r.Context(), `SELECT layout_docx, layout_name FROM offers_form WHERE mode = $1`,
+		form.Mode).Scan(&layoutDocx, &layoutName)
+	form.HasLayout = len(layoutDocx) > 0
+	form.LayoutName = layoutName
+	form.LayoutFields, form.LayoutPrompts = describeLayout(layoutDocx)
 	// Отвечаем тем, что реально записали, а НЕ перечитанным значением: пустая
 	// форма из БД трактуется как «не настроена» и подменяется формой по
 	// умолчанию — админ сохранил бы новую форму и получил ответ со старой.

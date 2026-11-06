@@ -112,8 +112,11 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/ui/sheet-upload.ts` | manager's Excel: "what I understood", then apply |
 | `src/ui/context-editor.ts` | "📚 Контекст КП": cached system cards, open note |
 | `src/ui/brief-editor.ts` + `brief-model.ts` | the brief card inside the offer editor |
-| `src/ui/form-editor.ts` | "⚙️ Форма КП": fields, blocks, required |
-| `src/ui/block-editor.ts` | block editor: nodes (text/list/table/page break/links/prompt/image), `{{field}}` chips, block placement |
+| `src/ui/form-editor.ts` | "⚙️ Форма КП": fields, blocks, required, describe-block button, layout card |
+| `src/ui/block-editor.ts` | block editor: nodes (text/list/table/page break/links/prompt/image), `{{field}}` chips, block placement, image source |
+| `src/ui/form-preview.ts` | live preview of the document under the blocks (alignment, indent, superscripts, tables, images) |
+| `src/ui/describe-block-modal.ts` | "✨ Опишите блок словами": free text → nodes, with a preview before applying |
+| `src/ui/form-layout.ts` | ".docx layout" card: upload / download / delete, shows the tags found in the file |
 | `src/ui/image-picker.ts` | picks an image from the vault, uploads it to KB attachments, returns the key |
 | `src/ui/access-editor.ts` | "👤 Бот и доступ": codes, bot token, who signed in |
 | `src/ui/help.ts` | help text (baked into the plugin) |
@@ -121,7 +124,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/styles.css` | `tn-offers-*` classes (the root `styles.css` is **built**, never edit it) |
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_docs_state.mjs` | docs vs code: version in `manifest`/`package`, SHA-256 of the three build files, HEAD of both branches present in `AGENTS.md` |
-| `scripts/offers_local_e2e.mjs` | the stand: **235** HTTP checks, 20 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **264** HTTP checks, 21 sections |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -136,11 +139,18 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `docx.go`, `docx_media.go`, `docx_links.go` (link section + hyperlink rels),
 `docx_image.go` (`wp:anchor` + wrap), `docx_text.go` (prompt blocks + cache),
 `docx_compare.go` (`compare_table` node - system comparison),
+`docx_runs.go` (one text pipeline: wiki links, glued words, superscripts; the
+`paraOpts` document formatting), `docx_card_images.go` + `card_images.go`
+(images of systems and materials, attachment → key), `docx_layout.go` (printing
+the user's `.docx` master), `layout_tokens.go` (`[…]` / `{…}` scanner and the
+human field names), `form_layout.go` (layout upload/read/delete),
+`form_describe.go` ("describe a block in words"),
 `s3.go`, `email.go`, `static.go`, `template.go`, `static/openapi.yaml`.
 Sub-packages: `model/` (domain types, plus `jsonrepair.go` - tolerant JSON
 extraction shared with `skills`), `skills/` (prompts, checklists, card and
 attachment parsing, `cardrefs.go` = `## Ссылки` parser, `filecontext*.go` =
-object context out of a file: literal facts, model prompt, merge).
+object context out of a file: literal facts, model prompt, merge,
+`blockstructure.go` = the "describe a block" prompt).
 
 `offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), `src/routes.ts`
 (routing), `src/callbacks.ts` (the draft flow and buttons), `src/telegram.ts`
@@ -216,6 +226,49 @@ docker restart offers-local-app
   2026-10-27). Older Russian entries are not translated retroactively.
 - Files are written as UTF-8 without a BOM; the `manifest.json` BOM rule is in
   the root `AGENTS.md`.
+
+## Document text, formatting and the .docx layout (2026-11-05)
+
+Four rules that came out of the live offer 003/2026 and the user's requests of
+that day. They overrule anything written earlier that contradicts them.
+
+1. **One text pipeline for every writer.** Paragraph, heading, list item and
+   table cell all go through `plainText` + `runsXML` (`docx_runs.go`). Never add
+   a writer that formats text on its own: the moment a second path exists, the
+   table prints `[[…]]` while the paragraph does not, and nobody notices until
+   the customer reads it. `plainText` strips wiki links (keeping the label),
+   markdown links/bold and repairs spaces lost in the note
+   (`подземныхсооружений` → `подземных сооружений`). `runsXML` turns unit
+   powers into real superscripts (`г/м2`, `м2`, `10-3`) - and must not touch
+   `V-SL 2 мм` or `AL2`.
+2. **`styles.xml` of the brand is never edited.** The brand's Normal style
+   (`a0`) is Arial 11pt, left-aligned, no first-line indent - so "no alignment"
+   in the export is the brand style, not a bug in the block editor. The document
+   rules (justified, 1.25 cm first line = 709 twips, 1.5 line spacing, headings
+   centred without indent) live in each paragraph's `pPr` (`paraOpts`). Editing
+   `styles.xml` cost the page numbers in the footer once (2026-10-29) and will
+   again; `TestDocxOnlyKnownStyles` guards it.
+3. **A truncated model answer must never reach the customer.** Two layers:
+   `blockMaxTokens` gives `words*10 + 600` (was `*6 + 400`), and
+   `trimTruncatedTail` cuts the tail at the last finished sentence. The live
+   defect was "…закрывает подземную часть одним кон" in the exported offer -
+   a text cut by the token budget, printed as is.
+4. **The uploaded layout wins over the form blocks.** When
+   `offers_form.layout_docx` is set, `renderOffer` prints the manager's own
+   document (`docx_layout.go`) and the blocks are not used - they stay in the
+   form so the administrator can return by deleting the layout. The layout is
+   an `.docx` master, never a rebuilt document: its styles, fonts, headers and
+   footers are the point. Placeholders are `[Поле]`/`{{field}}` for fixed
+   values and `{промт}` for model text; they are recognised inside a paragraph
+   even when Word split the text across several `<w:t>`, because it always
+   does. Labels in headers/footers are deliberately not replaced.
+
+Supporting files: `docx_runs.go` (text runs), `docx_card_images.go` +
+`card_images.go` (images of systems and materials, `imageOf` on the `image`
+node), `layout_tokens.go` (scanner and field aliases), `form_layout.go`
+(upload/read/delete), `form_describe.go` + `skills/blockstructure.go`
+("describe a block in words"). Plugin side: `src/ui/form-preview.ts` (live
+preview), `src/ui/describe-block-modal.ts`, `src/ui/form-layout.ts`.
 
 ## Rules from the agent's own mistakes (2026-11-02)
 
@@ -1543,3 +1596,110 @@ this cycle).
 | a block is missing from the DOCX | model down (`prompt_text` is silent by design), image key not in the store, or `showInClient` off |
 | links absent in the document | the card has no `## Ссылки` section, or `cardsForOffer` did not match the system to the composition |
 | old prompt text in a new document | `form_values["gen.section"]` hash matched; adding a system drops it, editing an item directly does not |
+## STATE 2026-11-05 (part 3) - the document became readable; the form became visual
+
+Version (manifest.json = package.json) = **0.7.0**, **not committed and not
+deployed yet**. Everything below was verified on the stand; the release is
+waiting for the user's command.
+
+### The user's report (live offer 003/2026)
+
+"В тексте есть оборванные фразы/слова, отсутствует выравнивание текста. Текст
+заметки вставляется с ошибками (теряются пробелы), вставляются вики-ссылки.
+Настройка блоков крайне не дружелюбная. Хочу загрузить макет ТКП с [] и {}.
+Индексы в единицах измерения должны отображаться правильно. Нужно проработать
+вставку картинок систем и материалов."
+
+### What was actually broken (measured, not guessed)
+
+- **The text was printed raw.** `paragraphXML` put the note's markdown straight
+  into `<w:t>`: `[[Геотекст…]]` around every composition item, `**Область
+  применения:**`, «подземныхсооружений», «г/м2». One function served the
+  paragraph, another the table cell - the table path and the paragraph path
+  drifted, and the degree was nowhere.
+- **"No alignment" was the brand style.** `styles.xml` → `a0` = Arial 11pt,
+  left, no indent. The document rules (justified, 1.25 cm, 1.5 spacing) were
+  written in `stylesXML` at the top of `docx.go` but that constant had been
+  dead since 2026-10-29, when the brand's styles were adopted. Nobody noticed
+  because the rules lived in a string that was no longer used.
+- **The cut phrase was the token budget**, not the model: `maxWords*6 + 400`
+  with reasoning spent inside the same budget.
+- **Image keys were never resolved.** `SystemCard.ImageKey` existed and was
+  always empty (`ParseSystemCard` returns `ImageName`, not the attachment key);
+  materials had a `photo_key` column nobody filled. So the `image` node could
+  only ever show a hand-picked file.
+
+### What changed (server)
+
+`docx_runs.go` - `plainText` (wiki/markdown links, bold, glued words) and
+`runsXML` (superscript degrees), applied by every writer; `paraOpts` gained
+`Align`/`NoIndent` + `spacingXML`/`alignXML`/`indentXML` (document rules per
+paragraph, brand style untouched); `paragraphsXML` splits a card description
+into real paragraphs (the `\n` inside one `<w:t>` was invisible in Word).
+`blockMaxTokens` → `words*10 + 600`; `trimTruncatedTail` cuts at the last
+finished sentence. `card_images.go` resolves `ImageName` → attachment key and
+fills `photo_key` on material sync; `docx_card_images.go` resolves `imageOf`
+(`system`/`material`) against the offer. `docx_layout.go` + `layout_tokens.go`
++ `form_layout.go` print the manager's `.docx`; `form_describe.go` +
+`skills/blockstructure.go` turn a description into nodes.
+
+### What changed (plugin)
+
+`form-preview.ts` (live document preview below the blocks), `describe-block-
+modal.ts` (!"Опишите блок словами"), `form-layout.ts` (layout card),
+`block-editor.ts` (image source: system / material / file). New `compare_table`
+in the `RichNode` type (it existed on the server since 0.6.0 but not in the
+TypeScript union - the preview would not compile against it).
+
+### Verified
+
+`go test ./...` green, `gofmt -l` empty, `go vet` clean; plugin `tsc --noEmit`
+EXIT=0, `npm run build`, `check_bundle_strings.mjs` 0 missing; stand **264/264**
+(21 sections, the new one prints by the layout and checks tags and formatting).
+`crapper`: every new function under CRAP 10 (`splitGluedWord` split into
+`gluedSecondWordCut`/`gluedJoinerCut`, `describeBlock` into
+`parseDescribedBlock`, `pickImageAttachment` into `firstImage`,
+`resolveNodeImage` into per-source helpers). `dryer`: two new pairs reported,
+both false positives (`escapeXML`/`unescapeXML` are inverses;
+`persistOfferFormValues`/`persistOfferSystem` write different columns).
+
+Live check on a real rendered DOCX (stand, real card text): wiki link gone,
+"подземных сооружений", superscript `г/м²`, body `jc=both ind=709`, "Итого"
+right with no indent, layout tags replaced, centering and bold of the layout
+kept, no leftover `[...]`/`{...}`.
+
+### A test found a real defect before the release
+
+`TestLayoutValuesFormWins`: `layoutValues` let `serviceValues` overwrite what
+the administrator had typed into the form. Fixed - service values fill only
+empty places, the same precedence the form blocks use.
+
+### Traps met here
+
+1. **Go's RE2 has no lookarounds** - `(?![0-9])` in a unit-degree regex panics
+   at `MustCompile`, before any test runs. The right-digit check is code
+   (`insertSupBeforeLastDigit`), not a regex.
+2. **A marker inserted by rewriting the whole match lands in the wrong byte.**
+   Marking `г/м2` by `ReplaceAllStringFunc` produced `г/м\x002`; mark by the
+   match's end index instead.
+3. **The glued-word splitter must be prefix-anchored.** A first version split
+   anywhere a known stem appeared and turned «уровнемподземных» into «у ровнем
+   подземных», «подземныхсооружений» into «по дземных сооружений» - the rune
+   cut was fine, the *choice* of cut was not. Cut only where a known stem
+   starts, and require the left half to end like a Russian word.
+4. **Single-letter joiners are ordinary word endings.** «на» split «мембрана»
+   into «мембра на». Only two-letter, unambiguous joiners (`от`, `их`, `ее`)
+   are used for a tail.
+5. **`SplitSupsub` accepted the marker but never made the following rune
+   superscript** - a `pending` flag was missing; the test caught it.
+6. **The stand's LLM stub answered every "JSON" prompt with the brief** - so
+   the describe endpoint looked broken (502, "no nodes") while the code was
+   fine. The stub now answers the structure prompt (`DESCRIBE_REPLY`).
+7. **`zipEntry` in the stand returns a record, not bytes** - packing a layout
+   needed the shared `packZip`; the packing loop in `makeXlsx` was extracted
+   instead of copied.
+8. **`stripImageExt` on both sides.** The extension-stripping pass compared the
+   wanted name (`Схема`, no extension) against a stripped attachment
+   (`Схема.png` → `Схема`) but had already stripped the wanted one into an empty
+   stem (`extOf("Схема")` = ""), so it never matched. Both sides go through the
+   same normal form now.

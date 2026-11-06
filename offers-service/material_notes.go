@@ -50,7 +50,39 @@ func (s *Server) syncMaterialsFromNotes(ctx context.Context) error {
 				note.NoteID, note.Title, err)
 		}
 	}
+	// Картинки материалов (2026-11-05). Колонка `photo_key` была в схеме с
+	// самого начала, но её никто не заполнял, поэтому картинки материалов в
+	// документе не было вовсе. Заполняем здесь, а не при каждом чтении
+	// справочника: вложения — запросы в чужой сервис, и они не должны стоять
+	// на пути открытия раздела.
+	s.syncMaterialPhotos(ctx)
 	return nil
+}
+
+// syncMaterialPhotos проставляет материалам ключ картинки из вложений заметки.
+//
+// Ошибка чужого сервиса здесь только пишется в журнал: материал без картинки —
+// норма, а упавший справочник — нет.
+func (s *Server) syncMaterialPhotos(ctx context.Context) {
+	if s.kb == nil || !s.kb.configured() {
+		return
+	}
+	items, err := s.listMaterialsOnce(ctx, true)
+	if err != nil {
+		log.Printf("материалы: чтение для картинок не удалось: %v", err)
+		return
+	}
+	withKeys := attachMaterialImageKeys(ctx, s.kb, items)
+	for i := range withKeys {
+		if withKeys[i].PhotoKey == "" || withKeys[i].PhotoKey == items[i].PhotoKey {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx,
+			`UPDATE offers_material SET photo_key = $2, updated_at = now() WHERE id = $1`,
+			withKeys[i].ID, withKeys[i].PhotoKey); err != nil {
+			log.Printf("материалы: картинка %d не сохранена: %v", withKeys[i].ID, err)
+		}
+	}
 }
 
 // materialNotes — заметки с тегом material.
