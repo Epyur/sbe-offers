@@ -30,7 +30,38 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
-## Steps C, D, E shipped (2026-11-06, version 0.7.7 — built, not released)
+## Block id copies as a ready marker (2026-11-07, version 0.7.8 — built, not released)
+
+Version (manifest.json = package.json) = **0.7.8**.
+
+The user asked: "добавить возможность копирования id блока сразу со скобками,
+для вставки в макет". The id existed only so the layout could say
+`{{block:<id>}}`, and the administrator had to type the marker by hand in Word -
+the easiest place to lose a brace.
+
+- The id chip in the block header (`renderBlockIDChip`, `src/ui/block-editor.ts`)
+  now shows the READY marker `{{block:<id>}}` and copies it to the clipboard on
+  click (with a `Notice`). The repeat selector carries the same copyable chip
+  under "Метка:".
+- **One copy path, one marker builder:** `copyMarkerChip` and `blockMarker`. A
+  second copy would drift, exactly like the two print paths did in 0.7.5.
+- A clipboard failure is reported through `errorMessage`, never swallowed.
+- `src/styles.css`: `.tn-offers-chip-copy` (dashed border, pointer cursor) -
+  without it a clickable chip is indistinguishable from a plain label.
+
+Verified: `tsc --noEmit` EXIT=0, `npm run build`, `check_bundle_strings.mjs` 0
+missing (the needle "Скопировать метку для вставки в макет .docx" is asserted).
+The stand is unchanged - this is a client-only edit.
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `092365cf7f3bedcce42777aa347c770fd97b4309531c8d3e14278ad2e1ecda2e` | 468 |
+| `main.js` | `4d3f6f41bfec910fe3612aa4cd7c1aafbc5f02be18c91cc0a4f03a8ad6336ddd` | 165013 |
+| `styles.css` | `e96e82c81c71f5272ecb8b66f3bcdda3b51d965e1f19d7f5bb3bf3f585989cad` | 34545 |
+
+`styles.css` changed for the first time since 0.7.6 (`.tn-offers-chip-copy`).
+
+## Steps C, D, E shipped (2026-11-06, version 0.7.7 — released)
 
 Version (manifest.json = package.json) = **0.7.7**. All five steps of the
 "generation without the model" plan are now in code; 0.7.6 shipped A and B, this
