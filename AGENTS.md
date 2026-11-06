@@ -61,6 +61,25 @@ The stand is unchanged - this is a client-only edit.
 
 `styles.css` changed for the first time since 0.7.6 (`.tn-offers-chip-copy`).
 
+### Released and self-hosted 2026-11-07
+
+| | value |
+|---|---|
+| plugin | **0.7.8** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` (code HEAD) | `2c92336` — pushed |
+| `main` (code HEAD) | `6a6c3f0` — pushed |
+| plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
+| server deploy | **not needed** — `git diff --stat <prev> <rel> -- offers-service offers-bot` is empty: this release is plugin-only (TS + CSS) |
+| self-hosting | `kb-selfhost.sh sbe-offers`; sums checked over https (`main 4d3f6f41…`, `styles e96e82c8…`, manifest `092365cf…`) |
+| registry | `sbe-apstore-registry` `2802f51`; `www/registry.json` patched surgically inside the `sbe-offers` block (three hashes + `version` + `uploadedAt`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums and `0.7.8` |
+
+**Trap met here (the second time in two releases):** patching `registry.json`
+by searching for the block end with `src.find('}', idx)` cut inside the nested
+`hashes` object, so the version was "not found in its block" and the script
+aborted before writing (the file was left untouched — that part worked). Cut
+the block by the NEXT entry's `"id":` instead.
+
 ## Steps C, D, E shipped (2026-11-06, version 0.7.7 — released)
 
 Version (manifest.json = package.json) = **0.7.7**. All five steps of the
