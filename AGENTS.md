@@ -1176,6 +1176,21 @@ carries both.
 Ordered by what will bite the commercial department soonest. Each item says
 where it hurts, so the next session can start without re-discovering it.
 
+0. **A written guide to the layout markup, inside the plugin** (added
+   2026-11-06, **the user's explicit requirement**). `src/ui/help.ts` says
+   nothing about `.docx` layout markers today; the one line about pictures
+   describes the form block's `image` node, not layout tokens. The guide must
+   cover `[Поле]` / `{промт}` / `{{картинка}}` (one to three braces, the value
+   decides), the full field-name list, what the model answer can express
+   (`## `, `- `, `1. `, URLs, `м2`), what it cannot (`**`, Markdown tables),
+   that a missing picture makes the marker silent, that `[7]` stays a
+   reference, the 4000-character instruction and the 800-word cap, and the
+   "clear `gen.section`" trap. Ship it as a card in the form editor next to
+   the `.docx` layout upload, with a downloadable example master. **Why now:**
+   the markup is not obvious and every mistake is silent — the instruction text
+   reaches the customer. It happened three times on 2026-11-06 (0.7.1, 0.7.3,
+   and "no pictures" in 0.7.5). Full breakdown: `HANDOFF.md`, section
+   "Задачи на обсуждение — картинки в макете", item 4.
 1. **Word documents as a context source.** Old offers arrive as `.docx` more
    often than as Excel; today `readAttachedFile` answers "пришлите .md или
    .xlsx". Removing the refusal is mostly `word/document.xml` text extraction
