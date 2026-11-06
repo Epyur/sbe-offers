@@ -269,7 +269,55 @@ func cleanBlockText(raw string) string {
 	if len(text) > 1 && strings.HasPrefix(text, `"`) && strings.HasSuffix(text, `"`) {
 		text = strings.TrimSpace(text[1 : len(text)-1])
 	}
+	text = stripMarkdownHeadings(text)
 	return trimTruncatedTail(documentText(stripReasoning(text)))
+}
+
+// reMarkdownHeading — строка-заголовок в разметке Markdown: `## Заголовок`.
+//
+// Появилась в живом КП 003/2026 (2026-11-06): в макете подсказка просила
+// «помечай заголовки второго уровня в разметке ворда», модель поняла это как
+// Markdown и написала `## …` в тексте. Макет печатает текст как есть, поэтому
+// `##` ушли клиенту. Знаки разметки — не текст документа: снимаем `#` и
+// оставляем заголовок отдельной строкой, её печать оформляет как абзац.
+var reMarkdownHeading = regexp.MustCompile(`^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$`)
+
+// reMarkdownBullet — строка-пункт Markdown: `- пункт`, `* пункт`.
+var reMarkdownBullet = regexp.MustCompile(`^\s{0,3}[-*+]\s+(.+)$`)
+
+// stripMarkdownHeadings убирает знаки Markdown-разметки из ответа модели.
+//
+// Только знаки, текст не переписывается: «## Отмостка» → «Отмостка»,
+// «**жирный**» → «жирный». Строка из одних знаков («##.») не становится
+// пустым абзацем, а выбрасывается целиком.
+func stripMarkdownHeadings(text string) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			out = append(out, "")
+			continue
+		}
+		if m := reMarkdownHeading.FindStringSubmatch(trimmed); m != nil {
+			trimmed = strings.TrimSpace(m[1])
+		} else if m := reMarkdownBullet.FindStringSubmatch(trimmed); m != nil {
+			trimmed = strings.TrimSpace(m[1])
+		}
+		trimmed = stripInlineMarkdown(trimmed)
+		// От строки остались только знаки разметки — печатать нечего.
+		if strings.TrimSpace(strings.Trim(trimmed, `#*_-–—.,;: `)) == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, "\n")
+}
+
+// stripInlineMarkdown снимает `**жирный**` и `__жирный__`, сохраняя текст.
+func stripInlineMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "__", "")
+	return strings.TrimSpace(s)
 }
 
 // reSentenceEnd — конец законченной фразы: знак, за которым идёт пробел, перевод
@@ -444,10 +492,14 @@ func stripReasoning(text string) string {
 			kept = append(kept, "")
 			continue
 		}
-		if reReasoningLine.MatchString(trimmed) || !mostlyCyrillic(trimmed) {
+		if reReasoningLine.MatchString(trimmed) {
 			dropped++
 			continue
 		}
+		// Хвост отрезаем ДО проверки языка: в строке «ПВХ мембрана — …;
+		// сварка швов… hmm, "сварка" is not in the brief. Better to be careful»
+		// английские слова стоят только в хвосте, и проверка по всей строке
+		// ошибла бы полезную её часть за черновик (2026-11-06).
 		if cleaned := reReasoningTail.ReplaceAllString(trimmed, ""); cleaned != trimmed {
 			dropped++
 			trimmed = strings.TrimSpace(reasoningTailSeparators.ReplaceAllString(cleaned, ""))
@@ -458,6 +510,10 @@ func stripReasoning(text string) string {
 			if !strings.HasSuffix(trimmed, ".") {
 				trimmed += "."
 			}
+		}
+		if !mostlyCyrillic(trimmed) {
+			dropped++
+			continue
 		}
 		kept = append(kept, trimmed)
 	}
@@ -520,22 +576,133 @@ func collapseBlankLines(text string) string {
 // mostlyCyrillic — строка написана по-русски, а не латиницей с русскими
 // вставками.
 //
-// Строка считается текстом ответа, если русских букв в ней не меньше, чем
-// латинских. «Мембрана Logicbase V-SL защищает подвал» — ответ. «Let me think
-// about what's known: мембрана, геотекстиль» — черновик: слов немного и они
-// английские. В живом ответе КП 003/2026 ровно такие строки шли вперемешку с
-// русскими, и это единственное, что их различает.
+// Строка считается текстом ответа, если латинских СЛОВ в ней почти нет
+// (2026-11-06). До этого считались буквы, и строка «Given the risk, I'll
+// frame group 3 as "Конструкция отмостки и примыканий"» проходила: русских
+// букв в кавычках было больше, чем латинских в английской части, и
+// английское рассуждение печаталось заказчику.
+//
+// Марки и артикулы не мешают: «XPS Carbon Prof», «V-SL», «PIR-плиты».
+// Английская речь узнаётся по СЛУЖЕБНЫМ словам, а не по длине: «the», «and»,
+// «for», «with», «from», «this», «that» в русском техническом тексте не
+// встречаются отдельными словами, а перечислять их можно исчерпывающе. Порог
+// по длине («слово короче пяти букв — марка») не годится: «risk», «group»,
+// «frame» — обычные английские слова той же длины, что и марки.
 func mostlyCyrillic(s string) bool {
-	var cyr, lat int
+	if countCyrillicLetters(s) == 0 {
+		return false
+	}
+	return countSpeechLatinWords(s) <= 1
+}
+
+// countCyrillicLetters — сколько русских букв в строке.
+func countCyrillicLetters(s string) int {
+	n := 0
 	for _, r := range s {
-		switch {
-		case (r >= 'А' && r <= 'я') || r == 'Ё' || r == 'ё':
-			cyr++
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
-			lat++
+		if (r >= 'А' && r <= 'я') || r == 'Ё' || r == 'ё' {
+			n++
 		}
 	}
-	return cyr > 0 && cyr >= lat
+	return n
+}
+
+// countSpeechLatinWords — сколько в строке латинских СЛОВ английской речи
+// (марки и артикулы не считаются).
+func countSpeechLatinWords(s string) int {
+	n := 0
+	for _, word := range strings.Fields(s) {
+		word = strings.TrimFunc(word, func(r rune) bool {
+			return !isLatinOrCyrillic(r)
+		})
+		if word == "" || !isLatin(word) || isLatinBrandWord(word) {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// isLatinOrCyrillic — буква, годная для слова.
+func isLatinOrCyrillic(r rune) bool {
+	switch {
+	case r >= 'А' && r <= 'я', r == 'Ё', r == 'ё':
+		return true
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		return true
+	}
+	return false
+}
+
+// isLatin — слово целиком из латинских букв.
+func isLatin(word string) bool {
+	for _, r := range word {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return word != ""
+}
+
+// englishFunctionWords — служебные слова английской речи. Именно по ним
+// узнаётся рассуждение модели посреди русского текста; в техническом описании
+// на русском они отдельными словами не встречаются.
+var englishFunctionWords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "or": true, "but": true,
+	"of": true, "to": true, "in": true, "on": true, "at": true, "by": true,
+	"for": true, "with": true, "from": true, "as": true, "is": true, "are": true,
+	"was": true, "were": true, "be": true, "been": true, "it": true, "this": true,
+	"that": true, "these": true, "those": true, "i": true, "i'll": true,
+	"i'm": true, "i've": true, "we": true, "you": true, "they": true,
+	"will": true, "would": true, "should": true, "need": true, "can": true,
+	"could": true, "not": true, "if": true, "so": true, "then": true,
+	"given": true, "frame": true, "group": true, "risk": true, "better": true,
+	"about": true, "into": true, "than": true, "there": true, "their": true,
+	"has": true, "have": true, "do": true, "does": true, "just": true,
+	"like": true, "more": true, "most": true, "some": true, "no": true,
+	"yes": true, "let": true, "lets": true, "hmm": true, "okay": true,
+	"here": true, "where": true, "which": true, "whose": true, "how": true,
+}
+
+// isLatinBrandWord — латинское слово — марка или артикул, а не английская речь.
+//
+// Порядок проверок важен (живой промах 2026-11-06): служебное слово ищется
+// ПЕРВЫМ. «Given», «I'll», «The» — обычная английская речь, хотя и написаны с
+// заглавной; правило «заглавная буква = марка» само по себе пропускало строку
+// «Given the risk, I'll frame group 3 as …» как текст ответа.
+func isLatinBrandWord(word string) bool {
+	lower := strings.ToLower(word)
+	lower = strings.TrimRight(lower, ".,;:!?)]'\"")
+	if englishFunctionWords[lower] {
+		return false
+	}
+	if containsDigitOrHyphen(word) {
+		return true
+	}
+	runes := []rune(word)
+	if len(runes) == 0 {
+		return false
+	}
+	allUpper := true
+	for _, r := range runes {
+		if r >= 'a' && r <= 'z' {
+			allUpper = false
+		}
+	}
+	if allUpper {
+		return true
+	}
+	first := runes[0]
+	return first >= 'A' && first <= 'Z'
+}
+
+// containsDigitOrHyphen — в слове есть цифра или дефис: артикул, а не речь.
+func containsDigitOrHyphen(word string) bool {
+	for _, r := range word {
+		if (r >= '0' && r <= '9') || r == '-' {
+			return true
+		}
+	}
+	return false
 }
 
 // buildBlockUserPrompt — данные предложения текстом для модели.

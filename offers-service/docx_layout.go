@@ -94,6 +94,21 @@ func fillLayoutParagraph(paragraph string, lc layoutContext) string {
 		return paragraph
 	}
 	replaced := applyLayoutTokens(plain, tokens, lc)
+	// Многострочный ответ модели печатается НЕСКОЛЬКИМИ абзацами (2026-11-06).
+	//
+	// Раньше весь текст писался в один `<w:t>`, а переводы строк внутри
+	// `<w:t>` Word не показывает: заголовки и абзацы слипались в один
+	// полотнище-абзац, и «оформления» в документе не было вовсе. Теперь каждая
+	// непустая строка ответа становится отдельным абзацем с вёрсткой метки —
+	// её `<w:pPr>` (стиль, выравнивание, отступ) копируется каждому.
+	//
+	// Строки модели-заголовки (`## Заголовок`) уходят без знаков разметки
+	// (чатка — `stripMarkdownHeadings`), но остаются отдельными абзацами:
+	// читаются как подзаголовки, даже если макет своим стилем их не выделит.
+	lines := splitLayoutLines(replaced)
+	if len(lines) > 1 {
+		return layoutAsParagraphs(paragraph, lines)
+	}
 	// Пишем результат в первый w:t и очищаем остальные. Содержимое первого
 	// может быть разбито на несколько прогонов — тогда просто его заменяем.
 	first := true
@@ -105,6 +120,61 @@ func fillLayoutParagraph(paragraph string, lc layoutContext) string {
 		return replaceWordText(tag, "")
 	})
 	return out
+}
+
+// splitLayoutLines режет текст на непустые строки, сохраняя краевые пробелы
+// абзаца в начале и в конце.
+func splitLayoutLines(text string) []string {
+	var out []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// layoutAsParagraphs печатает строки отдельными абзацами с вёрсткой исходного.
+//
+// Исходный абзац макета состоит из `<w:pPr>` (стиль и правила) и прогонов.
+// Первая строка наследует `<w:pPr>` как есть, остальные получают его копию —
+// так стиль абзаца макета действует на весь ответ модели, а не на первую
+// строку. Пустая строка исходного абзаца (он мог быть пустым) не теряется:
+// между строками абзацы не вставляются, потому что пустая строка в тексте
+// модели — разделитель абзацев, а не пустой абзац документа.
+func layoutAsParagraphs(paragraph string, lines []string) string {
+	pPr := reParagraphPr.FindString(paragraph)
+	if strings.TrimSpace(pPr) == "" {
+		// У абзаца нет правил — синтезируем минимум, чтобы Word не считал
+		// его отдельным «Normal по умолчанию».
+		pPr = `<w:pPr><w:jc w:val="both"/></w:pPr>`
+	}
+	rPr := firstRunProperties(paragraph)
+	var sb strings.Builder
+	for _, line := range lines {
+		sb.WriteString(`<w:p>`)
+		sb.WriteString(pPr)
+		sb.WriteString(`<w:r>`)
+		sb.WriteString(rPr)
+		sb.WriteString(`<w:t xml:space="preserve">`)
+		sb.WriteString(escapeXML(line))
+		sb.WriteString(`</w:t></w:r></w:p>`)
+	}
+	return sb.String()
+}
+
+// reParagraphPr — свойства абзаца (`<w:pPr>…</w:pPr>`) исходного абзаца.
+var reParagraphPr = regexp.MustCompile(`<w:pPr>[\s\S]*?</w:pPr>`)
+
+// reRunProperties — свойства прогона (`<w:rPr>…</w:rPr>`).
+var reRunProperties = regexp.MustCompile(`<w:rPr>[\s\S]*?</w:rPr>`)
+
+// firstRunProperties — оформление первого прогона абзаца (шрифт, размер).
+// Пустая строка — прогон макета без своих правил; тогда и копировать нечего.
+func firstRunProperties(paragraph string) string {
+	m := reRunProperties.FindString(paragraph)
+	return m
 }
 
 // replaceWordText подменяет содержимое `<w:t>` с сохранением его атрибутов.
