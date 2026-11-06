@@ -228,6 +228,18 @@
   cursor: pointer;
 }
 
+/* Чип, который копирует метку в буфер (2026-11-07): пунктир и курсор-рука
+   отличают его от обычной подписи — иначе не видно, что он кликабелен. */
+.tn-offers-chip-copy {
+  border: 1px dashed var(--border-secondary-enabled);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tn-offers-chip-copy:hover {
+  background: var(--background-secondary-a-pressed);
+}
+
 .tn-offers-link {
   cursor: pointer;
   color: var(--content-accent-enabled);
