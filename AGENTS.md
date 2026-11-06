@@ -30,7 +30,7 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
-## Steps A and B shipped (2026-11-06, release 0.7.6)
+## Steps A and B shipped (2026-11-06, release 0.7.6 — deployed and self-hosted)
 
 Version (manifest.json = package.json) = **0.7.6**. The first two steps of the
 "generation without the model" plan are in; C, D and E are still open.
@@ -118,6 +118,44 @@ dryer: no new duplicates (the four pre-existing pairs remain, including the
 {{текст: система: …}}; block epeat/source attributes; the layout markup
 guide. Until C lands, the document still prints the card through the existing
 block path - the texts are stored but the layout markers cannot read them yet.
+### Released and deployed 2026-11-06 22:45 MSK
+
+| | value |
+|---|---|
+| plugin | **0.7.6** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `e9163fb` (steps A, B, clients, docs) — pushed |
+| `main` | `43f791b` (plugin part copied from `e9163fb`) — pushed |
+| plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
+| server deploy | `git archive e9163fb` -> `scp` -> `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.5-20261106`, `offers-bot.bak-0.7.5-20261106`; `md5sum` of ten files compared BEFORE the build; containers recreated 22:45 MSK, health `ok`, bot poller started |
+| migration | `offers_system_text` created on the live DB: PK `(note_id, block)`, index `offers_system_text_note`, 0 rows |
+| routes | `system-texts` and `recalculate` registered (401 without a token), served OpenAPI contains both |
+| self-hosting | `sh /opt/mailers/kb-selfhost.sh sbe-offers`; three sums checked over https, served manifest reads `0.7.6` |
+| registry | `sbe-apstore-registry` `55281d5`; `www/registry.json` replaced (backup `registry.json.bak-20261106-0.7.5-server`); **`version` set by hand** |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `a0908ff3f83027d0f16bfc0fce604bd6ab15ec1b7c0be5a4928a1e6665b6237b` | 468 |
+| `main.js` | `fbda883272ae32a6385ef6d74c9e943c888aa2e0223a82ad5da8236338ccff20` | 152226 |
+| `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
+
+**Three traps met during this deploy, all new:**
+
+1. **`kb-selfhost.sh` reads `/tmp/selfhost-upload/<dir>/`, not the build.** The
+   first run uploaded the 0.7.5 files left there at 16:32: the script reported
+   success and the journal showed 0.7.5 sums. Always `scp` the three fresh
+   files, compare `md5sum`, then run the script; a `main.js` size mismatch is
+   the tell.
+2. **Caddy re-serialises `registry.json` when serving it** (minified, keys
+   sorted), so the on-disk sha256 never equals the one over https. Compare
+   fields via `Invoke-RestMethod`; verify the file on disk with `md5sum`.
+3. **Patch `registry.json` surgically, never through `JSON.parse` +
+   `stringify`.** Rebuilding the object reordered the keys of all 22 entries:
+   274 insertions and 215 deletions for a two-field change.
+
+**Not done after 0.7.6:** steps C, D and E (see the "Next stage" section) -
+so the stored system texts are not yet read by the layout; the live path for
+`offers_system_text` has not been exercised by a real selection; the 0.7.6 CUP
+news publishes on the next Obsidian start.
 ## Next stage: generation without the model (steps A+B shipped in 0.7.6; C, D, E open)
 
 **Full plan:** [`docs/superpowers/plans/2026-11-06-sbe-offers-generation-without-model-plan.md`](../../../docs/superpowers/plans/2026-11-06-sbe-offers-generation-without-model-plan.md).
