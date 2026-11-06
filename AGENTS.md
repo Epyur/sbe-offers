@@ -123,8 +123,8 @@ block path - the texts are stored but the layout markers cannot read them yet.
 | | value |
 |---|---|
 | plugin | **0.7.6** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `dd4b66c` (steps A, B, clients, docs) — pushed |
-| `main` | `6643438` (plugin part copied from `e9163fb`) — pushed |
+| `backend` | `e9163fb` (code: steps A, B, clients; code HEAD) + `dd4b66c` (docs) — pushed |
+| `main` | `43f791b` (code: plugin part copied from `e9163fb`; code HEAD) + `0d4c40a` (docs) — pushed |
 | plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
 | server deploy | `git archive e9163fb` -> `scp` -> `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.5-20261106`, `offers-bot.bak-0.7.5-20261106`; `md5sum` of ten files compared BEFORE the build; containers recreated 22:45 MSK, health `ok`, bot poller started |
 | migration | `offers_system_text` created on the live DB: PK `(note_id, block)`, index `offers_system_text_note`, 0 rows |
