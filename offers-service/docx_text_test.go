@@ -29,7 +29,7 @@ func promptForm() OfferForm {
 
 func TestGenerateBlockTextsWritesText(t *testing.T) {
 	c := &fakeCompleter{answer: "Система укладывается в два слоя."}
-	values, reused, written := generateBlockTexts(context.Background(), promptForm(), testOfferForBlocks(), c, nil, nil)
+	values, reused, written, _ := generateBlockTexts(context.Background(), promptForm(), testOfferForBlocks(), c, nil, nil)
 	if written != 1 || reused != 0 {
 		t.Fatalf("ожидали 1 новый текст, получили reused=%d written=%d", reused, written)
 	}
@@ -48,11 +48,11 @@ func TestGenerateBlockTextsWritesText(t *testing.T) {
 func TestGenerateBlockTextsReusesCache(t *testing.T) {
 	offer := testOfferForBlocks()
 	first := &fakeCompleter{answer: "Текст."}
-	values, _, _ := generateBlockTexts(context.Background(), promptForm(), offer, first, nil, nil)
+	values, _, _, _ := generateBlockTexts(context.Background(), promptForm(), offer, first, nil, nil)
 	offer.FormValues = values
 
 	second := &fakeCompleter{answer: "Другой текст."}
-	got, reused, written := generateBlockTexts(context.Background(), promptForm(), offer, second, nil, nil)
+	got, reused, written, _ := generateBlockTexts(context.Background(), promptForm(), offer, second, nil, nil)
 	if second.calls != 0 {
 		t.Fatalf("модель вызвана повторно (%d раз) при свежем кэше", second.calls)
 	}
@@ -67,7 +67,7 @@ func TestGenerateBlockTextsReusesCache(t *testing.T) {
 // Правка состава стирает кэш: старый текст говорит про старые суммы.
 func TestGenerateBlockTextsInvalidatesOnOfferChange(t *testing.T) {
 	offer := testOfferForBlocks()
-	values, _, _ := generateBlockTexts(context.Background(), promptForm(), offer, &fakeCompleter{answer: "Старый."}, nil, nil)
+	values, _, _, _ := generateBlockTexts(context.Background(), promptForm(), offer, &fakeCompleter{answer: "Старый."}, nil, nil)
 	offer.FormValues = values
 	// Меняем цену — данные, которые видел прошлый текст.
 	offer.Items[0].Price = 999
@@ -75,7 +75,7 @@ func TestGenerateBlockTextsInvalidatesOnOfferChange(t *testing.T) {
 	offer.Total = 99900
 
 	c := &fakeCompleter{answer: "Новый."}
-	got, reused, written := generateBlockTexts(context.Background(), promptForm(), offer, c, nil, nil)
+	got, reused, written, _ := generateBlockTexts(context.Background(), promptForm(), offer, c, nil, nil)
 	if c.calls != 1 || written != 1 || reused != 0 {
 		t.Fatalf("при изменившемся предложении текст должен быть переписан: calls=%d written=%d reused=%d", c.calls, written, reused)
 	}
@@ -88,7 +88,7 @@ func TestGenerateBlockTextsInvalidatesOnOfferChange(t *testing.T) {
 func TestGenerateBlockTextsDegradesOnModelError(t *testing.T) {
 	offer := testOfferForBlocks()
 	offer.FormValues["client_name"] = "ООО Заказчик"
-	got, _, written := generateBlockTexts(context.Background(), promptForm(), offer,
+	got, _, written, _ := generateBlockTexts(context.Background(), promptForm(), offer,
 		&fakeCompleter{err: errors.New("502")}, nil, nil)
 	if written != 0 {
 		t.Fatalf("на ошибке модели текст не должен появляться: %d", written)
@@ -107,7 +107,7 @@ func TestGenerateBlockTextsSkipsInternalBlocks(t *testing.T) {
 	form := promptForm()
 	form.Blocks[0].ShowInClient = false
 	c := &fakeCompleter{answer: "Не нужно."}
-	_, _, written := generateBlockTexts(context.Background(), form, testOfferForBlocks(), c, nil, nil)
+	_, _, written, _ := generateBlockTexts(context.Background(), form, testOfferForBlocks(), c, nil, nil)
 	if c.calls != 0 || written != 0 {
 		t.Fatalf("внутренний блок не должен генерироваться: calls=%d written=%d", c.calls, written)
 	}
@@ -124,7 +124,7 @@ func TestGenerateBlockTextsKeyedByBlockID(t *testing.T) {
 		Content:      []byte(`[{"type":"paragraph","text":"Титул"}]`),
 	}}, form.Blocks...)
 	c := &fakeCompleter{answer: "Текст."}
-	values, _, _ := generateBlockTexts(context.Background(), form, testOfferForBlocks(), c, nil, nil)
+	values, _, _, _ := generateBlockTexts(context.Background(), form, testOfferForBlocks(), c, nil, nil)
 	if values[genKeyTextByID("desc", 0)] == "" {
 		t.Fatalf("текст блока не найден под своим id: %#v", values)
 	}

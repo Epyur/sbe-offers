@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"mailers/offers/model"
 	"mailers/offers/skills"
@@ -170,22 +171,23 @@ func collectPromptNodes(form OfferForm) []promptNode {
 // form_values. Ошибка модели узла не является ошибкой всего документа.
 //
 // reused — сколько узлов взято из кэша: плагин показывает «тексты обновлены /
-// взяты готовые», чтобы человек понимал, почему файл не изменился.
+// взяты готовые», чтобы человек понимал, почему файл не изменился. failed —
+// сколько узлов модель не написала (для сводки сборки в журнале, 2026-11-06).
 func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
-	c Completer, cards []SystemCard, refs []skills.CardRef) (map[string]string, int, int) {
+	c Completer, cards []SystemCard, refs []skills.CardRef) (map[string]string, int, int, int) {
 	nodes := collectPromptNodes(form)
 	values := map[string]string{}
 	for k, v := range offer.FormValues {
 		values[k] = v
 	}
 	if len(nodes) == 0 {
-		return values, 0, 0
+		return values, 0, 0, 0
 	}
 	fresh := hashOfferFacts(offer)
 	previous := offer.FormValues
 	cacheValid := previous != nil && previous[genKeySection] == fresh
 
-	reused, written := 0, 0
+	reused, written, failed := 0, 0, 0
 	for _, pn := range nodes {
 		key := genKeyTextByID(pn.BlockID, pn.NodeIndex)
 		if cacheValid {
@@ -195,17 +197,21 @@ func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
 				continue
 			}
 		}
+		started := time.Now()
 		text, err := writePromptNode(ctx, pn.Node, offer, cards, refs, c)
+		logModelCall("block:"+pn.BlockID, genKeyTextByID(pn.BlockID, pn.NodeIndex),
+			len(pn.Node.Instruction), started, err)
 		if err != nil || strings.TrimSpace(text) == "" {
 			// Модель недоступна или ответила пустым — блок молчит.
 			delete(values, key)
+			failed++
 			continue
 		}
 		values[key] = text
 		written++
 	}
 	values[genKeySection] = fresh
-	return values, reused, written
+	return values, reused, written, failed
 }
 
 // writePromptNode — один вызов модели для одного узла.

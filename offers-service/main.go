@@ -129,6 +129,11 @@ func main() {
 	// позиции знает только он (вилка из таблиц менеджера), а не клиент.
 	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))
 	mux.HandleFunc("DELETE /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleRemoveSystem))
+	// Тексты системы (2026-11-06, шаг B): модель пишет их ОДИН РАЗ при выборе
+	// системы, а сборка документа только вставляет готовое. Путь «по заметке»
+	// позволяет пересчитать текст, когда карточка Базы знаний изменилась.
+	mux.HandleFunc("GET /api/offers/offers/{id}/system-texts", s.requirePerm("viewer")(s.handleGetSystemTexts))
+	mux.HandleFunc("POST /api/offers/offers/{id}/system/{noteId}/recalculate", s.requirePerm("editor")(s.handleRecalculateSystemTexts))
 	mux.HandleFunc("PUT /api/offers/form", s.requirePerm("admin")(s.handleSaveForm))
 	// Макет документа (2026-11-05): загрузка .docx с метками `[…]` и `{…}`,
 	// чтение обратно для правки и удаление (печать снова по блокам формы).
@@ -200,8 +205,12 @@ func main() {
 		Addr:              ":" + port,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      90 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// WriteTimeout снят 2026-11-06 (шаг A плана «генерация без модели»).
+		// Было 90 секунд — и длинный ответ модели (до трёх попыток по 180 с)
+		// не мог дойти до человека вовсе: сервер обрывал запись, бот получал
+		// пустоту и молчал. Предел теперь у каждой ручки свой — см.
+		// writeTimeoutFor в gentrace.go.
+		IdleTimeout: 120 * time.Second,
 	}
 
 	log.Printf("offers-service listening on :%s", port)
@@ -409,6 +418,30 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 			UNIQUE (material_id, ekn)
 		)`,
 		`CREATE INDEX IF NOT EXISTS offers_material_ekn_ekn ON offers_material_ekn (ekn)`,
+
+		// Тексты системы, написанные моделью ОДИН РАЗ при её выборе
+		// (2026-11-06, шаг B плана «генерация без модели»).
+		//
+		// Почему отдельная таблица, а не form_values: текст привязан к
+		// КАРТОЧКЕ (заметке Базы знаний), а не к предложению. Одна и та же
+		// система, выбранная в десяти КП, получает один и тот же обоснованный
+		// текст, и переписывать его при каждом выборе — это и была причина
+		// «система ушла думать» (правка макета обнуляла кэш, модель
+		// вызывалась заново, запрос умирал на таймауте).
+		//
+		// hash — отпечаток содержимого карточки, из которого текст написан.
+		// Не совпал — текст устарел, и кнопка «Пересчитать тексты системы»
+		// пишет его заново. Сборка документа модель не зовёт вовсе.
+		`CREATE TABLE IF NOT EXISTS offers_system_text (
+			note_id    BIGINT NOT NULL,
+			block      TEXT NOT NULL,
+			text       TEXT NOT NULL DEFAULT '',
+			hash       TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			PRIMARY KEY (note_id, block)
+		)`,
+		// Поиск «какие тексты есть у этих систем» идёт пачкой по note_id.
+		`CREATE INDEX IF NOT EXISTS offers_system_text_note ON offers_system_text (note_id)`,
 
 		// Перенос материалов из старого каталога. Идемпотентно: переносим только
 		// те карточки, которых ещё нет в новой таблице (по name+unit).

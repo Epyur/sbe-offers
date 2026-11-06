@@ -131,7 +131,7 @@ func TestDocumentTextDropsMarkerOnlyParagraph(t *testing.T) {
 // следующем скачивании того же предложения.
 func TestGeneratedBlockTextIsClean(t *testing.T) {
 	c := &fakeCompleter{answer: "Мембрана укладывается в два слоя. [НУЖНО: марка грунта]"}
-	values, _, written := generateBlockTexts(context.Background(), promptForm(),
+	values, _, written, _ := generateBlockTexts(context.Background(), promptForm(),
 		testOfferForBlocks(), c, nil, nil)
 	if written != 1 {
 		t.Fatalf("ожидали один текст, получили %d", written)

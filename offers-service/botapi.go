@@ -308,18 +308,24 @@ func docxFileName(offer Offer) string {
 // единственное место, где документ идёт в сеть за моделью. Не удалось — блоки
 // молчат, файл собирается как есть (форма и карточки всё равно нужны).
 func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
+	report := newBuildReport(offer.Number)
+	defer report.logSummary()
+	ctx, cancel := withWorkTimeout(r)
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	form, err := s.loadForm(r.Context(), "client")
 	if err != nil {
 		return nil, err
 	}
 	cards, refs := s.systemCardsForOffer(r.Context(), offer)
 	offer = s.offerWithBrief(r.Context(), offer)
-	offer = s.refreshBlockTexts(r.Context(), form, offer, cards, refs)
+	offer = s.refreshBlockTexts(r.Context(), form, offer, cards, refs, report)
 	// Макет пользователя главнее блоков формы (2026-11-05): если он загружен,
 	// документ собирается по нему, со своими стилями и колонтитулами. Блоки
 	// формы при этом остаются — вернуться к ним можно, удалив макет.
 	if layout, err := s.loadLayout(r); err == nil && len(layout) > 0 {
-		return s.renderLayoutOffer(r, layout, offer, cards, refs)
+		return s.renderLayoutOffer(r, layout, offer, cards, refs, report)
 	}
 	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
 }
@@ -330,7 +336,7 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 // одной точкой, а кэш — в form_values предложения (правило 2026-11-01: один
 // и тот же КП не должен давать разный документ при каждом скачивании).
 func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
-	cards []SystemCard, refs []skills.CardRef) ([]byte, error) {
+	cards []SystemCard, refs []skills.CardRef, report *buildReport) ([]byte, error) {
 	values := layoutValues(offer)
 	cache := &layoutPromptCache{
 		values:    map[string]string{},
@@ -340,6 +346,7 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, offer Offer,
 		cards:     cards,
 		refs:      refs,
 		completed: llmCompleter{},
+		report:    report,
 	}
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,
@@ -437,11 +444,16 @@ func (s *Server) systemCardsForOffer(ctx context.Context, offer Offer) ([]System
 // что печатать: свежий кэш или текст, только что написанный моделью. Запись в
 // БД — двигаем updated_at (правило проекта: правка данных двигает метку).
 func (s *Server) refreshBlockTexts(ctx context.Context, form OfferForm, offer Offer,
-	cards []SystemCard, refs []skills.CardRef) Offer {
+	cards []SystemCard, refs []skills.CardRef, report *buildReport) Offer {
 	if len(collectPromptNodes(form)) == 0 {
 		return offer
 	}
-	values, reused, written := generateBlockTexts(ctx, form, offer, llmCompleter{}, cards, refs)
+	values, reused, written, failed := generateBlockTexts(ctx, form, offer, llmCompleter{}, cards, refs)
+	if report != nil {
+		report.FromCache += reused
+		report.Generated += written
+		report.Failed += failed
+	}
 	if written == 0 && reused == 0 {
 		return offer
 	}

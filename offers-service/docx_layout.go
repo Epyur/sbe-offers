@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"mailers/offers/skills"
@@ -356,6 +357,10 @@ func splitReplacedByParagraph(spans struct {
 			replacement[i] = ""
 			imageMarkup[i] = layoutImageMarkup(spec, lc)
 		case layoutTokenPrompt:
+			// Таблица проверяется ДО модели (2026-11-06): раньше `lc.prompt`
+			// вызывался первым, ответ выбрасывался, и `layoutTableFor` подменял
+			// его таблицей из данных. Один лишний вызов модели на каждую
+			// сборку — на длинном промте это и есть те минуты ожидания.
 			if table := layoutTableFor(token.Inner, lc); table != nil {
 				replacement[i] = tableMarkdown(table)
 				continue
@@ -1164,6 +1169,9 @@ type layoutPromptCache struct {
 	cards     []SystemCard
 	refs      []skills.CardRef
 	completed Completer
+	// report — сводка сборки для журнала (2026-11-06). nil в тестах: печать
+	// документа без журнала ведёт себя так же.
+	report *buildReport
 }
 
 // layoutPromptKeyCache — ключ кэша одного промта макета.
@@ -1193,10 +1201,23 @@ func (c *layoutPromptCache) text(instruction string) string {
 	if c.previous != nil && c.previous[genKeySection] == c.section {
 		if v := documentText(strings.TrimSpace(c.previous[key])); v != "" {
 			c.values[key] = v
+			if c.report != nil {
+				c.report.FromCache++
+			}
 			return v
 		}
 	}
+	started := time.Now()
 	text := layoutPromptText(context.Background(), instruction, c.offer, c.cards, c.refs, c.completed)
+	reportFailed := text == ""
+	logModelCall("layout", key, len(instruction), started, nil)
+	if c.report != nil {
+		if reportFailed {
+			c.report.Failed++
+		} else {
+			c.report.Generated++
+		}
+	}
 	if text == "" {
 		return ""
 	}
