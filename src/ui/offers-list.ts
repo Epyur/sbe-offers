@@ -7,6 +7,16 @@ import { renderBriefCard } from './brief-editor';
 import { renderSheetUpload } from './sheet-upload';
 import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
+/**
+ * Блоки текста системы (2026-11-06): ровно два, и это решение, а не список
+ * «всё, что есть». Состав не генерируется — он уже есть в карточке Базы знаний,
+ * и пересказ моделью был бы второй правдой рядом со списком.
+ */
+const SYSTEM_TEXT_LABELS: Array<[string, string]> = [
+  ['description', 'Обоснование применения'],
+  ['advantages', 'Преимущества'],
+];
+
 export function renderOffersList(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка предложений…' });
   void load(view, container);
@@ -279,6 +289,19 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         const handle = chosen.noteId ? `sys-${chosen.noteId}` : (chosen.sku ?? '');
         const label = handle ? `Система: ${handleLabel(handle)}` : 'Система';
         row.createSpan({ cls: 'tn-offers-grow', text: label });
+        // «Пересчитать тексты системы» (2026-11-06, шаг B): карточку в Базе
+        // знаний могли поправить после выбора. Пересчёт — осознанное действие,
+        // потому что снова зовёт модель; автоматически этого не делаем.
+        if (chosen.noteId) {
+          const recalcBtn = row.createEl('button', {
+            text: '↻ Пересчитать',
+            cls: 'tn-btn tn-btn-ghost',
+          });
+          recalcBtn.setAttr('title', 'Переписать описание и преимущества системы по текущей карточке');
+          recalcBtn.addEventListener('click', () => {
+            void recalculate(chosen.noteId!, recalcBtn);
+          });
+        }
         const removeBtn = row.createEl('button', { text: 'Убрать', cls: 'tn-btn tn-btn-ghost' });
         removeBtn.addEventListener('click', () => {
           void removeSystem(handle, removeBtn);
@@ -311,19 +334,46 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         return;
       }
       addSystemBtn.setAttr('disabled', 'true');
+      // Тексты системы пишет модель — ОДИН раз при выборе (2026-11-06). Это
+      // занимает десятки секунд, и молчание здесь читается как поломка.
+      new Notice('Добавляю систему и пишу тексты (описание и преимущества) — до минуты…', 8000);
       try {
         const res = await view.plugin.offersService.addSystem(current.id!, choice);
         // Позиции не трогаем: сервер их не меняет, а локальный список в
         // редакторе остаётся тем, что человек правил.
         current.systems = res.offer.systems ?? [];
         renderChosen(current);
+        renderSystemTexts(res.texts ?? {}, res.missing ?? []);
+        const written = Object.values(res.texts ?? {}).filter((t) => t.trim() !== '').length;
         new Notice(
-          `Система добавлена: «${res.system?.title ?? ''}». Позиции не добавлялись — их состав вы заводите сами.`,
+          written > 0
+            ? `Система добавлена: «${res.system?.title ?? ''}». Тексты готовы — в документ они попадут сразу. Позиции не добавлялись.`
+            : `Система добавлена: «${res.system?.title ?? ''}». Тексты не записались — нажмите «Пересчитать тексты системы».`,
         );
       } catch (e: unknown) {
-        new Notice(`Не удалось добавить систему: ${errorMessage(e)}`);
+        new Notice(`Система выбрана, но тексты не записались: ${errorMessage(e)}`);
       } finally {
         addSystemBtn.removeAttribute('disabled');
+      }
+    }
+
+    /** Показать, что за тексты системы записаны (2026-11-06). */
+    function renderSystemTexts(texts: Record<string, string>, missing: string[]): void {
+      chosenList.createDiv({ cls: 'tn-offers-system-texts-head', text: 'Тексты системы:' });
+      for (const [block, label] of SYSTEM_TEXT_LABELS) {
+        const text = (texts[block] ?? '').trim();
+        const row = chosenList.createDiv({ cls: 'tn-offers-row tn-offers-system-text' });
+        row.createSpan({ cls: 'tn-offers-muted', text: `${label}: ` });
+        row.createSpan({
+          cls: text ? 'tn-offers-grow' : 'tn-offers-warn',
+          text: text ? `${text.slice(0, 160)}${text.length > 160 ? '…' : ''}` : 'не написано',
+        });
+      }
+      for (const block of missing) {
+        chosenList.createDiv({
+          cls: 'tn-offers-warn',
+          text: `Не удалось написать: ${SYSTEM_TEXT_LABELS.find(([id]) => id === block)?.[1] ?? block}. Документ соберётся без этого текста.`,
+        });
       }
     }
 
@@ -336,6 +386,32 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         new Notice('Система убрана из предложения.');
       } catch (e: unknown) {
         new Notice(`Не удалось убрать систему: ${errorMessage(e)}`);
+      } finally {
+        button.removeAttribute('disabled');
+      }
+    }
+
+    /**
+     * Пересчитать тексты одной системы по текущей карточке (2026-11-06).
+     *
+     * Нужно, когда карточку в Базе знаний поправили после выбора: текст
+     * сохранён и сам не обновится. Кнопка вызывает модель — поэтому она
+     * ручная, а не фоновая.
+     */
+    async function recalculate(noteId: number, button: HTMLButtonElement): Promise<void> {
+      button.setAttr('disabled', 'true');
+      new Notice('Пересчитываю тексты системы — до минуты…', 8000);
+      try {
+        const res = await view.plugin.offersService.recalculateSystemTexts(current.id!, noteId);
+        renderSystemTexts(res.texts, res.missing ?? []);
+        const written = Object.values(res.texts).filter((t) => t.trim() !== '').length;
+        new Notice(
+          written > 0
+            ? `Тексты системы «${res.title}» обновлены.`
+            : `Тексты системы «${res.title}» не записались — попробуйте позже.`,
+        );
+      } catch (e: unknown) {
+        new Notice(`Не удалось пересчитать тексты: ${errorMessage(e)}`);
       } finally {
         button.removeAttribute('disabled');
       }
