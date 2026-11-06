@@ -531,6 +531,24 @@ paths:
         '200':
           description: '`{hasLayout: false}`'
 
+  /api/offers/form/layout/example:
+    get:
+      summary: Образец макета со всеми метками — admin
+      description: |
+        Рабочий .docx, в котором стоят все метки, которые понимает печать
+        (2026-11-06, шаг E): `[Поле]`, `{промт}`, `{{система}}`,
+        `{{текст: система: description|advantages}}`, `{{ссылки: система}}`,
+        `{{характеристики: система}}`, `{{block:1}}`. Собирается самим сервисом,
+        поэтому не расходится с разбором.
+      responses:
+        '200':
+          description: Файл .docx с образцом
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+
   /api/offers/form/describe:
     post:
       summary: Опишите блок словами — admin
@@ -2133,6 +2151,18 @@ components:
         pageBreakBefore:
           type: boolean
           description: Начинать блок с новой страницы
+        repeat:
+          type: string
+          enum: ['', systems, materials]
+          description: |
+            Повтор блока в макете (2026-11-06, шаг D). `systems` — блок
+            печатается по разу на каждую выбранную систему, `materials` — по
+            каждой позиции предложения (не больше 10, дальше — строка о
+            приложении). Пусто — печатается один раз. Метка макета —
+            `{{block:<id>}}`. Это только печать: модель не вызывается.
+        source:
+          type: string
+          description: Источник данных блока; `card` — карточка Базы знаний.
     OfferForm:
       type: object
       properties:

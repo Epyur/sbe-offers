@@ -36,6 +36,32 @@ type Block struct {
 	KeepTogether bool `json:"keepTogether,omitempty"`
 	// PageBreakBefore — начинать блок с новой страницы.
 	PageBreakBefore bool `json:"pageBreakBefore,omitempty"`
+	// Repeat / Source — повтор и источник данных (2026-11-06, шаг D плана
+	// «генерация без модели»). `{{block:N}}` для блока с repeat:"systems"
+	// печатается по разу на выбранную систему, с repeat:"materials" — по
+	// позициям предложения. Source:"card" говорит, что данные блока — карточка
+	// Базы знаний, а не собственный текст администратора (сейчас используется
+	// для подсказки в редакторе; печать его не требует).
+	Repeat string `json:"repeat,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
+// Виды повтора блока формы.
+const (
+	blockRepeatSystems   = "systems"
+	blockRepeatMaterials = "materials"
+)
+
+// RepeatName — имя повтора: id блока.
+//
+// Метки макета ссылаются на повтор через `{{… name="S"}}`, и имя — это id
+// блока: администратор пишет `{{система name="7"}}`, где 7 — id блока с
+// repeat:"systems". Одно имя на два места, и держать его в двух полях незачем.
+func (b Block) RepeatName() string {
+	if strings.TrimSpace(b.Repeat) == "" {
+		return ""
+	}
+	return strings.TrimSpace(b.ID)
 }
 
 // OfferForm — конфигурация формы КП.
@@ -80,7 +106,14 @@ func validateForm(f OfferForm) string {
 			return "отступ блока «" + block.Title + "» не может быть отрицательным"
 		}
 		if block.SpacingBefore > maxBlockSpacing || block.SpacingAfter > maxBlockSpacing {
-			return "отступ блока «" + block.Title + "» больше " + strconv.Itoa(maxBlockSpacing) + " пт"
+			return "отступ блока <" + block.Title + "> больше " + strconv.Itoa(maxBlockSpacing) + " пт"
+		}
+		// Повтор блока (2026-11-06, шаг D): только известные значения. Молча
+		// не повторить блок значило бы напечатать его один раз и не сказать.
+		switch block.Repeat {
+		case "", blockRepeatSystems, blockRepeatMaterials:
+		default:
+			return "неизвестный повтор блока <" + block.Title + ">: " + block.Repeat
 		}
 	}
 	seenFields := make(map[string]bool, len(f.Placeholders))
