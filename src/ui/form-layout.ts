@@ -43,6 +43,29 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
 
   renderLayoutTokens(card, form);
 
+  // Начать с рабочего образца (2026-11-06, шаг E): требование пользователя —
+  // инструкция должна позволять начать с образца, а не со слов. Образец
+  // собирает сервис, поэтому он не разойдётся с разбором.
+  const guide = card.createDiv({ cls: 'tn-offers-muted' });
+  guide.createDiv({
+    text: 'Метки: [Поле] — значение, {промт} — текст модели, {{система}} — картинка ' +
+      'и состав одной таблицей, {{текст: система: description}} — сохранённый текст ' +
+      'системы, {{block:1}} — целый блок формы. Подробно — в разделе справки ' +
+      '«Макет .docx: как расставить метки».',
+  });
+  const exampleBtn = guide.createEl('button', { text: '⬇ Скачать образец макета', cls: 'tn-btn tn-btn-ghost' });
+  exampleBtn.addEventListener('click', () => {
+    void (async () => {
+      try {
+        const data = await view.plugin.offersService.downloadExampleLayout();
+        const path = await view.app.vault.createBinary(uniqueVaultPath(view, 'образец-макета-КП.docx'), data);
+        new Notice(`Образец макета сохранён в вольт: ${path.path}`);
+      } catch (e: unknown) {
+        new Notice(`Не удалось скачать образец: ${errorMessage(e)}`);
+      }
+    })();
+  });
+
   const actions = card.createDiv({ cls: 'tn-offers-row' });
   const upload = actions.createEl('button', {
     text: form.hasLayout ? '⬆ Заменить макет' : '⬆ Загрузить макет .docx',

@@ -326,6 +326,29 @@ export class OffersService {
   }
 
   /**
+   * Образец макета со всеми метками (2026-11-06, шаг E).
+   *
+   * Собирается сервисом, а не хранится отдельным файлом: образец обязан
+   * совпадать с тем, что система реально понимает. Администратор начинает
+   * разметку с рабочего документа, а не с пересказа инструкции.
+   */
+  async downloadExampleLayout(): Promise<ArrayBuffer> {
+    return this.withTokenRetry(async (token) => {
+      const res = await requestUrl({
+        url: `${this.base()}/api/offers/form/layout/example`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return res.arrayBuffer;
+    });
+  }
+
+  /**
    * Опиши блок словами — модель предлагает структуру блоков (2026-11-05).
    *
    * Возвращает готовые узлы формы: администратор описывает, что должно быть в
