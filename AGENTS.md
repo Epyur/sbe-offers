@@ -30,6 +30,105 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Steps C, D, E shipped (2026-11-06, version 0.7.7 — built, not released)
+
+Version (manifest.json = package.json) = **0.7.7**. All five steps of the
+"generation without the model" plan are now in code; 0.7.6 shipped A and B, this
+one ships C (data markers), D (block repeat) and E (markup guide). **The promise
+of the whole plan is now kept: the layout print calls the model zero times.**
+
+### C — markers that read data, not the model
+
+New marker kinds in `layout_tokens.go`; printing lives in `layout_service.go`:
+
+| marker | prints |
+|---|---|
+| `{{block:1}}` | the form block with `id = "1"`, by id (unknown id prints nothing + a log line) |
+| `{{система}}` | the system card's image and composition in ONE borderless `<w:tbl>` |
+| `{{система: таблица}}` | image above composition, no table |
+| `{{ссылки: система}}` | the card's `## Ссылки`, clickable |
+| `{{характеристики: система}}` | the card's `## Характеристики` as a table |
+| `{{текст: система: description\|advantages}}` | the stored `offers_system_text` text |
+| `{{материал}}` | one offer position's name (used by the repeat) |
+
+Rules worth keeping:
+
+- **The content decides the kind, not the brace count** (unchanged from
+  2026-11-06). A doubled brace is a field only if the name is known
+  (`isLayoutFieldName` calls `parseLayoutServiceSpec` first and rejects service
+  markers); otherwise it is a service marker or a prompt.
+- **A service marker prints as paragraph MARKUP** (`paragraphChange.image`), never
+  as text: `<w:tbl>` inside `<w:t>` would be escaped and the customer would see
+  tags. `attachServiceMarkup` mirrors `attachLayoutImages`.
+- **An unknown block id prints nothing.** A literal `{{block:9}}` in a finished
+  document is a defect; a log line names the missing id.
+- **`splitLayoutMarkerKey` splits by the FIRST WORD, never by the colon.** The
+  live admin instruction «Опиши систему: состав…» contains a colon and was being
+  read as a marker whose key was «опиши систему». This cost an hour; do not
+  "simplify" it back.
+- **`resolvePlaceholders` runs AFTER `expandBlockServiceMarkers`** in
+  `renderCtx.text`: it strips every leftover `{{…}}`, so a service marker that
+  ran second would simply vanish.
+- **`looksLikeFieldName`** decides the admin "what did the system see" view
+  (`values == nil`): a doubled brace is a field only when it is one word without
+  spaces or punctuation. Before this, `{{Опиши систему: …}}` was shown to the
+  admin as a field name.
+- The wasted model call for a layout table is gone: `layoutTableFor` is checked
+  **before** `lc.prompt` in `splitReplacedByParagraph`.
+
+### D — block repeat (print only, no model)
+
+- `Block.Repeat` = `""` / `"systems"` / `"materials"`, `Block.Source` reserved
+  (`form.go`); `Block.RepeatName()` returns the block id.
+- `{{block:N}}` for a block with `repeat:"systems"` prints once per chosen
+  system; inside each pass `{{текст: система: …}}` and `{{система}}` resolve
+  against THAT card (`renderLayoutBlockWith` sets `renderCtx.systemCard` and
+  narrows `rc.cards`/`rc.offer.Systems`), not the first one. Without this the
+  second system would repeat the first system's text and nobody would notice.
+- `repeat:"materials"` prints one pass per offer position, capped at
+  `layoutMaterialRepeatLimit` = 10; above the cap a line says the rest is in the
+  attachment. `rc.materialSource` keeps the full item list so `{{материал}}` can
+  find its own row while the block sees one item.
+- An unknown `repeat` value is a `validateForm` error — silently not repeating
+  means printing the block once and saying nothing.
+
+### E — the markup guide (the user's explicit requirement)
+
+- `src/ui/help.ts` section «Макет .docx: как расставить метки»: every marker
+  kind, what a model answer can express (`## `, `- `, `1. `, URLs, `м2`) and
+  cannot (`**`, markdown tables in text), `[7]` stays a reference, the 800-word
+  cap, and the "stale cache" trap.
+- The layout card (`src/ui/form-layout.ts`) carries a one-paragraph cheat sheet
+  and a «⬇ Скачать образец макета» button.
+- **The example master is produced by the service**, not stored as a file:
+  `GET /api/offers/form/layout/example` → `exampleLayoutDocx()` over
+  `layoutExampleMarkers`. `TestExampleLayoutPrintsEveryMarker` prints it through
+  the real path and fails if any brace survives — so the example cannot drift
+  from the parser.
+
+### Verified
+
+`go test ./...` green (main 54.8 %, model 82.6 %, skills 79.3 %), `gofmt -l`
+empty, `go vet` clean; `crapper`: every new function under CRAP 10 (the worst new
+one is `withKind` 15.2 at 81.8 % coverage; `renderLayoutOffer` and
+`handleExampleLayout` are network handlers with no unit coverage, like the
+pre-existing `handleUploadLayout`); `dryer`: no new duplicate pairs (the four
+pre-existing remain). Plugin `tsc --noEmit` EXIT=0, `npm run build`,
+`check_bundle_strings.mjs` 0 missing, `check_offers_openapi.mjs` **70 operations
+/ 53 paths, schema matches**; stand **305/305**, section 24 is new (14 checks:
+example master, every data marker, clickable links, borderless table, block by
+id, repeat over positions).
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `a161153dd15c5bd8bfe010afd35c23e10d8be82dda6fcd2142b7c868b9d4f41c` | 468 |
+| `main.js` | `7d0bb82a0c6cf8279c85e926eeabc07b1e6745bab597e673b0cefe805e2f29f4` | 165753 |
+| `styles.css` | `50358b4a2ecd849e48b4ee74f783218c8345ca8c049f5f4b8e70d90826c6d152` | 34072 |
+
+`styles.css` unchanged (no CSS edits). **Not released:** the commit, the deploy
+and the self-host wait for the user's command. The live master has not been
+walked by a human (the agent has no device key).
+
 ## Steps A and B shipped (2026-11-06, release 0.7.6 — deployed and self-hosted)
 
 Version (manifest.json = package.json) = **0.7.6**. The first two steps of the
