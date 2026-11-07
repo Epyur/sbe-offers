@@ -210,6 +210,29 @@ func TestLayoutSystemTableVariant(t *testing.T) {
 	}
 }
 
+// Состав системы — НУМЕРОВАННЫЙ список (2026-11-07).
+//
+// Живая жалоба: карточка Базы знаний нумерует слои («1 Мембрана», «2 Песок»), а
+// на разрезе системы маркеры слоёв — с НОМЕРАМИ. В документе же состав шёл
+// маркированным списком, и сопоставить разрез со строками было невозможно.
+// Номер из карточки снимается при разборе, поэтому его ставит Word — так он идёт
+// подряд и не задваивается в тексте.
+func TestLayoutCompositionIsNumberedList(t *testing.T) {
+	lc := serviceLayoutContext(nil)
+	doc := layoutDocxFromXML(t, wordDoc(`<w:p><w:r><w:t>{{система}}</w:t></w:r></w:p>`))
+	out, err := renderLayoutDocx(doc, lc)
+	if err != nil {
+		t.Fatalf("печать: %v", err)
+	}
+	body := string(docxEntry(t, out, "word/document.xml"))
+	if !strings.Contains(body, `numId w:val="`+styleListNumbered+`"`) {
+		t.Fatalf("состав напечатан не нумерованным списком:\n%s", body)
+	}
+	if strings.Contains(body, `numId w:val="`+styleListBullet+`"`) {
+		t.Fatalf("в составе остался маркированный список:\n%s", body)
+	}
+}
+
 // Тексты системы берутся из сохранённых, а не пишутся моделью.
 func TestLayoutSystemTextMarkers(t *testing.T) {
 	var prompts []string

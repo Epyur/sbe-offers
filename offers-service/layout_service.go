@@ -271,6 +271,11 @@ const compositionHeading = "Состав системы"
 //
 // Пункты идут тем же конвейером текста, что и остальной документ: вики-ссылки
 // печатаются подписью, степени в единицах — надстрочными.
+//
+// Список НУМЕРОВАННЫЙ (2026-11-07, живая жалоба): карточка Базы знаний нумерует
+// слои, и на разрезе системы маркеры слоёв стоят с номерами. Маркированный
+// список сопоставить с разрезом было нельзя. Номер в карточке разбор уже снял
+// (reCardNumber), так что его ставит Word: он идёт подряд и не задваивается.
 func layoutCompositionMarkup(card SystemCard) string {
 	items := compositionLines(card)
 	if len(items) == 0 {
@@ -279,7 +284,7 @@ func layoutCompositionMarkup(card SystemCard) string {
 	var sb strings.Builder
 	sb.WriteString(headingXMLOpts(compositionHeading, 4, paraOpts{NoIndent: true}))
 	for _, item := range items {
-		sb.WriteString(listItemXMLOpts(item, paraOpts{}))
+		sb.WriteString(numberedItemXMLOpts(item, paraOpts{}))
 	}
 	return sb.String()
 }

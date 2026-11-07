@@ -275,9 +275,22 @@ func listItemXML(text string) string {
 
 // listItemXMLOpts — пункт списка с размещением: отступы блока нужны и пункту.
 func listItemXMLOpts(text string, opts paraOpts) string {
+	return listItemNumXML(text, styleListBullet, opts)
+}
+
+// numberedItemXMLOpts — пункт НУМЕРОВАННОГО списка бланка (2026-11-07).
+//
+// Отдельная точка на два вида списка: при маркировке и нумерации различие —
+// только numId, и вторая копия разметки разошлась бы с первой молча.
+func numberedItemXMLOpts(text string, opts paraOpts) string {
+	return listItemNumXML(text, styleListNumbered, opts)
+}
+
+// listItemNumXML — пункт списка с заданной нумерацией бланка.
+func listItemNumXML(text, numID string, opts paraOpts) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
 		opts.spacingXML() +
-		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
+		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + numID + `"/></w:numPr></w:pPr>` +
 		runsXML(plainText(text), "") + `</w:p>`
 }
 
