@@ -1976,6 +1976,56 @@ async function sectionServiceMarkers() {
     repeatXML.includes('Мембрана') && repeatXML.includes('Геотекстиль'),
     repeatXML.slice(0, 300));
 
+  // {{система}} внутри БЛОКА формы и напрямую в макете (2026-11-07).
+  //
+  // Живая жалоба на temple.docx: метка, вставленная в блок формы, печатала
+  // пустой абзац, а картинка системы не вставлялась вовсе. Обе дороги обязаны
+  // дать одно: таблицу состава без границ и картинку.
+  const systemBlockForm = {
+    ...form.json,
+    blocks: [{
+      id: '98', title: 'Система', showInClient: true, showInInternal: false,
+      content: [{ type: 'paragraph', text: '{{система}}' }],
+    }],
+  };
+  await call('PUT', '/form', { token: ownerToken, body: systemBlockForm });
+  const systemBlockDoc =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:r><w:t>{{block:98}}</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>{{система}}</w:t></w:r></w:p>` +
+    `</w:body></w:document>`;
+  const systemBlockLayout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(systemBlockDoc, 'utf8')),
+  ]);
+  await fetch(`${BASE}/api/offers/form/layout?name=Система.docx`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: systemBlockLayout,
+  });
+  const systemBlockDocx = Buffer.from(await (await fetch(
+    `${BASE}/api/offers/offers/${offerId}/export`, {
+      method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+    })).arrayBuffer());
+  const systemBlockXML = unzipEntrySafe(systemBlockDocx, 'word/document.xml');
+  const tableCount = (systemBlockXML.match(/<w:tbl>/g) ?? []).length;
+  ok('система из блока и из макета — две таблицы', tableCount === 2,
+    `таблиц ${tableCount}`);
+  ok('у обеих таблиц системы нет границ',
+    (systemBlockXML.match(/<w:left w:val="none"/g) ?? []).length >= 2);
+  const drawingCount = (systemBlockXML.match(/<w:drawing>/g) ?? []).length;
+  ok('картинка системы вставлена дважды', drawingCount === 2,
+    `картинок ${drawingCount}`);
+  ok('прогон картинки не сосед абзаца', !systemBlockXML.includes('</w:p><w:r>'));
+  ok('картинка системы попала в пакет',
+    systemBlockDocx.includes(Buffer.from('word/media/offerimg1.png')));
+
   // Возвращаем форму, который был до проверки, и убираем макет.
   await call('PUT', '/form', { token: ownerToken, body: { ...repeatForm, blocks: originalBlocks } });
   await call('DELETE', '/form/layout', { token: ownerToken });
