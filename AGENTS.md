@@ -30,6 +30,36 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## System composition prints as a NUMBERED list (2026-11-07 — built, not released)
+
+Version is still **0.7.8** (this is a service-only fix; version bump comes with
+«Фиксируй»).
+
+User report: the composition of a chosen system reached the document as a
+bulleted list, while the Knowledge Base note numbers its layers and the system
+drawing (`{{система}}`) marks layers with **those numbers** — so the reader
+could not match the picture to the list.
+
+- `layoutCompositionMarkup` (`layout_service.go`) now prints every item through
+  `numberedItemXMLOpts` (`styleListNumbered`, the brand's `numId 1`, decimal)
+  instead of `listItemXMLOpts` (`styleListBullet`, `numId 6`).
+- **The number is put by Word, not typed into the text.** `ParseSystemCard`
+  already strips it (`reCardNumber`), so Word numbers 1..N without doubling.
+- **One place for both list kinds:** `listItemNumXML(text, numID, opts)`; the
+  bullet and numbered helpers are thin wrappers. A second copy of the paragraph
+  markup would drift from the first silently.
+- This covers `{{система}}`, `{{система: таблица}}` and `{{система}}` inside a
+  form block — all of them go through the same function.
+- **Not the block path:** `renderCardSectionsWithMedia` (`docx.go`) still prints
+  the composition with bullets. That is the layout-less path for old offers; if
+  numbers are wanted there too, change `docx.go`, not this code.
+
+Verified: `TestLayoutCompositionIsNumberedList` (red before the fix — `numId 6`
+in the document), `go test ./...` green, `gofmt -l` empty, `go vet` clean;
+`crapper` 3.0 / 1.0 / 1.0 at 100 % on the new functions; `dryer` no new
+duplicates (the four pre-existing pairs were confirmed against a stashed clean
+tree).
+
 ## Block id copies as a ready marker (2026-11-07, version 0.7.8 — built, not released)
 
 Version (manifest.json = package.json) = **0.7.8**.
