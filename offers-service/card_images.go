@@ -29,21 +29,29 @@ func attachImageKeys(ctx context.Context, kb KBReader, cards []SystemCard) []Sys
 		return cards
 	}
 	for i := range cards {
-		if cards[i].ImageKey != "" || cards[i].NoteID <= 0 {
-			continue
-		}
-		atts, err := kb.Attachments(ctx, cards[i].NoteID)
-		if err != nil || len(atts) == 0 {
-			continue
-		}
-		if key, name := pickImageAttachment(atts, cards[i].ImageName); key != "" {
-			cards[i].ImageKey = key
-			if cards[i].ImageName == "" {
-				cards[i].ImageName = name
-			}
-		}
+		attachImageKey(ctx, kb, &cards[i])
 	}
 	return cards
+}
+
+// attachImageKey — ключ картинки одной карточки.
+//
+// Пропускается всё, где привязывать нечего или не к чему: ключ уже есть, нет
+// заметки, ошибка вложений (сеть), нет картинок среди вложений.
+func attachImageKey(ctx context.Context, kb KBReader, card *SystemCard) {
+	if card.ImageKey != "" || card.NoteID <= 0 {
+		return
+	}
+	atts, err := kb.Attachments(ctx, card.NoteID)
+	if err != nil || len(atts) == 0 {
+		return
+	}
+	if key, name := pickImageAttachment(atts, card.ImageName); key != "" {
+		card.ImageKey = key
+		if card.ImageName == "" {
+			card.ImageName = name
+		}
+	}
 }
 
 // attachMaterialImageKeys — то же для материалов: `PhotoKey` заполняется по
@@ -68,6 +76,31 @@ func attachMaterialImageKeys(ctx context.Context, kb KBReader, materials []Mater
 		}
 	}
 	return materials
+}
+
+// offerCardsWithImages — карточки ВЫБРАННЫХ систем предложения с картинками.
+//
+// Кеш систем (`offers_context`) хранит карточки, прочитанные ДО появления
+// `ImageKey` (2026-11-05): у них есть `imageName`, а ключ пуст. Экспорт берёт
+// карточки из кеша, поэтому без этого шага метка `{{система}}` печатала систему
+// без картинки — живая жалоба 2026-11-07. Привязка идёт только по выбранным
+// карточкам: их одна-две, а не все 376 систем.
+//
+// Ошибка Базы знаний карточку не теряет: картинка необязательна.
+func offerCardsWithImages(ctx context.Context, kb KBReader, cards []SystemCard, offer Offer) []SystemCard {
+	return attachImageKeys(ctx, kb, cardsForOffer(cards, offer))
+}
+
+// kbReaderOrNil — клиент Базы знаний как интерфейс, либо nil.
+//
+// Отдельная функция, потому что типизированный nil в интерфейсе НЕ равен nil:
+// `attachImageKeys` проверил бы `kb == nil`, получил false и упал на первом
+// вызове. Проверка «настроен ли» живёт в одном месте.
+func kbReaderOrNil(kb *KBClient) KBReader {
+	if kb == nil || !kb.configured() {
+		return nil
+	}
+	return kb
 }
 
 // pickImageAttachment выбирает картинку из вложений карточки.

@@ -261,7 +261,7 @@ func layoutCardImageMarkup(card SystemCard, lc layoutContext) string {
 	if drawing == "" {
 		return ""
 	}
-	return paragraphXMLOpts("", "center", paraOpts{NoIndent: true}) + drawing
+	return imageParagraphXML(drawing)
 }
 
 // compositionHeading — подпись списка состава.

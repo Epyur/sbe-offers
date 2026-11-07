@@ -341,7 +341,10 @@ func SystemsFromKB(ctx context.Context, kb KBReader, materials []Material) ([]Sy
 		card.CompositionLinks, card.Problems = resolveComposition(parsed, materials)
 		cards = append(cards, card)
 	}
-	return cards, nil
+	// Картинки — как в SystemCardsFromKB и SystemsWithCompositionFromKB: без
+	// ключа вложения метка `{{система}}` не находит байтов, и карточка печатается
+	// без картинки. Живая жалоба 2026-11-07.
+	return attachImageKeys(ctx, kb, cards), nil
 }
 
 // SystemWithComposition — карточка системы вместе с разрешённым составом.

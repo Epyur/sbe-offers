@@ -168,3 +168,29 @@ func TestAttachMaterialImageKeys(t *testing.T) {
 		t.Fatalf("картинка материала не привязана: %q", got[0].PhotoKey)
 	}
 }
+
+// Имени картинки у карточки нет — оно берётся из вложения: без имени
+// `imageExt` угадывал бы тип, и картинка уезжала бы в пакет с чужим расширением.
+func TestAttachImageKeyFillsName(t *testing.T) {
+	kb := &fakeKB{attachments: []KBAttachment{
+		{Filename: "Схема.png", Mime: "image/png", Key: "att/scheme.png"},
+	}}
+	got := attachImageKeys(context.Background(), kb, []SystemCard{{NoteID: 5}})
+	if got[0].ImageKey != "att/scheme.png" || got[0].ImageName != "Схема.png" {
+		t.Fatalf("ключ или имя не заполнены: %+v", got[0])
+	}
+}
+
+// Типизированный nil в интерфейсе не равен nil: без отдельной проверки
+// `attachImageKeys` упал бы на первом вызове несуществующего клиента.
+func TestKBReaderOrNil(t *testing.T) {
+	if kbReaderOrNil(nil) != nil {
+		t.Fatal("nil-клиент стал источником картинок")
+	}
+	if kbReaderOrNil(&KBClient{}) != nil {
+		t.Fatal("ненастроенный клиент стал источником картинок")
+	}
+	if got := kbReaderOrNil(&KBClient{baseURL: "http://kb"}); got == nil {
+		t.Fatal("настроенный клиент потерян")
+	}
+}

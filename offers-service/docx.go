@@ -455,8 +455,9 @@ func (rc renderCtx) text(raw string) string {
 // макете — таблицей, и заказчик получил бы разное от одной формы.
 //
 // Метки, которые печатают НЕ текст (таблица состава, таблица характеристик),
-// здесь остаются пустыми: узел абзаца не может принять полотно. Для таких
-// случаев администратор ставит метку в макет целиком, а не внутрь блока.
+// здесь остаются пустыми: это текстовый конвейер (заголовок, пункт списка,
+// ячейка таблицы), и полотно Word в него не встаёт. Абзац обрабатывает
+// renderParagraphNode — он умеет и текст, и полотно.
 func expandBlockServiceMarkers(text string, rc renderCtx) string {
 	if !strings.Contains(text, "{{") && !strings.Contains(text, "{") {
 		return text
@@ -479,7 +480,7 @@ func expandBlockServiceMarkers(text string, rc renderCtx) string {
 		case layoutTokenText, layoutTokenMaterial:
 			// Текст системы и позиции — строки: узел абзаца печатает их как есть.
 		default:
-			// Таблица/картинка внутрь абзаца не встаёт: оставляем пусто.
+			// Таблица/картинка внутрь текста не встаёт: оставляем пусто.
 			markup = ""
 		}
 		sb.WriteString(text[last:token.Start])
@@ -488,6 +489,80 @@ func expandBlockServiceMarkers(text string, rc renderCtx) string {
 	}
 	sb.WriteString(text[last:])
 	return sb.String()
+}
+
+// blockServiceKind — метка печатает ПОЛОТНО Word (таблицу, картинку), а не
+// строку текста.
+//
+// `{{block:N}}` здесь намеренно нет: блок внутри самого себя ушёл бы в
+// бесконечную печать, а выгоды у такой ссылки нет — блоки ставят в макет.
+func blockServiceKind(kind string) bool {
+	switch kind {
+	case layoutTokenSystem, layoutTokenLinks, layoutTokenSpecs, layoutTokenImage:
+		return true
+	}
+	return false
+}
+
+// renderBlockNodeMarker — разметка полотна для узла абзаца блока формы.
+//
+// Картинка разбирается отдельно: `renderLayoutService` печатает данные
+// предложения, а метка `{{картинка}}` — изображение, и её вид (система или
+// материал) живёт в `layoutImageSpec`. Одна ветка, потому что иначе номер
+// системы пришлось бы разбирать второй раз и в другом месте.
+func renderBlockNodeMarker(token layoutToken, lc layoutContext, row layoutServiceRow) string {
+	if token.Kind != layoutTokenImage {
+		return renderLayoutService(token, lc, row)
+	}
+	spec, ok := parseLayoutImageSpec(token.Inner)
+	if !ok {
+		return ""
+	}
+	return layoutImageMarkup(spec, lc)
+}
+
+// renderParagraphNode — абзац блока формы со служебными метками.
+//
+// Метка, печатающая полотно (`{{система}}`, `{{ссылки: система}}`,
+// `{{характеристики: система}}`, `{{картинка}}`), НЕ встаёт внутрь `<w:p>`:
+// таблица или картинка там либо экранируется, либо даёт невалидный OOXML.
+// Поэтому текст абзаца печатается абзацем, а полотно — следом, как `imageAfter`
+// в attachServiceMarkup. Абзац, состоявший из одной метки, не даёт пустого
+// `<w:p>` — от него оставалось пустое место в готовом КП (2026-11-07).
+func renderParagraphNode(text, align string, opts paraOpts, rc renderCtx) string {
+	tokens := scanLayoutTokens(text, rc.allValues())
+	if !hasBlockServiceMarker(tokens) {
+		return paragraphXMLOpts(rc.text(text), align, opts)
+	}
+	lc := rc.layoutContext()
+	row := rc.serviceRow()
+	var rest, block strings.Builder
+	last := 0
+	for _, token := range tokens {
+		if !blockServiceKind(token.Kind) {
+			continue
+		}
+		rest.WriteString(text[last:token.Start])
+		last = token.End
+		block.WriteString(renderBlockNodeMarker(token, lc, row))
+	}
+	rest.WriteString(text[last:])
+	var sb strings.Builder
+	if strings.TrimSpace(rest.String()) != "" {
+		sb.WriteString(paragraphXMLOpts(rc.text(rest.String()), align, opts))
+	}
+	sb.WriteString(block.String())
+	return sb.String()
+}
+
+// hasBlockServiceMarker — есть ли в абзаце метка, печатающая полотно.
+func hasBlockServiceMarker(tokens []layoutToken) bool {
+	for _, token := range tokens {
+		if blockServiceKind(token.Kind) {
+			return true
+		}
+	}
+	return false
 }
 
 // layoutContext — контекст печати по макету из контекста блоков: один перевод,
@@ -500,7 +575,7 @@ func (rc renderCtx) layoutContext() layoutContext {
 	if rc.materialIndex > 0 && rc.materialSource != nil {
 		offer = Offer{Number: rc.offer.Number, Items: rc.materialSource}
 	}
-	return layoutContext{
+	ctx := layoutContext{
 		values:      rc.allValues(),
 		offer:       offer,
 		refs:        rc.refs,
@@ -509,6 +584,14 @@ func (rc renderCtx) layoutContext() layoutContext {
 		cards:       func() []SystemCard { return rc.cards },
 		images:      rc.images,
 	}
+	// Сборщик картинок обязан доехать до метки системы: без него
+	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке
+	// печаталась без картинки (живая жалоба 2026-11-07). Указатель общий с
+	// блоком формы: добавленные файлы уходят в пакет тем же сборщиком.
+	if rc.media != nil {
+		ctx.layout = &layoutRuntime{media: rc.media}
+	}
+	return ctx
 }
 
 // serviceRow — проход повтора: своя система или своя позиция.
@@ -616,7 +699,7 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			}
 			continue
 		default:
-			sb.WriteString(paragraphXMLOpts(rc.text(node.Text), node.Align, opts))
+			sb.WriteString(renderParagraphNode(node.Text, node.Align, opts, rc))
 		}
 		started = true
 	}

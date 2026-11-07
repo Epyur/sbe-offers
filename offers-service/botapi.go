@@ -442,7 +442,10 @@ func (s *Server) systemCardsForOffer(ctx context.Context, offer Offer) ([]System
 	if err != nil || len(cards) == 0 {
 		return nil, nil
 	}
-	cards = cardsForOffer(cards, offer)
+	// Ключ картинки добирается по выбранным карточкам: в кеше он может быть
+	// пуст (кеш прочитан до 2026-11-05), и тогда `{{система}}` печатает состав
+	// без картинки. Сеть может не ответить — карточка остаётся, картинки нет.
+	cards = offerCardsWithImages(ctx, kbReaderOrNil(s.kb), cards, offer)
 	return cards, collectOfferRefs(cards)
 }
 

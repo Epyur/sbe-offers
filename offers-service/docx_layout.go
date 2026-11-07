@@ -96,7 +96,11 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	// Сборщик живёт в структуре печати, а не в копии контекста: fillLayoutDocument
 	// работает с копией, и наполнение копии потерялось бы.
 	if lc.layout == nil {
-		lc.layout = &layoutRuntime{media: newTemplateMedia()}
+		// Сборщик читает занятые id ВИЗУАЛЬНЫХ ЭЛЕМЕНТОВ САМОГО МАКЕТА, а не
+		// бланка: у пользовательского документа свои номера, и картинка с id от
+		// другого шаблона может совпасть с уже занятым — Word тогда молча не
+		// покажет её (2026-11-07).
+		lc.layout = &layoutRuntime{media: newDocxMedia(files)}
 	}
 	rendered := fillLayoutDocument(string(docXML), lc)
 	// Адреса в ответе модели делаются кликабельными (2026-11-06). Раньше этот
@@ -504,6 +508,17 @@ func layoutImageMarkup(spec layoutImageSpec, lc layoutContext) string {
 	if drawing == "" {
 		return ""
 	}
+	return imageParagraphXML(drawing)
+}
+
+// imageParagraphXML — картинка прогоном ВНУТРИ абзаца.
+//
+// Прогон `<w:r>` не может быть соседом абзаца: в OOXML он живёт только внутри
+// `<w:p>`, и голый прогон Word молча не показывает. Раньше метка карточки
+// склеивала пустой абзац и прогон рядом — картинка системы не вставлялась
+// (живая жалоба 2026-11-07). Одна точка сборки на обе метки: иначе они
+// разойдутся, и одну из них снова никто не заметит.
+func imageParagraphXML(drawing string) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
 		`<w:jc w:val="center"/></w:pPr>` + drawing + `</w:p>`
 }
