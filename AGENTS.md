@@ -30,10 +30,9 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
-## System composition prints as a NUMBERED list (2026-11-07 — built, not released)
+## Version 0.7.9 — system composition prints as a NUMBERED list (2026-11-07)
 
-Version is still **0.7.8** (this is a service-only fix; version bump comes with
-«Фиксируй»).
+Version (manifest.json = package.json) = **0.7.9**, no `b` suffix.
 
 User report: the composition of a chosen system reached the document as a
 bulleted list, while the Knowledge Base note numbers its layers and the system
@@ -58,11 +57,38 @@ Verified: `TestLayoutCompositionIsNumberedList` (red before the fix — `numId 6
 in the document), `go test ./...` green, `gofmt -l` empty, `go vet` clean;
 `crapper` 3.0 / 1.0 / 1.0 at 100 % on the new functions; `dryer` no new
 duplicates (the four pre-existing pairs were confirmed against a stashed clean
-tree).
+tree); stand **312/312** (two new checks: the composition uses `numId 1`, no
+`numId 6` left). Plugin `tsc --noEmit` EXIT=0, `npm run build` OK,
+`check_bundle_strings.mjs` 0 missing (the 0.7.9 news line asserts the bundle).
 
-## Block id copies as a ready marker (2026-11-07, version 0.7.8 — built, not released)
+### Release 0.7.9 — committed and pushed 2026-11-07
 
-Version (manifest.json = package.json) = **0.7.8**.
+| | value |
+|---|---|
+| plugin | **0.7.9** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `9f2b952` (fix) + `afb2562` (release) — pushed |
+| `main` | plugin part copied from `backend` into a clean `main` — pushed |
+| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts package.json` exits 0; the three build sums are the same on both branches |
+| self-hosting | pending an explicit deploy command |
+
+**Trap met here.** After the `backend` → `main` checkout the built files
+differed by 10 bytes (`main.js` 165013 vs 164692): the `main` blob carried a
+rebuild with ten `\r\n` although `.gitattributes` marks `main.js` as `-text`.
+The sums for self-hosting were taken **after** rebuilding on `backend`, and
+that build equals what both branches now serve — which is exactly why the rule
+"compute the hashes LAST" exists.
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `d2ea854d0398032f7ee06cf4671d08a29aa395b0574924996b4f6e770a5e903f` | 468 |
+| `main.js` | `4b8ab1670bcc0292a7537eda2c4797aa3d8b64a4303740af4ad40778d6c9769f` | 164692 |
+| `styles.css` | `e96e82c81c71f5272ecb8b66f3bcdda3b51d965e1f19d7f5bb3bf3f585989cad` | 34545 |
+
+`styles.css` unchanged (no CSS edits).
+
+## Block id copies as a ready marker (2026-11-07, version 0.7.8)
+
+Version (manifest.json = package.json) = **0.7.8** (released 2026-11-07).
 
 The user asked: "добавить возможность копирования id блока сразу со скобками,
 для вставки в макет". The id existed only so the layout could say
