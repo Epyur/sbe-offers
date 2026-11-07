@@ -36,17 +36,26 @@
 
 `styles.css` изменился впервые с 0.7.6 (добавлен `.tn-offers-chip-copy`).
 
-### Релиз 0.7.8 — выложен 2026-11-07 00:07 MSK
+### Релиз 0.7.8 — выложен 2026-11-07 (бэк дообновлён 21:28 MSK)
 
 | | значение |
 |---|---|
 | plugin | **0.7.8** (`manifest.json` = `package.json`), без суффикса `b` |
-| `backend` | `2c92336` — запушен |
-| `main` | `6a6c3f0` — запушен |
+| `backend` | `e836536` (фикс `{{система}}` в блоке и картинки) / `2c92336` (0.7.8) — запушен |
+| `main` | `14b0dda` (стенд E2E) / `6a6c3f0` (0.7.8) — запушен |
 | плагинная часть идентична | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` → 0 |
-| сервер | **деплой не нужен**: изменился только TS/CSS, `git diff` по `offers-service`/`offers-bot` пуст |
+| сервер | `offers-service` задеплоен из `e836536` 2026-11-07 21:28 MSK (`offers-service.bak-0.7.8-20261107`, `md5sum` семи Go-файлов сверены до сборки, `mailers-offers-1` пересоздан, health `ok`) |
 | самораздача | `kb-selfhost.sh sbe-offers`; три суммы сверены по https |
 | реестр | `sbe-apstore-registry` `2802f51`; `www/registry.json` поправлен точечно в блоке `sbe-offers` |
+
+### Бэк-фикс 2026-11-07 (`e836536`): `{{система}}` в блоке формы и картинка в макете
+
+По живой проверке `temple.docx`:
+- `renderParagraphNode` (`docx.go`) выносит полотно служебных меток (`{{система}}`, `{{ссылки: система}}`, `{{характеристики: система}}`, `{{картинка}}`) из `<w:p>` без пустых абзацев; `rc.layoutContext()` передаёт `rc.media`.
+- `layoutCardImageMarkup` (`layout_service.go`) оборачивает `<w:r><w:drawing>` внутрь `<w:p>` (`imageParagraphXML`), а не ставит соседом `<w:p>` в `<w:tc>`.
+- `systemCardsForOffer` (`botapi.go`) и `SystemsFromKB` (`systemcards.go`) добирают `ImageKey` через `attachImageKeys` для карточек, прочитанных в кеш до появления `ImageKey`.
+- `renderLayoutDocx` (`docx_layout.go`) учитывает занятые `wp:docPr id` самого загруженного макета (`newDocxMedia(files)`).
+- Стенд: **310/310**.
 
 **Грабля (вторая за две выкладки):** искать конец блока в `registry.json`
 через `src.find('}', idx)` нельзя — попадает во вложенный объект `hashes`, и

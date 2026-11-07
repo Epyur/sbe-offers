@@ -66,13 +66,27 @@ The stand is unchanged - this is a client-only edit.
 | | value |
 |---|---|
 | plugin | **0.7.8** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` (code HEAD) | `7f4c67c` (feature) + `2c92336` (release) — pushed |
-| `main` (code HEAD) | `6a6c3f0` — pushed |
+| `backend` (code HEAD) | `e836536` (service fix: `{{система}}` in blocks + card image) / `2c92336` (0.7.8 release) — pushed |
+| `main` (code HEAD) | `14b0dda` (stand E2E) / `6a6c3f0` (0.7.8 release) — pushed |
 | plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts` exits 0 |
-| server deploy | **not needed** — `git diff --stat <prev> <rel> -- offers-service offers-bot` is empty: this release is plugin-only (TS + CSS) |
+| server deploy | `offers-service` deployed from `e836536` on 2026-11-07 21:28 MSK (`offers-service.bak-0.7.8-20261107`, `md5sum` of seven Go files verified before build, `mailers-offers-1` recreated, health `ok`) |
 | self-hosting | `kb-selfhost.sh sbe-offers`; sums checked over https (`main 4d3f6f41…`, `styles e96e82c8…`, manifest `092365cf…`) |
 | registry | `sbe-apstore-registry` `2802f51`; `www/registry.json` patched surgically inside the `sbe-offers` block (three hashes + `version` + `uploadedAt`) |
 | three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums and `0.7.8` |
+
+### `{{система}}` inside a form block and card image in layout (2026-11-07, `offers-service` `e836536`)
+
+User report on `temple.docx`: `{{система}}` inside a form block (`{{block:blk_mw6oonck8g8z}}`) produced empty lines, and direct `{{система}}` in the layout did not insert the system image.
+
+1. **`{{система}}` inside a form block (`docx.go`):**
+   - `expandBlockServiceMarkers` dropped `layoutTokenSystem`, `layoutTokenLinks`, and `layoutTokenSpecs` with `markup = ""` ("table/image cannot fit inside a paragraph"), leaving an empty `<w:p>` in the document.
+   - `(rc renderCtx) layoutContext()` did not pass `rc.media` into `layoutContext.layout`, so `lc.media()` was always `nil` inside a block.
+   - Fixed: `renderParagraphNode` (`blockServiceKind` / `renderBlockNodeMarker`) emits canvas markers (`layoutTokenSystem`, `layoutTokenLinks`, `layoutTokenSpecs`, `layoutTokenImage`) at the block body level without wrapping them in `<w:p>` and without leaving an empty `<w:p>`; `rc.layoutContext()` wires `rc.media`.
+2. **Missing image in direct `{{система}}` (`layout_service.go`, `botapi.go`, `systemcards.go`, `card_images.go`, `docx_layout.go`):**
+   - `layoutCardImageMarkup` concatenated `paragraphXMLOpts("", "center", ...) + drawing`, placing `<w:r><w:drawing>…</w:drawing></w:r>` as a sibling of `<w:p>` directly inside `<w:tc>` (invalid OOXML, ignored by Word). Fixed via `imageParagraphXML(drawing)` so the run sits inside `<w:p>`.
+   - The live `offers_context` cache (`system_cards` and `systems`) had been populated on 2026-11-02 before `ImageKey` existed (so card 5874 carried `imageName: "ТН-ФУНДАМЕНТ Дренаж Проф.png"` and `imageKey: ""`), and `SystemsFromKB` never called `attachImageKeys`. Fixed: `systemCardsForOffer` (`offerCardsWithImages`) and `SystemsFromKB` resolve missing `ImageKey` via `attachImageKeys`.
+   - `renderLayoutDocx` initialised media with `newTemplateMedia()` (scanning `standardTemplateDocx`) instead of `newDocxMedia(files)` (scanning the uploaded layout's own `wp:docPr` IDs).
+3. **Verified:** `gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green (including `TestLiveTempleLayoutPrintsBlockAndDirectSystem` against `temple.docx`), `crapper` < 10 on all touched functions, `dryer` 0 new duplicates, local stand **310/310**.
 
 **Trap met here (the second time in two releases):** patching `registry.json`
 by searching for the block end with `src.find('}', idx)` cut inside the nested
