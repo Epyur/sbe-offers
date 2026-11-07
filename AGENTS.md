@@ -61,22 +61,34 @@ tree); stand **312/312** (two new checks: the composition uses `numId 1`, no
 `numId 6` left). Plugin `tsc --noEmit` EXIT=0, `npm run build` OK,
 `check_bundle_strings.mjs` 0 missing (the 0.7.9 news line asserts the bundle).
 
-### Release 0.7.9 — committed and pushed 2026-11-07
+### Release 0.7.9 — released and deployed 2026-11-07
 
 | | value |
 |---|---|
 | plugin | **0.7.9** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `9f2b952` (fix) + `afb2562` (release) — pushed |
-| `main` | plugin part copied from `backend` into a clean `main` — pushed |
-| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts package.json` exits 0; the three build sums are the same on both branches |
-| self-hosting | pending an explicit deploy command |
+| `backend` | `9f2b952` (fix) + `afb2562` (release) + `cc1d73f` (docs) — pushed |
+| `main` | `80b5e7a` (plugin part copied from `backend`) — pushed |
+| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts package.json AGENTS.md HANDOFF.md` exits 0; the three build sums are the same on both branches |
+| server deploy | `git archive cc1d73f` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.9-20261107`, `offers-bot.bak-0.7.9-20261107`; **`md5sum` of the two changed Go files compared with the COMMIT BLOBS before the build** (`a93b0294…` `docx.go`, `41c2efba…` `layout_service.go`); `mailers-offers-1` recreated 21:53 MSK, health `ok` over https |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https and against `/registry.json` |
+| registry | `sbe-apstore-registry` `240fe4e`; `www/registry.json` patched surgically (three hashes + `version` + `uploadedAt`, backup `registry.json.bak-20261107-0.7.8-server`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums and `0.7.9` |
 
-**Trap met here.** After the `backend` → `main` checkout the built files
+**Trap met in the port.** After the `backend` → `main` checkout the built files
 differed by 10 bytes (`main.js` 165013 vs 164692): the `main` blob carried a
 rebuild with ten `\r\n` although `.gitattributes` marks `main.js` as `-text`.
 The sums for self-hosting were taken **after** rebuilding on `backend`, and
 that build equals what both branches now serve — which is exactly why the rule
 "compute the hashes LAST" exists.
+
+**Trap met at the deploy (the known one, again).** `kb-selfhost.sh` writes the
+sums into `registry_file_overrides` but leaves `www/registry.json` untouched: the
+served files were 0.7.9 while the registry entry still read `0.7.8` with the OLD
+`manifest`/`main` hashes. Patched surgically, two small scripts
+(`patch_registry.py` for `version`, `patch_hashes.py` for the sums) rather than
+re-serialising the JSON, then both checks repeated: the three files over https
+**and** the fields of `/registry.json`. Checking only what the script printed
+would have declared a broken entry green.
 
 | file | sha256 | bytes |
 |---|---|---|
