@@ -30,6 +30,98 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Version 0.8.1 — TOC recalculation, heading levels 1–4, system titles from KB, no forced prices in text (2026-11-08)
+
+Version (manifest.json = package.json) = **0.8.1**, no `b` suffix.
+
+User report on the exported `Коммерческое предложение 003-2026.docx`:
+1. The Table of Contents does not recalculate in the exported file.
+2. Headings inserted from form blocks are inserted as level-1 headings, even though level 2 is configured in the block settings.
+3. Instead of the system name, its service identifier (`система №5874`) is inserted.
+4. The LLM ignores the prompt instruction not to include cost figures ("perhaps the system prompt explicitly requires always including the cost").
+
+### Root causes (measured on the live `.docx` and live DB form) and fixes
+
+1. **TOC did not update on open (`ensureUpdateFields`, `docx.go`).**
+   The master layout contains `TOC \o "1-3" \h \z \u` with a cached three-line
+   table of contents from the template, while `word/settings.xml` lacked
+   `<w:updateFields w:val="true"/>`. Without that setting Word displays the stale
+   cached TOC. `zipFiles` now calls `ensureUpdateFields`, injecting
+   `<w:updateFields w:val="true"/>` into `word/settings.xml` on both the
+   standard template path and the custom `.docx` layout path.
+2. **All block headings printed as Heading 1 (`headingXMLOpts`, `docx.go`; `block-editor.ts`).**
+   `standard.docx` defines only `heading 1` (`w:styleId="1"`, which carries
+   `<w:outlineLvl w:val="0"/>`). `headingXMLOpts` attached `<w:pStyle w:val="1"/>`
+   to every heading regardless of `level` (2, 3, or 4) and only varied the font
+   size — so Word and `TOC \o "1-3" \u` treated every block heading as a
+   top-level Heading 1. Now only `level == 1` receives `styleHeading1`
+   (`outlineLvl="0"`), while levels 2, 3, and 4 use `styleNormal` with explicit
+   `<w:outlineLvl w:val="1|2|3"/>` and `<w:keepNext/>`. In `block-editor.ts`
+   the heading level selector now includes `Уровень 1` (`1 | 2 | 3 | 4`).
+3. **`система №5874` instead of the system title (`offerSystemTitles`, `serviceValuesWithCards`, `layoutValuesWithCards`, `withRowSystem`).**
+   None of the 375 live Knowledge Base system cards carry `system_sku`; system
+   choices are stored by `NoteID` (`5874`). `offerSystemTitles` took only
+   `Offer` without `[]SystemCard`, so it always fell back to `"система №" +
+   noteId`. In addition, `serviceValues` in `docx.go` did not populate
+   `system_title` or `systems_list` for form blocks, and `renderLayoutBlockWith`
+   did not set `system_title` to the current pass's card title when repeating a
+   block with `repeat: "systems"`. Now `offerSystemTitles(offer, cards)` resolves
+   `card.Title` from the KB cards first, `serviceValuesWithCards` /
+   `layoutValuesWithCards` expose `system_title` and `systems_list` on both
+   paths, and `withRowSystem` binds `system_title` to each repeated system's own
+   card title.
+4. **System prompt forced cost figures into every block (`skills/docs.go`, `skills/prompt.go`, `docx_text.go`).**
+   The user's hypothesis was exact: `salesDoc` (`skills/docs.go`) contained
+   `4. Сколько это стоит — цифры берутся из расчёта, дословно` and
+   `Как писать о цене. Не оправдывайся и не прячь. Итог называй прямо, одной
+   фразой, и связывай с объёмом: «9 200 м² материалов — 20 158 633,08 руб.»`,
+   and `offerFactsText` (`docx_text.go`) fed `- Итого: 20 158 633,08 руб.` plus
+   every item's unit price and sum into every block prompt. The model obeyed the
+   system prompt and appended `— 20 158 633,08 руб.` to both the introduction
+   and the engineering description.
+   - Removed the mandatory price lines from `salesDoc` and added an explicit rule
+     forbidding prices and totals in text blocks unless the instruction asks for
+     them (`AsksForPrices` in `skills/prompt.go`, honoring negations such as
+     `без стоимостных показателей`).
+   - `offerFactsTextFor` (`docx_text.go`) omits `Итого` and item prices/sums
+     (passing only item names and quantities) whenever `!AsksForPrices(instruction)`.
+   - Bumped the cache fingerprint (`hashOfferFacts` / `systemTextHash` `v2`) so
+     cached block texts containing the old forced total are regenerated.
+
+### Verified
+
+`go test ./...` green (`main` 55.4 %, `model` 82.6 %, `skills` 83.8 %),
+`gofmt -l` empty, `go vet` clean; `crapper --changed` — all touched functions
+under CRAP 10 (`headingXMLOpts` 6.0, `offerSystemTitles` 7.0, `offerFactsTextFor`
+6.0, `renderLayoutBlockWith` 5.1, `withRowSystem` 4.0, `ensureUpdateFields` 4.1,
+`AsksForPrices` 4.0); `dryer --changed` — 0 new duplicates; plugin `tsc --noEmit`
+EXIT=0, `npm run build` OK, `check_bundle_strings.mjs` 0 missing,
+`check_marker_registry.mjs` 24/24, `check_offers_openapi.mjs` 70/53; stand
+`offers_local_e2e.mjs` — all topic checks green (including new checks for
+`updateFields`, `outlineLvl="1"`, and system title resolution).
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `fb41de4fa870e5fd1034d58429613960eb992c806b944ffc399bf83f60940109` | 468 |
+| `main.js` | `73793a1e419c28393901e1f4d4132ccb71604be9eaf7ab2e7b0dd96995cdfff3` | 172263 |
+| `styles.css` | `c878adb5f861bc2cf5836c0f570159c97963b012fd13d47d9e4d1b540039639d` | 34961 |
+
+`styles.css` changed: `.tn-offers-preview-h1` added and `.tn-offers-preview-h2`
+adjusted.
+
+### Released and deployed 2026-11-08
+
+| | value |
+|---|---|
+| plugin | **0.8.1** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `c7fc513` (code + release) — pushed |
+| `main` | `47edef4` (plugin part copied from `c7fc513`) — pushed |
+| plugin part identical | `git diff --quiet origin/backend origin/main -- main.js manifest.json styles.css src scripts package.json` exits 0 |
+| server deploy | `git archive c7fc513` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.8.0-20261108`, `offers-bot.bak-0.8.0-20261108`; `md5sum` of the nine changed Go files matched the commit blobs before the build; `mailers-offers-1` recreated 13:30 MSK, health `ok` over https |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https and against `/registry.json` |
+| registry | `sbe-apstore-registry` `cde6f44`; `www/registry.json` updated (`md5sum` `d65d3564…`, backup `registry.json.bak-20261108-0.8.0-server`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums and `0.8.1` |
+
 ## Version 0.8.0 — the system-text marker works, every marker is clickable (2026-11-07)
 
 Version (manifest.json = package.json) = **0.8.0**, no `b` suffix.
