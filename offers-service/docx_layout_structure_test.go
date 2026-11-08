@@ -17,11 +17,15 @@ import (
 // три вида строки, и вид решается ОДНИМ местом (layoutLineKind), чтобы печать и
 // очистка не разошлись.
 
-// TestLayoutAnswerKeepsHeadingStructure — строка-заголовок печатается заголовком.
+// TestLayoutAnswerKeepsHeadingStructure — строка-заголовок печатается заголовком
+// второго уровня (outlineLvl="1"), а не основным текстом и не заголовком 1 уровня.
 func TestLayoutAnswerKeepsHeadingStructure(t *testing.T) {
 	body := renderLayoutAnswer(t, "## Горизонтальная часть\nМембрана укладывается на плиту.")
-	if !strings.Contains(body, `<w:pStyle w:val="`+styleHeading1+`"`) {
-		t.Fatal("строка-заголовок напечатана как обычный текст")
+	if !strings.Contains(body, `<w:outlineLvl w:val="1"/>`) {
+		t.Fatalf("строка-заголовок ## не получила второй уровень (outlineLvl=1):\n%s", body)
+	}
+	if strings.Contains(body, `<w:pStyle w:val="`+styleHeading1+`"`) {
+		t.Fatalf("строка-заголовок ## стала заголовком 1 уровня:\n%s", body)
 	}
 	if strings.Contains(body, "##") {
 		t.Fatal("знаки разметки дошли до документа")

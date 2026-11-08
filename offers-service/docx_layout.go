@@ -1435,14 +1435,23 @@ func mergeFormValues(values, add map[string]string) map[string]string {
 	return out
 }
 
-// offerSystemTitles — названия выбранных систем в порядке выбора.
+// offerSystemTitles — человеческие названия выбранных систем в порядке выбора.
 //
-// Из самого предложения, а не из карточек: метка макета должна печатать то,
-// что менеджер выбрал, даже если раздел «Системы» ещё не перечитывали.
-func offerSystemTitles(offer Offer) []string {
+// Название карточки Базы знаний главнее служебного номера заметки (2026-11-08,
+// живая жалоба на КП 003/2026): ни одна из 375 живых систем не имеет `system_sku`,
+// поэтому без карточек вместо «ТН-ФУНДАМЕНТ Дренаж Проф» в документ уходило
+// «система №5874». Если карточка в кеше не нашлась — остаётся код или запасной
+// номер заметки, чтобы метка не печатала пустоту.
+func offerSystemTitles(offer Offer, cards []SystemCard) []string {
 	out := make([]string, 0, len(offer.Systems))
 	for _, s := range offer.Systems {
-		title := strings.TrimSpace(s.SKU)
+		title := ""
+		if card, found := FindSystem(cards, SystemChoice{SKU: s.SKU, NoteID: s.NoteID}); found {
+			title = strings.TrimSpace(card.Title)
+		}
+		if title == "" {
+			title = strings.TrimSpace(s.SKU)
+		}
 		if title == "" && s.NoteID > 0 {
 			title = "система №" + strconv.FormatInt(s.NoteID, 10)
 		}
@@ -1474,7 +1483,7 @@ func layoutPromptText(ctx context.Context, instruction string, offer Offer,
 	// заказчика, не рассуждай» уже выведены там, и второй их набор разошёлся
 	// бы с первым.
 	system := skills.RenderBlockSystem(instruction, "", maxWords)
-	user := buildBlockUserPrompt(offer, cards, refs)
+	user := buildBlockUserPromptFor(instruction, offer, cards, refs)
 	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return ""

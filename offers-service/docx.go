@@ -299,23 +299,40 @@ func headingXML(text string, level int) string {
 }
 
 func headingXMLOpts(text string, level int, opts paraOpts) string {
-	// В бланке есть только «heading 1» (styleId "1"). Уровни 3 и 4 отличаются
-	// размером шрифта, а не стилем: своих Heading2/Heading3 в бланке нет, и
-	// ссылаться на несуществующий стиль нельзя — Word покажет дефолтный шрифт.
-	size := "28" // 14pt
+	// В бланке есть только «heading 1» (styleId "1", outlineLvl 0). Назначать
+	// его заголовкам 2–4 уровней нельзя (2026-11-08, живая жалоба на КП
+	// 003/2026): любой абзац со стилем "1" Word и оглавление `TOC \o "1-3" \u`
+	// считают заголовком 1-го уровня, хотя в настройках блока стоял уровень 2.
+	// Поэтому styleHeading1 получает только уровень 1, а уровни 2–4 идут на
+	// основе styleNormal со своим `<w:outlineLvl w:val="level-1"/>` и
+	// `<w:keepNext/>`.
+	if level <= 0 {
+		level = 2
+	}
+	if level > 4 {
+		level = 4
+	}
+	style := styleNormal
+	size := "28" // 14pt (уровень 2)
 	switch level {
+	case 1:
+		style = styleHeading1
+		size = "32" // 16pt
 	case 3:
 		size = "26" // 13pt
 	case 4:
 		size = "24" // 12pt
 	}
+	outline := strconv.Itoa(level - 1)
 	const headingRPr = `<w:b/>`
-	// Заголовок — по центру, без красной строки: так оформлены документы
-	// экосистемы (sbe-agent) и так их читают в КП.
+	// Заголовок — по центру, без красной строки, не отрывается от следующего
+	// абзаца: так оформлены документы экосистемы (sbe-agent) и так их читают в КП.
 	opts.NoIndent = true
 	opts.Align = "center"
-	return `<w:p><w:pPr><w:pStyle w:val="` + styleHeading1 + `"/>` +
-		opts.pageBreakXML() + opts.spacingXML() + opts.indentXML() + opts.alignXML() + opts.keepXML() + `</w:pPr>` +
+	return `<w:p><w:pPr><w:pStyle w:val="` + style + `"/>` +
+		`<w:keepNext/><w:keepLines/>` +
+		opts.pageBreakXML() + opts.spacingXML() + opts.indentXML() + opts.alignXML() +
+		`<w:outlineLvl w:val="` + outline + `"/></w:pPr>` +
 		runsXML(plainText(text), headingRPr+`<w:sz w:val="`+size+`"/><w:szCs w:val="`+size+`"/>`) +
 		`</w:p>`
 }
@@ -821,7 +838,7 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 	media := newTemplateMedia()
 	rc := renderCtx{
 		values:      offer.FormValues,
-		service:     serviceValues(offer),
+		service:     serviceValuesWithCards(offer, cards),
 		offer:       offer,
 		refs:        refs,
 		cards:       cards,
@@ -915,6 +932,8 @@ const (
 	fieldManager     = "manager"
 	fieldClientName  = "offer_client"
 	fieldObjectName  = "offer_object"
+	fieldSystemTitle = "system_title"
+	fieldSystemsList = "systems_list"
 )
 
 // ServiceFieldIDs — служебные поля, которые конфигуратор показывает администратору
@@ -924,21 +943,32 @@ const (
 // расхождение видно сразу (поле-чип, которое сервер не знает).
 var ServiceFieldIDs = []string{
 	fieldOfferNumber, fieldOfferDate, fieldManager, fieldClientName, fieldObjectName,
+	fieldSystemTitle, fieldSystemsList,
 }
 
-// serviceValues — значения служебных полей шаблона.
-//
-// Считаются при печати, а не хранятся в form_values: номер, дата и подпись есть
-// у каждого предложения, и заполнять их руками в форме значит забыть обновить
-// после копирования КП.
+// serviceValues — значения служебных полей шаблона без карточек.
 func serviceValues(offer Offer) map[string]string {
-	return map[string]string{
+	return serviceValuesWithCards(offer, nil)
+}
+
+// serviceValuesWithCards — значения служебных полей шаблона с карточками систем.
+//
+// Считаются при печати, а не хранятся в form_values: номер, дата, подпись и
+// названия выбранных систем есть у каждого предложения, и заполнять их руками
+// в форме значит забыть обновить после копирования КП.
+func serviceValuesWithCards(offer Offer, cards []SystemCard) map[string]string {
+	out := map[string]string{
 		fieldOfferNumber: offer.Number,
 		fieldOfferDate:   offerDateText(offer.CreatedAt),
 		fieldManager:     offer.OwnerEmail,
 		fieldClientName:  offer.Client.Name,
 		fieldObjectName:  formValue(offer.FormValues, "object_name"),
 	}
+	if titles := offerSystemTitles(offer, cards); len(titles) > 0 {
+		out[fieldSystemTitle] = titles[0]
+		out[fieldSystemsList] = strings.Join(titles, "; ")
+	}
+	return out
 }
 
 // titleOr — заголовок документа: сохранённый или заводской.
@@ -1199,6 +1229,7 @@ func buildDocxWithMediaAndLinks(bodyXML string, media *docxMedia, links []render
 // заводила второй такой же цикл: порядок частей в zip — часть контракта Word,
 // и две копии этого правила разошлись бы молча.
 func zipFiles(files map[string][]byte, names []string) ([]byte, error) {
+	ensureUpdateFields(files)
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	// Новые части (word/media/*) в names отсутствуют — пишем их следом.
@@ -1229,6 +1260,32 @@ func zipFiles(files map[string][]byte, names []string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// ensureUpdateFields заставляет Word пересчитать поля (оглавление TOC, PAGEREF)
+// при открытии документа (2026-11-08, живая жалоба на КП 003/2026).
+//
+// Сервер не раскладывает документ по страницам — номера страниц знает только
+// сам Word. Без `<w:updateFields w:val="true"/>` в word/settings.xml Word
+// показывает кэш оглавления из шаблона, где новых заголовков и актуальных
+// страниц ещё нет.
+func ensureUpdateFields(files map[string][]byte) {
+	settings, ok := files["word/settings.xml"]
+	if !ok {
+		return
+	}
+	s := string(settings)
+	if strings.Contains(s, "<w:updateFields") {
+		return
+	}
+	const closeTag = "</w:settings>"
+	if idx := strings.LastIndex(s, closeTag); idx >= 0 {
+		files["word/settings.xml"] = []byte(s[:idx] + `<w:updateFields w:val="true"/>` + s[idx:])
+		return
+	}
+	if idx := strings.LastIndex(s, "/>"); idx >= 0 && strings.Contains(s, "<w:settings") {
+		files["word/settings.xml"] = []byte(s[:idx] + `><w:updateFields w:val="true"/></w:settings>` + s[idx+2:])
+	}
 }
 
 func splitTemplateBody(docXML string) (prefix, suffix string, err error) {

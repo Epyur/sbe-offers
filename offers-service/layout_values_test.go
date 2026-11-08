@@ -50,15 +50,68 @@ func TestLayoutValuesFormWins(t *testing.T) {
 	}
 }
 
-// offerSystemTitles: код, иначе «система №N» — макет не должен печатать пусто.
+// offerSystemTitles: название карточки главнее кода и номера заметки (2026-11-08,
+// живая жалоба на КП 003/2026): у живых систем нет `system_sku`, и вместо
+// названия «ТН-ФУНДАМЕНТ Дренаж Проф» в документ уходило «система №5874».
 func TestOfferSystemTitles(t *testing.T) {
-	offer := Offer{Systems: []OfferSystem{{SKU: "TN-A"}, {NoteID: 42}}}
-	got := offerSystemTitles(offer)
-	if len(got) != 2 || got[0] != "TN-A" || !strings.Contains(got[1], "42") {
+	offer := Offer{Systems: []OfferSystem{{SKU: "TN-A"}, {NoteID: 5874}, {NoteID: 99}}}
+	cards := []SystemCard{
+		{NoteID: 5874, Title: "ТН-ФУНДАМЕНТ Дренаж Проф"},
+	}
+	got := offerSystemTitles(offer, cards)
+	if len(got) != 3 {
 		t.Fatalf("названия систем: %v", got)
 	}
-	if len(offerSystemTitles(Offer{})) != 0 {
+	if got[0] != "TN-A" {
+		t.Fatalf("первая система: %q, ожидалось TN-A", got[0])
+	}
+	if got[1] != "ТН-ФУНДАМЕНТ Дренаж Проф" {
+		t.Fatalf("вторая система должна печататься человеческим названием, получили %q", got[1])
+	}
+	if !strings.Contains(got[2], "99") {
+		t.Fatalf("без карточки ожидался запасной номер заметки, получили %q", got[2])
+	}
+	if len(offerSystemTitles(Offer{}, nil)) != 0 {
 		t.Fatal("без систем список не пуст")
+	}
+}
+
+// Внутри повтора блока по системам `{{system_title}}` печатает название СВОЕЙ
+// системы на каждом проходе, а не первой или служебный номер.
+func TestLayoutBlockRepeatResolvesEachSystemTitle(t *testing.T) {
+	offer := Offer{
+		Systems: []OfferSystem{{NoteID: 101}, {NoteID: 102}},
+	}
+	cards := []SystemCard{
+		{NoteID: 101, Title: "ТН-ФУНДАМЕНТ Дренаж Проф"},
+		{NoteID: 102, Title: "ТН-КРОВЛЯ Классик"},
+	}
+	form := OfferForm{
+		Blocks: []Block{{
+			ID:           "sysblk",
+			Repeat:       "systems",
+			ShowInClient: true,
+			Content:      []byte(`[{"type":"heading","level":2,"text":"{{system_title}}"}]`),
+		}},
+	}
+	lc := layoutContext{
+		values:  layoutValuesWithCards(offer, cards),
+		service: serviceValuesWithCards(offer, cards),
+		offer:   offer,
+		cards:   func() []SystemCard { return cards },
+		form:    func() OfferForm { return form },
+	}
+	doc := layoutDocxFromXML(t, wordDoc(`<w:p><w:r><w:t>{{block:sysblk}}</w:t></w:r></w:p>`))
+	out, err := renderLayoutDocx(doc, lc)
+	if err != nil {
+		t.Fatalf("сборка: %v", err)
+	}
+	body := string(docxEntry(t, out, "word/document.xml"))
+	if !strings.Contains(body, "ТН-ФУНДАМЕНТ Дренаж Проф") || !strings.Contains(body, "ТН-КРОВЛЯ Классик") {
+		t.Fatalf("в документе нет названий обеих систем:\n%s", body)
+	}
+	if strings.Contains(body, "система №") {
+		t.Fatalf("в документе остался служебный идентификатор:\n%s", body)
 	}
 }
 

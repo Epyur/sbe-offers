@@ -82,7 +82,7 @@ func systemCardHash(card SystemCard) string {
 // systemTextHash — хеш, под которым хранится текст: содержимое карточки плюс
 // сама инструкция. Инструкция тоже меняет текст — значит, входит в свежесть.
 func systemTextHash(card SystemCard, block string) string {
-	return hashShort(systemCardHash(card) + "\x1f" + systemTextInstruction[block])
+	return hashShort(systemCardHash(card) + "\x1fv2\x1f" + systemTextInstruction[block])
 }
 
 // storedSystemTexts — тексты, которые уже есть у систем предложения.
@@ -207,7 +207,7 @@ func writeSystemTextWith(ctx context.Context, instruction string, offer Offer,
 		maxWords = 800
 	}
 	system := skills.RenderBlockSystem(instruction, "", maxWords)
-	user := buildBlockUserPrompt(offer, []SystemCard{card}, refs)
+	user := buildBlockUserPromptFor(instruction, offer, []SystemCard{card}, refs)
 	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return "", err

@@ -118,7 +118,7 @@ func hashOfferFacts(offer Offer) string {
 	for _, it := range offer.Items {
 		fmt.Fprintf(&b, "%s|%s|%g|%g|%g\x1f", it.Name, it.Unit, it.Qty, it.Price, it.Sum)
 	}
-	fmt.Fprintf(&b, "%.2f", offer.Total)
+	fmt.Fprintf(&b, "%.2f|v2", offer.Total)
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
 }
@@ -225,7 +225,7 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 		maxWords = genDefaultMaxWords
 	}
 	system := skills.RenderBlockSystem(node.Instruction, node.Hint, maxWords)
-	user := buildBlockUserPrompt(offer, cards, refs)
+	user := buildBlockUserPromptFor(node.Instruction+" "+node.Hint, offer, cards, refs)
 	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return "", err
@@ -993,9 +993,13 @@ func containsDigitOrHyphen(word string) bool {
 // заполнил, модель писала «[НУЖНО: что за объект и какие грунтовые воды]».
 // Обоснование преимуществ без целей, болей и рисков писать не из чего.
 func buildBlockUserPrompt(offer Offer, cards []SystemCard, refs []skills.CardRef) string {
+	return buildBlockUserPromptFor("", offer, cards, refs)
+}
+
+func buildBlockUserPromptFor(instruction string, offer Offer, cards []SystemCard, refs []skills.CardRef) string {
 	var b strings.Builder
 	b.WriteString("ДАННЫЕ ПРЕДЛОЖЕНИЯ:\n")
-	b.WriteString(offerFactsText(offer))
+	b.WriteString(offerFactsTextFor(offer, skills.AsksForPrices(instruction)))
 	b.WriteString(renderBriefForPrompt(offer.FormValues))
 	if len(cards) > 0 {
 		b.WriteString("\nСИСТЕМЫ И МАТЕРИАЛЫ В ПРЕДЛОЖЕНИИ:\n")
@@ -1068,33 +1072,49 @@ func renderBriefForPrompt(values map[string]string) string {
 	return b.String()
 }
 
-// offerFactsText — числа предложения в формате документа. Тот же вид, что у
-// секций (skills.renderOfferFacts): модель получает одинаковые числа на обоих
-// путях, иначе два текста про одну сумму разойдутся в написании.
+// offerFactsText — числа предложения в формате документа (с ценами).
 func offerFactsText(offer Offer) string {
+	return offerFactsTextFor(offer, true)
+}
+
+// offerFactsTextFor — данные предложения для модели; цены и итоговая сумма
+// включаются только тогда, когда подсказка администратора прямо их просит
+// (2026-11-08, живая жалоба на КП 003/2026). Иначе модель видит рублёвые суммы
+// и вставляет их в конец каждого текстового блока даже при запрете в промпте.
+func offerFactsTextFor(offer Offer, includePrices bool) string {
 	var b strings.Builder
-	if model.NonEmpty(offer.Number) {
-		b.WriteString("- Номер предложения: " + offer.Number + "\n")
-	}
-	if model.NonEmpty(offer.Client.Name) {
-		b.WriteString("- Заказчик: " + offer.Client.Name + "\n")
-	}
-	if model.NonEmpty(offer.Client.Contact) {
-		b.WriteString("- Контактное лицо: " + offer.Client.Contact + "\n")
-	}
-	if offer.Total > 0 {
+	writeOfferFactLine(&b, "Номер предложения", offer.Number)
+	writeOfferFactLine(&b, "Заказчик", offer.Client.Name)
+	writeOfferFactLine(&b, "Контактное лицо", offer.Client.Contact)
+	if includePrices && offer.Total > 0 {
 		b.WriteString("- Итого: " + skills.FormatMoney(offer.Total) + " руб.\n")
 	}
 	if len(offer.Items) > 0 {
 		b.WriteString("- Состав:\n")
 		for _, it := range offer.Items {
-			b.WriteString(fmt.Sprintf("  • %s — %s %s × %s = %s руб.\n",
-				it.Name, formatQtyValue(it.Qty), it.Unit,
-				skills.FormatMoney(it.Price), skills.FormatMoney(it.Sum)))
+			b.WriteString(offerItemFactLine(it, includePrices))
 		}
 	}
 	if b.Len() == 0 {
 		return "предложение ещё не рассчитано\n"
 	}
 	return b.String()
+}
+
+// writeOfferFactLine дописывает непустую строку факта предложения.
+func writeOfferFactLine(b *strings.Builder, label, value string) {
+	if model.NonEmpty(value) {
+		b.WriteString("- " + label + ": " + value + "\n")
+	}
+}
+
+// offerItemFactLine — одна позиция состава: с ценой или только с количеством.
+func offerItemFactLine(it OfferItem, includePrices bool) string {
+	if includePrices {
+		return fmt.Sprintf("  • %s — %s %s × %s = %s руб.\n",
+			it.Name, formatQtyValue(it.Qty), it.Unit,
+			skills.FormatMoney(it.Price), skills.FormatMoney(it.Sum))
+	}
+	return fmt.Sprintf("  • %s — %s %s\n",
+		it.Name, formatQtyValue(it.Qty), it.Unit)
 }

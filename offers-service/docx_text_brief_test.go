@@ -167,3 +167,28 @@ func TestRenderedPromptBlockDropsLegacyMarker(t *testing.T) {
 		t.Fatal("текст из кэша потерян")
 	}
 }
+
+// Цены и итоговая сумма не передаются модели в текстовый блок, если подсказка
+// администратора их не просит (2026-11-08, живая жалоба на КП 003/2026).
+// Модель не может вставить в ответ «20 158 633,08 руб.», если она этого числа
+// не видела.
+func TestBlockPromptOmitsPricesUnlessAsked(t *testing.T) {
+	offer := testOfferForBlocks()
+	offer.Total = 20158633.08
+	offer.Items = []OfferItem{
+		{Name: "Мембрана V-SL 2 мм", Unit: "м2", Qty: 5520, Price: 769.56, Sum: 4247971.20},
+	}
+
+	userNoPrice := buildBlockUserPromptFor("Опиши систему без стоимостных показателей", offer, nil, nil)
+	if strings.Contains(userNoPrice, "20 158 633,08") || strings.Contains(userNoPrice, "769,56") || strings.Contains(userNoPrice, "4 247 971,20") {
+		t.Fatalf("в промпт блока без запроса стоимости попали цены:\n%s", userNoPrice)
+	}
+	if !strings.Contains(userNoPrice, "5520 м2") {
+		t.Fatalf("количество материала потеряно:\n%s", userNoPrice)
+	}
+
+	userWithPrice := buildBlockUserPromptFor("Напиши вывод и укажи итоговую стоимость предложения", offer, nil, nil)
+	if !strings.Contains(userWithPrice, "20 158 633,08") {
+		t.Fatalf("при явном запросе стоимости итог не попал в промпт:\n%s", userWithPrice)
+	}
+}

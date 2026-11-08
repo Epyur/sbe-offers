@@ -382,7 +382,7 @@ func (s *Server) persistLayoutTextCache(ctx context.Context, offer Offer, cache 
 // и тот же КП не должен давать разный документ при каждом скачивании).
 func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferForm, offer Offer,
 	cards []SystemCard, refs []skills.CardRef, report *buildReport) ([]byte, error) {
-	values := layoutValues(offer)
+	values := layoutValuesWithCards(offer, cards)
 	cache := &layoutPromptCache{
 		values:    map[string]string{},
 		previous:  offer.FormValues,
@@ -419,7 +419,7 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		// систем — всё из данных, без модели.
 		form:        func() OfferForm { return form },
 		refs:        refs,
-		service:     serviceValues(offer),
+		service:     serviceValuesWithCards(offer, cards),
 		systemTexts: func(card SystemCard) map[string]string { return texts[card.NoteID] },
 		// Текста нет — дописать и сохранить (2026-11-07). Живая жалоба:
 		// `{{текст: система: description}}` печатала пустое место, потому что
@@ -441,12 +441,17 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 	return data, nil
 }
 
-// layoutValues — все значения, доступные меткам макета.
+// layoutValues — все значения, доступные меткам макета (без карточек).
+func layoutValues(offer Offer) map[string]string {
+	return layoutValuesWithCards(offer, nil)
+}
+
+// layoutValuesWithCards — все значения, доступные меткам макета.
 //
 // Служебные поля предложения главнее формы (как и в блоках), плюс название
 // выбранной системы и список систем: администратор ставит `[Название системы]`
 // и `[Выбранные системы]`, а не пишет их руками в каждом КП.
-func layoutValues(offer Offer) map[string]string {
+func layoutValuesWithCards(offer Offer, cards []SystemCard) map[string]string {
 	values := make(map[string]string, len(offer.FormValues)+8)
 	for k, v := range offer.FormValues {
 		values[k] = v
@@ -455,21 +460,13 @@ func layoutValues(offer Offer) map[string]string {
 	// своё. Обратный порядок значил бы «номенклатура в макете печатает номер
 	// предложения вместо того, что администратор написал руками», а пустое
 	// место номера в документе хуже ошибки в нём.
-	for k, v := range serviceValues(offer) {
+	for k, v := range serviceValuesWithCards(offer, cards) {
 		if v != "" && strings.TrimSpace(values[k]) == "" {
 			values[k] = v
 		}
 	}
 	if values[fieldObjectName] == "" && offer.FormValues != nil {
 		values[fieldObjectName] = offer.FormValues["object_name"]
-	}
-	// Системы: название первой и перечень всех. Узлы макета не умеют
-	// повторяться, поэтому «по системам» печатается списком одной строкой —
-	// это честнее, чем молча потерять вторую систему.
-	titles := offerSystemTitles(offer)
-	if len(titles) > 0 {
-		values["system_title"] = titles[0]
-		values["systems_list"] = strings.Join(titles, "; ")
 	}
 	return values
 }

@@ -186,6 +186,35 @@ func TestDocxKeepsBody(t *testing.T) {
 	}
 }
 
+// Оглавление пересчитывается при открытии файла в Word (2026-11-08, живая
+// жалоба на КП 003/2026): без `<w:updateFields w:val="true"/>` в
+// word/settings.xml Word показывает кэш оглавления из шаблона и не добавляет
+// новые заголовки.
+func TestDocxSetsUpdateFields(t *testing.T) {
+	docx, err := renderOfferDocx(OfferForm{Title: "Коммерческое предложение"}, sampleOffer())
+	if err != nil {
+		t.Fatalf("сборка по бланку: %v", err)
+	}
+	settings := string(docxEntry(t, docx, "word/settings.xml"))
+	if !strings.Contains(settings, `<w:updateFields w:val="true"/>`) {
+		t.Fatalf("в word/settings.xml бланка нет <w:updateFields w:val=\"true\"/>:\n%s", settings)
+	}
+
+	layoutOut, err := renderLayoutDocx(standardTemplateDocx, layoutContext{
+		values: map[string]string{"offer_number": "003/2026"},
+	})
+	if err != nil {
+		t.Fatalf("сборка по макету: %v", err)
+	}
+	layoutSettings := string(docxEntry(t, layoutOut, "word/settings.xml"))
+	if !strings.Contains(layoutSettings, `<w:updateFields w:val="true"/>`) {
+		t.Fatalf("в word/settings.xml макета нет <w:updateFields w:val=\"true\"/>:\n%s", layoutSettings)
+	}
+	if strings.Count(layoutSettings, "<w:updateFields") != 1 {
+		t.Fatalf("updateFields вставлен %d раз, ожидался 1", strings.Count(layoutSettings, "<w:updateFields"))
+	}
+}
+
 // rebuildZip собирает .docx обратно из карты частей в исходном порядке.
 func rebuildZip(t *testing.T, files map[string][]byte, names []string) []byte {
 	t.Helper()

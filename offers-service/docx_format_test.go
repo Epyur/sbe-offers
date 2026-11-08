@@ -48,6 +48,45 @@ func TestHeadingIsCenteredWithoutIndent(t *testing.T) {
 	}
 }
 
+// Уровни заголовков (2026-11-08, живая жалоба на КП 003/2026):
+// в настройках блоков указан заголовок 2 уровня, а в документ он вставлялся
+// стилем heading 1 (outlineLvl 0) и попадал в оглавление как раздел 1-го уровня.
+// Только level=1 получает styleHeading1; уровни 2, 3 и 4 получают свой
+// outlineLvl="1", "2", "3", чтобы Word и оглавление `TOC \o "1-3" \u` строили
+// правильную иерархию.
+func TestHeadingLevelsProduceCorrectOutlineLvl(t *testing.T) {
+	h1 := headingXML("Введение", 1)
+	if !strings.Contains(h1, `<w:pStyle w:val="`+styleHeading1+`"/>`) {
+		t.Fatalf("заголовок 1 уровня не получил styleHeading1:\n%s", h1)
+	}
+	if !strings.Contains(h1, `<w:outlineLvl w:val="0"/>`) {
+		t.Fatalf("заголовок 1 уровня не получил outlineLvl=0:\n%s", h1)
+	}
+
+	h2 := headingXML("Перечень систем", 2)
+	if strings.Contains(h2, `<w:pStyle w:val="`+styleHeading1+`"/>`) {
+		t.Fatalf("заголовок 2 уровня получил styleHeading1 (станет 1 уровнем в Word):\n%s", h2)
+	}
+	if !strings.Contains(h2, `<w:outlineLvl w:val="1"/>`) {
+		t.Fatalf("заголовок 2 уровня не получил outlineLvl=1:\n%s", h2)
+	}
+
+	h0 := headingXML("Без явного уровня (по умолчанию 2)", 0)
+	if strings.Contains(h0, `<w:pStyle w:val="`+styleHeading1+`"/>`) || !strings.Contains(h0, `<w:outlineLvl w:val="1"/>`) {
+		t.Fatalf("заголовок с level=0 должен быть 2 уровня (outlineLvl=1):\n%s", h0)
+	}
+
+	h3 := headingXML("Подзаголовок", 3)
+	if !strings.Contains(h3, `<w:outlineLvl w:val="2"/>`) {
+		t.Fatalf("заголовок 3 уровня не получил outlineLvl=2:\n%s", h3)
+	}
+
+	h4 := headingXML("Состав системы", 4)
+	if !strings.Contains(h4, `<w:outlineLvl w:val="3"/>`) {
+		t.Fatalf("заголовок 4 уровня не получил outlineLvl=3:\n%s", h4)
+	}
+}
+
 // Пункт списка — без красной строки: отступ даёт нумерация бланка.
 func TestListItemHasNoFirstLineIndent(t *testing.T) {
 	xml := listItemXML("Пункт списка")

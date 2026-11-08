@@ -131,10 +131,9 @@ func renderLayoutBlock(blockID string, lc layoutContext) string {
 func renderLayoutBlockWith(block Block, lc layoutContext, row layoutServiceRow) string {
 	rc := lc.renderCtx()
 	if row.system != nil {
-		// Внутри повтора метка системы в блоке указывает на СВОЮ систему.
-		rc.cards = []SystemCard{*row.system}
-		rc.offer.Systems = nil
-		rc.systemCard = row.system
+		// Внутри повтора метка системы и {{system_title}} в блоке указывают на
+		// СВОЮ систему, а не на первую.
+		rc = withRowSystem(rc, *row.system)
 	}
 	if row.material > 0 && row.material <= len(lc.offer.Items) {
 		rc.materialSource = lc.offer.Items
@@ -147,6 +146,32 @@ func renderLayoutBlockWith(block Block, lc layoutContext, row layoutServiceRow) 
 		return ""
 	}
 	return content
+}
+
+// withRowSystem привязывает контекст блока к системе текущего прохода повтора.
+func withRowSystem(rc renderCtx, card SystemCard) renderCtx {
+	rc.cards = []SystemCard{card}
+	rc.offer.Systems = nil
+	rc.systemCard = &card
+	title := strings.TrimSpace(card.Title)
+	if title == "" {
+		return rc
+	}
+	rc.service = copyMapWith(rc.service, fieldSystemTitle, title)
+	if rc.values != nil && rc.values[fieldSystemTitle] != "" {
+		rc.values = copyMapWith(rc.values, fieldSystemTitle, title)
+	}
+	return rc
+}
+
+// copyMapWith возвращает копию карты с подставленным ключом.
+func copyMapWith(src map[string]string, key, value string) map[string]string {
+	out := make(map[string]string, len(src)+1)
+	for k, v := range src {
+		out[k] = v
+	}
+	out[key] = value
+	return out
 }
 
 // findFormBlock ищет блок по id.

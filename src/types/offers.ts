@@ -27,7 +27,7 @@ export interface RichNode {
     /** Таблица сравнения выбранных систем (2026-11-05): строки — показатели
      *  из характеристик карточек, столбцы — системы. Молчит при одной системе. */
     | 'compare_table';
-  level?: 2 | 3 | 4;
+  level?: 1 | 2 | 3 | 4;
   align?: 'center' | 'right' | 'justify' | 'left';
   text?: string;
   items?: string[];

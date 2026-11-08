@@ -18,7 +18,7 @@ import (
 
 // blockNodeKinds — виды узлов с их полями, как их понимает печать.
 const blockNodeKinds = `- paragraph: {"type":"paragraph","text":"…","align":"center|left|right|justify"}
-- heading:   {"type":"heading","text":"…","level":2|3|4}
+- heading:   {"type":"heading","text":"…","level":1|2|3|4}
 - bullet_list: {"type":"bullet_list","items":["…","…"]}
 - table:     {"type":"table","rows":[["Колонка 1","Колонка 2"],["…","…"]]}
 - prompt_text: {"type":"prompt_text","instruction":"что написать модели","maxWords":150}
