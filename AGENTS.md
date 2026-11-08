@@ -120,6 +120,26 @@ the new «текст системы дописан и напечатан из м
 `styles.css` changed: `.tn-offers-chip-wrap` and `.tn-offers-chip-group`
 (chip groups).
 
+### Released and deployed 2026-11-08
+
+| | value |
+|---|---|
+| plugin | **0.8.0** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `0c7536c` (service fix) + `06b69a1` (marker registry) + `8e60197` (release) — pushed |
+| `main` | plugin part copied from `8e60197` — pushed |
+| plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts package.json AGENTS.md HANDOFF.md` exits 0 |
+| server deploy | `git archive 8e60197` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.9-20261108`, `offers-bot.bak-0.7.9-20261108`; **`md5sum` of the five changed Go files compared with the COMMIT BLOBS before the build** and they matched; `mailers-offers-1` recreated 09:46 MSK, health `ok` over https |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https and against `/registry.json` |
+| registry | `sbe-apstore-registry` `b7de8d9`; `www/registry.json` patched surgically (three hashes + `version` + `uploadedAt`, backup `registry.json.bak-20261108-0.7.9-server`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve the same three sums and `0.8.0` |
+
+**Trap met again at the deploy, and a new variant of it.** `kb-selfhost.sh`
+still does not touch `www/registry.json`, so the served files were 0.8.0 while
+the entry still said `0.7.9` — patched surgically. The new variant: my own
+`patch_uploaded.py` asserted a hard-coded OLD `uploadedAt` value and failed
+(`AssertionError: 0`) once that value had already moved on. **Patch by the KEY
+with a regex, never by a hard-coded old value.**
+
 ## Version 0.7.9 — system composition prints as a NUMBERED list (2026-11-07)
 
 Version (manifest.json = package.json) = **0.7.9**, no `b` suffix.
