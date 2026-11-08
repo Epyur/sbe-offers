@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -69,8 +70,13 @@ type layoutContext struct {
 	refs    []skills.CardRef
 	service map[string]string
 	// systemTexts — сохранённые тексты системы (шаг B): метка `{{текст: …}}`
-	// только печатает их и модель не зовёт.
+	// печатает их и модель не зовёт.
 	systemTexts func(card SystemCard) map[string]string
+	// systemText — дописать недостающий текст и сохранить его (2026-11-07).
+	// Нет сохранённого — метка зовёт это, а не молчит: пустая таблица
+	// `offers_system_text` делала метку мёртвой для всех живых систем.
+	// nil в тестах и в сборках без БД: метка тогда печатает только сохранённое.
+	systemText func(card SystemCard, block string) string
 }
 
 // layoutRuntime — состояние одной сборки по макету.
@@ -1241,6 +1247,115 @@ type layoutPromptCache struct {
 	// report — сводка сборки для журнала (2026-11-06). nil в тестах: печать
 	// документа без журнала ведёт себя так же.
 	report *buildReport
+	// persist — куда записать дописанный текст системы (2026-11-07). nil —
+	// сохранять некуда: текст печатается, но при следующей сборке будет
+	// написан заново.
+	persist func(noteID int64, block, text, hash string)
+}
+
+// systemText — текст системы для метки `{{текст: …}}`: сохранённый в этой
+// сборке, из кэша прошлой или дописанный сейчас.
+//
+// Повод (2026-11-07): метка печатала только строку `offers_system_text`, а у
+// всех живых систем она пуста — метка молчала и в макете, и в блоке формы.
+// Порядок здесь повторяет выбор системы (шаг B): пишем один раз, сохраняем в
+// `offers_system_text` и кэшируем в form_values предложения, чтобы повторная
+// сборка не платила за тот же ответ дважды.
+//
+// key — по какому тексту кэш: у метки макета это инструкция блока, у повтора
+// по системам та же инструкция, но заметка другая.
+func (c *layoutPromptCache) systemText(noteID int64, block, instruction string) string {
+	instruction = strings.TrimSpace(instruction)
+	if instruction == "" {
+		return ""
+	}
+	// Карточку ищем ОДИН раз и до всякой записи: без неё нечего ни спросить,
+	// ни сохранить. Раньше путь «заметки нет» доходил до сохранения и писал
+	// строку с note_id = 0 (поймано на стенде 2026-11-07).
+	card := cardByNote(c.cards, noteID)
+	if card.NoteID == 0 {
+		return ""
+	}
+	key := systemTextCacheKey(noteID, instruction)
+	if v, ok := c.values[key]; ok {
+		return v
+	}
+	if v := c.previousSystemText(key); v != "" {
+		c.values[key] = v
+		return v
+	}
+	text := c.writeSystemTextNow(card, instruction)
+	if text == "" {
+		return ""
+	}
+	if c.persist != nil {
+		c.persist(card.NoteID, block, text, systemTextHash(card, block))
+	}
+	return text
+}
+
+// previousSystemText — текст из прошлой сборки, если данные предложения те же.
+//
+// Кэш завязан на хеш данных КП: поменялись цены — текст с прежними цифрами не
+// годится, и модель напишет новый (правило 2026-11-01).
+func (c *layoutPromptCache) previousSystemText(key string) string {
+	if c.previous == nil || c.previous[genKeySection] != c.section {
+		return ""
+	}
+	text := documentText(strings.TrimSpace(c.previous[key]))
+	if text == "" {
+		return ""
+	}
+	if c.report != nil {
+		c.report.FromCache++
+	}
+	return text
+}
+
+// systemTextCacheKey — ключ кэша текста системы.
+func systemTextCacheKey(noteID int64, instruction string) string {
+	return genKeySystemText(noteID) + "." + hashShort(instruction)
+}
+
+// writeSystemTextNow — один вызов модели; ответ кладётся в кэш этой сборки.
+//
+// Карточка приходит готовой: вызывающий уже убедился, что она есть. Второй
+// поиск по списку здесь означал бы, что «нет карточки» можно пропустить.
+func (c *layoutPromptCache) writeSystemTextNow(card SystemCard, instruction string) string {
+	if c.completed == nil {
+		return ""
+	}
+	started := time.Now()
+	text := layoutPromptText(context.Background(), instruction, c.offer, []SystemCard{card}, c.refs, c.completed)
+	reportFailed := strings.TrimSpace(text) == ""
+	logModelCall("system:"+instruction, fmt.Sprintf("note=%d", card.NoteID), len(instruction), started, nil)
+	if c.report != nil {
+		if reportFailed {
+			c.report.Failed++
+		} else {
+			c.report.Generated++
+		}
+	}
+	if reportFailed {
+		return ""
+	}
+	c.values[systemTextCacheKey(card.NoteID, instruction)] = text
+	return text
+}
+
+// genKeySystemText — начало ключа кэша текста системы в form_values.
+func genKeySystemText(noteID int64) string {
+	return "gen.systext." + itoa(int(noteID))
+}
+
+// cardByNote — карточка по номеру заметки; пустая, если такой нет.
+func cardByNote(cards []SystemCard, noteID int64) SystemCard {
+	for _, card := range cards {
+		if card.NoteID == noteID {
+			return card
+		}
+	}
+	return SystemCard{}
 }
 
 // layoutPromptKeyCache — ключ кэша одного промта макета.

@@ -449,6 +449,9 @@ type renderCtx struct {
 	// systemTexts — сохранённые тексты системы (шаг B): узлы блока читают их
 	// так же, как метки макета, и модель не зовут.
 	systemTexts func(card SystemCard) map[string]string
+	// systemText — дописать недостающий текст системы (2026-11-07). nil —
+	// дописывать некуда, блок печатает только сохранённое.
+	systemText func(card SystemCard, block string) string
 }
 
 // text подставляет поля формы и служебные значения предложения в один кусок
@@ -594,8 +597,12 @@ func (rc renderCtx) layoutContext() layoutContext {
 		refs:        rc.refs,
 		service:     rc.service,
 		systemTexts: rc.systemTexts,
-		cards:       func() []SystemCard { return rc.cards },
-		images:      rc.images,
+		// Текста системы нет — дописать (2026-11-07): в блоке формы метка
+		// `{{текст: система: description}}` вела себя так же, как в макете, и
+		// так же молчала. Одна функция на оба пути.
+		systemText: rc.systemText,
+		cards:      func() []SystemCard { return rc.cards },
+		images:     rc.images,
 	}
 	// Сборщик картинок обязан доехать до метки системы: без него
 	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке
@@ -792,6 +799,18 @@ func renderOfferDocxWithCards(form OfferForm, offer Offer, cards []SystemCard, i
 // таблицы состава, а вместо неё — честная строка о том, что состав передаётся
 // отдельно. Врать про «итого 0,00» нельзя: это выглядит как бесплатно.
 func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images ImageSource, refs []skills.CardRef) ([]byte, error) {
+	return renderOfferDocxWithTexts(form, offer, cards, images, refs, nil, nil)
+}
+
+// renderOfferDocxWithTexts — блочный путь с текстами систем (2026-11-07).
+//
+// Без systemTexts/systemText метка `{{текст: система: …}}` в блоке формы
+// печатала пустое место: блоки просто не знали о текстах, которые для макета
+// уже читались. Здесь оба пути получают одно и то же, и модель дописывает
+// недостающее одинаково (живая жалоба «метка не работает и в блоке формы»).
+func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, images ImageSource,
+	refs []skills.CardRef, systemTexts func(SystemCard) map[string]string,
+	systemText func(SystemCard, string) string) ([]byte, error) {
 
 	// Все ссылки предложения: из карточек систем, если их не передали.
 	if len(refs) == 0 {
@@ -801,13 +820,15 @@ func renderOfferDocxFull(form OfferForm, offer Offer, cards []SystemCard, images
 	// картинки карточек: у бланка свои id, и второй сборщик дал бы дубли.
 	media := newTemplateMedia()
 	rc := renderCtx{
-		values:  offer.FormValues,
-		service: serviceValues(offer),
-		offer:   offer,
-		refs:    refs,
-		cards:   cards,
-		images:  images,
-		media:   media,
+		values:      offer.FormValues,
+		service:     serviceValues(offer),
+		offer:       offer,
+		refs:        refs,
+		cards:       cards,
+		images:      images,
+		media:       media,
+		systemTexts: systemTexts,
+		systemText:  systemText,
 	}
 
 	var sb strings.Builder

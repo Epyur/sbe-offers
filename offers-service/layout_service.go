@@ -377,19 +377,32 @@ func renderLayoutCardSpecs(lc layoutContext, row layoutServiceRow) string {
 	return tableXML(card.Specifications)
 }
 
-// renderLayoutCardText — сохранённый текст системы.
+// renderLayoutCardText — текст системы: сохранённый, а при его отсутствии —
+// дописанный.
 //
-// Текст пишется ОДИН раз при выборе системы (шаг B) и лежит в
-// offers_system_text; здесь он только печатается. Нет текста — метка молчит:
-// пустое место честнее черновика, а догенерировать его в экспорте значило бы
-// вернуть ту самую минуту ожидания.
+// Текст пишется при выборе системы (шаг B) и лежит в `offers_system_text`. До
+// 2026-11-07 метка печатала ТОЛЬКО сохранённое и при пустом месте молчала — из-за
+// этого `{{текст: система: description}}` «не работала» ни в макете, ни в блоке
+// формы: у живой системы текстов не было вовсе (замер: таблица пуста), и человек
+// видел пустое место, а не текст.
+//
+// Правило теперь симметрично выбору системы: пустых систем не бывает. Сборка
+// дописывает недостающее тем же вызовом, сохраняет и печатает — второй раз эта
+// работа не делается, дальше текст берётся из таблицы. Ошибка модели по-прежнему
+// не роняет документ: блок молчит, а причина уходит в журнал генерации.
 func renderLayoutCardText(lc layoutContext, row layoutServiceRow, block string) string {
 	card, ok := layoutRowCard(lc, row)
-	if !ok || lc.systemTexts == nil {
+	if !ok {
 		return ""
 	}
-	text := strings.TrimSpace(lc.systemTexts(card)[block])
+	text := strings.TrimSpace(storedSystemText(lc, card, block))
+	if text == "" && lc.systemText != nil {
+		text = strings.TrimSpace(lc.systemText(card, block))
+	}
 	if text == "" {
+		// Нет ни сохранённого, ни написанного — метка молчит: пустое место
+		// честнее выдумки, а причина записана журналом генерации.
+		log.Printf("макет: текст %q системы %d не написан — метка молчит", block, card.NoteID)
 		return ""
 	}
 	if row.viaBlock {
@@ -397,6 +410,14 @@ func renderLayoutCardText(lc layoutContext, row layoutServiceRow, block string) 
 		return text
 	}
 	return layoutAsParagraphs(`<w:p><w:pPr><w:jc w:val="both"/></w:pPr></w:p>`, layoutLines(text))
+}
+
+// storedSystemText — уже сохранённый текст блока.
+func storedSystemText(lc layoutContext, card SystemCard, block string) string {
+	if lc.systemTexts == nil {
+		return ""
+	}
+	return lc.systemTexts(card)[block]
 }
 
 // layoutRepeatRows — сколько проходов делает повтор и по каким данным.

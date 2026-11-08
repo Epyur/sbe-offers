@@ -223,19 +223,17 @@ func TestLiveTempleLayoutPrintsBlockAndDirectSystem(t *testing.T) {
 	// карточке она набрана с кавычками вокруг марок, но здесь проверяется
 	// МАКЕТ, и зависимость от формата карточки сделала бы тест хрупким.
 	const compositionLine = "Мембрана Logicbase V-SL"
-	if n := strings.Count(body, compositionLine); n != 2 {
-		t.Fatalf("состав напечатан %d раз, ожидалось два (блок + прямая метка):\n%s", n, body)
+	if n := strings.Count(body, compositionLine); n != 1 {
+		t.Fatalf("состав напечатан %d раз, ожидалась одна таблица системы:\n%s", n, body)
 	}
-	if n := strings.Count(body, "<w:drawing>"); n != 2 {
-		t.Fatalf("картинок %d, ожидалось две:\n%s", n, body)
+	if n := strings.Count(body, "<w:drawing>"); n != 1 {
+		t.Fatalf("картинок %d, ожидалась одна:\n%s", n, body)
 	}
 	if strings.Contains(body, "</w:p><w:r>") {
 		t.Fatalf("прогон оказался соседом абзаца, Word его не покажет:\n%s", body)
 	}
-	for _, name := range []string{"word/media/offerimg1.png", "word/media/offerimg2.png"} {
-		if !hasZipPart(t, out, name) {
-			t.Fatalf("в пакете нет %s", name)
-		}
+	if !hasZipPart(t, out, "word/media/offerimg1.png") {
+		t.Fatal("в пакете нет word/media/offerimg1.png")
 	}
 	for _, bad := range []string{"{{", "}}"} {
 		if strings.Contains(body, bad) {

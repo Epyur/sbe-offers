@@ -248,6 +248,38 @@ func (s *Server) storedTextsOf(ctx context.Context, card SystemCard) map[string]
 	return texts
 }
 
+// writeMissingSystemText — дописать один текст системы при сборке документа.
+//
+// Повод (2026-11-07): метка `{{текст: система: description}}` печатала только
+// СОХРАНЁННОЕ, а у всех живых систем таблица `offers_system_text` была пуста —
+// метка молчала всегда, в макете и в блоке формы одинаково. Человек справедливо
+// считал, что она не работает.
+//
+// Здесь повторяется правило выбора системы: текст пишется один раз и
+// сохраняется. Черновик кэшируется в form_values предложения, чтобы вторая
+// сборка дорогого ответа не писала: обрыв связи посреди печати не должен
+// превращать готовый документ в другой.
+//
+// nil-приёмник (стенд без БД, тесты) — пусто: метка тогда молчит, как раньше.
+func (s *Server) writeMissingSystemText(offer *Offer, cache *layoutPromptCache,
+	card SystemCard, block string) string {
+	instruction, ok := systemTextInstruction[block]
+	if !ok {
+		return ""
+	}
+	if cache != nil {
+		return cache.systemText(card.NoteID, block, instruction)
+	}
+	if s == nil {
+		return ""
+	}
+	text, wrote := s.writeAndStoreSystemText(context.Background(), *offer, card, block)
+	if !wrote {
+		return ""
+	}
+	return text
+}
+
 // systemTextsByNote — сохранённые тексты систем по номеру заметки: карта
 // «заметка → блок → текст».
 //

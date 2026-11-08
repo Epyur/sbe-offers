@@ -327,7 +327,52 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 	if layout, err := s.loadLayout(r); err == nil && len(layout) > 0 {
 		return s.renderLayoutOffer(r, layout, form, offer, cards, refs, report)
 	}
-	return renderOfferDocxFull(form, offer, cards, NewKBImageSource(s.kb), refs)
+	// Блочный путь получает те же тексты систем, что и макет (2026-11-07):
+	// иначе метка `{{текст: система: …}}` в блоке формы молчит, хотя в макете
+	// та же метка печатает. Одна функция дописывания на оба пути.
+	texts := s.systemTextsByNote(r.Context(), cards)
+	cache := &layoutPromptCache{
+		values:    map[string]string{},
+		previous:  offer.FormValues,
+		section:   hashOfferFacts(offer),
+		offer:     offer,
+		cards:     cards,
+		refs:      refs,
+		completed: llmCompleter{},
+		report:    report,
+		persist: func(noteID int64, block, text, hash string) {
+			if err := s.saveSystemText(r.Context(), SystemText{
+				NoteID: noteID, Block: block, Text: text, Hash: hash,
+			}); err != nil {
+				log.Printf("блок формы: текст %s системы %d не сохранён: %v", block, noteID, err)
+			}
+		},
+	}
+	data, err := renderOfferDocxWithTexts(form, offer, cards, NewKBImageSource(s.kb), refs,
+		func(card SystemCard) map[string]string { return texts[card.NoteID] },
+		func(card SystemCard, block string) string {
+			return s.writeMissingSystemText(&offer, cache, card, block)
+		})
+	if err != nil {
+		return nil, err
+	}
+	s.persistLayoutTextCache(r.Context(), offer, cache)
+	return data, nil
+}
+
+// persistLayoutTextCache сохраняет дописанные тексты в form_values предложения.
+//
+// Без этого каждая сборка блочного пути платила бы моделью заново: ключ кэша
+// живёт в form_values, а не в памяти процесса.
+func (s *Server) persistLayoutTextCache(ctx context.Context, offer Offer, cache *layoutPromptCache) {
+	changed := cache.changed()
+	if len(changed) == 0 {
+		return
+	}
+	offer.FormValues = mergeFormValues(offer.FormValues, changed)
+	if err := s.persistOfferFormValues(ctx, offer); err != nil {
+		log.Printf("блок формы: тексты не сохранены у КП %s: %v", offer.Number, err)
+	}
 }
 
 // renderLayoutOffer печатает предложение по макету администратора.
@@ -349,8 +394,17 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		report:    report,
 	}
 	// Сохранённые тексты систем (шаг B) — читаются один раз на сборку: метки
-	// `{{текст: …}}` печатают их и модель не зовут (шаг C).
+	// `{{текст: …}}` печатают их и модель не зовут (шаг C). Пустое место
+	// дописывает writeMissingSystemText (2026-11-07): до этой правки метка
+	// молчала у каждой системы, у которой текстов ещё не было.
 	texts := s.systemTextsByNote(r.Context(), cards)
+	cache.persist = func(noteID int64, block, text, hash string) {
+		if err := s.saveSystemText(r.Context(), SystemText{
+			NoteID: noteID, Block: block, Text: text, Hash: hash,
+		}); err != nil {
+			log.Printf("макет: текст %s системы %d не сохранён: %v", block, noteID, err)
+		}
+	}
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,
 		prompt: cache.text,
@@ -367,6 +421,12 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		refs:        refs,
 		service:     serviceValues(offer),
 		systemTexts: func(card SystemCard) map[string]string { return texts[card.NoteID] },
+		// Текста нет — дописать и сохранить (2026-11-07). Живая жалоба:
+		// `{{текст: система: description}}` печатала пустое место, потому что
+		// у системы не было сохранённого текста, а метка модель не звала.
+		systemText: func(card SystemCard, block string) string {
+			return s.writeMissingSystemText(&offer, cache, card, block)
+		},
 	})
 	if err != nil {
 		return nil, err
