@@ -259,6 +259,52 @@ session - see "The two 'flaky' stand checks").
   first version of `TestPromptListsEveryChosenSystem` passed `[]SystemCard{cards[0]}`
   and failed: the set must be derived from the offer, not from the slice.
 
+## Version 0.8.2 — the introduction covers every chosen system (2026-11-08, released)
+
+Plugin version (manifest.json = package.json) = **0.8.2**, no `b` suffix. The
+client code did not change; the version was raised because the CUP news must be
+published (`announceOnce` fires once per version).
+
+### What changed
+
+The 2026-11-08 server fix (see "The intro described one system" above) and the
+stand repairs (see "The two 'flaky' stand checks") shipped together:
+
+- the introduction names and argues for ALL chosen systems, and is regenerated
+  when the selection changes (`offerSelectionHandle` in the cache keys);
+- per-system texts and per-system composition numbering (commit `8bf4399`),
+  which had been deployed but never announced;
+- the stand now runs **317/0**.
+
+### Released and deployed 2026-11-08
+
+| | value |
+|---|---|
+| plugin | **0.8.2** (`manifest.json` = `package.json`), no `b` suffix |
+| `backend` | `6a36851` (service) + `f847c87` (stand) + `6930e50` (release) — pushed |
+| `main` | `ab15448` — plugin part copied from `6930e50`; pushed |
+| plugin part identical | `git diff --quiet 6930e50 -- main.js manifest.json styles.css` exits 0; `tsc --noEmit` EXIT=0 on `main` |
+| server deploy | `git archive 6930e50 offers-service offers-bot` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.8.1-20261108b`, `offers-bot.bak-0.8.1-20261108b`; `md5sum` of five Go files matched the working tree before the build; containers recreated 17:14 MSK, health `ok`, bot poller started |
+| self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https (`-t=` cache buster, downloaded to a file) |
+| registry | `sbe-apstore-registry` `a180ace`; `www/registry.json` patched surgically (three hashes + `version` 0.8.1→0.8.2 + `uploadedAt`, backup `registry.json.bak-20261108-0.8.2-server`, md5 `779cbe5a…`) |
+| three points agree | GitHub `main`, self-hosting and `/registry.json` serve `0.8.2` and the same three sums |
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `fe44caf05ddb871749a77c4274900bada0a3e08a2e11963a23369c6de2cbecfc` | 468 |
+| `main.js` | `0d28a4a3dfa47c303cccfaf03a5c8a775815a19c1b1c5df950e4aa1e7fc64615` | 172182 |
+| `styles.css` | `c878adb5f861bc2cf5836c0f570159c97963b012fd13d47d9e4d1b540039639d` | 34961 |
+
+`styles.css` unchanged (no CSS edits).
+
+**The known trap met again:** `kb-selfhost.sh` wrote the sums into
+`registry_file_overrides` and left `version` at 0.8.1 in `www/registry.json` -
+patched surgically by key, never by re-serialising the JSON.
+
+**Not verified:** the live master has not been walked by a human after this
+release (the agent has no device key); the 0.8.2 CUP news publishes on the next
+Obsidian start (hot-reload does not watch files on Windows).
+
 ## Version 0.8.1 — TOC recalculation, heading levels 1–4, system titles from KB, no forced prices in text (2026-11-08)
 
 Version (manifest.json = package.json) = **0.8.1**, no `b` suffix.
