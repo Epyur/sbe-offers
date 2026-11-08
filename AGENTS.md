@@ -125,8 +125,8 @@ the new «текст системы дописан и напечатан из м
 | | value |
 |---|---|
 | plugin | **0.8.0** (`manifest.json` = `package.json`), no `b` suffix |
-| `backend` | `0c7536c` (service fix) + `06b69a1` (marker registry) + `8e60197` (release) — pushed |
-| `main` | plugin part copied from `8e60197` — pushed |
+| `backend` | `0c7536c` (service fix) + `06b69a1` (marker registry) + `8e60197` (release) + `663852d` (docs) — pushed |
+| `main` | plugin part copied from `8e60197`, then `6c57589` (docs) — pushed |
 | plugin part identical | `git diff --quiet origin/backend -- main.js manifest.json styles.css src scripts package.json AGENTS.md HANDOFF.md` exits 0 |
 | server deploy | `git archive 8e60197` → `scp` → `tar xf` in `/opt/mailers`; backups `offers-service.bak-0.7.9-20261108`, `offers-bot.bak-0.7.9-20261108`; **`md5sum` of the five changed Go files compared with the COMMIT BLOBS before the build** and they matched; `mailers-offers-1` recreated 09:46 MSK, health `ok` over https |
 | self-hosting | `kb-selfhost.sh sbe-offers`; three sums checked over https and against `/registry.json` |
