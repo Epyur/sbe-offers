@@ -30,6 +30,110 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Server fix 2026-11-08 — per-system composition numbering and per-system prompt text (NO plugin version bump)
+
+Server-only change in `offers-service/`; plugin client (`src/`) unchanged, so
+`manifest.json`/`package.json`/`main.js`/`styles.css` are NOT touched and the
+version stays **0.8.1**. **Deploy to the server NOT done at commit time** - needs
+a separate user command.
+
+User report on the live export `Коммерческое предложение 003-2026.docx` with a
+SECOND system added:
+
+1. The layer numbering of the first system CONTINUED into the second (layers of
+   system 2 ran 13, 14… instead of restarting at 1).
+2. The description/advantages were IDENTICAL for both systems and matched the
+   first one.
+3. The introduction describes only one system.
+
+User's semantic note: the systems the manager adds are **not comparison
+systems** - they are systems chosen for **completeness of supply**. Comparison
+must be against **analogues from the Knowledge Base** (why, out of many variants,
+these were chosen). That is a **third, separate task - not done**, needs a
+decision (see "Next step").
+
+### Measured cause (live form `offers_form` id 1, two blocks)
+
+- `blk_mw7lf8xwyk10` "Введение", `repeat: ""`: a `prompt_text` (single intro).
+- `blk_mw6oonck8g8z` "Основной блок", **`repeat: "systems"`**: heading
+  `{{system_title}}`, paragraph `{{система: таблица}}` (image + composition), and
+  a `prompt_text` (the system description).
+
+Two distinct defects, both "one system's data shown for all":
+
+1. **Numbering.** `layoutCompositionMarkup` (`layout_service.go`) printed every
+   composition item with the SAME `numId 1`. Word counts numbering continuously
+   per `numId`, so the second list simply continued the first (13, 14…).
+2. **Same text.** A `prompt_text` node inside a `repeat: "systems"` block was
+   cached under `gen.<blockId>.<nodeIndex>` **without the system** and printed
+   identically for every system. The model was called without narrowing to the
+   pass's card (all cards were sent together), and the cache did not distinguish
+   which system a text belonged to.
+
+### Fix
+
+**Composition numbering — a fresh `numId` per list.**
+
+- New `offers-service/docx_numbering.go`: `numberingPlan.newList()` hands out a
+  `numId` that references the brand's decimal `abstractNum 0` with
+  `<w:lvlOverride><w:startOverride w:val="1"/></w:lvlOverride>` - that is Word's
+  "restart this list at 1". `injectNumberingDefinitions` **appends** `<w:num>` to
+  the package's `word/numbering.xml`; the file is NOT replaced (rule 2026-10-29:
+  replacing `styles.xml`/`numbering.xml` wholesale broke page numbers/footers).
+- The plan lives in `layoutRuntime.numbering` (`docx_layout.go`) and
+  `renderCtx.numbering` (`docx.go`); each repeat pass calls `newList()`. The plan
+  is created only when the layout HAS `word/numbering.xml`; without it the
+  composition falls back to the shared `numId 1` (an undefined `numId` renders no
+  numbers, worse than the old behaviour).
+- `numId` base is `numberingUserBase = 9000` to stay clear of the brand's 1..12.
+
+**Description/advantages — one text per system.**
+
+- `docx_text.go`: `genKeyTextForSystem(blockID, nodeIndex, handle)` =
+  `gen.<blockId>.<nodeIndex>.sys<handle>`, where `handle` = `systemCacheHandle(card)`
+  (note id; for SKU-only systems a hash of the SKU).
+- `collectPromptNodes` records `Repeat`. `generateBlockTexts`: for a
+  `repeat: "systems"` block the `prompt_text` node is generated **once per chosen
+  system**, and the model prompt receives **only that system's card**
+  (`[]SystemCard{card}`).
+- `generatedTextFor` inside a repeat pass reads the pass's system key
+  (`rc.systemCard`), so the second system prints its OWN text.
+- A normal (non-repeated) block still generates ONE text under the shared key.
+
+**Not touched:** the intro (`blk_mw7lf8xwyk10`, no repeat) is still a single
+text; cross-system intro and analogue comparison are the separate third task.
+
+### Files
+
+- `docx_numbering.go` (new), `docx_repeat_systems_test.go` (new).
+- `docx.go` (`renderCtx.numbering`, `buildDocxWithNumbering` /
+  `buildDocxWithMediaAndLinksAndNumbering`, plan passed at build; dead
+  `numberedItemXMLOpts` removed), `docx_layout.go` (`layoutRuntime.numbering`,
+  plan creation, `injectNumberingDefinitions` before `zipFiles`), `docx_text.go`
+  (per-system keys/generation), `layout_service.go` (`numberingPlan()`,
+  `layoutCompositionMarkup(card, plan)` via `listItemNumXML`).
+- Tests: `layout_service_tokens_test.go` (updated for `numId` 9000+ and
+  `startOverride`), `docx_layout_links_test.go` (fixture now has
+  `word/numbering.xml`), `scripts/offers_local_e2e.mjs` (layout fixture gained
+  `word/numbering.xml`; composition check rewritten for `numId >= 9000` +
+  `startOverride`).
+
+### Verified
+
+`gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green. New tests:
+`TestCompositionNumberingRestartsPerSystem`, `TestRepeatedBlockPromptTextIsPerSystem`,
+`TestSingleBlockPromptTextStaysSingle`. Stand: **315 passed, 2 failed** - the two
+known flaky checks (`ответ менеджера попал в бриф`, `ссылки карточки кликабельны`)
+that also fail on the pre-change code (verified via `git stash` + stand rebuild).
+
+### Next step (NOT done)
+
+1. Rewrite the intro prompt so it covers ALL chosen systems as a complex supply
+   solution (single text today).
+2. Build KB analogue comparison (why these systems, not alternatives) - new
+   functionality; current `compare_table`/`compareSystemRows` compares the
+   CHOSEN systems to each other, which is not what is wanted.
+
 ## Version 0.8.1 — TOC recalculation, heading levels 1–4, system titles from KB, no forced prices in text (2026-11-08)
 
 Version (manifest.json = package.json) = **0.8.1**, no `b` suffix.

@@ -82,6 +82,10 @@ type layoutContext struct {
 // layoutRuntime — состояние одной сборки по макету.
 type layoutRuntime struct {
 	media *docxMedia
+	// numbering — списки, заведённые на время сборки: у каждого состава свой
+	// numId, чтобы нумерация слоёв начиналась заново у каждой системы
+	// (2026-11-08). nil — состав печатается одним сквозным списком.
+	numbering *numberingPlan
 }
 
 // renderLayoutDocx собирает КП по макету.
@@ -108,6 +112,17 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 		// покажет её (2026-11-07).
 		lc.layout = &layoutRuntime{media: newDocxMedia(files)}
 	}
+	// План нумерации списков: у каждого состава свой numId (2026-11-08).
+	// abstractNum 0 — десятичный список бланка (на него ссылается numId 1).
+	// Заводим план, только если в макете ЕСТЬ numbering.xml: без него нашим
+	// numId некуда положить определение, и список напечатался бы без номеров.
+	// Тогда состав идёт общим списком бланка (numId 1), как раньше, — это
+	// честнее пустой нумерации.
+	if lc.layout.numbering == nil {
+		if _, hasNumbering := files["word/numbering.xml"]; hasNumbering {
+			lc.layout.numbering = newNumberingPlan(numberingAbstractDecimal)
+		}
+	}
 	rendered := fillLayoutDocument(string(docXML), lc)
 	// Адреса в ответе модели делаются кликабельными (2026-11-06). Раньше этот
 	// шаг жил только в блочном пути, и при загруженном макете ссылки в КП не
@@ -133,6 +148,9 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	if err := applyMedia(files, lc.layout.media); err != nil {
 		return nil, err
 	}
+	// Определения наших списков (перезапуск нумерации состава) дописываются к
+	// numbering.xml макета: файл не заменяется, только получает новые <w:num>.
+	injectNumberingDefinitions(files, lc.layout.numbering)
 	return zipFiles(files, names)
 }
 

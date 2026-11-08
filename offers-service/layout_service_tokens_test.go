@@ -217,6 +217,10 @@ func TestLayoutSystemTableVariant(t *testing.T) {
 // маркированным списком, и сопоставить разрез со строками было невозможно.
 // Номер из карточки снимается при разборе, поэтому его ставит Word — так он идёт
 // подряд и не задваивается в тексте.
+//
+// С 2026-11-08 состав получает СВОЙ numId из плана сборки (9000+), чтобы
+// нумерация каждой системы шла с единицы; определение дописывается в
+// numbering.xml со `<w:startOverride w:val="1"/>`.
 func TestLayoutCompositionIsNumberedList(t *testing.T) {
 	lc := serviceLayoutContext(nil)
 	doc := layoutDocxFromXML(t, wordDoc(`<w:p><w:r><w:t>{{система}}</w:t></w:r></w:p>`))
@@ -225,11 +229,18 @@ func TestLayoutCompositionIsNumberedList(t *testing.T) {
 		t.Fatalf("печать: %v", err)
 	}
 	body := string(docxEntry(t, out, "word/document.xml"))
-	if !strings.Contains(body, `numId w:val="`+styleListNumbered+`"`) {
+	if !strings.Contains(body, `numId w:val="`+itoa(numberingUserBase)+`"`) {
 		t.Fatalf("состав напечатан не нумерованным списком:\n%s", body)
 	}
 	if strings.Contains(body, `numId w:val="`+styleListBullet+`"`) {
 		t.Fatalf("в составе остался маркированный список:\n%s", body)
+	}
+	numbering := string(docxEntry(t, out, "word/numbering.xml"))
+	if !strings.Contains(numbering, `w:numId="`+itoa(numberingUserBase)+`"`) {
+		t.Fatalf("в numbering.xml нет определения нашего списка:\n%s", numbering)
+	}
+	if !strings.Contains(numbering, `<w:startOverride w:val="1"/>`) {
+		t.Fatalf("у нашего списка нет перезапуска нумерации:\n%s", numbering)
 	}
 }
 

@@ -278,14 +278,6 @@ func listItemXMLOpts(text string, opts paraOpts) string {
 	return listItemNumXML(text, styleListBullet, opts)
 }
 
-// numberedItemXMLOpts — пункт НУМЕРОВАННОГО списка бланка (2026-11-07).
-//
-// Отдельная точка на два вида списка: при маркировке и нумерации различие —
-// только numId, и вторая копия разметки разошлась бы с первой молча.
-func numberedItemXMLOpts(text string, opts paraOpts) string {
-	return listItemNumXML(text, styleListNumbered, opts)
-}
-
 // listItemNumXML — пункт списка с заданной нумерацией бланка.
 func listItemNumXML(text, numID string, opts paraOpts) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
@@ -454,6 +446,10 @@ type renderCtx struct {
 	cards  []SystemCard
 	images ImageSource
 	media  *docxMedia
+	// numbering — план нумерации списков этой сборки: каждый состав получает
+	// свой numId, чтобы нумерация слоёв начиналась заново у каждой системы
+	// (2026-11-08). nil — состав печатается одним сквозным списком.
+	numbering *numberingPlan
 	// systemCard — выбранная система повтора (шаг D): блок формы с repeat
 	// печатается по разу на систему, и служебные метки внутри блока обязаны
 	// брать ЕЁ карточку, а не первую. nil — обычная печать.
@@ -626,7 +622,7 @@ func (rc renderCtx) layoutContext() layoutContext {
 	// печаталась без картинки (живая жалоба 2026-11-07). Указатель общий с
 	// блоком формы: добавленные файлы уходят в пакет тем же сборщиком.
 	if rc.media != nil {
-		ctx.layout = &layoutRuntime{media: rc.media}
+		ctx.layout = &layoutRuntime{media: rc.media, numbering: rc.numbering}
 	}
 	return ctx
 }
@@ -844,6 +840,7 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 		cards:       cards,
 		images:      images,
 		media:       media,
+		numbering:   newNumberingPlan(numberingAbstractDecimal),
 		systemTexts: systemTexts,
 		systemText:  systemText,
 	}
@@ -916,12 +913,12 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 
 	// Ссылки раздела `links` превращаются в кликабельные: отношение на каждую.
 	body, linkRels := applyHyperlinks(sb.String(), refs)
-	relsXML, err := relsXMLWithLinks(nil, linkRels)
-	if err != nil {
-		// Ссылки без отношений печатаются текстом: документ важнее.
+	// Ссылки без отношений печатаются текстом: документ важнее.
+	if _, relErr := relsXMLWithLinks(nil, linkRels); relErr != nil {
 		body = sb.String()
+		linkRels = nil
 	}
-	return buildDocxFull(body, media, linkRels, relsXML)
+	return buildDocxWithNumbering(body, media, linkRels, rc.numbering)
 }
 
 // Служебные поля шаблона: то, что служба знает про предложение сама, без
@@ -1132,7 +1129,16 @@ func writeOfferHead(sb *strings.Builder, form OfferForm, offer Offer) {
 
 // buildDocxFull — сборка с картинками и внешними ссылками.
 func buildDocxFull(bodyXML string, media *docxMedia, links []renderedLink, _ []byte) ([]byte, error) {
-	return buildDocxWithMediaAndLinks(bodyXML, media, links)
+	return buildDocxWithNumbering(bodyXML, media, links, nil)
+}
+
+// buildDocxWithNumbering — сборка с планом нумерации списков (2026-11-08).
+//
+// plan != nil — в numbering.xml бланка дописываются наши numId, чтобы состав
+// каждой системы нумеровался с единицы. nil — прежнее поведение (сквозной
+// список), как у документов без составов.
+func buildDocxWithNumbering(bodyXML string, media *docxMedia, links []renderedLink, plan *numberingPlan) ([]byte, error) {
+	return buildDocxWithMediaAndLinksAndNumbering(bodyXML, media, links, plan)
 }
 
 // buildDocx вставляет тело в корпоративный бланк; при его отсутствии собирает
@@ -1156,6 +1162,11 @@ func buildDocxWithMedia(bodyXML string, media *docxMedia) ([]byte, error) {
 // дописываются в word/_rels/document.xml.rels после того, как тело уже
 // вставлено, чтобы одна и та же ссылка не завела два отношения.
 func buildDocxWithMediaAndLinks(bodyXML string, media *docxMedia, links []renderedLink) ([]byte, error) {
+	return buildDocxWithMediaAndLinksAndNumbering(bodyXML, media, links, nil)
+}
+
+// buildDocxWithMediaAndLinksAndNumbering — то же плюс определения нумерации.
+func buildDocxWithMediaAndLinksAndNumbering(bodyXML string, media *docxMedia, links []renderedLink, plan *numberingPlan) ([]byte, error) {
 	tr, err := zip.NewReader(bytes.NewReader(standardTemplateDocx), int64(len(standardTemplateDocx)))
 	if err != nil {
 		return nil, fmt.Errorf("открыть шаблон: %w", err)
@@ -1219,6 +1230,9 @@ func buildDocxWithMediaAndLinks(bodyXML string, media *docxMedia, links []render
 		}
 		files["word/_rels/document.xml.rels"] = rels
 	}
+	// Перезапуск нумерации составов: определения наших numId дописываются к
+	// numbering.xml бланка (2026-11-08). Без плана файл не меняется.
+	injectNumberingDefinitions(files, plan)
 	return zipFiles(files, names)
 }
 

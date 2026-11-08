@@ -165,10 +165,19 @@ func TestLayoutLinksWithCardRefs(t *testing.T) {
 }
 
 // layoutDocxFromXML — минимальный .docx с заданным document.xml.
+//
+// numbering.xml включён намеренно (2026-11-08): состав системы получает свой
+// numId, и его определение дописывается в этот файл; без него проверка
+// перезапуска нумерации нечего смотреть.
 func layoutDocxFromXML(t *testing.T, docXML string) []byte {
 	t.Helper()
 	return zipOf(t, map[string]string{
 		"[Content_Types].xml": `<?xml version="1.0" encoding="UTF-8"?><Types/>`,
 		"word/document.xml":   docXML,
+		"word/numbering.xml": `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+			`<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+			`<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>` +
+			`<w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>` +
+			`<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`,
 	})
 }

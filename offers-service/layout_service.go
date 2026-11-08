@@ -200,6 +200,7 @@ func (lc layoutContext) renderCtx() renderCtx {
 		cards:       lc.cardList(),
 		images:      lc.images,
 		media:       lc.media(),
+		numbering:   lc.numberingPlan(),
 		systemTexts: lc.systemTexts,
 	}
 }
@@ -218,6 +219,14 @@ func (lc layoutContext) media() *docxMedia {
 		return nil
 	}
 	return lc.layout.media
+}
+
+// numberingPlan — план нумерации текущей сборки (nil — сквозной список).
+func (lc layoutContext) numberingPlan() *numberingPlan {
+	if lc.layout == nil {
+		return nil
+	}
+	return lc.layout.numbering
 }
 
 // layoutRowCard — карточка, которую печатает метка.
@@ -250,7 +259,7 @@ func renderLayoutSystemCard(lc layoutContext, row layoutServiceRow, plain bool) 
 		return ""
 	}
 	image := layoutCardImageMarkup(card, lc)
-	composition := layoutCompositionMarkup(card)
+	composition := layoutCompositionMarkup(card, lc.numberingPlan())
 	if plain {
 		return image + composition
 	}
@@ -301,15 +310,23 @@ const compositionHeading = "Состав системы"
 // слои, и на разрезе системы маркеры слоёв стоят с номерами. Маркированный
 // список сопоставить с разрезом было нельзя. Номер в карточке разбор уже снял
 // (reCardNumber), так что его ставит Word: он идёт подряд и не задваивается.
-func layoutCompositionMarkup(card SystemCard) string {
+//
+// Перезапуск нумерации у каждой системы (2026-11-08, живая жалоба КП 003/2026):
+// у каждого состава теперь свой numId из плана сборки. С общим numId второй
+// список продолжал первый, и слои второй системы шли с 13, а не с 1.
+func layoutCompositionMarkup(card SystemCard, plan *numberingPlan) string {
 	items := compositionLines(card)
 	if len(items) == 0 {
 		return ""
 	}
+	numID := styleListNumbered
+	if plan != nil {
+		numID = plan.newList()
+	}
 	var sb strings.Builder
 	sb.WriteString(headingXMLOpts(compositionHeading, 4, paraOpts{NoIndent: true}))
 	for _, item := range items {
-		sb.WriteString(numberedItemXMLOpts(item, paraOpts{}))
+		sb.WriteString(listItemNumXML(item, numID, paraOpts{}))
 	}
 	return sb.String()
 }

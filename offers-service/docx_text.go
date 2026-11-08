@@ -51,6 +51,34 @@ func genKeyTextByID(blockID string, nodeIndex int) string {
 	return fmt.Sprintf("gen.%s.%d", blockID, nodeIndex)
 }
 
+// genKeyTextForSystem — ключ кэша текста узла для ОДНОЙ системы.
+//
+// Повод (2026-11-08, живая жалоба на КП 003/2026): у блока с repeat:"systems"
+// узел по промту печатался один раз, и его текст повторялся для КАЖДОЙ системы.
+// Причина — ключ кэша не содержал систему, и вторая система брала текст первой.
+// Теперь у каждой системы свой ключ, и модель пишет её карточку.
+//
+// handle — по чему различать системы (обычно номер заметки; см. systemCacheHandle).
+func genKeyTextForSystem(blockID string, nodeIndex int, handle string) string {
+	return fmt.Sprintf("%s.sys%s", genKeyTextByID(blockID, nodeIndex), handle)
+}
+
+// systemCacheHandle — устойчивый признак системы для ключа кэша.
+//
+// Номер заметки главнее (он не меняется). Система без заметки, выбранная по
+// коду, различается хешем кода — иначе все такие системы получили бы один
+// текст. Нет ни того, ни другого — "0": общий ключ, как до правки (лучше он,
+// чем ключ несуществующей системы).
+func systemCacheHandle(card SystemCard) string {
+	if card.NoteID > 0 {
+		return itoa(int(card.NoteID))
+	}
+	if sku := strings.TrimSpace(card.SKU); sku != "" {
+		return "sku" + hashShort(sku)
+	}
+	return "0"
+}
+
 // cardsForOffer — карточки систем, о которых говорится в предложении.
 //
 // Основание — сам факт выбора системы, а не совпадение названий позиций
@@ -136,10 +164,16 @@ func generatedTextFor(rc renderCtx, blockID string, nodeIndex int) string {
 	if rc.values[genKeySection] != hashOfferFacts(rc.offer) {
 		return ""
 	}
+	// Внутри повтора по системам текст узла — свой у каждой системы
+	// (2026-11-08): с общим ключом вторая система печатала текст первой.
+	key := genKeyTextByID(blockID, nodeIndex)
+	if rc.systemCard != nil {
+		key = genKeyTextForSystem(blockID, nodeIndex, systemCacheHandle(*rc.systemCard))
+	}
 	// documentText и здесь: КП, собранные до 2026-11-05, держат в кэше пометку
 	// [НУЖНО: …], и без чистки при чтении она уйдёт клиенту при следующем
 	// скачивании того же файла.
-	return documentText(strings.TrimSpace(rc.values[genKeyTextByID(blockID, nodeIndex)]))
+	return documentText(strings.TrimSpace(rc.values[key]))
 }
 
 // promptNodes — узлы `prompt_text` формы вместе с их местом.
@@ -147,7 +181,11 @@ type promptNode struct {
 	BlockIndex int
 	NodeIndex  int
 	BlockID    string
-	Node       blockNode
+	// Repeat — вид повтор блока: пусто — обычный блок, "systems" — блок
+	// печатается по разу на систему (2026-11-08). От повтора зависит, писать
+	// ли ОДИН текст или по тексту на каждую систему.
+	Repeat string
+	Node   blockNode
 }
 
 // collectPromptNodes — все узлы по промту в порядке документа.
@@ -157,11 +195,15 @@ func collectPromptNodes(form OfferForm) []promptNode {
 		if !block.ShowInClient {
 			continue
 		}
+		repeat := strings.TrimSpace(block.Repeat)
 		for ni, node := range blockNodes(block) {
 			if node.Type != "prompt_text" || strings.TrimSpace(node.Instruction) == "" {
 				continue
 			}
-			out = append(out, promptNode{BlockIndex: bi, NodeIndex: ni, BlockID: block.ID, Node: node})
+			out = append(out, promptNode{
+				BlockIndex: bi, NodeIndex: ni, BlockID: block.ID,
+				Repeat: repeat, Node: node,
+			})
 		}
 	}
 	return out
@@ -187,31 +229,53 @@ func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
 	previous := offer.FormValues
 	cacheValid := previous != nil && previous[genKeySection] == fresh
 
-	reused, written, failed := 0, 0, 0
+	var reused, written, failed int
 	for _, pn := range nodes {
-		key := genKeyTextByID(pn.BlockID, pn.NodeIndex)
-		if cacheValid {
-			if strings.TrimSpace(previous[key]) != "" {
-				values[key] = previous[key]
-				reused++
-				continue
+		// Блок с repeat:"systems" печатается по разу на систему — значит, и
+		// текст узла внутри него пишется для КАЖДОЙ системы, под её карточку
+		// (2026-11-08). Иначе все системы получали текст первой.
+		if pn.Repeat == blockRepeatSystems {
+			for _, card := range cardsForOffer(cards, offer) {
+				r, w, f := generatePromptNodeText(ctx, pn, systemCacheHandle(card),
+					[]SystemCard{card}, offer, refs, c, values, previous, cacheValid)
+				reused, written, failed = reused+r, written+w, failed+f
 			}
-		}
-		started := time.Now()
-		text, err := writePromptNode(ctx, pn.Node, offer, cards, refs, c)
-		logModelCall("block:"+pn.BlockID, genKeyTextByID(pn.BlockID, pn.NodeIndex),
-			len(pn.Node.Instruction), started, err)
-		if err != nil || strings.TrimSpace(text) == "" {
-			// Модель недоступна или ответила пустым — блок молчит.
-			delete(values, key)
-			failed++
 			continue
 		}
-		values[key] = text
-		written++
+		r, w, f := generatePromptNodeText(ctx, pn, "", cards, offer, refs, c,
+			values, previous, cacheValid)
+		reused, written, failed = reused+r, written+w, failed+f
 	}
 	values[genKeySection] = fresh
 	return values, reused, written, failed
+}
+
+// generatePromptNodeText пишет (или берёт из кэша) текст одного узла.
+//
+// handle != "" — узел в блоке с повтором по системам: ключ кэша и подсказка для
+// модели относятся к ОДНОЙ системе (card), а не ко всему предложению.
+// Возвращает (взято из кэша, написано, не удалось).
+func generatePromptNodeText(ctx context.Context, pn promptNode, handle string,
+	cards []SystemCard, offer Offer, refs []skills.CardRef, c Completer,
+	values, previous map[string]string, cacheValid bool) (int, int, int) {
+	key := genKeyTextByID(pn.BlockID, pn.NodeIndex)
+	if handle != "" {
+		key = genKeyTextForSystem(pn.BlockID, pn.NodeIndex, handle)
+	}
+	if cacheValid && strings.TrimSpace(previous[key]) != "" {
+		values[key] = previous[key]
+		return 1, 0, 0
+	}
+	started := time.Now()
+	text, err := writePromptNode(ctx, pn.Node, offer, cards, refs, c)
+	logModelCall("block:"+pn.BlockID, key, len(pn.Node.Instruction), started, err)
+	if err != nil || strings.TrimSpace(text) == "" {
+		// Модель недоступна или ответила пустым — блок молчит.
+		delete(values, key)
+		return 0, 0, 1
+	}
+	values[key] = text
+	return 0, 1, 0
 }
 
 // writePromptNode — один вызов модели для одного узла.
