@@ -12,6 +12,37 @@ const BASE = process.argv[2] ?? 'http://127.0.0.1:18080';
 const SECRET = 'test-service-secret';
 const BOT_SECRET = 'test-bot-secret';
 
+// styleListBullet — numId маркерного списка бланка (docx.go, styleListBullet).
+// Одна копия: проверки ищут его в разметке, и вписанное руками «6» молча
+// разошлось бы с сервером, если номер в бланке поменяется.
+const styleListBullet = '6';
+
+/**
+ * compositionSection — часть документа со СОСТАВОМ системы.
+ *
+ * Нужна, чтобы проверка «состав не маркерами» не смотрела на весь файл: в нём
+ * есть и другие списки бланка (раздел `{{ссылки: система}}` печатается
+ * маркерами, 2026-11-08), и вопрос «нет ли маркеров В СОСТАВЕ» заранее отвечал
+ * «нет» на исправном документе.
+ *
+ * Граница — от заголовка «Состав системы» до конца абзацев этого списка: берём
+ * ровно те `<w:p>`, что идут следом, и останавливаемся на первом абзаце без
+ * нашего numId. Так срез не захватывает ни характеристики, ни ссылки.
+ */
+function compositionSection(xml) {
+  const at = xml.indexOf('Состав системы');
+  if (at < 0) return '';
+  const start = xml.lastIndexOf('<w:p>', at);
+  const from = start >= 0 ? start : at;
+  const paragraphs = xml.slice(from).split(/(?=<w:p>)/);
+  const out = [];
+  for (const paragraph of paragraphs) {
+    if (out.length > 0 && !/<w:numId w:val="\d+"\/>/.test(paragraph)) break;
+    out.push(paragraph);
+  }
+  return out.join('');
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -1903,6 +1934,17 @@ async function sectionServiceMarkers() {
       '<?xml version="1.0" encoding="UTF-8"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>',
       'utf8')),
     zipEntry('word/document.xml', Buffer.from(layoutDoc, 'utf8')),
+    // numbering.xml обязателен: с 2026-11-08 состав каждой системы получает
+    // СВОЙ numId, и его определение дописывается именно сюда. Без этого файла
+    // сервис печатает состав общим списком, и проверка перезапуска не увидит.
+    zipEntry('word/numbering.xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+      '<w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>' +
+      '<w:num w:numId="6"><w:abstractNumId w:val="0"/></w:num></w:numbering>',
+      'utf8')),
   ]);
   const up = await fetch(`${BASE}/api/offers/form/layout?name=Метки.docx`, {
     method: 'POST',
@@ -1953,10 +1995,20 @@ async function sectionServiceMarkers() {
 
   // Состав печатается НУМЕРОВАННЫМ списком (2026-11-07): на разрезе системы
   // маркеры слоёв стоят с номерами, и сопоставить их с маркированным списком
-  // было нельзя. numId 1 — нумерация бланка, numId 6 — маркеры.
-  ok('состав системы — нумерованный список', xml.includes('<w:numId w:val="1"/>'),
-    'нет нумерации списка');
-  ok('в составе нет маркеров', !xml.includes('<w:numId w:val="6"/>'),
+  // было нельзя. С 2026-11-08 у каждого состава СВОЙ numId (9000+), чтобы
+  // нумерация каждой системы шла с единицы; определение с перезапуском лежит в
+  // numbering.xml. numId 6 — маркеры, его в составе быть не должно.
+  const numberingXML = unzipEntrySafe(Buffer.from(doc), 'word/numbering.xml');
+  const compositionNumIds = [...xml.matchAll(/<w:numId w:val="(\d+)"\/>/g)]
+    .map((m) => Number(m[1])).filter((n) => n >= 9000);
+  ok('состав системы — нумерованный список', compositionNumIds.length > 0,
+    'нет нашего numId в составе');
+  ok('определение списка с перезапуском в numbering.xml',
+    [...new Set(compositionNumIds)].every((id) =>
+      numberingXML.includes(`<w:num w:numId="${id}">`) &&
+      numberingXML.includes('<w:startOverride w:val="1"/>')),
+    `numIds ${JSON.stringify(compositionNumIds)}`);
+  ok('в составе нет маркеров', !compositionSection(xml).includes(`<w:numId w:val="${styleListBullet}"/>`),
     'состав напечатан маркерами');
   // {{block:N}} — блок формы напечатан со своим текстом (берём по реальному id).
   const blockText = formBefore.json?.blocks?.[0]?.content?.[0]?.text ?? '';

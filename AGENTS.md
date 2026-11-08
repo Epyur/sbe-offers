@@ -30,6 +30,235 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Server fix 2026-11-08 — per-system composition numbering and per-system prompt text (NO plugin version bump)
+
+Server-only change in `offers-service/`; plugin client (`src/`) unchanged, so
+`manifest.json`/`package.json`/`main.js`/`styles.css` are NOT touched and the
+version stays **0.8.1**. **Deployed to the server 2026-11-08 15:21 MSK** (`backend`
+`8bf4399`): `git archive` → `scp` → `tar xf` in `/opt/mailers`, backup
+`offers-service.bak-0.8.1-20261108`, 8 file md5 sums matched the working tree
+(= commit) before the build, `mailers-offers-1` recreated (`Created 12:21:39Z`),
+health `ok`. Plugin, self-hosting and registry untouched (client unchanged).
+
+User report on the live export `Коммерческое предложение 003-2026.docx` with a
+SECOND system added:
+
+1. The layer numbering of the first system CONTINUED into the second (layers of
+   system 2 ran 13, 14… instead of restarting at 1).
+2. The description/advantages were IDENTICAL for both systems and matched the
+   first one.
+3. The introduction describes only one system.
+
+User's semantic note: the systems the manager adds are **not comparison
+systems** - they are systems chosen for **completeness of supply**. Comparison
+must be against **analogues from the Knowledge Base** (why, out of many variants,
+these were chosen). That is a **third, separate task - not done**, needs a
+decision (see "Next step").
+
+### Measured cause (live form `offers_form` id 1, two blocks)
+
+- `blk_mw7lf8xwyk10` "Введение", `repeat: ""`: a `prompt_text` (single intro).
+- `blk_mw6oonck8g8z` "Основной блок", **`repeat: "systems"`**: heading
+  `{{system_title}}`, paragraph `{{система: таблица}}` (image + composition), and
+  a `prompt_text` (the system description).
+
+Two distinct defects, both "one system's data shown for all":
+
+1. **Numbering.** `layoutCompositionMarkup` (`layout_service.go`) printed every
+   composition item with the SAME `numId 1`. Word counts numbering continuously
+   per `numId`, so the second list simply continued the first (13, 14…).
+2. **Same text.** A `prompt_text` node inside a `repeat: "systems"` block was
+   cached under `gen.<blockId>.<nodeIndex>` **without the system** and printed
+   identically for every system. The model was called without narrowing to the
+   pass's card (all cards were sent together), and the cache did not distinguish
+   which system a text belonged to.
+
+### Fix
+
+**Composition numbering — a fresh `numId` per list.**
+
+- New `offers-service/docx_numbering.go`: `numberingPlan.newList()` hands out a
+  `numId` that references the brand's decimal `abstractNum 0` with
+  `<w:lvlOverride><w:startOverride w:val="1"/></w:lvlOverride>` - that is Word's
+  "restart this list at 1". `injectNumberingDefinitions` **appends** `<w:num>` to
+  the package's `word/numbering.xml`; the file is NOT replaced (rule 2026-10-29:
+  replacing `styles.xml`/`numbering.xml` wholesale broke page numbers/footers).
+- The plan lives in `layoutRuntime.numbering` (`docx_layout.go`) and
+  `renderCtx.numbering` (`docx.go`); each repeat pass calls `newList()`. The plan
+  is created only when the layout HAS `word/numbering.xml`; without it the
+  composition falls back to the shared `numId 1` (an undefined `numId` renders no
+  numbers, worse than the old behaviour).
+- `numId` base is `numberingUserBase = 9000` to stay clear of the brand's 1..12.
+
+**Description/advantages — one text per system.**
+
+- `docx_text.go`: `genKeyTextForSystem(blockID, nodeIndex, handle)` =
+  `gen.<blockId>.<nodeIndex>.sys<handle>`, where `handle` = `systemCacheHandle(card)`
+  (note id; for SKU-only systems a hash of the SKU).
+- `collectPromptNodes` records `Repeat`. `generateBlockTexts`: for a
+  `repeat: "systems"` block the `prompt_text` node is generated **once per chosen
+  system**, and the model prompt receives **only that system's card**
+  (`[]SystemCard{card}`).
+- `generatedTextFor` inside a repeat pass reads the pass's system key
+  (`rc.systemCard`), so the second system prints its OWN text.
+- A normal (non-repeated) block still generates ONE text under the shared key.
+
+**Not touched:** the intro (`blk_mw7lf8xwyk10`, no repeat) is still a single
+text; cross-system intro and analogue comparison are the separate third task.
+
+### Files
+
+- `docx_numbering.go` (new), `docx_repeat_systems_test.go` (new).
+- `docx.go` (`renderCtx.numbering`, `buildDocxWithNumbering` /
+  `buildDocxWithMediaAndLinksAndNumbering`, plan passed at build; dead
+  `numberedItemXMLOpts` removed), `docx_layout.go` (`layoutRuntime.numbering`,
+  plan creation, `injectNumberingDefinitions` before `zipFiles`), `docx_text.go`
+  (per-system keys/generation), `layout_service.go` (`numberingPlan()`,
+  `layoutCompositionMarkup(card, plan)` via `listItemNumXML`).
+- Tests: `layout_service_tokens_test.go` (updated for `numId` 9000+ and
+  `startOverride`), `docx_layout_links_test.go` (fixture now has
+  `word/numbering.xml`), `scripts/offers_local_e2e.mjs` (layout fixture gained
+  `word/numbering.xml`; composition check rewritten for `numId >= 9000` +
+  `startOverride`).
+
+### Verified
+
+`gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green. New tests:
+`TestCompositionNumberingRestartsPerSystem`, `TestRepeatedBlockPromptTextIsPerSystem`,
+`TestSingleBlockPromptTextStaysSingle`. Stand: **317 passed, 0 failed** (the two
+checks previously written off as "flaky" were stand defects - see "The two
+'flaky' stand checks" below).
+
+### The two "flaky" stand checks - they were stand defects, not flakiness (2026-11-08)
+
+Both failed on every run, including on the code before the 2026-11-08 changes
+(verified with `git stash` + a rebuilt stand), and had been recorded as "known
+flaky" in every release note. Neither had anything to do with the service.
+
+1. **`ответ менеджера попал в бриф`.** `scripts/llm-stub.mjs` chose the brief
+   answer with `return /JSON/i.test(system) ? BRIEF_REPLY : COPY_REPLY`, i.e.
+   by the system prompt. The brief prompt does NOT contain "JSON" in its system
+   half - the marker lives in the USER half (`buildBriefUserPrompt`:
+   "ТЕКУЩИЙ БРИФ (JSON):"). So the stub answered the brief step with the
+   copywriting text, `parseBriefAnswer` failed, the service replied «Не разобрал
+   ответ», and the check went red - correctly, but for a stand reason.
+   **Fix:** `reply(system, user)` takes both halves and matches the brief by
+   `^ТЕКУЩИЙ БРИФ \(JSON\):` in the user prompt. **Rule: match a stub on the
+   half of the request where the service actually writes the marker** - the
+   third time a matcher was written against the wrong side (see 2026-11-06 and
+   2026-11-07).
+2. **`ссылки карточки кликабельны`.** The check prints a layout over KB stub
+   card **100**, but `## Ссылки` existed only on card **101**. The marker
+   honestly printed nothing, so no `<w:hyperlink>` appeared. Live cards carry
+   the section on all 120 systems, so the stub was also misrepresenting the live
+   data shape. **Fix:** card 100 gained `## Ссылки` (a page URL and a document
+   link), the same shape as 101.
+
+**A third one surfaced when the second was fixed - and it was also a stand
+defect.** `в составе нет маркеров` asserted `!xml.includes('<w:numId w:val="6"/>')`
+over the WHOLE document. With the card's links now printed, the `{{ссылки:
+система}}` block contributes its own bullet list (`numId 6`), so the check
+reported "composition printed with bullets" on a correct document. **Fix:** the
+assertion is scoped to `compositionSection(xml)` - the `<w:p>` run that starts
+at the «Состав системы» heading and stops at the first paragraph without a
+`numId` - and compares against `styleListBullet`, a named constant instead of a
+hand-typed `6`.
+
+**Rule that came out of all three:** a check that searches the WHOLE document
+for a construct the document legitimately uses elsewhere is not a check. Scope
+it to the section it is about, the way `itemsTableXML` already scopes the price
+table.
+
+### Next step (item 1 DONE 2026-11-08, item 2 open)
+
+1. ~~Rewrite the intro prompt so it covers ALL chosen systems as a complex
+   supply solution (single text today).~~ **DONE 2026-11-08** — see "The intro
+   described one system" below.
+2. Build KB analogue comparison (why these systems, not alternatives) - new
+   functionality; current `compare_table`/`compareSystemRows` compares the
+   CHOSEN systems to each other, which is not what is wanted. **Not started.**
+
+## The intro described one system (2026-11-08, server-only, second half)
+
+Server-only change in `offers-service/`; the plugin client (`src/`) is untouched,
+version stays **0.8.1**. Third item of the live report on offer 003/2026:
+*"введение описывает только одну систему"* — with two systems chosen
+(note 5874 "ТН-ФУНДАМЕНТ Дренаж Проф" and note 6878) the introduction named
+only the first.
+
+### Measured cause — two independent defects
+
+1. **The cache key did not know the selection.** `hashOfferFacts` is built from
+   the offer's own fields, positions and total; chosen systems live in
+   `offers_context` (KB cards) and were not part of the hash. `gen.layout.<hash>`
+   and `gen.<block>.<node>` therefore stayed valid when a second system was
+   added — the build reprinted the text written for one system. Verified on the
+   live `form_values` of offer 003/2026: the intro text mentions only
+   «система ТН-Фундамент Дренаж Проф».
+2. **The prompt never said what the selection was.** `buildBlockUserPromptFor`
+   listed cards under "СИСТЕМЫ И МАТЕРИАЛЫ В ПРЕДЛОЖЕНИИ" but never stated
+   how many systems are chosen, and inside `repeat: "systems"` the cards are
+   narrowed to ONE (`[]SystemCard{card}` — correct for the per-system text, but
+   the intro is a separate pass that should know the whole set). The model did
+   what the instruction said and wrote about one system.
+
+### Fix
+
+- **Selection fingerprint.** `offerSelectionHandle(offer)` joins the chosen
+  systems' handles (note id, else `sku<hash>`) in choice order;
+  `cardSelectionHandle(cards)` is the fallback for calls that carry cards but
+  no recorded choice. It enters:
+  - the layout prompt cache key: `layoutPromptKeyCache(instruction, selection)`
+    → `gen.layout.<hash>.sel<hash>` (`layoutPromptCache.selection`);
+  - the block node key: `genKeyTextByID(blockID, node, selection)` and
+    `genKeyTextForSystem(blockID, node, handle, selection)`;
+  - `form_values[genKeySystems]`, written next to `gen.section` on every build.
+- **`buildBlockUserPromptSelection`** is the single prompt builder;
+  `buildBlockUserPromptFor` / `buildBlockUserPrompt` keep their old signatures
+  and pass an empty selection (tests and callers unaffected).
+- **`renderSystemsForPrompt`** adds a "ВЫБРАННЫЕ СИСТЕМЫ В ПРЕДЛОЖЕНИИ (N шт.)"
+  block listing every chosen system, plus — only when N ≥ 2 — an explicit rule
+  to speak of all of them as one turnkey solution ("комплектное решение") and
+  never to silently describe one. With a single system the rule is omitted: it
+  pushes the model towards an invented comparison.
+- `layoutContext.selection` / `renderCtx.selection` carry the fingerprint into
+  both print paths; `layoutContext.renderCtx()` and `renderLayoutOffer`
+  (`botapi.go`) fill it from the offer.
+- **Old cached texts are not rewritten**, they simply stop matching: the new
+  keys are minted on the next build and the model is called once per changed
+  selection. The intro of offer 003/2026 regenerates on its next export.
+
+### Verified
+
+`gofmt -l .` empty, `go vet ./...` clean, `go test ./...` green (`main`,
+`model`, `skills`). New tests in `docx_prompt_selection_test.go`:
+`TestPromptListsEveryChosenSystem` (both titles + "(2 шт.)" + the turnkey rule),
+`TestPromptKeepsSingleSystemSimple` (no turnkey rule for one system),
+`TestSelectionChangesPromptAndTextKeys` (fingerprint differs on add, stable on
+repeat), `TestIntroIsRewrittenWhenSecondSystemAdded` (a text written for one
+system is NOT reused after adding the second — `written=1`),
+`TestRepeatedBlockPromptSeesWholeSelection` (the repeat prompt carries the whole
+set while the model still receives one card). Live prompt checked against the
+real offer data (`Охотская`, both notes): the section appears with both systems.
+Stand `offers_local_e2e.mjs`: **317 passed, 0 failed** (the two checks long
+written off as "flaky" turned out to be stand defects and were fixed in the same
+session - see "The two 'flaky' stand checks").
+
+### Traps met here
+
+- **`hashOfferFacts` is not "the offer's data" for text purposes.** Anything the
+  model SEES and that does not live on the offer row (KB cards, the selection,
+  refs) is invisible to it. When a text depends on such data, put its
+  fingerprint into the cache key, or the text silently freezes.
+- **`offerSystemTitles` falls back to "система №<noteId>"** for a system whose
+  card is missing from the passed slice — which is exactly the state inside a
+  repeat pass. The prompt list therefore names every system even when only one
+  card is at hand; the title is replaced by the real name on the pass that has
+  the card.
+- **A test written against a narrowed card slice proves the wrong thing.** The
+  first version of `TestPromptListsEveryChosenSystem` passed `[]SystemCard{cards[0]}`
+  and failed: the set must be derived from the offer, not from the slice.
+
 ## Version 0.8.1 — TOC recalculation, heading levels 1–4, system titles from KB, no forced prices in text (2026-11-08)
 
 Version (manifest.json = package.json) = **0.8.1**, no `b` suffix.
