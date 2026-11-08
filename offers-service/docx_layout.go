@@ -69,6 +69,12 @@ type layoutContext struct {
 	// напечатанным по метке, и метке `{{ссылки: …}}`.
 	refs    []skills.CardRef
 	service map[string]string
+	// selection — признак НАБОРА выбранных систем, а не карточек для модели
+	// (2026-11-08). Печать блока с повтором сужает `cards` до одной системы, и
+	// промт потерял бы, что систем в предложении несколько: вступление КП
+	// 003/2026 описывало первую и молчало о второй. Пусто — признак считается
+	// по `cards` и `offer.Systems` (так живут тесты и старые вызовы).
+	selection string
 	// systemTexts — сохранённые тексты системы (шаг B): метка `{{текст: …}}`
 	// печатает их и модель не зовёт.
 	systemTexts func(card SystemCard) map[string]string
@@ -77,6 +83,20 @@ type layoutContext struct {
 	// `offers_system_text` делала метку мёртвой для всех живых систем.
 	// nil в тестах и в сборках без БД: метка тогда печатает только сохранённое.
 	systemText func(card SystemCard, block string) string
+}
+
+// selectionHandle — набор выбранных систем для ключей кэша текстов.
+//
+// Заданный признак главнее расчётного: печать блока с повтором сужает `cards`
+// до одной системы, а промт вступления обязан знать весь комплект (2026-11-08).
+func (lc layoutContext) selectionHandle() string {
+	if lc.selection != "" {
+		return lc.selection
+	}
+	if lc.offer.Systems != nil {
+		return offerSelectionHandle(lc.offer)
+	}
+	return cardSelectionHandle(lc.cardList())
 }
 
 // layoutRuntime — состояние одной сборки по макету.
@@ -1257,7 +1277,11 @@ type layoutPromptCache struct {
 	// previous — form_values предложения до сборки (там же кэш прошлых текстов).
 	previous map[string]string
 	// section — хеш данных предложения: под ним кэш имеет силу.
-	section   string
+	section string
+	// selection — набор выбранных систем на момент сборки (offerSelectionHandle).
+	// Промт без повтора описывает все системы, поэтому его ключ и текст зависят
+	// от набора: добавили систему — вступление пересобирается (2026-11-08).
+	selection string
 	offer     Offer
 	cards     []SystemCard
 	refs      []skills.CardRef
@@ -1376,12 +1400,67 @@ func cardByNote(cards []SystemCard, noteID int64) SystemCard {
 	return SystemCard{}
 }
 
+// offerSelectionHandle — признак набора выбранных систем в предложении.
+//
+// Зачем отдельный признак, если есть `hashOfferFacts` (2026-11-08). Хеш данных
+// не видит выбора систем: карточки в него не входят, а живут они в
+// `offers_context`. Живой случай КП 003/2026 — вторую систему добавили, хеш не
+// изменился, и сборка взяла из кэша вступление, написанное про ОДНУ систему.
+//
+// Поэтому имя системы (номер заметки, иначе код) входит и в ключ текста, и в
+// хеш данных: сменился набор — текст пересобирается, повторный выбор той же
+// системы — нет.
+func offerSelectionHandle(offer Offer) string {
+	parts := make([]string, 0, len(offer.Systems))
+	for _, s := range offer.Systems {
+		if handle := systemChoiceHandle(s); handle != "" {
+			parts = append(parts, handle)
+		}
+	}
+	return strings.Join(parts, "+")
+}
+
+// systemChoiceHandle — устойчивый признак выбранной системы.
+func systemChoiceHandle(s OfferSystem) string {
+	if s.NoteID > 0 {
+		return itoa(int(s.NoteID))
+	}
+	if sku := strings.TrimSpace(s.SKU); sku != "" {
+		return "sku" + hashShort(sku)
+	}
+	return ""
+}
+
+// cardSelectionHandle — признак ОДНОЙ карточки в том же виде.
+//
+// Если у предложения выбор не записан (старый КП, сборка из тестов), признак
+// набора берётся по карточкам, которые получила модель: без этого умолчания
+// ключ текста вступления не совпал бы с ключом чтения.
+func cardSelectionHandle(cards []SystemCard) string {
+	if len(cards) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(cards))
+	for _, card := range cards {
+		if handle := systemCacheHandle(card); handle != "" && handle != "0" {
+			parts = append(parts, handle)
+		}
+	}
+	return strings.Join(parts, "+")
+}
+
 // layoutPromptKeyCache — ключ кэша одного промта макета.
 //
 // В ключ входит сам текст промта (хеш): администратор мог переписать фразу в
-// макете, и старый текст к другой подсказке не годится.
-func layoutPromptKeyCache(instruction string) string {
-	return "gen.layout." + hashShort(instruction)
+// макете, и старый текст к другой подсказке не годится. Второй вход — набор
+// систем: промт без повтора описывает ВСЕ выбранные системы, и его текст
+// обязан меняться вместе с выбором (2026-11-08).
+func layoutPromptKeyCache(instruction, selection string) string {
+	key := "gen.layout." + hashShort(instruction)
+	if selection == "" {
+		return key
+	}
+	return key + ".sel" + hashShort(selection)
 }
 
 // hashShort — первые байты sha256 шестнадцатерично.
@@ -1396,7 +1475,7 @@ func (c *layoutPromptCache) text(instruction string) string {
 	if instruction == "" {
 		return ""
 	}
-	key := layoutPromptKeyCache(instruction)
+	key := layoutPromptKeyCache(instruction, c.selection)
 	if v, ok := c.values[key]; ok {
 		return v
 	}

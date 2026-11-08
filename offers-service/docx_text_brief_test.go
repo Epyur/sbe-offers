@@ -136,7 +136,7 @@ func TestGeneratedBlockTextIsClean(t *testing.T) {
 	if written != 1 {
 		t.Fatalf("ожидали один текст, получили %d", written)
 	}
-	got := values[genKeyTextByID("desc", 0)]
+	got := values[genKeyTextByID("desc", 0, "")]
 	if strings.Contains(got, "НУЖНО") {
 		t.Fatalf("маркер попал в кэш: %q", got)
 	}
@@ -150,8 +150,8 @@ func TestGeneratedBlockTextIsClean(t *testing.T) {
 func TestRenderedPromptBlockDropsLegacyMarker(t *testing.T) {
 	offer := testOfferForBlocks()
 	offer.FormValues = map[string]string{
-		genKeySection:             hashOfferFacts(testOfferForBlocks()),
-		genKeyTextByID("test", 0): "Текст с маркером [НУЖНО: срок службы].",
+		genKeySection:                 hashOfferFacts(testOfferForBlocks()),
+		genKeyTextByID("test", 0, ""): "Текст с маркером [НУЖНО: срок службы].",
 	}
 	docx, err := renderOfferDocxWithCards(formWithBlock(
 		`[{"type":"prompt_text","instruction":"Опиши систему","maxWords":60}]`),

@@ -392,6 +392,7 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		refs:      refs,
 		completed: llmCompleter{},
 		report:    report,
+		selection: offerSelectionHandle(offer),
 	}
 	// Сохранённые тексты систем (шаг B) — читаются один раз на сборку: метки
 	// `{{текст: …}}` печатают их и модель не зовут (шаг C). Пустое место
@@ -420,6 +421,7 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		form:        func() OfferForm { return form },
 		refs:        refs,
 		service:     serviceValuesWithCards(offer, cards),
+		selection:   offerSelectionHandle(offer),
 		systemTexts: func(card SystemCard) map[string]string { return texts[card.NoteID] },
 		// Текста нет — дописать и сохранить (2026-11-07). Живая жалоба:
 		// `{{текст: система: description}}` печатала пустое место, потому что

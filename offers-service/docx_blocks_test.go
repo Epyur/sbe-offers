@@ -201,7 +201,7 @@ func TestPromptNodeUsesCacheAndDegrades(t *testing.T) {
 	form := formWithBlock(`[{"type":"prompt_text","instruction":"Опиши систему","maxWords":80}]`)
 	offer := testOfferForBlocks()
 	offer.FormValues[genKeySection] = hashOfferFacts(offer)
-	offer.FormValues[genKeyTextByID("test", 0)] = "Готовый текст из кэша."
+	offer.FormValues[genKeyTextByID("test", 0, "")] = "Готовый текст из кэша."
 
 	data, err := renderOfferDocxFull(form, offer, nil, nil, nil)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestPromptNodeStaleCacheIgnored(t *testing.T) {
 	form := formWithBlock(`[{"type":"prompt_text","instruction":"Опиши систему"}]`)
 	offer := testOfferForBlocks()
 	offer.FormValues[genKeySection] = "старый-хеш"
-	offer.FormValues[genKeyTextByID("test", 0)] = "Текст по старой версии."
+	offer.FormValues[genKeyTextByID("test", 0, "")] = "Текст по старой версии."
 
 	data, err := renderOfferDocxFull(form, offer, nil, nil, nil)
 	if err != nil {

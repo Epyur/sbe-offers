@@ -70,8 +70,11 @@ func TestRepeatedBlockPromptTextIsPerSystem(t *testing.T) {
 	if written != 2 {
 		t.Fatalf("написано текстов %d, ожидалось два (по одному на систему)", written)
 	}
-	first := values[genKeyTextForSystem("main", 0, "1")]
-	second := values[genKeyTextForSystem("main", 0, "2")]
+	// В ключе текста теперь есть и набор систем (2026-11-08): без него блок
+	// продолжал бы печатать текст, написанный до добавления системы.
+	selection := offerSelectionHandle(offer)
+	first := values[genKeyTextForSystem("main", 0, "1", selection)]
+	second := values[genKeyTextForSystem("main", 0, "2", selection)]
 	if first == "" || second == "" {
 		t.Fatalf("текст системы не записан: %q / %q", first, second)
 	}
@@ -104,11 +107,17 @@ func TestSingleBlockPromptTextStaysSingle(t *testing.T) {
 	if written != 1 {
 		t.Fatalf("написано текстов %d, ожидался один", written)
 	}
-	if values[genKeyTextByID("intro", 0)] != "Введение." {
-		t.Fatalf("текст введения не записан: %q", values[genKeyTextByID("intro", 0)])
+	// Один текст на всё предложение, но под набором систем: сменился набор —
+	// вступление пишется заново (2026-11-08).
+	introKey := genKeyTextByID("intro", 0, offerSelectionHandle(offer))
+	if values[introKey] != "Введение." {
+		t.Fatalf("текст введения не записан: %q", values[introKey])
 	}
-	if values[genKeyTextForSystem("intro", 0, "1")] != "" {
+	if values[genKeyTextForSystem("intro", 0, "1", offerSelectionHandle(offer))] != "" {
 		t.Fatal("обычный блок написал посистемный текст — ключ не должен зависеть от системы")
+	}
+	if values[genKeyTextByID("intro", 0, "")] != "" {
+		t.Fatal("блок без выбора систем написал текст под общим ключом — кэш пережил бы смену набора")
 	}
 }
 

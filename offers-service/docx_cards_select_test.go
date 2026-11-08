@@ -11,15 +11,15 @@ import "testing"
 // Сброс кэша текстов стирает ТОЛЬКО хеш данных; тексты остаются.
 func TestDropStaleBlockTextsRemovesHashOnly(t *testing.T) {
 	values := map[string]string{
-		genKeySection:          "hash",
-		genKeyTextByID("d", 0): "Текст блока",
-		"client_name":          "ООО Заказчик",
+		genKeySection:              "hash",
+		genKeyTextByID("d", 0, ""): "Текст блока",
+		"client_name":              "ООО Заказчик",
 	}
 	out := dropStaleBlockTexts(values)
 	if _, ok := out[genKeySection]; ok {
 		t.Fatal("хеш остался — текст считался бы свежим")
 	}
-	if out[genKeyTextByID("d", 0)] != "Текст блока" {
+	if out[genKeyTextByID("d", 0, "")] != "Текст блока" {
 		t.Fatalf("текст блока пропал: %#v", out)
 	}
 	if out["client_name"] != "ООО Заказчик" {

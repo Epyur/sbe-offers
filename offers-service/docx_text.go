@@ -33,6 +33,11 @@ import (
 const (
 	// genKeySection — хеш данных, под которые был написан весь текст блоков.
 	genKeySection = "gen.section"
+	// genKeySystems — набор выбранных систем на момент последней сборки
+	// (2026-11-08). Хеш данных систем не видит: живут они в `offers_context`, а
+	// не в предложении, поэтому добавленная система раньше не меняла ни один
+	// ключ — и вступление оставалось написанным про одну (живой КП 003/2026).
+	genKeySystems = "gen.systems"
 	// genPrefixNode — начало ключа текста одного узла.
 	genPrefixNode = "gen."
 	// genDefaultMaxWords — длина текста блока по умолчанию: абзац в
@@ -45,10 +50,18 @@ func genKeyText(blockIndex, nodeIndex int) string {
 	return fmt.Sprintf("gen.block%d.%d", blockIndex, nodeIndex)
 }
 
-// genKeyTextByID — тот же ключ по идентификатору блока: у формы блоки правятся
-// и переезжают, и привязка к id переживает перестановку.
-func genKeyTextByID(blockID string, nodeIndex int) string {
-	return fmt.Sprintf("gen.%s.%d", blockID, nodeIndex)
+// genKeyTextByID — тот же ключ по идентификатору блока.
+//
+// selection — набор выбранных систем (2026-11-08). Блок без повтора пишет ОДИН
+// текст про все системы, поэтому при смене набора он обязан пересобраться:
+// живой КП 003/2026 держал вступление, написанное про одну систему, хотя
+// выбраны были две. Пусто — ключ прежний (выбора нет, блок не зависит от него).
+func genKeyTextByID(blockID string, nodeIndex int, selection string) string {
+	key := fmt.Sprintf("gen.%s.%d", blockID, nodeIndex)
+	if selection == "" {
+		return key
+	}
+	return key + ".sel" + hashShort(selection)
 }
 
 // genKeyTextForSystem — ключ кэша текста узла для ОДНОЙ системы.
@@ -59,8 +72,10 @@ func genKeyTextByID(blockID string, nodeIndex int) string {
 // Теперь у каждой системы свой ключ, и модель пишет её карточку.
 //
 // handle — по чему различать системы (обычно номер заметки; см. systemCacheHandle).
-func genKeyTextForSystem(blockID string, nodeIndex int, handle string) string {
-	return fmt.Sprintf("%s.sys%s", genKeyTextByID(blockID, nodeIndex), handle)
+// selection — набор выбранных систем: весь блок пересобирается, когда набор
+// сменился (2026-11-08), и текст ОДНОЙ системы живёт под тем же набором.
+func genKeyTextForSystem(blockID string, nodeIndex int, handle, selection string) string {
+	return fmt.Sprintf("%s.sys%s", genKeyTextByID(blockID, nodeIndex, selection), handle)
 }
 
 // systemCacheHandle — устойчивый признак системы для ключа кэша.
@@ -166,9 +181,10 @@ func generatedTextFor(rc renderCtx, blockID string, nodeIndex int) string {
 	}
 	// Внутри повтора по системам текст узла — свой у каждой системы
 	// (2026-11-08): с общим ключом вторая система печатала текст первой.
-	key := genKeyTextByID(blockID, nodeIndex)
+	selection := rc.selectionHandle()
+	key := genKeyTextByID(blockID, nodeIndex, selection)
 	if rc.systemCard != nil {
-		key = genKeyTextForSystem(blockID, nodeIndex, systemCacheHandle(*rc.systemCard))
+		key = genKeyTextForSystem(blockID, nodeIndex, systemCacheHandle(*rc.systemCard), selection)
 	}
 	// documentText и здесь: КП, собранные до 2026-11-05, держат в кэше пометку
 	// [НУЖНО: …], и без чистки при чтении она уйдёт клиенту при следующем
@@ -226,6 +242,11 @@ func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
 		return values, 0, 0, 0
 	}
 	fresh := hashOfferFacts(offer)
+	sections := cardsForOffer(cards, offer)
+	selection := offerSelectionHandle(offer)
+	if selection == "" {
+		selection = cardSelectionHandle(sections)
+	}
 	previous := offer.FormValues
 	cacheValid := previous != nil && previous[genKeySection] == fresh
 
@@ -235,18 +256,21 @@ func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
 		// текст узла внутри него пишется для КАЖДОЙ системы, под её карточку
 		// (2026-11-08). Иначе все системы получали текст первой.
 		if pn.Repeat == blockRepeatSystems {
-			for _, card := range cardsForOffer(cards, offer) {
+			for _, card := range sections {
 				r, w, f := generatePromptNodeText(ctx, pn, systemCacheHandle(card),
-					[]SystemCard{card}, offer, refs, c, values, previous, cacheValid)
+					[]SystemCard{card}, offer, refs, c, values, previous, cacheValid, selection)
 				reused, written, failed = reused+r, written+w, failed+f
 			}
 			continue
 		}
 		r, w, f := generatePromptNodeText(ctx, pn, "", cards, offer, refs, c,
-			values, previous, cacheValid)
+			values, previous, cacheValid, selection)
 		reused, written, failed = reused+r, written+w, failed+f
 	}
 	values[genKeySection] = fresh
+	// Признак набора — рядом с признаком систем: он ставится даже когда модель
+	// не ответила ни на один узел, иначе следующая сборка повторила бы отказ.
+	values[genKeySystems] = selection
 	return values, reused, written, failed
 }
 
@@ -254,20 +278,23 @@ func generateBlockTexts(ctx context.Context, form OfferForm, offer Offer,
 //
 // handle != "" — узел в блоке с повтором по системам: ключ кэша и подсказка для
 // модели относятся к ОДНОЙ системе (card), а не ко всему предложению.
+// selection — набор выбранных систем: подсказке он нужен всегда (вступление
+// перечисляет все системы), ключу — чтобы текст пересобрался со сменой набора
+// (2026-11-08).
 // Возвращает (взято из кэша, написано, не удалось).
 func generatePromptNodeText(ctx context.Context, pn promptNode, handle string,
 	cards []SystemCard, offer Offer, refs []skills.CardRef, c Completer,
-	values, previous map[string]string, cacheValid bool) (int, int, int) {
-	key := genKeyTextByID(pn.BlockID, pn.NodeIndex)
+	values, previous map[string]string, cacheValid bool, selection string) (int, int, int) {
+	key := genKeyTextByID(pn.BlockID, pn.NodeIndex, selection)
 	if handle != "" {
-		key = genKeyTextForSystem(pn.BlockID, pn.NodeIndex, handle)
+		key = genKeyTextForSystem(pn.BlockID, pn.NodeIndex, handle, selection)
 	}
 	if cacheValid && strings.TrimSpace(previous[key]) != "" {
 		values[key] = previous[key]
 		return 1, 0, 0
 	}
 	started := time.Now()
-	text, err := writePromptNode(ctx, pn.Node, offer, cards, refs, c)
+	text, err := writePromptNode(ctx, pn.Node, offer, cards, selection, refs, c)
 	logModelCall("block:"+pn.BlockID, key, len(pn.Node.Instruction), started, err)
 	if err != nil || strings.TrimSpace(text) == "" {
 		// Модель недоступна или ответила пустым — блок молчит.
@@ -279,8 +306,12 @@ func generatePromptNodeText(ctx context.Context, pn promptNode, handle string,
 }
 
 // writePromptNode — один вызов модели для одного узла.
+//
+// selection — набор выбранных систем всего предложения: у блока с повтором
+// `cards` сужены до одной системы, и без этого признака модель не знала бы, что
+// в КП их несколько.
 func writePromptNode(ctx context.Context, node blockNode, offer Offer,
-	cards []SystemCard, refs []skills.CardRef, c Completer) (string, error) {
+	cards []SystemCard, selection string, refs []skills.CardRef, c Completer) (string, error) {
 	if c == nil {
 		return "", nil
 	}
@@ -289,7 +320,7 @@ func writePromptNode(ctx context.Context, node blockNode, offer Offer,
 		maxWords = genDefaultMaxWords
 	}
 	system := skills.RenderBlockSystem(node.Instruction, node.Hint, maxWords)
-	user := buildBlockUserPromptFor(node.Instruction+" "+node.Hint, offer, cards, refs)
+	user := buildBlockUserPromptSelection(node.Instruction+" "+node.Hint, offer, cards, selection, refs)
 	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return "", err
@@ -1060,13 +1091,27 @@ func buildBlockUserPrompt(offer Offer, cards []SystemCard, refs []skills.CardRef
 	return buildBlockUserPromptFor("", offer, cards, refs)
 }
 
+// buildBlockUserPromptFor — промпт для узла, где набор систем совпадает с
+// карточками (так пишут и читают тесты, и так работает блок без повтора).
 func buildBlockUserPromptFor(instruction string, offer Offer, cards []SystemCard, refs []skills.CardRef) string {
+	return buildBlockUserPromptSelection(instruction, offer, cards, "", refs)
+}
+
+// buildBlockUserPromptSelection — данные предложения текстом для модели.
+//
+// selection — набор выбранных систем всего предложения (offerSelectionHandle).
+// У блока с повтором `cards` сужены до одной системы, а читателю нужен весь
+// комплект: вступление КП 003/2026 описывало первую систему и молчало о второй
+// (2026-11-08). Пусто — набор считается по карточкам.
+func buildBlockUserPromptSelection(instruction string, offer Offer, cards []SystemCard,
+	selection string, refs []skills.CardRef) string {
 	var b strings.Builder
 	b.WriteString("ДАННЫЕ ПРЕДЛОЖЕНИЯ:\n")
 	b.WriteString(offerFactsTextFor(offer, skills.AsksForPrices(instruction)))
 	b.WriteString(renderBriefForPrompt(offer.FormValues))
+	b.WriteString(renderSystemsForPrompt(offer, cards, selection))
 	if len(cards) > 0 {
-		b.WriteString("\nСИСТЕМЫ И МАТЕРИАЛЫ В ПРЕДЛОЖЕНИИ:\n")
+		b.WriteString("\nКАРТОЧКИ СИСТЕМ (для обоснования, в подмножестве ниже):\n")
 		for _, card := range cards {
 			b.WriteString(card.PromptText() + "\n\n")
 		}
@@ -1080,6 +1125,70 @@ func buildBlockUserPromptFor(instruction string, offer Offer, cards []SystemCard
 	}
 	b.WriteString("\nНапиши только текст этого блока.")
 	return b.String()
+}
+
+// renderSystemsForPrompt — какие системы выбраны в предложении, разделом.
+//
+// Один раздел вместо разрозненных фактов (2026-11-08). На живом КП 003/2026
+// модель получила карточки обеих систем и всё равно написала вступление об
+// одной: в промпте не было сказано, что систем несколько и что вступление —
+// введение ко всему комплекту. Правило о комплектной поставке появляется
+// только при двух и более системах: при одной системе оно бессмысленно и
+// сбивает модель на выдумку «сравнения вариантов».
+func renderSystemsForPrompt(offer Offer, cards []SystemCard, selection string) string {
+	names := promptSystemNames(offer, cards, selection)
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nВЫБРАННЫЕ СИСТЕМЫ В ПРЕДЛОЖЕНИИ (" + itoa(len(names)) + " шт.):\n")
+	for _, name := range names {
+		b.WriteString("- " + name + "\n")
+	}
+	if len(names) < 2 {
+		return b.String()
+	}
+	b.WriteString("\nЭти системы выбраны по отдельности, каждая — на свой участок объекта, и в\n")
+	b.WriteString("документе идут в комплекте. Если подсказка просит общий текст (вступление,\n")
+	b.WriteString("резюме), говори обо ВСЕХ системах как об одном комплектном решении: что\n")
+	b.WriteString("закрывает каждая и что вместе дают. Выдумывать системы, которых нет в\n")
+	b.WriteString("списке, нельзя; молча писать об одной системе, когда их несколько, тоже\n")
+	b.WriteString("нельзя — читатель решит, что остальное в предложение не входит.\n")
+	return b.String()
+}
+
+// promptSystemNames — названия систем в порядке выбора, без повторов.
+//
+// Название берётся из карточек (так же, как их печатает метка `[Название
+// системы]`): ни у одной живой системы нет кода, и номер заметки читателю ни о
+// чём не говорит. Система, чьей карточки нет в переданном списке, называется
+// так же, как её печатает metка: код, иначе номер заметки. Выбрасывать её
+// нельзя — вступление обязано упомянуть все системы, даже если карточка ещё не
+// загрузилась в кэш (2026-11-08).
+func promptSystemNames(offer Offer, cards []SystemCard, selection string) []string {
+	out := make([]string, 0, len(offer.Systems)+len(cards))
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		for _, have := range out {
+			if strings.EqualFold(have, name) {
+				return
+			}
+		}
+		out = append(out, name)
+	}
+	for _, title := range offerSystemTitles(offer, cards) {
+		add(title)
+	}
+	// Старые КП и тесты: предложение без выбора, но с карточками.
+	if selection == "" || selection == cardSelectionHandle(cards) {
+		for _, card := range cards {
+			add(card.Title)
+		}
+	}
+	return out
 }
 
 // briefPromptFields — что из брифа попадает в промпт, в каком порядке и под

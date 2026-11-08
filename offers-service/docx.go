@@ -465,6 +465,24 @@ type renderCtx struct {
 	// systemText — дописать недостающий текст системы (2026-11-07). nil —
 	// дописывать некуда, блок печатает только сохранённое.
 	systemText func(card SystemCard, block string) string
+	// selection - набор выбранных систем всего предложения (2026-11-08). В
+	// повторе `cards` сужены до одной системы, а промт вступления обязан знать
+	// весь комплект. Пусто - признак считается по карточкам и `offer.Systems`.
+	selection string
+}
+
+// selectionHandle - признак набора систем для ключей кэша текстов.
+func (rc renderCtx) selectionHandle() string {
+	if rc.selection != "" {
+		return rc.selection
+	}
+	if handle := offerSelectionHandle(rc.offer); handle != "" {
+		return handle
+	}
+	if rc.systemCard != nil {
+		return cardSelectionHandle([]SystemCard{*rc.systemCard})
+	}
+	return cardSelectionHandle(rc.cards)
 }
 
 // text подставляет поля формы и служебные значения предложения в один кусок

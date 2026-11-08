@@ -33,7 +33,7 @@ func TestGenerateBlockTextsWritesText(t *testing.T) {
 	if written != 1 || reused != 0 {
 		t.Fatalf("ожидали 1 новый текст, получили reused=%d written=%d", reused, written)
 	}
-	if got := values[genKeyTextByID("desc", 0)]; got != "Система укладывается в два слоя." {
+	if got := values[genKeyTextByID("desc", 0, "")]; got != "Система укладывается в два слоя." {
 		t.Fatalf("текст не записан: %q", got)
 	}
 	if values[genKeySection] == "" {
@@ -59,8 +59,8 @@ func TestGenerateBlockTextsReusesCache(t *testing.T) {
 	if reused != 1 || written != 0 {
 		t.Fatalf("reused=%d written=%d", reused, written)
 	}
-	if got[genKeyTextByID("desc", 0)] != "Текст." {
-		t.Fatalf("текст из кэша не сохранён: %q", got[genKeyTextByID("desc", 0)])
+	if got[genKeyTextByID("desc", 0, "")] != "Текст." {
+		t.Fatalf("текст из кэша не сохранён: %q", got[genKeyTextByID("desc", 0, "")])
 	}
 }
 
@@ -79,8 +79,8 @@ func TestGenerateBlockTextsInvalidatesOnOfferChange(t *testing.T) {
 	if c.calls != 1 || written != 1 || reused != 0 {
 		t.Fatalf("при изменившемся предложении текст должен быть переписан: calls=%d written=%d reused=%d", c.calls, written, reused)
 	}
-	if got[genKeyTextByID("desc", 0)] != "Новый." {
-		t.Fatalf("текст не обновлён: %q", got[genKeyTextByID("desc", 0)])
+	if got[genKeyTextByID("desc", 0, "")] != "Новый." {
+		t.Fatalf("текст не обновлён: %q", got[genKeyTextByID("desc", 0, "")])
 	}
 }
 
@@ -93,8 +93,8 @@ func TestGenerateBlockTextsDegradesOnModelError(t *testing.T) {
 	if written != 0 {
 		t.Fatalf("на ошибке модели текст не должен появляться: %d", written)
 	}
-	if got[genKeyTextByID("desc", 0)] != "" {
-		t.Fatalf("ключ текста оставлен: %q", got[genKeyTextByID("desc", 0)])
+	if got[genKeyTextByID("desc", 0, "")] != "" {
+		t.Fatalf("ключ текста оставлен: %q", got[genKeyTextByID("desc", 0, "")])
 	}
 	if got["client_name"] != "ООО Заказчик" {
 		t.Fatal("прочие значения формы потерялись")
@@ -125,7 +125,7 @@ func TestGenerateBlockTextsKeyedByBlockID(t *testing.T) {
 	}}, form.Blocks...)
 	c := &fakeCompleter{answer: "Текст."}
 	values, _, _, _ := generateBlockTexts(context.Background(), form, testOfferForBlocks(), c, nil, nil)
-	if values[genKeyTextByID("desc", 0)] == "" {
+	if values[genKeyTextByID("desc", 0, "")] == "" {
 		t.Fatalf("текст блока не найден под своим id: %#v", values)
 	}
 }

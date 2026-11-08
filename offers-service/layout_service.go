@@ -202,6 +202,7 @@ func (lc layoutContext) renderCtx() renderCtx {
 		media:       lc.media(),
 		numbering:   lc.numberingPlan(),
 		systemTexts: lc.systemTexts,
+		selection:   lc.selectionHandle(),
 	}
 }
 
