@@ -27,16 +27,6 @@ function check(name, ok, detail = '') {
 
 const read = (rel) => fs.readFileSync(path.join(pluginRoot, rel), 'utf8');
 
-// На ветке `main` серверных папок нет (правило «бэки живут только на
-// backend»). Сверка с кодом сервера там невозможна — это не расхождение, и
-// падать незачем: скрипт говорит об этом и выходит успешно. Запускать сверку
-// надо на `backend`, и именно там она держит контракт.
-const serverDir = path.join(pluginRoot, 'offers-service');
-if (!fs.existsSync(path.join(serverDir, 'layout_tokens.go'))) {
-  console.log('SKIP сверка с сервером: offers-service нет в этой ветке (запускайте на backend)');
-  process.exit(0);
-}
-
 /** Маркеры из плагина: `{ marker: '…', label: '…' }`. */
 function pluginMarkers() {
   const out = [];
