@@ -1888,6 +1888,7 @@ async function sectionServiceMarkers() {
   const layoutDoc =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    `<w:p><w:r><w:t>{{system_title}}</w:t></w:r></w:p>` +
     `<w:p><w:r><w:t>{{система}}</w:t></w:r></w:p>` +
     `<w:p><w:r><w:t>{{текст: система: description}}</w:t></w:r></w:p>` +
     `<w:p><w:r><w:t>{{ссылки: система}}</w:t></w:r></w:p>` +
@@ -1897,6 +1898,9 @@ async function sectionServiceMarkers() {
   const layout = packZip([
     zipEntry('[Content_Types].xml', Buffer.from(
       '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/settings.xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>',
       'utf8')),
     zipEntry('word/document.xml', Buffer.from(layoutDoc, 'utf8')),
   ]);
@@ -1914,11 +1918,18 @@ async function sectionServiceMarkers() {
     method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
   })).arrayBuffer();
   const xml = unzipEntrySafe(Buffer.from(doc), 'word/document.xml');
+  const settingsXML = unzipEntrySafe(Buffer.from(doc), 'word/settings.xml');
 
   // Ни одной скобки метки: всё распознано и подставлено или снято.
   for (const bad of ['{{', '}}']) {
     ok(`скобки метки «${bad}» не дошли до документа`, !xml.includes(bad), xml.slice(0, 200));
   }
+  ok('название системы подставлено вместо номера заметки',
+    !xml.includes('система №100') && xml.includes('ТН-Гидроизоляция Фундамента'),
+    xml.slice(0, 200));
+  ok('settings.xml просит Word пересчитать оглавление при открытии',
+    settingsXML.includes('<w:updateFields w:val="true"/>'),
+    settingsXML);
   // {{система}} — одна таблица без границ.
   ok('система напечатана одной таблицей', (xml.match(/<w:tbl>/g) ?? []).length >= 1);
   ok('у таблицы системы нет границ', xml.includes('<w:left w:val="none"'),
@@ -2004,7 +2015,10 @@ async function sectionServiceMarkers() {
     ...form.json,
     blocks: [{
       id: '98', title: 'Система', showInClient: true, showInInternal: false,
-      content: [{ type: 'paragraph', text: '{{система}}' }],
+      content: [
+        { type: 'heading', level: 2, text: 'Раздел 2 уровня' },
+        { type: 'paragraph', text: '{{система}}' },
+      ],
     }],
   };
   await call('PUT', '/form', { token: ownerToken, body: systemBlockForm });
@@ -2042,6 +2056,9 @@ async function sectionServiceMarkers() {
   ok('картинка системы вставлена дважды', drawingCount === 2,
     `картинок ${drawingCount}`);
   ok('прогон картинки не сосед абзаца', !systemBlockXML.includes('</w:p><w:r>'));
+  ok('заголовок 2 уровня из блока имеет outlineLvl=1, а не heading 1',
+    systemBlockXML.includes('<w:outlineLvl w:val="1"/>') && !systemBlockXML.includes('<w:pStyle w:val="1"/>'),
+    systemBlockXML.slice(0, 300));
   ok('картинка системы попала в пакет',
     systemBlockDocx.includes(Buffer.from('word/media/offerimg1.png')));
 

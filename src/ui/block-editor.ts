@@ -95,7 +95,7 @@ function nodeRow(
 
   if (node.type === 'heading') {
     const level = row.createEl('select', { cls: 'tn-offers-input tn-offers-node-level' });
-    for (const value of [2, 3, 4]) {
+    for (const value of [1, 2, 3, 4]) {
       level.createEl('option', { value: String(value), text: `Уровень ${value}` });
     }
     level.value = String(node.level ?? 2);

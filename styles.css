@@ -1090,7 +1090,8 @@
   margin: 12px 0 6px;
 }
 
-.tn-offers-preview-h2 { font-size: 16pt; }
+.tn-offers-preview-h1 { font-size: 16pt; }
+.tn-offers-preview-h2 { font-size: 14pt; }
 .tn-offers-preview-h3 { font-size: 13pt; }
 .tn-offers-preview-h4 { font-size: 12pt; }
 
