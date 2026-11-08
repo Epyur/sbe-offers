@@ -30,6 +30,96 @@ check commands, what is unfinished. It is one page and it is meant to be read
 whole. The section "Текущее состояние" there is always the current truth; the
 newest "STATE" block at the bottom of this file is the short version of it.
 
+## Version 0.8.0 — the system-text marker works, every marker is clickable (2026-11-07)
+
+Version (manifest.json = package.json) = **0.8.0**, no `b` suffix.
+
+User report: *"`{{текст: система: description}}` не работает ни через прямую
+вставку в макет, ни через вставку в блоки форм"*, plus two requirements —
+check every placeholder declared in the help, and make all of them insertable
+by click in the form configurator, "as standard attributes".
+
+### 1. Why the marker was silent (measured)
+
+`offers_system_text` on production held **0 rows**. `renderLayoutCardText`
+printed ONLY the stored text and never called the model, so with an empty table
+every marker printed empty space — in the layout and in the form block alike.
+
+Fix: `layoutContext.systemText` is a new print input ("write block N of system
+X"). `writeMissingSystemText` → `layoutPromptCache.systemText`
+(`docx_layout.go`) writes it once, caches it in `form_values`
+(`gen.systext.<noteId>.<hash>`), stores it in `offers_system_text` and prints
+it. The cache is tied to `hashOfferFacts`, so changed prices invalidate it. A
+model failure leaves the block silent and logs the reason — never fails the
+document.
+
+### 2. Both print paths, because both were broken differently
+
+- In the layout the text source did not exist at all (above).
+- In the form-block path `renderCtx` never received the system texts:
+  `renderOfferDocxFull` did not pass them. `renderOfferDocxWithTexts`
+  (`docx.go`) is the new entry point; `renderOfferDocxFull` is now a
+  compatibility wrapper, so no existing caller or test changed.
+
+### 3. One registry for every marker, clickable
+
+`src/ui/markers.ts` (`MARKER_GROUPS`) is the single place listing all markers:
+7 service fields, 6 system markers, `{{block:<id>}}`, and 4 prompt/image
+markers. `block-editor.ts` renders chips under every text field and inserts the
+marker AT THE CURSOR (`insertMarker`); `form-layout.ts` renders the same list
+for the .docx card and COPIES to the clipboard (`copyMarker`), because Word has
+no cursor to insert into; `help.ts` builds its lines from the registry
+(`markerLines()`), so the help cannot drift from the code again — which is
+exactly how the marker ended up documented but missing from the UI.
+
+**Verified by script, not by eye:** `scripts/check_marker_registry.mjs` reads
+the service keys and the text-block names OUT OF THE GO CODE
+(`serviceLayoutMarkers`, `startsWithImageWord`, `systemTextBlocks`) and fails
+when the plugin claims a marker the server does not parse, or when a server
+marker is missing from the plugin. `TestEveryDeclaredMarkerPrints`
+(`layout_markers_contract_test.go`) prints every declared marker for real and
+fails if one stays a literal.
+
+### Traps met here — each cost time, all will repeat
+
+1. **The model stub answered the wrong prompt.** The matchers
+   `/Задача заказчика/` never fired: the real instruction says «…из брифа —
+   задача заказчика…» in **lower case**. The layout answer was stored as the
+   system description. Fix: the `i` flag. **Check a stub matcher against the
+   real string from `systemtext.go`, never against a paraphrase.**
+2. **Matcher order matters both ways.** The system text and the layout prompt
+   are both built by `RenderBlockSystem`, and «ПО ПОДСКАЗКЕ АДМИНИСТРАТОРА»
+   appears in both. System texts are checked first.
+3. **`cardByNote` returns an empty card, not an error.** The first version
+   reached `saveSystemText` with `note_id = 0` and wrote junk rows. The card is
+   now looked up ONCE before any write; no card — nothing is saved.
+4. **A stub container recreated by hand with `docker run` starts WITHOUT the
+   compose environment.** Doing that produced 300/313 on the stand. Recreate
+   only with `docker compose -f docker-compose.local.yml up -d --force-recreate llm-stub`.
+5. **Two stand failures are not mine.** `ответ менеджера попал в бриф` and
+   `ссылки карточки кликабельны` fail on the code BEFORE this change too
+   (checked with `git stash` and a rebuild). They are flaky stand checks.
+
+### Verified
+
+`go test ./...` green, `gofmt -l` empty, `go vet` clean; live run on
+`temple.docx` (`OFFERS_LIVE_LAYOUT`) — no marker braces survive and the system
+text prints in both the layout and the block; `crapper` — new functions under
+CRAP 10 (`systemText` 7.0 at 94 %, `previousSystemText` 5.4,
+`writeSystemTextNow` 7.3, `cardByNote` 3.0, `renderLayoutCardText` 6.0); plugin
+`tsc --noEmit` EXIT=0, `npm run build`, `check_bundle_strings.mjs` 0,
+`check_marker_registry.mjs` 24/24; stand — every topic check green, including
+the new «текст системы дописан и напечатан из метки».
+
+| file | sha256 | bytes |
+|---|---|---|
+| `manifest.json` | `a08140c140581f709d64623a111fd931276b6209fc8ae85d2e313905c7fcff68` | 468 |
+| `main.js` | `a2612dd0440a8a34f5b5b346b0d2f1d302e71e16464012ad11719bf83b12b677` | 172753 |
+| `styles.css` | `a512690ad6ff6edb9d6ca754d740c2e59f9e48a4a1617f789d449c5e25433fb6` | 34915 |
+
+`styles.css` changed: `.tn-offers-chip-wrap` and `.tn-offers-chip-group`
+(chip groups).
+
 ## Version 0.7.9 — system composition prints as a NUMBERED list (2026-11-07)
 
 Version (manifest.json = package.json) = **0.7.9**, no `b` suffix.

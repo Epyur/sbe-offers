@@ -2,6 +2,7 @@ import { Modal, Notice, TFile } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { OfferForm } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { MARKER_GROUPS } from './markers';
 
 /**
  * Карточка «Макет документа .docx» (2026-11-05).
@@ -53,6 +54,10 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
       'системы, {{block:1}} — целый блок формы. Подробно — в разделе справки ' +
       '«Макет .docx: как расставить метки».',
   });
+  // Список готовых меток с копированием (2026-11-07): макет набирают в Word, и
+  // руками `{{текст: система: description}}` не набрать без ошибки. Копия в
+  // буфер — единственный способ, который там работает.
+  renderMarkerCopyList(guide, 'Метки для макета — нажмите, чтобы скопировать:');
   const exampleBtn = guide.createEl('button', { text: '⬇ Скачать образец макета', cls: 'tn-btn tn-btn-ghost' });
   exampleBtn.addEventListener('click', () => {
     void (async () => {
@@ -119,6 +124,40 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
         }
       })();
     });
+  }
+}
+
+/**
+ * Список готовых меток, копируемых в буфер (2026-11-07).
+ *
+ * Один и тот же список — в карточке макета и в справке, из `markers.ts`. Сделано
+ * по прямому требованию: «все варианты стандартных плейсхолдеров должны быть
+ * перечислены так же, как стандартные атрибуты, с возможностью выбора по клику».
+ * В Word клик не вставит текст в документ, поэтому здесь он копирует метку.
+ */
+export function renderMarkerCopyList(container: HTMLElement, title: string): void {
+  container.createDiv({ cls: 'tn-offers-muted', text: title });
+  for (const group of MARKER_GROUPS) {
+    const row = container.createDiv({ cls: 'tn-offers-row tn-offers-chip-row tn-offers-chip-wrap' });
+    row.createSpan({ cls: 'tn-offers-chip-group', text: group.title });
+    for (const v of group.variants) {
+      const chip = row.createEl('button', { cls: 'tn-offers-chip tn-offers-chip-btn', text: v.label });
+      chip.setAttribute('title', `${v.marker} — нажмите, чтобы скопировать`);
+      chip.addEventListener('click', (event) => {
+        event.preventDefault();
+        void copyMarker(v.marker);
+      });
+    }
+  }
+}
+
+/** Копирует метку в буфер и говорит об этом; ошибка не глотается. */
+export async function copyMarker(marker: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(marker);
+    new Notice(`Метка скопирована: ${marker}`, 5000);
+  } catch (e: unknown) {
+    new Notice(`Не удалось скопировать метку: ${errorMessage(e)} — наберите вручную: ${marker}`, 10000);
   }
 }
 

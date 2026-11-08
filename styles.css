@@ -768,6 +768,20 @@
   flex-wrap: wrap;
 }
 
+/* Группа меток в списке чипов (2026-11-07): служебные метки идут с
+   заголовками, иначе двадцать кнопок подряд не читаются. */
+.tn-offers-chip-wrap {
+  gap: 6px;
+}
+
+.tn-offers-chip-group {
+  flex-basis: 100%;
+  margin-top: 4px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+
 .tn-offers-chip-btn {
   border: 1px solid var(--border-secondary-enabled);
   cursor: pointer;
