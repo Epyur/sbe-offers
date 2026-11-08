@@ -1,0 +1,90 @@
+import type { Placeholder } from '../types/offers';
+
+/**
+ * Служебные метки, которые печатает сервер (2026-11-07).
+ *
+ * Повод — живое «не работает»: администратор знал про `{{текст: система:
+ * description}}` только из справки и набирал ее руками в Word, а в редакторе
+ * формы такой метки не было вовсе. Здесь один список на все места: чипы в
+ * редакторе блоков, карточка макета, справка, образец — править надо здесь.
+ *
+ * Правило синхронизации: каждое имя и значение ниже обязано пониматься сервером
+ * (`layout_tokens.go`, `parseLayoutServiceSpec`). Скрипт
+ * `scripts/check_marker_registry.mjs` сверяет этот файл с сервером и падает,
+ * если метка заявлена здесь, а там не разбирается.
+ *
+ * `word` — слово, которое ищет сервер; `variants` — что человек может вставить.
+ * Вариант `система`/`ссылки`/`характеристики` берёт ПЕРВУЮ выбранную систему;
+ * в блоке с повтором «по каждой системе» — свою.
+ */
+export interface MarkerVariant {
+  /** Готовая метка для вставки. */
+  marker: string;
+  /** Что она печатает — текст для человека. */
+  label: string;
+}
+
+export interface MarkerGroup {
+  /** Название группы (по ней рисуется разделитель в списке чипов). */
+  title: string;
+  variants: MarkerVariant[];
+}
+
+/** Поля формы/предложения, которые подставляет сервер без модели. */
+export const MARKER_GROUPS: MarkerGroup[] = [
+  {
+    title: 'Служебные поля предложения',
+    variants: [
+      { marker: '{{offer_number}}', label: 'Номер предложения' },
+      { marker: '{{offer_date}}', label: 'Дата предложения (дд.мм.гггг)' },
+      { marker: '{{manager}}', label: 'Подпись (e-mail менеджера)' },
+      { marker: '{{offer_client}}', label: 'Получатель из КП' },
+      { marker: '{{offer_object}}', label: 'Объект из формы КП' },
+      { marker: '{{system_title}}', label: 'Название первой системы' },
+      { marker: '{{systems_list}}', label: 'Выбранные системы списком' },
+    ],
+  },
+  {
+    title: 'Система (данные карточки, без модели)',
+    variants: [
+      { marker: '{{система}}', label: 'Картинка и состав одной таблицей' },
+      { marker: '{{система: таблица}}', label: 'Картинка и состав друг под другом' },
+      { marker: '{{текст: система: description}}', label: 'Обоснование применения' },
+      { marker: '{{текст: система: advantages}}', label: 'Преимущества' },
+      { marker: '{{ссылки: система}}', label: 'Ссылки карточки' },
+      { marker: '{{характеристики: система}}', label: 'Характеристики карточки таблицей' },
+    ],
+  },
+  {
+    title: 'Блоки формы',
+    variants: [
+      { marker: '{{block:<id>}}', label: 'Целый блок по его id' },
+    ],
+  },
+  {
+    title: 'Модель и картинки',
+    variants: [
+      { marker: '{Опиши систему в двух абзацах}', label: 'Текст модели по подсказке' },
+      { marker: '{картинка}', label: 'Картинка первой системы' },
+      { marker: '{картинка: система 2}', label: 'Картинка второй выбранной системы' },
+      { marker: '{картинка: материал}', label: 'Картинка первой позиции' },
+    ],
+  },
+];
+
+/**
+ * Чипы служебных полей для редактора блоков: плоский список, как устроен
+ * существующий `renderPlaceholderPicker`.
+ */
+export const SERVICE_FIELDS: Placeholder[] = MARKER_GROUPS[0].variants.map((v) => ({
+  id: markerInner(v.marker),
+  label: v.label,
+}));
+
+/** Внутренняя часть метки: `{{имя}}` → `имя`. */
+export function markerInner(marker: string): string {
+  const trimmed = marker.trim();
+  if (trimmed.startsWith('{{') && trimmed.endsWith('}}')) return trimmed.slice(2, -2).trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed.slice(1, -1).trim();
+  return trimmed;
+}

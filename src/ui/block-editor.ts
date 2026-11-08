@@ -1,6 +1,7 @@
 ﻿import { Notice } from 'obsidian';
 import type { Block, Placeholder, RichNode } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { MARKER_GROUPS, SERVICE_FIELDS } from './markers';
 
 /**
  * Блок-редактор формы КП — по образцу конфигуратора протоколов в ЛИМС
@@ -34,21 +35,7 @@ function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/**
- * Поля, которые сервер подставляет сам, без заполнения администратором.
- *
- * Номер и дата предложения, подпись и клиент есть у каждого КП; вписывать их
- * в форму руками — забыть обновить после копирования. Тот же список считает
- * сервер (`ServiceFieldIDs`, offers-service/docx.go) — правя один, поправьте
- * второй, иначе чип предложит поле, которого сервер не знает.
- */
-export const SERVICE_FIELDS: Placeholder[] = [
-  { id: 'offer_number', label: 'Номер предложения' },
-  { id: 'offer_date', label: 'Дата предложения' },
-  { id: 'manager', label: 'Подпись (e-mail менеджера)' },
-  { id: 'offer_client', label: 'Получатель из КП' },
-  { id: 'offer_object', label: 'Объект из формы КП' },
-];
+export { SERVICE_FIELDS, MARKER_GROUPS } from './markers';
 
 const NODE_LABELS: Array<[RichNode['type'], string]> = [
   ['paragraph', 'Абзац'],
@@ -402,23 +389,74 @@ function onNodeKindChanged(node: RichNode): void {
   }
 }
 
+/**
+ * Вставка метки в текст по курсору: одно место на все чипы.
+ *
+ * Повод (2026-11-07): администратор просил вставлять служебные метки по клику
+ * так же, как обычные поля, — набирать `{{текст: система: description}}` руками
+ * в Word и в текстовом поле невыносимо, и метка теряется от одного пропуска.
+ */
+export function insertMarker(target: HTMLTextAreaElement | HTMLInputElement, marker: string): void {
+  const start = target.selectionStart ?? target.value.length;
+  const end = target.selectionEnd ?? start;
+  target.value = target.value.slice(0, start) + marker + target.value.slice(end);
+  target.dispatchEvent(new Event('input'));
+  target.selectionStart = start + marker.length;
+  target.selectionEnd = start + marker.length;
+  target.focus();
+}
+
+/**
+ * Чипы для вставки: поля формы, затем все служебные метки по группам.
+ *
+ * Служебные метки (2026-11-07) пришли на смену короткому списку полей: раньше
+ * здесь были только номер, дата и подпись, а `{{система}}`, `{{текст: система:
+ * …}}`, `{{ссылки: система}}` и прочие существовали лишь в справке — вставить
+ * их можно было только руками. Один список — `markers.ts`: правка в одном месте
+ * меняет все экраны, а серверная сверка (`check_marker_registry.mjs`) ловит
+ * расхождение с кодом.
+ */
 export function renderPlaceholderPicker(placeholders: Placeholder[], target: HTMLTextAreaElement): void {
-  const all = [...placeholders, ...SERVICE_FIELDS];
-  if (all.length === 0) return;
-  const picker = target.parentElement?.createDiv({ cls: 'tn-offers-row tn-offers-chip-row' });
+  const picker = target.parentElement?.createDiv({ cls: 'tn-offers-row tn-offers-chip-row tn-offers-chip-wrap' });
   if (!picker) return;
-  picker.createSpan({ cls: 'tn-offers-muted', text: 'Вставить поле:' });
-  for (const p of all) {
-    const chip = picker.createEl('button', { cls: 'tn-offers-chip tn-offers-chip-btn', text: p.label });
-    chip.addEventListener('click', () => {
-      const insert = `{{${p.id}}}`;
-      const start = target.selectionStart ?? target.value.length;
-      const end = target.selectionEnd ?? start;
-      target.value = target.value.slice(0, start) + insert + target.value.slice(end);
-      target.dispatchEvent(new Event('input'));
-      target.focus();
-    });
+  picker.createSpan({ cls: 'tn-offers-muted', text: 'Вставить:' });
+  for (const p of placeholders) {
+    addChip(picker, `{{${p.id}}}`, p.label, target);
   }
+  for (const group of MARKER_GROUPS) {
+    picker.createSpan({ cls: 'tn-offers-chip-group', text: group.title });
+    for (const v of group.variants) {
+      addChip(picker, v.marker, v.label, target);
+    }
+  }
+  // Поля формы есть и в первом списке, а он может быть пустым у новой формы.
+  const seen = new Set([
+    ...placeholders.map((p) => `{{${p.id}}}`),
+    ...MARKER_GROUPS.flatMap((g) => g.variants.map((v) => v.marker)),
+  ]);
+  if (seen.size > 0) return;
+  addChip(picker, '{{offer_number}}', 'Номер предложения', target);
+}
+
+/** Один чип: кнопка вставляет готовую метку и не уводит фокус из поля. */
+export function addChip(
+  parent: HTMLElement,
+  marker: string,
+  label: string,
+  target: HTMLTextAreaElement | HTMLInputElement,
+): void {
+  const chip = parent.createEl('button', { cls: 'tn-offers-chip tn-offers-chip-btn', text: label });
+  chip.setAttribute('title', marker);
+  chip.addEventListener('click', (event) => {
+    event.preventDefault();
+    insertMarker(target, marker);
+  });
+}
+
+/** Остались ли в списке поля, не пришедшие из общей таблицы меток. */
+export function customFields(placeholders: Placeholder[]): Placeholder[] {
+  const known = new Set(SERVICE_FIELDS.map((p) => p.id));
+  return placeholders.filter((p) => !known.has(p.id) && !p.id.startsWith('brief.'));
 }
 
 export interface BlockEditorHandle {
