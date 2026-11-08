@@ -34,8 +34,11 @@ newest "STATE" block at the bottom of this file is the short version of it.
 
 Server-only change in `offers-service/`; plugin client (`src/`) unchanged, so
 `manifest.json`/`package.json`/`main.js`/`styles.css` are NOT touched and the
-version stays **0.8.1**. **Deploy to the server NOT done at commit time** - needs
-a separate user command.
+version stays **0.8.1**. **Deployed to the server 2026-11-08 15:21 MSK** (`backend`
+`8bf4399`): `git archive` → `scp` → `tar xf` in `/opt/mailers`, backup
+`offers-service.bak-0.8.1-20261108`, 8 file md5 sums matched the working tree
+(= commit) before the build, `mailers-offers-1` recreated (`Created 12:21:39Z`),
+health `ok`. Plugin, self-hosting and registry untouched (client unchanged).
 
 User report on the live export `Коммерческое предложение 003-2026.docx` with a
 SECOND system added:
