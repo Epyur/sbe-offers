@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.4**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `PENDING`, `main` `PENDING`
+registry updated. Code commits: `backend` `68b6fef`, `main` `ca45438`
 (the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
 at the last commit that touched code). This release fixes and extends the link
 section of the exported offer: the visible hyperlink text is the document title
