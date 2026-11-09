@@ -44,7 +44,7 @@ Telegram-боте и в самом Obsidian, на выходе — DOCX на ф�
 | `main` (HEAD) | `ca45438` (код); плагинная часть побайтово равна `backend` |
 | сервер | контейнер `mailers-offers-1` пересоздан 2026-11-09 16:59 MSK, health `ok`; бэкап `offers-{service,bot}.bak-0.9.3-20261109-165829`; `offers-bot` не пересобирался (бот не менялся), поллер запущен |
 | самораздача | выложена `kb-selfhost.sh sbe-offers`; три суммы сверены по https (`aba8be45…`, `c1edd7b9…`, `a32ac3df…`) |
-| реестр | `www/registry.json` поправлен точечно (version 0.9.4 + uploadedAt + manifest/main), копия прежнего — `registry.json.bak-20261109-0.9.4-server`; https отдаёт 0.9.4 с теми же суммами |
+| реестр | `sbe-apstore-registry` `22d3934`; `www/registry.json` поправлен точечно (version 0.9.4 + uploadedAt + manifest/main), копия прежнего — `registry.json.bak-20261109-0.9.4-server`; https отдаёт 0.9.4 с теми же суммами |
 | сборка | `manifest.json` 468 Б, `main.js` 191531 Б, `styles.css` 35651 Б |
 | стенд | кодовые проверки зелёные (`go test`, `tsc`, `check_bundle_strings`, OpenAPI 87/64); локальный стенд Docker в этой сессии не поднимался |
 | что не проверено | живой прогон документа человеком (нет ключа устройства); новость ЦУП 0.9.4 опубликуется при следующем запуске Obsidian; `LinkedRefs` появятся после «Перечитать из Базы знаний» на боевой базе |
