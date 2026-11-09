@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"mailers/offers/skills"
@@ -106,4 +107,30 @@ func TestRefDisplayTextCleansMarkdownLabel(t *testing.T) {
 	if got := refDisplayText(ref); got != "Техлист ФНД" {
 		t.Fatalf("подпись из старого кеша не очищена: %q", got)
 	}
+}
+
+// Метка `{{ссылки: система}}` ВНЕ повтора печатает ссылки ВСЕХ выбранных
+// систем, а не первой (2026-11-09, КП 003/2026: пропадали ссылки ТН-Стилобат).
+func TestLinksMarkerOutsideRepeatCoversAllSystems(t *testing.T) {
+	form := OfferForm{
+		Title: "КП",
+		Blocks: []Block{
+			{ID: "rep", Title: "Системы", ShowInClient: true, Repeat: "systems", Content: []byte(`[{"type":"paragraph","text":"{{system_title}}"}]`)},
+			{ID: "links", Title: "Ссылки", ShowInClient: true, Content: []byte(`[{"type":"paragraph","text":"{{ссылки: система}}"}]`)},
+		},
+	}
+	cards := []SystemCard{
+		{NoteID: 1, Title: "Первая", Refs: []skills.CardRef{{Label: "Страница первой", URL: "https://tn.ru/sys/1", Kind: skills.RefKindPage}}},
+		{NoteID: 2, Title: "Вторая", Refs: []skills.CardRef{{Label: "Страница второй", URL: "https://tn.ru/sys/2", Kind: skills.RefKindPage}}},
+	}
+	offer := Offer{Number: "1/2026", OwnerEmail: "m@tn.ru", Systems: []OfferSystem{{NoteID: 1}, {NoteID: 2}}}
+	data, err := renderOfferDocxFull(form, offer, cards, nil, nil)
+	if err != nil {
+		t.Fatalf("сборка упала: %v", err)
+	}
+	body := string(docxEntry(t, data, "word/document.xml"))
+	if !strings.Contains(body, "Страница первой") || !strings.Contains(body, "Страница второй") {
+		t.Fatalf("метка вне повтора напечатала не все системы:\n%s", body)
+	}
+	assertAllLinksDefined(t, data)
 }

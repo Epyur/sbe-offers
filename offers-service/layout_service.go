@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"strings"
+
+	"mailers/offers/skills"
 )
 
 // Печать служебных меток макета (2026-11-06, шаг C плана «генерация без
@@ -389,15 +391,16 @@ func cellBody(markup string) string {
 // Отношения собираются здесь, а не в linkLayoutDocument: видимого адреса в
 // тексте больше нет, искать его там нечего. Сборщик один — lc.layout.links;
 // renderLayoutDocx пишет их вместе с найденными адресами.
+//
+// ВНЕ повтора по системам метка печатает ссылки ВСЕХ выбранных систем (Refs +
+// LinkedRefs материалов, дедуп по адресу) — ту же сборку, что и узел `links`
+// (collectOfferRefs). Раньше она брала первую систему: в живом КП 003/2026
+// (две системы, метка `{{ссылки: система}}` стоит ПОСЛЕ повтора) печатались
+// ссылки только ТН-Фундамент, а ТН-Стилобат и его материалы пропадали
+// (жалоба 2026-11-09). ВНУТРИ повтора остаётся своя система прохода — иначе
+// каждый проход печатал бы весь комплект.
 func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
-	card, ok := layoutRowCard(lc, row)
-	if !ok {
-		return ""
-	}
-	refs := cardAllRefs(card)
-	if len(refs) == 0 {
-		refs = lc.refs
-	}
+	refs := layoutLinksFor(lc, row)
 	if len(refs) > maxLinkRefs {
 		refs = refs[:maxLinkRefs]
 	}
@@ -413,6 +416,22 @@ func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 		}
 	}
 	return sb.String()
+}
+
+// layoutLinksFor — какие ссылки печатает метка `{{ссылки}}`.
+//
+// Повтор по системам — карточка прохода; иначе — весь комплект выбранных
+// систем (lc.refs уже собран collectOfferRefs по всем карточкам, с материалами
+// и без повторов). Пустой список — метка молчит.
+func layoutLinksFor(lc layoutContext, row layoutServiceRow) []skills.CardRef {
+	if row.system != nil {
+		return cardAllRefs(*row.system)
+	}
+	if len(lc.refs) > 0 {
+		return lc.refs
+	}
+	// lc.refs пуст (сборку звали без него) — собираем из карточек на месте.
+	return collectOfferRefs(lc.cardList())
 }
 
 // renderLayoutCardSpecs — характеристики карточки таблицей.

@@ -61,6 +61,7 @@ func TestServiceMarkersScanAsService(t *testing.T) {
 		"{{block:1}}":                     layoutTokenBlock,
 		"{{система}}":                     layoutTokenSystem,
 		"{{система: таблица}}":            layoutTokenSystem,
+		"{{ссылки}}":                      layoutTokenLinks,
 		"{{ссылки: система}}":             layoutTokenLinks,
 		"{{ссылки системы}}":              layoutTokenLinks,
 		"{{характеристики: система}}":     layoutTokenSpecs,
