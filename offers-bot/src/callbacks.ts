@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Обработчики кнопок черновика (Task 1 плана 2026-10-29).
  *
  * Раньше эти десять веток жили внутри `handleCallback` в поллере, и функция
@@ -25,6 +25,16 @@ import {
 import * as api from './api.ts';
 import type { BotDeps } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
+import {
+  COMBAT_KEYBOARD,
+  combatIntro,
+  combatListMessage,
+  combatNotEmptyMessage,
+  combatPickerKeyboard,
+  combatPickerMessage,
+  combatSheetMessage,
+  combatSideAddedMessage,
+} from './flow/combat.ts';
 import {
   NO_OFFER_FOR_FILE,
   applyPending,
@@ -77,6 +87,10 @@ export interface CallbackCtx {
   foundSystems?: api.SystemItem[];
   /** Запомнить показанный список систем, чтобы `sys:<индекс>` его нашёл. */
   rememberSystems?: (systems: api.SystemItem[]) => void;
+  /** Стороны боевого листка, показанные кнопками (2026-11-09). */
+  foundCombat?: api.CombatSystemItem[];
+  /** Запомнить список сторон, чтобы `oursel:<индекс>`/`compsel:<индекс>` его нашли. */
+  rememberCombat?: (items: api.CombatSystemItem[]) => void;
 }
 
 /**
@@ -651,6 +665,207 @@ export async function applyAttachConfirm(ctx: CallbackCtx, yes: boolean): Promis
   }
 }
 
+// --- Боевой листок в боте (2026-11-09) ---------------------------------
+//
+// Листок собирается кнопками: выбрать наш продукт, добавить конкурента,
+// забрать DOCX. Текстового ввода здесь нет — стороны выбираются из списков,
+// которые уже лежат в кеше сервера.
+
+/** «⚔️ Боевой листок»: создать пустой листок с номером и начать диалог. */
+export async function startCombat(ctx: CallbackCtx): Promise<void> {
+  let sheet: api.CombatSheet;
+  try {
+    sheet = await api.createCombat(ctx.chatId, 'Боевой листок');
+  } catch (e) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось начать боевой листок: ${(e as Error).message}`,
+      MAIN_KEYBOARD,
+    );
+    return;
+  }
+  apply(ctx, {
+    ...ctx.session,
+    combat: { sheetId: sheet.id, number: sheet.number },
+  });
+  await ctx.deps.send(ctx.chatId, combatIntro(sheet.number), COMBAT_KEYBOARD);
+}
+
+/** Показать сводку по листку с клавиатурой действий. */
+async function showCombatSheet(ctx: CallbackCtx, sheet: api.CombatSheet, hint?: string): Promise<void> {
+  await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), COMBAT_KEYBOARD);
+}
+
+/** «📂 Мои боевые листки»: последние листки этого чата. */
+export async function handleMyCombat(deps: BotDeps, chatId: string): Promise<void> {
+  try {
+    const sheets = await api.listCombat(chatId);
+    const list = combatListMessage(sheets);
+    if (!list) {
+      await deps.send(chatId, 'Боевых листков пока нет. Начните кнопкой «⚔️ Боевой листок».', MAIN_KEYBOARD);
+      return;
+    }
+    await deps.send(chatId, list.text, list.keyboard);
+  } catch (e) {
+    await deps.send(chatId, `Не удалось загрузить список: ${(e as Error).message}`, MAIN_KEYBOARD);
+  }
+}
+
+/** Открыть сохранённый боевой листок: `cbe:<id>`. */
+export async function onCombatOpen(ctx: CallbackCtx, id: number): Promise<void> {
+  const sheet = await loadOwnCombat(ctx, id);
+  if (!sheet) return;
+  apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
+  await showCombatSheet(ctx, sheet);
+}
+
+/** Файл по листку из списка: `cbx:<id>`. */
+export async function onCombatFile(ctx: CallbackCtx, id: number): Promise<void> {
+  const sheet = await loadOwnCombat(ctx, id);
+  if (!sheet) return;
+  apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
+  await sendCombatDocx(ctx, sheet);
+}
+
+/** Прочитать листок по id, проверяя, что он открыт в этом чате. */
+async function loadOwnCombat(ctx: CallbackCtx, id: number): Promise<api.CombatSheet | null> {
+  try {
+    // Список приходит из «Мои боевые листки»: там только свои. Но листок мог
+    // быть удалён — тогда честно говорим.
+    const sheets = await api.listCombat(ctx.chatId);
+    const found = sheets.find((s) => s.id === id);
+    if (!found) {
+      await ctx.deps.send(ctx.chatId, 'Боевой листок не найден — возможно, удалён.');
+      return null;
+    }
+    return found;
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось открыть листок: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** «➕ Наша система»: показать наши системы для выбора стороны. */
+export async function onCombatOurSys(ctx: CallbackCtx): Promise<void> {
+  await showCombatPicker(ctx, 'our');
+}
+
+/** «🏷️ Добавить конкурента»: показать конкурентов. */
+export async function onCombatComp(ctx: CallbackCtx): Promise<void> {
+  await showCombatPicker(ctx, 'competitor');
+}
+
+/** Показать список выбора стороны: наш продукт или конкурент. */
+async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): Promise<void> {
+  if (!ctx.session.combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const items = await fetchCombatItems(ctx, side);
+  if (!items) return;
+  const message = combatPickerMessage(items, side);
+  if (!message.show) {
+    await ctx.deps.send(ctx.chatId, message.text, COMBAT_KEYBOARD);
+    return;
+  }
+  const shown = items.slice(0, PAGE_SIZE);
+  ctx.foundCombat = shown;
+  ctx.rememberCombat?.(shown);
+  apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
+  const prefix = side === 'our' ? 'oursel' : 'compsel';
+  await ctx.deps.send(ctx.chatId, message.text, combatPickerKeyboard(shown, prefix));
+}
+
+/** Прочитать стороны для выбора; `null` — уже отправлена ошибка человеку. */
+async function fetchCombatItems(
+  ctx: CallbackCtx,
+  side: 'our' | 'competitor',
+): Promise<api.CombatSystemItem[] | null> {
+  try {
+    const res = side === 'our' ? await api.combatSystems() : await api.combatCompetitors();
+    return res.cards ?? [];
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить список: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Выбор стороны из списка: `oursel:<индекс>` / `compsel:<индекс>`. */
+export async function onCombatPick(ctx: CallbackCtx, index: number): Promise<void> {
+  const sheet = ctx.session.combat;
+  if (!sheet) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const side = sheet.picking ?? 'our';
+  const item = (ctx.foundCombat ?? [])[index];
+  if (!item) {
+    await ctx.deps.send(ctx.chatId, 'Список устарел — откройте выбор стороны ещё раз.');
+    return;
+  }
+  try {
+    const updated = await api.addCombatSide(sheet.sheetId, ctx.chatId, side, {
+      noteId: item.noteId,
+      title: item.title,
+    });
+    apply(ctx, { ...ctx.session, combat: { ...sheet, picking: undefined } });
+    await showCombatSheet(ctx, updated, combatSideAddedMessage(side, item.title));
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
+  }
+}
+
+/** «⬇ DOCX»: собрать файл боевого листка. */
+export async function onCombatDoc(ctx: CallbackCtx): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const sheet = await loadOwnCombat(ctx, combat.sheetId);
+  if (!sheet) return;
+  await sendCombatDocx(ctx, sheet);
+}
+
+/** Собрать и отправить DOCX; пустой листок не печатаем. */
+async function sendCombatDocx(ctx: CallbackCtx, sheet: api.CombatSheet): Promise<void> {
+  if (sheet.ourNotes.length === 0 && sheet.competitorNotes.length === 0) {
+    await ctx.deps.send(ctx.chatId, combatNotEmptyMessage(), COMBAT_KEYBOARD);
+    return;
+  }
+  try {
+    const doc = await api.combatDocx(sheet.id, ctx.chatId);
+    const bytes = Buffer.from(doc.docx_base64, 'base64');
+    await sendDocument(ctx.chatId, doc.file_name, bytes, 'Боевой листок');
+    await ctx.deps.send(ctx.chatId, 'Файл готов. Можно добавить ещё стороны или нажать «✅ Готово».', COMBAT_KEYBOARD);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось собрать файл: ${(e as Error).message}`, COMBAT_KEYBOARD);
+  }
+}
+
+/** «✅ Готово»: выходим из боевого листка к меню. */
+export async function onCombatDone(ctx: CallbackCtx): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт.', MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, { ...ctx.session, combat: undefined });
+  await ctx.deps.send(ctx.chatId, `Боевой листок № ${combat.number} закрыт.`, MAIN_KEYBOARD);
+}
+
+/** «< Назад» из списка выбора: вернуться к сводке листка. */
+export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
+  if (!ctx.session.combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: undefined } });
+  const sheet = await loadOwnCombat(ctx, ctx.session.combat.sheetId);
+  if (!sheet) return;
+  await showCombatSheet(ctx, sheet);
+}
+
 /** Таблица кнопок по префиксу: точное совпадение или `prefix:число`. */
 export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   new: onNew,
@@ -670,6 +885,12 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   // Продолжение сохранённого КП (2026-11-01).
   'edit:brief': onEditBrief,
   'edit:doc': onEditDoc,
+  // Боевой листок (2026-11-09).
+  'cb:oursys': onCombatOurSys,
+  'cb:comp': onCombatComp,
+  'cb:doc': onCombatDoc,
+  'cb:done': onCombatDone,
+  'cb:back': onCombatBack,
 };
 
 export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promise<void>> = {
@@ -681,6 +902,11 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   // Выбор системы из списка: `sys:<индекс>`. Индекс, а не код: callback_data
   // ограничен 64 байтами, а код системы с кириллицей туда не влезет.
   sys: onSystemPick,
+  // Боевой листок (2026-11-09): открыть листок, файл по листку, выбор стороны.
+  cbe: onCombatOpen,
+  cbx: onCombatFile,
+  oursel: onCombatPick,
+  compsel: onCombatPick,
 };
 
 export { answerCallback, editMessage };

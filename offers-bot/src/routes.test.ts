@@ -46,6 +46,7 @@ function makeDeps(initial?: ChatSession): {
     pages: new Map(),
     sessions: new Map(),
     foundSystems: new Map(),
+    foundCombat: new Map(),
   };
   const current = initial ?? newSession();
   const deps: BotDeps = {
@@ -166,3 +167,136 @@ describe('лимит частоты', () => {
     assert.match(sent[sent.length - 1].text, /Слишком много сообщений/);
   });
 });
+
+// --- Боевой листок в боте (2026-11-09) ---------------------------------
+//
+// Сеть подменяется подменным offers-service: fetch отвечает JSON по адресу.
+// Telegram идёт через node:https, а не fetch, поэтому подмена не задевает его —
+// но DOCX по сети здесь и не собираем (пустой листок), так что сеть не нужна.
+
+interface FakeCombat {
+  id: number;
+  number: string;
+  ourNotes: Array<{ noteId: number; title: string }>;
+  competitorNotes: Array<{ noteId: number; title: string }>;
+}
+
+function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
+  const calls: string[] = [];
+  let nextId = 1;
+  const sheets: FakeCombat[] = [];
+
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push(`${method} ${url}`);
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+    if (method === 'POST' && url.endsWith('/bot/combat')) {
+      const sheet: FakeCombat = { id: nextId++, number: `00${nextId - 1}/2026`, ourNotes: [], competitorNotes: [] };
+      sheets.push(sheet);
+      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
+    }
+    if (method === 'GET' && url.endsWith('/bot/combat/systems')) {
+      return json({ cards: [{ noteId: 10, title: 'Кровля' }, { noteId: 11, title: 'Фасад' }] });
+    }
+    if (method === 'GET' && url.endsWith('/bot/combat/competitors')) {
+      return json({ cards: [{ noteId: 20, title: 'Конкурент А' }] });
+    }
+    if (method === 'GET' && url.includes('/bot/combat?') ) {
+      return json({ sheets: sheets.map((s) => ({ ...s, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' })) });
+    }
+    const sideAdd = url.match(/\/bot\/combat\/(\d+)\/(our|competitor)$/);
+    if (method === 'POST' && sideAdd) {
+      const sheet = sheets.find((s) => s.id === Number(sideAdd[1]));
+      const body = JSON.parse(String(init?.body ?? '{}')) as { noteId: number; title: string };
+      if (!sheet) return json({ error: 'нет листка' }, 404);
+      const target = sideAdd[2] === 'our' ? sheet.ourNotes : sheet.competitorNotes;
+      if (!target.some((n) => n.noteId === body.noteId)) target.push({ noteId: body.noteId, title: body.title });
+      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
+    }
+    return json({ ok: true });
+  }) as typeof fetch;
+
+  return {
+    calls,
+    current: () => sheets[sheets.length - 1],
+  };
+}
+
+describe('боевой листок в боте', () => {
+  it('«Боевой листок» создаёт листок и показывает приветствие', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '⚔️ Боевой листок', state);
+    assert.match(sent[0].text, /Боевой листок № 001\/2026/);
+    // В сессии запомнен листок: дальше кнопки пишут в него.
+    assert.equal(session(state)?.combat?.sheetId, 1);
+  });
+
+  it('«Наша система» показывает список и добавляет выбранную', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
+    assert.match(sent[0].text, /Выберите нашу систему/);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'oursel:0', 'cb2', state);
+    assert.match(sent[sent.length - 1].text, /Кровля/);
+    assert.equal(server.current().ourNotes.length, 1);
+    assert.equal(server.current().ourNotes[0].noteId, 10);
+  });
+
+  it('«Добавить конкурента» показывает список и добавляет выбранного', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:comp', 'cb1', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'compsel:0', 'cb2', state);
+    assert.match(sent[sent.length - 1].text, /Конкурент А/);
+    assert.equal(server.current().competitorNotes.length, 1);
+  });
+
+  it('текст в боевом листке не уходит в черновик КП', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    sent.length = 0;
+    await route.routeText(deps, '42', 'Монтаж | 12 | 850', state);
+    assert.match(sent[0].text, /В боевом листке стороны выбираются кнопками/);
+  });
+
+  it('«Готово» закрывает листок и возвращает к меню', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:done', 'cb1', state);
+    assert.match(sent[0].text, /закрыт/);
+    const sess = state.sessions.get('42');
+    assert.equal(sess?.combat, undefined);
+  });
+
+  it('«Мои боевые листки» пусто — честное сообщение', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    // Пустой ответ списка: ни одного листка.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ sheets: [] }), { status: 200 })) as typeof fetch;
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '📂 Мои боевые листки', state);
+    assert.match(sent[0].text, /Боевых листков пока нет/);
+  });
+});
+
+/** Сессия боевого листка в карте состояния (для проверок). */
+function session(state: RouterState): ChatSession | undefined {
+  return state.sessions.get('42');
+}

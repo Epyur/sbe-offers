@@ -1910,6 +1910,179 @@ paths:
       responses:
         '200':
           description: Ссылка
+  /api/offers/bot/combat/systems:
+    get:
+      summary: Наши системы для выбора стороны в боевом листке
+      description: |
+        Кеш карточек систем (как в плагине): заметка, название, код и замечания
+        состава. Бот выбирает сторону по названию; в листок уходит заметка.
+        Если кеша нет, а База знаний настроена, читается один раз.
+      security:
+        - serviceSecret: []
+      responses:
+        '200':
+          description: Карточки сторон, либо пустой список с `error`
+  /api/offers/bot/combat/competitors:
+    get:
+      summary: Продукты конкурентов для выбора стороны
+      description: |
+        Те же карточки, что в разделе «Конкуренты»: кеш папки Базы знаний
+        «материалы и системы конкурентов». Отсутствие папки — не ошибка.
+      security:
+        - serviceSecret: []
+      responses:
+        '200':
+          description: Карточки конкурентов и признак `folderFound`
+  /api/offers/bot/combat:
+    get:
+      summary: «Мои боевые листки» (бот)
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Листки привязанного chat_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sheets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CombatSheet'
+    post:
+      summary: Создать пустой боевой листок с номером (бот)
+      description: Черновик получает номер сразу; стороны выбираются следующими кнопками.
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id]
+              properties:
+                chat_id:
+                  type: string
+                title:
+                  type: string
+      responses:
+        '200':
+          description: Созданный листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+  /api/offers/bot/combat/{id}/our:
+    post:
+      summary: Добавить нашу систему в боевой листок (бот)
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CombatSideRequest'
+      responses:
+        '200':
+          description: Обновлённый листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+    delete:
+      summary: Убрать нашу систему из боевого листка (бот)
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CombatSideRequest'
+      responses:
+        '200':
+          description: Обновлённый листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+  /api/offers/bot/combat/{id}/competitor:
+    post:
+      summary: Добавить продукт конкурента в боевой листок (бот)
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CombatSideRequest'
+      responses:
+        '200':
+          description: Обновлённый листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+    delete:
+      summary: Убрать продукт конкурента из боевого листка (бот)
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CombatSideRequest'
+      responses:
+        '200':
+          description: Обновлённый листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+  /api/offers/bot/combat/{id}/export:
+    post:
+      summary: DOCX боевого листка (base64) для отправки в чат
+      description: Та же печать, что у ручки плагина: по форме `combat`, сторонами-карточками.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Документ в base64
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  docx_base64:
+                    type: string
+                  file_name:
+                    type: string
 components:
   securitySchemes:
     bearerAuth:
@@ -2431,6 +2604,20 @@ components:
       type: object
       description: Ссылка на заметку Базы знаний внутри боевого листка.
       properties:
+        noteId:
+          type: integer
+          format: int64
+        title:
+          type: string
+    CombatSideRequest:
+      type: object
+      description: |
+        Добавить или убрать сторону листка из бота: заметка Базы знаний и её
+        подпись. `noteId` обязателен; для удаления подпись не нужна.
+      required: [chat_id, noteId]
+      properties:
+        chat_id:
+          type: string
         noteId:
           type: integer
           format: int64

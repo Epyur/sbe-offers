@@ -220,6 +220,25 @@ func main() {
 	// «что понял», attach/apply пишет только подтверждённое.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/attach", s.requireServiceSecret(s.handleBotAttach))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/attach/apply", s.requireServiceSecret(s.handleBotAttachApply))
+	// Боевой листок в боте (2026-11-09): списки сторон, создание листка,
+	// добавление/удаление стороны, печать DOCX. Сущность та же, что у плагина.
+	mux.HandleFunc("GET /api/offers/bot/combat/systems", s.requireServiceSecret(s.handleBotCombatSystems))
+	mux.HandleFunc("GET /api/offers/bot/combat/competitors", s.requireServiceSecret(s.handleBotCombatCompetitors))
+	mux.HandleFunc("GET /api/offers/bot/combat", s.requireServiceSecret(s.handleBotListCombat))
+	mux.HandleFunc("POST /api/offers/bot/combat", s.requireServiceSecret(s.handleBotCreateCombat))
+	mux.HandleFunc("POST /api/offers/bot/combat/{id}/our", s.requireServiceSecret(func(w http.ResponseWriter, r *http.Request) {
+		s.handleBotCombatSide(w, r, combatSideOur, true)
+	}))
+	mux.HandleFunc("DELETE /api/offers/bot/combat/{id}/our", s.requireServiceSecret(func(w http.ResponseWriter, r *http.Request) {
+		s.handleBotCombatSide(w, r, combatSideOur, false)
+	}))
+	mux.HandleFunc("POST /api/offers/bot/combat/{id}/competitor", s.requireServiceSecret(func(w http.ResponseWriter, r *http.Request) {
+		s.handleBotCombatSide(w, r, combatSideCompetitor, true)
+	}))
+	mux.HandleFunc("DELETE /api/offers/bot/combat/{id}/competitor", s.requireServiceSecret(func(w http.ResponseWriter, r *http.Request) {
+		s.handleBotCombatSide(w, r, combatSideCompetitor, false)
+	}))
+	mux.HandleFunc("POST /api/offers/bot/combat/{id}/export", s.requireServiceSecret(s.handleBotExportCombat))
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

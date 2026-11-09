@@ -499,3 +499,105 @@ export async function getBrief(id: number, chatId: string): Promise<Brief> {
   );
   return res.brief;
 }
+
+// --- Боевой листок в боте (2026-11-09) ---------------------------------
+//
+// Сущность та же, что в плагине (combat.go): сравнение нашего продукта с
+// продуктами конкурентов. Бот выбирает стороны по названиям, а листок хранит
+// заметку и подпись (`noteId`+`title`).
+
+/** Карточка стороны в списке выбора: то, что увидит менеджер. */
+export interface CombatSystemItem {
+  noteId: number;
+  title: string;
+  sku?: string;
+  problems?: string[];
+}
+
+/** Ссылка на карточку в сохранённом листке. */
+export interface CombatNoteRef {
+  noteId: number;
+  title: string;
+}
+
+/** Боевой листок — снапшот, как КП. */
+export interface CombatSheet {
+  id: number;
+  number: string;
+  ownerEmail: string;
+  title: string;
+  offerId: number;
+  ourNotes: CombatNoteRef[];
+  competitorNotes: CombatNoteRef[];
+  formValues: Record<string, string>;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Наши системы для выбора стороны. */
+export async function combatSystems(): Promise<{ cards: CombatSystemItem[]; error?: string }> {
+  return call('GET', '/bot/combat/systems');
+}
+
+/** Продукты конкурентов для выбора стороны. */
+export async function combatCompetitors(): Promise<{
+  cards: CombatSystemItem[];
+  folderFound?: boolean;
+  error?: string;
+}> {
+  return call('GET', '/bot/combat/competitors');
+}
+
+/** «Мои боевые листки» этого чата. */
+export async function listCombat(chatId: string): Promise<CombatSheet[]> {
+  const res = await call<{ sheets: CombatSheet[] }>(
+    'GET',
+    `/bot/combat?chat_id=${encodeURIComponent(chatId)}`,
+  );
+  return res.sheets ?? [];
+}
+
+/** Создать пустой боевой листок с номером. */
+export async function createCombat(chatId: string, title: string): Promise<CombatSheet> {
+  return call('POST', '/bot/combat', { chat_id: chatId, title });
+}
+
+export type CombatSide = 'our' | 'competitor';
+
+/** Добавить сторону (наш продукт или конкурента) в листок. */
+export async function addCombatSide(
+  id: number,
+  chatId: string,
+  side: CombatSide,
+  ref: CombatNoteRef,
+): Promise<CombatSheet> {
+  return call('POST', `/bot/combat/${id}/${side}`, {
+    chat_id: chatId,
+    noteId: ref.noteId,
+    title: ref.title,
+  });
+}
+
+/** Убрать сторону из листка. */
+export async function removeCombatSide(
+  id: number,
+  chatId: string,
+  side: CombatSide,
+  noteId: number,
+): Promise<CombatSheet> {
+  return call('DELETE', `/bot/combat/${id}/${side}`, { chat_id: chatId, noteId });
+}
+
+/** DOCX боевого листка: та же печать, что в плагине. */
+export async function combatDocx(
+  id: number,
+  chatId: string,
+): Promise<{ docx_base64: string; file_name: string }> {
+  return call(
+    'POST',
+    `/bot/combat/${id}/export?chat_id=${encodeURIComponent(chatId)}`,
+    undefined,
+    LONG_TIMEOUT_MS,
+  );
+}

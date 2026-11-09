@@ -10,7 +10,7 @@
  * Зависимости передаются снаружи (`BotDeps`), а не берутся из модулей: так
  * маршруты проверяются стендом без сети, а поллер остаётся тонким.
  */
-import { applyCodeRequested, applyLogin, nextStep, type ChatSession } from './session.ts';
+import { applyCodeRequested, applyLogin, isCombat, nextStep, type ChatSession } from './session.ts';
 import { AUTH_OK, AUTH_PROMPT, HELP_TEXT, MAIN_KEYBOARD } from './flow/build.ts';
 import * as api from './api.ts';
 import type { SystemItem } from './api.ts';
@@ -19,7 +19,9 @@ import {
   ID_BUTTONS,
   applyAttachConfirm,
   handleDraftText,
+  handleMyCombat,
   onEditOffer,
+  startCombat,
   startDraft,
   type CallbackCtx,
 } from './callbacks.ts';
@@ -61,6 +63,11 @@ export interface RouterState {
    * него не влезет.
    */
   foundSystems: Map<string, SystemItem[]>;
+  /**
+   * Стороны боевого листка, показанные кнопками (2026-11-09). Как и системы:
+   * кнопка несёт индекс, а не заметку/название.
+   */
+  foundCombat: Map<string, api.CombatSystemItem[]>;
 }
 
 export function newRouterState(): RouterState {
@@ -70,6 +77,7 @@ export function newRouterState(): RouterState {
     pages: new Map(),
     sessions: new Map(),
     foundSystems: new Map(),
+    foundCombat: new Map(),
   };
 }
 
@@ -193,6 +201,15 @@ async function routeMenu(
     await handleMyOffers(deps, ctx.chatId);
     return true;
   }
+  // Боевой листок (2026-11-09): собрать новый или открыть свои.
+  if (trimmed === '⚔️ Боевой листок' || trimmed === '/combat') {
+    await startCombat(ctx);
+    return true;
+  }
+  if (trimmed === '📂 Мои боевые листки' || trimmed === '/combats') {
+    await handleMyCombat(deps, ctx.chatId);
+    return true;
+  }
   // «003/2026» — открыть сохранённое КП на правку (2026-11-01). Номер узнаётся
   // по форме, поэтому команду можно вводить, не открывая список.
   if (canResume(trimmed)) {
@@ -246,9 +263,17 @@ export async function routeText(
     pages: state.pages,
     foundSystems: state.foundSystems.get(chatId) ?? [],
     rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
+    foundCombat: state.foundCombat.get(chatId) ?? [],
+    rememberCombat: (items) => state.foundCombat.set(chatId, items),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
+  // В боевом листке текст не означает ничего (2026-11-09): стороны выбираются
+  // кнопками. Иначе свободная строка «Монтаж | 12 | 850» попала бы в черновик КП.
+  if (isCombat(session)) {
+    await deps.send(chatId, 'В боевом листке стороны выбираются кнопками ниже.', MAIN_KEYBOARD);
+    return;
+  }
   if (await handleDraftText(ctx, trimmed)) return;
 
   await deps.send(chatId, 'Не понял. Выберите действие кнопкой ниже или отправьте /help.', MAIN_KEYBOARD);
@@ -326,6 +351,8 @@ export async function routeCallback(
     pages: state.pages,
     foundSystems: state.foundSystems.get(chatId) ?? [],
     rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
+    foundCombat: state.foundCombat.get(chatId) ?? [],
+    rememberCombat: (items) => state.foundCombat.set(chatId, items),
   };
 
   const exact = BUTTONS[data];
