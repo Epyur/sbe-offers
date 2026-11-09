@@ -9,6 +9,8 @@ import type {
   BriefPayload,
   BriefResponse,
   CatalogItem,
+  CombatSheet,
+  CompetitorsResponse,
   ComposeSystemResponse,
   Material,
   Offer,
@@ -658,6 +660,68 @@ export class OffersService {
   /** Перечитать карточки из Базы знаний (admin). */
   async refreshSystemCards(): Promise<RefreshSystemCardsResponse> {
     return this.request<RefreshSystemCardsResponse>('POST', '/context/refresh');
+  }
+
+  // --- Боевой листок и конкуренты (2026-11-08) --------------------------
+
+  /** Список боевых листков (свои; admin — все). */
+  async listCombat(): Promise<CombatSheet[]> {
+    const res = await this.request<{ sheets: CombatSheet[] }>('GET', '/combat');
+    return res.sheets || [];
+  }
+
+  async getCombat(id: number): Promise<CombatSheet> {
+    return this.request<CombatSheet>('GET', `/combat/${id}`);
+  }
+
+  /** Создать или сохранить боевой листок. */
+  async saveCombat(sheet: Partial<CombatSheet>): Promise<CombatSheet> {
+    if (sheet.id) {
+      return this.request<CombatSheet>('PUT', `/combat/${sheet.id}`, sheet);
+    }
+    return this.request<CombatSheet>('POST', '/combat', sheet);
+  }
+
+  async deleteCombat(id: number): Promise<void> {
+    await this.request<unknown>('DELETE', `/combat/${id}`);
+  }
+
+  /**
+   * Скачать DOCX боевого листка (2026-11-08).
+   *
+   * Как и DOCX КП, сборка может ждать модель косвенно (общие таймауты), но
+   * печать по форме быстрая; общий предел 20 с достаточен, а защитный
+   * `LONG_TIMEOUT_MS` не нужен — здесь модель не зовётся вовсе.
+   */
+  async exportCombatDocx(id: number): Promise<Uint8Array> {
+    return this.withTokenRetry(async (token) => {
+      const res = await requestUrl({
+        url: `${this.base()}/api/offers/combat/${id}/export`,
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (res.status === 401) throw new OffersError('unauthorized', 401);
+      if (res.status < 200 || res.status >= 300) {
+        throw new OffersError(this.extractError(res.text, res.status), res.status);
+      }
+      return new Uint8Array(res.arrayBuffer);
+    });
+  }
+
+  /**
+   * Продукты конкурентов из папки Базы знаний (из кеша).
+   *
+   * `folderFound:false` — папки «материалы и системы конкурентов» в Базе
+   * знаний нет. Это не ошибка: боевой листок собирается и без неё.
+   */
+  async listCompetitors(): Promise<CompetitorsResponse> {
+    return this.request<CompetitorsResponse>('GET', '/competitors');
+  }
+
+  /** Перечитать папку конкурентов из Базы знаний (admin). */
+  async refreshCompetitors(): Promise<CompetitorsResponse> {
+    return this.request<CompetitorsResponse>('POST', '/competitors/refresh');
   }
   /** Настройки Telegram-бота: задан ли токен и чей это бот. */
   async getBotConfig(): Promise<BotConfigInfo> {
