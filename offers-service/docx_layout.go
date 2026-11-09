@@ -1368,7 +1368,7 @@ func (c *layoutPromptCache) writeSystemTextNow(card SystemCard, instruction stri
 		return ""
 	}
 	started := time.Now()
-	text := layoutPromptText(context.Background(), instruction, c.offer, []SystemCard{card}, c.refs, c.completed)
+	text := layoutPromptText(context.Background(), instruction, c.offer, []SystemCard{card}, c.cards, c.refs, c.completed)
 	reportFailed := strings.TrimSpace(text) == ""
 	logModelCall("system:"+instruction, fmt.Sprintf("note=%d", card.NoteID), len(instruction), started, nil)
 	if c.report != nil {
@@ -1489,7 +1489,7 @@ func (c *layoutPromptCache) text(instruction string) string {
 		}
 	}
 	started := time.Now()
-	text := layoutPromptText(context.Background(), instruction, c.offer, c.cards, c.refs, c.completed)
+	text := layoutPromptText(context.Background(), instruction, c.offer, c.cards, c.cards, c.refs, c.completed)
 	reportFailed := text == ""
 	logModelCall("layout", key, len(instruction), started, nil)
 	if c.report != nil {
@@ -1559,7 +1559,7 @@ func offerSystemTitles(offer Offer, cards []SystemCard) []string {
 	return out
 }
 func layoutPromptText(ctx context.Context, instruction string, offer Offer,
-	cards []SystemCard, refs []skills.CardRef, c Completer) string {
+	cards, allCards []SystemCard, refs []skills.CardRef, c Completer) string {
 	if c == nil || strings.TrimSpace(instruction) == "" {
 		return ""
 	}
@@ -1580,7 +1580,7 @@ func layoutPromptText(ctx context.Context, instruction string, offer Offer,
 	// заказчика, не рассуждай» уже выведены там, и второй их набор разошёлся
 	// бы с первым.
 	system := skills.RenderBlockSystem(instruction, "", maxWords)
-	user := buildBlockUserPromptFor(instruction, offer, cards, refs)
+	user := buildBlockUserPromptSelection(instruction, offer, cards, allCards, "", refs)
 	raw, err := c.Complete(ctx, system, user, documentTextMaxTokens())
 	if err != nil {
 		return ""

@@ -20,7 +20,7 @@ func TestPromptListsEveryChosenSystem(t *testing.T) {
 	cards, offer := twoSystemCards()
 	// Блок с повтором: модель получает карточку ОДНОЙ системы, но о наборе
 	// обязана знать — иначе вступление снова напишется про первую.
-	prompt := buildBlockUserPromptSelection("Напиши введение", offer, cards,
+	prompt := buildBlockUserPromptSelection("Напиши введение", offer, cards, cards,
 		offerSelectionHandle(offer), nil)
 	for _, title := range []string{"ТН-ФУНДАМЕНТ", "ТН-СТИЛОБАТ"} {
 		if !strings.Contains(prompt, title) {
@@ -42,7 +42,7 @@ func TestPromptKeepsSingleSystemSimple(t *testing.T) {
 	offer := Offer{Number: "001/2026", Systems: []OfferSystem{{NoteID: 1}}}
 	card := SystemCard{NoteID: 1, Title: "ТН-ФУНДАМЕНТ"}
 	prompt := buildBlockUserPromptSelection("Напиши введение", offer,
-		[]SystemCard{card}, offerSelectionHandle(offer), nil)
+		[]SystemCard{card}, []SystemCard{card}, offerSelectionHandle(offer), nil)
 	if !strings.Contains(prompt, "ВЫБРАННЫЕ СИСТЕМЫ В ПРЕДЛОЖЕНИИ (1 шт.)") {
 		t.Fatalf("нет раздела с системой:\n%s", prompt)
 	}
@@ -128,5 +128,35 @@ func TestRepeatedBlockPromptSeesWholeSelection(t *testing.T) {
 	generateBlockTexts(context.Background(), form, offer, c, cards, nil)
 	if !strings.Contains(c.lastUser, "ВЫБРАННЫЕ СИСТЕМЫ В ПРЕДЛОЖЕНИИ (2 шт.)") {
 		t.Fatalf("промт повтора не знает про весь набор систем:\n%s", c.lastUser)
+	}
+}
+
+// Раздел «выбрано» в промте повтора называет КАЖДУЮ систему карточкой, а не
+// запасным номером заметки (2026-11-09, живое КП 003/2026).
+//
+// Карточки в промт повтора сужены до описываемой системы. Раздел «выбрано»
+// строился по тем же суженым карточкам, поэтому вторая система получала имя
+// «система №<номер>», модель вписывала его в текст, и это уезжало клиенту.
+// Повод — жалоба: в готовом документе «система №6878» посреди описания.
+func TestRepeatedBlockPromptHasNoNumberedSystemFallback(t *testing.T) {
+	cards, offer := twoSystemCards()
+	form := OfferForm{
+		Mode: "client",
+		Blocks: []Block{{
+			ID:           "main",
+			Repeat:       blockRepeatSystems,
+			ShowInClient: true,
+			Content:      []byte(`[{"type":"prompt_text","instruction":"Опиши систему","maxWords":60}]`),
+		}},
+	}
+	c := &fakeCompleter{answer: "Описание."}
+	generateBlockTexts(context.Background(), form, offer, c, cards, nil)
+	if strings.Contains(c.lastUser, "система №") {
+		t.Fatalf("в промте есть «система №N» вместо названия из карточки:\n%s", c.lastUser)
+	}
+	for _, title := range []string{"ТН-ФУНДАМЕНТ", "ТН-СТИЛОБАТ"} {
+		if !strings.Contains(c.lastUser, "- "+title) {
+			t.Fatalf("в разделе «выбрано» нет карточки %q:\n%s", title, c.lastUser)
+		}
 	}
 }

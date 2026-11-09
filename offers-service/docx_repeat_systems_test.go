@@ -39,9 +39,13 @@ type echoTitleCompleter struct {
 }
 
 func (c *echoTitleCompleter) Complete(_ context.Context, _ string, user string, _ int) (string, error) {
+	// Систему определяем по строке карточки «Система: <название>», а не по
+	// любому упоминанию названия: раздел «ВЫБРАННЫЕ СИСТЕМЫ» перечисляет весь
+	// набор, и поиск по всему промту брал бы последнюю названную систему
+	// (2026-11-09).
 	title := "неизвестно"
 	for _, t := range []string{"ТН-ФУНДАМЕНТ", "ТН-СТИЛОБАТ"} {
-		if strings.Contains(user, t) {
+		if strings.Contains(user, "Система: "+t) {
 			title = t
 		}
 	}
