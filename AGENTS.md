@@ -30,14 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.3**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `4eca311`, `main` `99e3c79`
+Current version = **0.9.4**, released 2026-11-09: deployed, self-hosted,
+registry updated. Code commits: `backend` `PENDING`, `main` `PENDING`
 (the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
-at the last commit that touched code). This release makes the combat sheet
-usable with the 1500+-entry catalogue: our product and competitor sides are
-picked by a name search instead of a long list, competitor cards are read from
-the whole subtree of the «материалы и системы конкурентов» folder, and several
-products can be compared on each side.
+at the last commit that touched code). This release fixes and extends the link
+section of the exported offer: the visible hyperlink text is the document title
+(a bare URL no longer shows), URLs with spaces/quotes inside
+`response-content-disposition` parse correctly, and links are collected from the
+materials a system's composition points to (one level, deduplicated by URL).
 
 ## Purpose (current)
 
@@ -364,6 +364,30 @@ measurements) are in the archive.
   the post-processing.
 - **A layout marker describes the FORMAT, not the content** — strip it, keep the
   text.
+- **A hyperlink's visible text is the LABEL, never the URL.** Printing
+  «подпись — адрес» put the raw navigation URL (with
+  `?response-content-disposition=filename="…"`) on the page, and the layout
+  auto-linker turned that tail into a clickable link showing the URL (0.9.4,
+  live КП 003/2026). The URL belongs only in the relationship; the reader sees
+  the card's label. One helper, `refDisplayText`, on every place that prints a
+  link (`renderLinkSection`, `renderLayoutCardLinks`, `applyHyperlinks`), so
+  they cannot drift.
+- **Navigation card URLs contain spaces and quotes** inside
+  `response-content-disposition=filename="…"`. The markdown-link regex must
+  allow them: `\[([^\]]*)\]\((https?://[^)]+)\)` stops at the first `)` (the
+  link's own) and keeps spaces/quotes in the URL. A `[^)\s]+` pattern fails on
+  such a link and silently falls back to a bare-URL parse that truncates at the
+  quote — the label is lost and the URL is broken. `applyHyperlinks` must NOT
+  skip URLs containing `"`: `escapeXML` writes it as `&quot;` in the
+  relationship and Word reads it back.
+- **A link in the offer comes from the system card AND from its materials'
+  «## Ссылки»** (2026-11-09, one level). `enrichLinkedRefs` resolves each
+  composition `[[link]]` against the materials index (by `note_title`), reads
+  that material note's refs, and stores them in `SystemCard.LinkedRefs`; this
+  runs at **cache refresh** (`refreshSystemCards`), never at export. `Refs`
+  alone are not enough — the user wanted product documents too. Deduplicate by
+  URL across `Refs` + `LinkedRefs` (`cardAllRefs`/`collectOfferRefs`). Old
+  caches carry no `LinkedRefs` until «Перечитать из Базы знаний».
 
 ### Bot and rights
 
