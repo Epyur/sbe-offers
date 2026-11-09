@@ -51,15 +51,17 @@ func renderCombatDocx(form OfferForm, sheet CombatSheet, ourCards, competitorCar
 	refs := dedupCardRefs(append(collectOfferRefs(ourCards), collectOfferRefs(competitorCards)...))
 
 	media := newTemplateMedia()
+	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal)}
 	rc := renderCtx{
-		values:    offer.FormValues,
-		service:   serviceValuesWithCards(offer, ourCards),
-		offer:     offer,
-		refs:      refs,
-		cards:     ourCards,
-		images:    images,
-		media:     media,
-		numbering: newNumberingPlan(numberingAbstractDecimal),
+		values:        offer.FormValues,
+		service:       serviceValuesWithCards(offer, ourCards),
+		offer:         offer,
+		refs:          refs,
+		cards:         ourCards,
+		images:        images,
+		media:         media,
+		layoutRuntime: links,
+		numbering:     links.numbering,
 	}
 
 	var sb strings.Builder
@@ -84,12 +86,7 @@ func renderCombatDocx(form OfferForm, sheet CombatSheet, ourCards, competitorCar
 	writeCombatCards(&sb, "Наш продукт", ourCards, images, media)
 	writeCombatCards(&sb, "Продукты конкурентов", competitorCards, images, media)
 
-	body, linkRels := applyHyperlinks(sb.String(), refs)
-	if _, relErr := relsXMLWithLinks(nil, linkRels); relErr != nil {
-		body = sb.String()
-		linkRels = nil
-	}
-	return buildDocxWithNumbering(body, media, linkRels, rc.numbering)
+	return buildBodyWithLinks(sb.String(), refs, links, media)
 }
 
 // dedupCardRefs убирает ссылки с повторяющимся адресом. Обе стороны сравнения

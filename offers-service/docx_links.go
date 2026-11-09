@@ -100,11 +100,27 @@ func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
 // есть, иначе адрес. Одна функция на все места печати ссылок (раздел формы,
 // метка макета), иначе они разойдутся: где-то останется «подпись — адрес».
 func refDisplayText(ref skills.CardRef) string {
-	label := strings.TrimSpace(ref.Label)
+	label := cleanRefLabel(ref.Label)
 	if label != "" && label != ref.URL {
 		return label
 	}
 	return ref.URL
+}
+
+// cleanRefLabel снимает с подписи остатки markdown, если ими оказалась сама
+// подпись. Так выглядят ссылки в кеше карточек, прочитанном старым разбором
+// (до 0.9.4): подпись = вся строка `[название](адрес…)`. Печатать это клиенту
+// — тот же дефект, из-за которого выпуск и делался, поэтому чистим здесь, а не
+// ждём перечитывания Базы знаний: старый кеш иначе испортит каждый документ.
+func cleanRefLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if !strings.HasPrefix(label, "[") {
+		return label
+	}
+	if cut, _, ok := strings.Cut(label, "]("); ok {
+		return strings.TrimSpace(strings.TrimPrefix(cut, "["))
+	}
+	return label
 }
 
 // applyHyperlinks превращает адреса в разделе ссылок в кликабельные.

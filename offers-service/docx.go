@@ -446,6 +446,12 @@ type renderCtx struct {
 	cards  []SystemCard
 	images ImageSource
 	media  *docxMedia
+	// layoutRuntime — состояние сборки по макету (сборщик картинок, нумерация
+	// и собранные ссылки). Общий указатель с внешним контекстом печати: иначе
+	// ссылки, напечатанные меткой внутри блока формы, попадали бы в тело, а их
+	// отношения терялись — Word не открывает файл со ссылкой на неизвестное
+	// отношение (2026-11-09, живой сломанный КП 003/2026).
+	layoutRuntime *layoutRuntime
 	// numbering — план нумерации списков этой сборки: каждый состав получает
 	// свой numId, чтобы нумерация слоёв начиналась заново у каждой системы
 	// (2026-11-08). nil — состав печатается одним сквозным списком.
@@ -639,7 +645,12 @@ func (rc renderCtx) layoutContext() layoutContext {
 	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке
 	// печаталась без картинки (живая жалоба 2026-11-07). Указатель общий с
 	// блоком формы: добавленные файлы уходят в пакет тем же сборщиком.
-	if rc.media != nil {
+	// Тот же общий указатель несуёт и собранные ссылки: иначе отношения,
+	// заведённые меткой `{{ссылки}}` внутри блока, терялись бы, и документ со
+	// ссылкой на неизвестное отношение Word не открывает (2026-11-09).
+	if rc.layoutRuntime != nil {
+		ctx.layout = rc.layoutRuntime
+	} else if rc.media != nil {
 		ctx.layout = &layoutRuntime{media: rc.media, numbering: rc.numbering}
 	}
 	return ctx
@@ -850,17 +861,22 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 	// Картинки из формы (узлы `image`) собираются тем же сборщиком, что и
 	// картинки карточек: у бланка свои id, и второй сборщик дал бы дубли.
 	media := newTemplateMedia()
+	// Сборщик ссылок тоже общий: метка `{{ссылки}}` внутри блока печатает
+	// настоящую гиперссылку, и её отношение нельзя потерять — документ со
+	// ссылкой на неизвестное отношение Word не открывает (2026-11-09).
+	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal)}
 	rc := renderCtx{
-		values:      offer.FormValues,
-		service:     serviceValuesWithCards(offer, cards),
-		offer:       offer,
-		refs:        refs,
-		cards:       cards,
-		images:      images,
-		media:       media,
-		numbering:   newNumberingPlan(numberingAbstractDecimal),
-		systemTexts: systemTexts,
-		systemText:  systemText,
+		values:        offer.FormValues,
+		service:       serviceValuesWithCards(offer, cards),
+		offer:         offer,
+		refs:          refs,
+		cards:         cards,
+		images:        images,
+		media:         media,
+		layoutRuntime: links,
+		numbering:     links.numbering,
+		systemTexts:   systemTexts,
+		systemText:    systemText,
 	}
 
 	var sb strings.Builder
@@ -929,14 +945,26 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 		sb.WriteString(paragraphXMLOpts("Менеджер: "+offer.OwnerEmail, "", paraOpts{NoIndent: true}))
 	}
 
-	// Ссылки раздела `links` превращаются в кликабельные: отношение на каждую.
-	body, linkRels := applyHyperlinks(sb.String(), refs)
+	return buildBodyWithLinks(sb.String(), refs, links, media)
+}
+
+// buildBodyWithLinks собирает тело и отношения ссылок и упаковывает документ.
+//
+// Одна точка на оба пути печати (форма и боевой листок): ссылки раздела
+// `links` делаются кликабельными, к ним добавляются отношения, собранные
+// меткой `{{ссылки}}` внутри блока (иначе документ сослался бы на неизвестное
+// отношение и Word его не открыл бы — 2026-11-09), и всё это уходит в пакет.
+func buildBodyWithLinks(body string, refs []skills.CardRef, rt *layoutRuntime, media *docxMedia) ([]byte, error) {
+	linked, linkRels := applyHyperlinks(body, refs)
+	for _, link := range rt.links {
+		linkRels = appendLinkOnce(linkRels, link)
+	}
 	// Ссылки без отношений печатаются текстом: документ важнее.
 	if _, relErr := relsXMLWithLinks(nil, linkRels); relErr != nil {
-		body = sb.String()
+		linked = body
 		linkRels = nil
 	}
-	return buildDocxWithNumbering(body, media, linkRels, rc.numbering)
+	return buildDocxWithNumbering(linked, media, linkRels, rt.numbering)
 }
 
 // Служебные поля шаблона: то, что служба знает про предложение сама, без

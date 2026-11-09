@@ -203,6 +203,9 @@ func (lc layoutContext) renderCtx() renderCtx {
 		numbering:   lc.numberingPlan(),
 		systemTexts: lc.systemTexts,
 		selection:   lc.selectionHandle(),
+		// Ссылки, напечатанные меткой внутри блока, должны попасть в тот же
+		// сборщик, что и отношения всего документа (2026-11-09).
+		layoutRuntime: lc.layout,
 	}
 }
 
