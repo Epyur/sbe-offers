@@ -30,10 +30,11 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.0**, released 2026-11-09 (stand 333/0): deployed,
-self-hosted, registry updated. Code commits: `backend` `cae15f5`, `main`
-`d1ec743` (the plugin part is byte-identical across branches; `check_docs_state.mjs`
-looks at the last commit that touched code).
+Current version = **0.9.1**, released 2026-11-09: deployed, self-hosted,
+registry updated. Code commits: `backend` `49f68f8`, `main` `23c56a3` (the
+plugin part is byte-identical across branches; `check_docs_state.mjs` looks at
+the last commit that touched code). This release adds the combat sheet to the
+bot (see Purpose).
 
 ## Purpose (current)
 
@@ -87,6 +88,12 @@ renamed accordingly.
   button. The combat form is the **same form editor as КП** under `mode='combat'`
   (no second editor). DOCX export is done (`combat_docx.go`): rendered from the
   combat form, our and competitor cards printed as two sections.
+  **In the bot (2026-11-09)**: «⚔️ Боевой листок» creates an empty sheet with a
+  number; sides are picked by button from cached lists («➕ Наша система» /
+  «🏷️ Добавить конкурента»), «⬇ DOCX» sends the file, «📂 Мои боевые листки»
+  lists the chat's sheets. `botcombat.go` reuses the plugin's entity and renderer;
+  the owner is the chat's bound email, and text typed in combat mode is ignored
+  (it must not land in an offer draft).
 
 ## Architecture
 
@@ -155,6 +162,9 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `offers_context` `mode='competitors'`),
 `combat_docx.go` (combat-sheet DOCX: blocks by the combat form, both sides printed
 as card sections; reuses the block/text pipeline),
+`botcombat.go` (combat sheet in the bot, 2026-11-09: system/competitor pick lists,
+create, add/remove a side, DOCX — reuses `combat.go`/`combat_docx.go`, owner is
+the chat's bound email),
 `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
 `docx.go` (render entry points, service fields, composition printing),
@@ -172,9 +182,10 @@ Sub-packages: `model/` (domain types + `jsonrepair.go`, shared with `skills`);
 `filecontext*.go`, `blockstructure.go`).
 
 `offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), `src/routes.ts`
-(routing + the single sign-in check), `src/callbacks.ts`, `src/telegram.ts`
+(routing + the single sign-in check), `src/callbacks.ts` (button handlers,
+including the combat sheet — 2026-11-09), `src/telegram.ts`
 (Bot API via SOCKS), `src/session.ts`, `src/attach.ts`, `src/flow/` (`build`,
-`brief`, `copy`, `writer`, `resume`), `src/api.ts`, `Dockerfile`.
+`brief`, `copy`, `writer`, `resume`, `combat`), `src/api.ts`, `Dockerfile`.
 
 ## Settings (data.json)
 
@@ -208,9 +219,12 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
 
-Expected on 0.9.0: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+Expected on 0.9.1: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
 `check_marker_registry` 24/24, `check_docs_state` EXIT=0, `go test` green,
-OpenAPI 78/58, stand **333/0**.
+OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.1: only the bot and
+server changed, so the plugin-side stand count is unchanged). The bot's own
+suite (`offers-bot`): `npm run typecheck` EXIT=0, `node --test "src/**/*.test.ts"`
+**107 passing** (combat flow covered by route tests against a faked service).
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase
