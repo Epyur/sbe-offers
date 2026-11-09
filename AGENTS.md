@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.4**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `68b6fef`, `main` `ca45438`
+registry updated. Code commits: `backend` `1220f65` (0.9.4 + hotfix «документ не открывался»), `main` `ca45438`
 (the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
 at the last commit that touched code). This release fixes and extends the link
 section of the exported offer: the visible hyperlink text is the document title
@@ -388,6 +388,20 @@ measurements) are in the archive.
   alone are not enough — the user wanted product documents too. Deduplicate by
   URL across `Refs` + `LinkedRefs` (`cardAllRefs`/`collectOfferRefs`). Old
   caches carry no `LinkedRefs` until «Перечитать из Базы знаний».
+- **Every `<w:hyperlink r:id>` in the body MUST have its relationship in
+  `document.xml.rels`, or Word refuses to open the file** (2026-11-09, live
+  broken КП 003/2026 after 0.9.4). The `{{ссылки}}` marker prints a real
+  hyperlink and collects its relation in `layoutRuntime.links`. A marker placed
+  **inside a form block** (`repeat:systems`) ran through `renderCtx` →
+  `layoutContext()`, which used to build its OWN `layoutRuntime` and drop the
+  collected relations — body had the hyperlink, rels did not. Fix: `renderCtx`
+  carries the shared `layoutRuntime` pointer and `layoutContext()` reuses it;
+  both the block-form path and the combat sheet create one shared runtime and
+  merge its links in `buildBodyWithLinks` (single pack point). Regression
+  guards: `TestLinksMarkerInsideBlockLayoutDefinesRelations`,
+  `TestLinksMarkerInsideBlockFormDefinesRelations` (`docx_links_broken_test.go`)
+  assert every body `r:id` is defined. **Whenever a marker prints a link, prove
+  the relation reaches the pack — not just that the text appears.**
 
 ### Bot and rights
 
