@@ -30,11 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.1**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `49f68f8`, `main` `23c56a3` (the
+Current version = **0.9.2**, released 2026-11-09: deployed, self-hosted,
+registry updated. Code commits: `backend` `02cae0c`, `main` `e67afbf` (the
 plugin part is byte-identical across branches; `check_docs_state.mjs` looks at
-the last commit that touched code). This release adds the combat sheet to the
-bot (see Purpose).
+the last commit that touched code). This release fixes the system name in the
+document text: the repeat-by-system prompt was given only the described
+system's card, so the other system's name fell back to «система №N» and the
+model wrote it into the prose. `hashOfferFacts` was bumped to `v3` to discard
+the stale cached text.
 
 ## Purpose (current)
 
@@ -219,10 +222,10 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
 
-Expected on 0.9.1: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+Expected on 0.9.2: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
 `check_marker_registry` 24/24, `check_docs_state` EXIT=0, `go test` green,
-OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.1: only the bot and
-server changed, so the plugin-side stand count is unchanged). The bot's own
+OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.2: only the server
+changed, so the plugin-side stand count is unchanged). The bot's own
 suite (`offers-bot`): `npm run typecheck` EXIT=0, `node --test "src/**/*.test.ts"`
 **107 passing** (combat flow covered by route tests against a faked service).
 
@@ -338,6 +341,15 @@ measurements) are in the archive.
   live elsewhere and are invisible to it. A text that depends on them needs its
   own fingerprint in the key (`gen.systems`, `...sel<hash>`), or it silently
   freezes (2026-11-08: the intro described one system after a second was added).
+- **A narrowed card list is for the described system, not for naming the set.**
+  A `repeat: "systems"` block feeds only the described system's card to the
+  prompt, so building the «выбрано» list from those same cards made the other
+  system fall back to «система №N» — the model wrote that number into the prose
+  and it reached the client (0.9.2, live КП 003/2026). Pass the full selected
+  set (`allCards`) for the names section, separate from the narrowed `cards`
+  used for the card body. When an already-written text is wrong and the keys
+  hash only the offer row, bump the `hashOfferFacts` version (`v3`) to discard
+  every cached block once.
 - **Our own `max_tokens` truncates answers; the provider's does not.** Send 0
   and let the provider choose; retry 3 times on timeout/502/504/429.
 - **When a block goes empty, read the cached `form_values` first.** Three
