@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.4**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `1220f65` (0.9.4 + hotfix «документ не открывался»), `main` `ca45438`
+registry updated. Code commits: `backend` `5632f7f` (0.9.4 + два серверных хотфикса: «документ не открывался» и «`{{ссылки}}` без системы»), `main` `ca45438`
 (the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
 at the last commit that touched code). This release fixes and extends the link
 section of the exported offer: the visible hyperlink text is the document title
@@ -402,6 +402,22 @@ measurements) are in the archive.
   `TestLinksMarkerInsideBlockFormDefinesRelations` (`docx_links_broken_test.go`)
   assert every body `r:id` is defined. **Whenever a marker prints a link, prove
   the relation reaches the pack — not just that the text appears.**
+- **Bare `{{ссылки}}` is the links marker, and OUTSIDE a `repeat:systems` it
+  prints ALL selected systems' links** (2026-11-09, live КП 003/2026 with two
+  systems). Two defects found together:
+  1. `serviceLayoutKindOf` required a system word after the key, so bare
+     `{{ссылки}}` was not a service marker at all — it went to the model as a
+     prompt and printed nothing. `links` is now recognised by the key alone
+     (`TestServiceMarkersScanAsService`).
+  2. `renderLayoutCardLinks` used `layoutRowCard` (first system) even without a
+     repeat, so only ТН-Фундамент links printed and ТН-Стилобат plus its
+     materials vanished. Now `layoutLinksFor` returns `lc.refs`
+     (`collectOfferRefs` over all systems, `Refs`+`LinkedRefs`, deduped) when
+     there is no per-iteration system; inside a `repeat:systems` it stays the
+     row's own system (`TestLinksMarkerOutsideRepeatCoversAllSystems`).
+  The `{{ссылки: система}}` spelling behaves the same outside a repeat. A marker
+  that silently does nothing is the worst outcome — a bare key must either
+  print or be rejected, not be sent to the model.
 
 ### Bot and rights
 
