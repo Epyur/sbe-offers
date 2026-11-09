@@ -5,6 +5,7 @@ import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { formatMoney, itemsTotal } from '../utils/money';
 import { renderBriefCard } from './brief-editor';
 import { renderSheetUpload } from './sheet-upload';
+import { renderFormEditor } from './form-editor';
 import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
 /**
@@ -29,6 +30,20 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
     const create = actions.createEl('button', { text: '➕ Новое предложение', cls: 'tn-btn tn-btn-primary' });
     create.addEventListener('click', () => {
       void openEditor(view, container, null);
+    });
+  }
+  // «Форма КП» переехала внутрь модуля КП (2026-11-08, просьба пользователя):
+  // кнопка рядом с «Новое предложение», а не отдельный пункт сайдбара. Один
+  // путь к конфигуратору вместо двух.
+  if (view.admin) {
+    const formBtn = actions.createEl('button', { text: '⚙️ Форма КП', cls: 'tn-btn tn-btn-ghost' });
+    formBtn.addEventListener('click', () => {
+      container.empty();
+      const back = container.createEl('button', { text: '← К списку', cls: 'tn-btn tn-btn-ghost' });
+      back.addEventListener('click', () => {
+        void load(view, container);
+      });
+      renderFormEditor(view, container, 'client');
     });
   }
   const reload = actions.createEl('button', { text: '↻ Обновить', cls: 'tn-btn tn-btn-ghost' });

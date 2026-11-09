@@ -11,9 +11,19 @@ import { renderSystemsEditor } from './systems-editor';
 import { renderFormEditor } from './form-editor';
 import { renderAccessEditor } from './access-editor';
 import { renderContextEditor } from './context-editor';
+import { renderCombatView } from './combat-view';
+import { renderCompetitorsEditor } from './competitors-editor';
 import { isAdminRole, type Role } from '../types/offers';
 
-export type NavKey = 'offers' | 'materials' | 'systems' | 'context' | 'form' | 'access';
+export type NavKey =
+  | 'offers'
+  | 'materials'
+  | 'systems'
+  | 'context'
+  | 'combat'
+  | 'competitors'
+  | 'form'
+  | 'access';
 
 export class OffersView extends ItemView {
   plugin: SbeOffersPlugin;
@@ -119,28 +129,53 @@ export class OffersView extends ItemView {
 
   private buildNavForRole(): void {
     // Сменилась роль — если текущий раздел теперь недоступен, уходим на «КП».
-    if (!this.isAdmin && (this.key === 'form' || this.key === 'access')) {
+    if (!this.isAdmin && (this.key === 'form' || this.key === 'access' || this.key === 'competitors')) {
       this.key = 'offers';
     }
   }
 
   private buildNav(): void {
     this.navEl.empty();
-    const items: Array<{ key: NavKey; icon: string; label: string }> = [
+    // Сайдбар — два списка модулей (2026-11-08): «КП» и «Боевой листок». Так
+    // менеджер видит, что инструментов у него два, и у каждого свой набор
+    // разделов. Общие справочники (материалы, системы, контекст) — ниже,
+    // отдельной группой.
+    const offerItems: Array<{ key: NavKey; icon: string; label: string }> = [
       { key: 'offers', icon: '🧾', label: 'КП' },
-      // «Каталог» разделился на две сущности (2026-10-31): материалы — то, что
-      // продаётся и имеет цену; системы — сочетание материалов из Базы знаний,
-      // у которого своей цены нет.
+    ];
+    this.renderNavGroup('Коммерческие предложения', offerItems);
+
+    const combatItems: Array<{ key: NavKey; icon: string; label: string }> = [
+      { key: 'combat', icon: '⚔️', label: 'Боевой листок' },
+    ];
+    this.renderNavGroup('Боевой листок', combatItems);
+
+    // Справочники, общие для обоих модулей.
+    const refItems: Array<{ key: NavKey; icon: string; label: string }> = [
       { key: 'materials', icon: '🧱', label: 'Материалы' },
       { key: 'systems', icon: '🧩', label: 'Системы' },
       { key: 'context', icon: '📚', label: 'Контекст КП' },
     ];
+    this.renderNavGroup('Справочники', refItems);
+
     if (this.isAdmin) {
-      items.push({ key: 'form', icon: '⚙️', label: 'Форма КП' });
-      items.push({ key: 'access', icon: '👤', label: 'Бот и доступ' });
+      const adminItems: Array<{ key: NavKey; icon: string; label: string }> = [
+        { key: 'competitors', icon: '🏷️', label: 'Конкуренты' },
+        { key: 'access', icon: '👤', label: 'Бот и доступ' },
+      ];
+      this.renderNavGroup('Администрирование', adminItems);
     }
+  }
+
+  /** Одна группа пунктов сайдбара с заголовком. */
+  private renderNavGroup(
+    title: string,
+    items: Array<{ key: NavKey; icon: string; label: string }>,
+  ): void {
+    const group = this.navEl.createDiv({ cls: 'tn-offers-nav-group' });
+    group.createDiv({ cls: 'tn-offers-nav-group-title', text: title });
     for (const item of items) {
-      const btn = this.navEl.createEl('button', {
+      const btn = group.createEl('button', {
         cls: `tn-offers-nav-item${this.key === item.key ? ' is-active' : ''}`,
       });
       btn.createSpan({ cls: 'tn-offers-nav-icon', text: item.icon });
@@ -160,6 +195,8 @@ export class OffersView extends ItemView {
       materials: 'Материалы',
       systems: 'Системы',
       context: 'Контекст КП',
+      combat: 'Боевой листок',
+      competitors: 'Продукты конкурентов',
       form: 'Форма КП',
       access: 'Бот и доступ',
     };
@@ -168,6 +205,18 @@ export class OffersView extends ItemView {
       case 'offers':
         this.pageSubEl.setText(this.myEmail ? `Вы: ${this.myEmail}` : '');
         renderOffersList(this, this.bodyEl);
+        break;
+      case 'combat':
+        this.pageSubEl.setText(
+          'Критическое сравнение нашего продукта (то, что идёт в КП) с продуктами конкурентов.',
+        );
+        renderCombatView(this, this.bodyEl);
+        break;
+      case 'competitors':
+        this.pageSubEl.setText(
+          'Карточки продуктов конкурентов из папки Базы знаний «материалы и системы конкурентов».',
+        );
+        renderCompetitorsEditor(this, this.bodyEl);
         break;
       case 'materials':
         this.pageSubEl.setText(

@@ -11,26 +11,32 @@ import { errorMessage } from '../../../sbe-core/src/utils/errors';
 /**
  * Конфигуратор формы КП (раздел «⚙️ Форма КП», только admin): заголовок,
  * поля-плейсхолдеры, блоки документа и обязательные поля.
+ *
+ * `mode` (2026-11-08) — какой форме принадлежит редактор: `'client'` (КП) или
+ * `'combat'` (боевой листок). Редактор ОДИН на оба документа: блоки,
+ * подстановки и макет .docx у них одинаковой природы, и второй редактор
+ * разошёлся бы с первым при первой же правке. Отличается только режим строки
+ * в `offers_form` и подписи, которые показывает карточка документа.
  */
-export function renderFormEditor(view: OffersView, container: HTMLElement): void {
+export function renderFormEditor(view: OffersView, container: HTMLElement, mode = 'client'): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка формы…' });
-  void load(view, container);
+  void load(view, container, mode);
 }
 
-async function load(view: OffersView, container: HTMLElement): Promise<void> {
+async function load(view: OffersView, container: HTMLElement, mode: string): Promise<void> {
   let form: OfferForm;
   try {
-    form = await view.plugin.offersService.getForm('client');
+    form = await view.plugin.offersService.getForm(mode);
   } catch (e: unknown) {
     container.empty();
     container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить форму: ${errorMessage(e)}` });
     return;
   }
   container.empty();
-  render(view, container, form);
+  render(view, container, form, mode);
 }
 
-function render(view: OffersView, container: HTMLElement, form: OfferForm): void {
+function render(view: OffersView, container: HTMLElement, form: OfferForm, mode: string): void {
   const placeholders: Placeholder[] = form.placeholders.map((p) => ({ ...p }));
   const blocks = form.blocks.map((b) => ({ ...b, content: JSON.parse(JSON.stringify(b.content)) }));
   const required = new Set(form.requiredFields);
@@ -131,7 +137,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
   // блоками и говорит прямо, что сейчас печатается.
   renderLayoutCard(view, container, form, {
     onChanged: () => {
-      void load(view, container);
+      void load(view, container, mode);
     },
     onPickFile: pickLayoutFile,
   });
@@ -143,21 +149,21 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm): void
   });
   const reloadBtn = actions.createEl('button', { text: '↻ Отменить правки', cls: 'tn-btn tn-btn-ghost' });
   reloadBtn.addEventListener('click', () => {
-    void load(view, container);
+    void load(view, container, mode);
   });
 
   async function save(): Promise<void> {
     const payload: OfferForm = {
       ...form,
-      title: titleInput.value.trim() || 'Коммерческое предложение',
+      title: titleInput.value.trim() || (mode === 'combat' ? 'Боевой листок' : 'Коммерческое предложение'),
       placeholders,
       blocks,
       requiredFields: Array.from(required),
     };
     try {
       await view.plugin.offersService.saveForm(payload);
-      new Notice('Форма КП сохранена');
-      await load(view, container);
+      new Notice(mode === 'combat' ? 'Форма боевого листка сохранена' : 'Форма КП сохранена');
+      await load(view, container, mode);
     } catch (e: unknown) {
       new Notice(`Не удалось сохранить форму: ${errorMessage(e)}`);
     }

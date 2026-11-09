@@ -601,6 +601,28 @@
   gap: 2px;
 }
 
+/* Группы навигации (2026-11-08): сайдбар делит разделы на «КП», «Боевой
+   листок», справочники и администрирование. Заголовок группы — не кнопка, он
+   только отделяет один набор от другого. */
+.tn-offers-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tn-offers-nav-group + .tn-offers-nav-group {
+  margin-top: 12px;
+}
+
+.tn-offers-nav-group-title {
+  padding: 4px 8px;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 .tn-offers-nav-item,
 .tn-offers-nav-action {
   display: flex;

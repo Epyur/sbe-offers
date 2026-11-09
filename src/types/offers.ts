@@ -504,3 +504,46 @@ export function emptyBriefPayload(): BriefPayload {
     skipped_topics: [],
   };
 }
+
+/**
+ * Ссылка на заметку Базы знаний внутри боевого листка (2026-11-08).
+ *
+ * Название фиксируется на момент выбора: это снимок, как и всё в боевом
+ * листке. Текст карточки подтягивается по `noteId` из кеша систем/конкурентов.
+ */
+export interface CombatNoteRef {
+  noteId: number;
+  title: string;
+}
+
+/**
+ * Боевой листок — быстрая справка-сравнение нашего продукта с продуктами
+ * конкурентов (2026-11-08).
+ *
+ * Это снапшот, как и КП: номер и состав фиксируются при сохранении. Наш
+ * продукт — `ourNotes`, конкурентный — `competitorNotes`. `offerId` (0 —
+ * не привязан) говорит, чей продукт защищаем, если листок ведётся от КП.
+ */
+export interface CombatSheet {
+  id: number;
+  number: string;
+  ownerEmail: string;
+  title: string;
+  offerId: number;
+  ourNotes: CombatNoteRef[];
+  competitorNotes: CombatNoteRef[];
+  formValues: Record<string, string>;
+  status: 'draft' | 'final';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Ответ раздела «Конкуренты»: карточки из папки Базы знаний. */
+export interface CompetitorsResponse {
+  cards: SystemCard[];
+  kbEnabled: boolean;
+  /** Найдена ли в Базе знаний папка «материалы и системы конкурентов». */
+  folderFound: boolean;
+  /** Ошибка Базы знаний; список при этом прежний или пустой. */
+  error?: string;
+}
