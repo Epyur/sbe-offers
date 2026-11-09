@@ -30,14 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.2**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `02cae0c`, `main` `e67afbf` (the
-plugin part is byte-identical across branches; `check_docs_state.mjs` looks at
-the last commit that touched code). This release fixes the system name in the
-document text: the repeat-by-system prompt was given only the described
-system's card, so the other system's name fell back to «система №N» and the
-model wrote it into the prose. `hashOfferFacts` was bumped to `v3` to discard
-the stale cached text.
+Current version = **0.9.3**, released 2026-11-09: deployed, self-hosted,
+registry updated. Code commits: `backend` `4eca311`, `main` `MAIN_CODE_SHA`
+(the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
+at the last commit that touched code). This release makes the combat sheet
+usable with the 1500+-entry catalogue: our product and competitor sides are
+picked by a name search instead of a long list, competitor cards are read from
+the whole subtree of the «материалы и системы конкурентов» folder, and several
+products can be compared on each side.
 
 ## Purpose (current)
 
@@ -91,12 +91,17 @@ renamed accordingly.
   button. The combat form is the **same form editor as КП** under `mode='combat'`
   (no second editor). DOCX export is done (`combat_docx.go`): rendered from the
   combat form, our and competitor cards printed as two sections.
-  **In the bot (2026-11-09)**: «⚔️ Боевой листок» creates an empty sheet with a
-  number; sides are picked by button from cached lists («➕ Наша система» /
-  «🏷️ Добавить конкурента»), «⬇ DOCX» sends the file, «📂 Мои боевые листки»
-  lists the chat's sheets. `botcombat.go` reuses the plugin's entity and renderer;
-  the owner is the chat's bound email, and text typed in combat mode is ignored
-  (it must not land in an offer draft).
+  **In the bot (2026-11-09, search since 0.9.3)**: «⚔️ Боевой листок» creates
+  an empty sheet with a number. Sides are picked by **name search**, not from a
+  long list: «➕ Наш продукт» (materials catalogue + systems) or «🏷️ Добавить
+  конкурента» asks for a name, the typed text becomes the query, matching
+  products come back as buttons, and «▼ Все продукты» shows the whole list. The
+  same product can be added on each side several times. «⬇ DOCX» sends the file;
+  «📂 Мои боевые листки» lists the chat's sheets. `botcombat.go` reuses the
+  plugin's entity and renderer; the owner is the chat's bound email, and text
+  typed **outside** a side pick never lands in an offer draft.
+  Competitor cards come from the **whole subtree** of the «материалы и системы
+  конкурентов» folder (`KBClient.SubtreeFolderIDs`), each note becoming a card.
 
 ## Architecture
 
@@ -165,9 +170,10 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `offers_context` `mode='competitors'`),
 `combat_docx.go` (combat-sheet DOCX: blocks by the combat form, both sides printed
 as card sections; reuses the block/text pipeline),
-`botcombat.go` (combat sheet in the bot, 2026-11-09: system/competitor pick lists,
-create, add/remove a side, DOCX — reuses `combat.go`/`combat_docx.go`, owner is
-the chat's bound email),
+`botcombat.go` (combat sheet in the bot, 2026-11-09: our product = catalogue
+materials + systems, competitors = whole folder subtree; name search via `q`
+(`combatOurItems`, `filterCombatItems`), create, add/remove a side, DOCX —
+reuses `combat.go`/`combat_docx.go`, owner is the chat's bound email),
 `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
 `docx.go` (render entry points, service fields, composition printing),
@@ -222,12 +228,13 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
 
-Expected on 0.9.2: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+Expected on 0.9.3: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
 `check_marker_registry` 24/24, `check_docs_state` EXIT=0, `go test` green,
-OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.2: only the server
-changed, so the plugin-side stand count is unchanged). The bot's own
-suite (`offers-bot`): `npm run typecheck` EXIT=0, `node --test "src/**/*.test.ts"`
-**107 passing** (combat flow covered by route tests against a faked service).
+OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.3: the plugin-side
+stand count is unchanged, and the added combat checks run in the Docker stand).
+The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
+`node --test "src/**/*.test.ts"` **112 passing** (combat flow — search, folder
+subtree, multiple sides — covered by route tests against a faked service).
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase

@@ -831,6 +831,25 @@ basePrice`), добавлены `sku` и `hasPrice` — без признака 
   знаний нет (не ошибка).
 - `POST   /api/offers/competitors/refresh` — перечитать папку (admin).
 
+### Боевой листок в боте (2026-11-09, поиск — 0.9.3)
+
+Защита — `X-Service-Secret`, владелец стороны — email привязанного `chat_id`.
+Сущность и печать те же, что в плагине (отдельного DOCX нет).
+
+- `GET  /api/offers/bot/combat/systems?q=` — наш продукт: материалы каталога
+  (`offers_material`, без архивных и без пустого `noteId`) **плюс** карточки систем
+  Базы знаний, без повторов по заметке. Ответ `{cards, total}`; карточка
+  `{noteId, title, sku?, problems?}`. `q` — поиск по названию и коду (все слова,
+  регистр/«ё» не важны); пусто — весь список.
+- `GET  /api/offers/bot/combat/competitors?q=` — то же для конкурентов, из кеша
+  поддерева папки; ответ `{cards, folderFound, total}`.
+- `GET  /api/offers/bot/combat?chat_id=` — «Мои боевые листки».
+- `POST /api/offers/bot/combat` — создать пустой листок (номер сразу).
+- `POST/DELETE /api/offers/bot/combat/{id}/{our|competitor}` — добавить/убрать
+  сторону `{chat_id, noteId, title}`; повтор не дублирует. Сторон с каждой
+  стороны может быть несколько.
+- `POST /api/offers/bot/combat/{id}/export?chat_id=` — DOCX (та же печать).
+
 ### Форма боевого листка
 
 Та же таблица `offers_form`, режим **`combat`** (`GET /form?mode=combat`,
@@ -842,10 +861,13 @@ basePrice`), добавлены `sku` и `hasPrice` — без признака 
 ### Источник конкурентов
 
 Папка Базы знаний **«материалы и системы конкурентов»** (не тег). Сервис
-находит папку по имени (`KBClient.FolderIDByName`, без учёта регистра), читает
-заметки по `folder_id` (`FolderNotes`, с пагинацией), разбирает их тем же
-`skills.ParseSystemCard` и кеширует в `offers_context` `mode='competitors'`
-(формат `{found, cards}`). Ошибка Базы знаний не стирает прежний кеш.
+находит папку по имени (`KBClient.FolderIDByName`, без учёта регистра), берёт
+**всё поддерево** (`KBClient.SubtreeFolderIDs` — папка и все потомки на любую
+глубину, 2026-11-09), читает заметки каждой папки по `folder_id`
+(`FolderNotes`, с пагинацией), разбирает их тем же `skills.ParseSystemCard`
+(названием карточки служит заголовок заметки) и кеширует в `offers_context`
+`mode='competitors'` (формат `{found, cards}`). Ошибка Базы знаний не стирает
+прежний кеш.
 
 ### Печать DOCX (`combat_docx.go`)
 
