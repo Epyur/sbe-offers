@@ -137,6 +137,12 @@ type SystemCard struct {
 	// Refs — ссылки из раздела «Ссылки» карточки (2026-11-01): страница на
 	// корпоративном сайте и техдокументация на навигаторе. Идут в конец КП.
 	Refs []skills.CardRef `json:"refs,omitempty"`
+	// LinkedRefs — ссылки материалов, на которые ведёт состав системы
+	// (2026-11-09). Читаются на один уровень: разбирается строка состава,
+	// находится материал по ссылке, берётся его раздел «Ссылки». В документ
+	// идут вместе с Refs, повторы по адресу схлопываются. Пусто — у составных
+	// материалов ссылок нет или карточка прочитана до этой правки.
+	LinkedRefs []skills.CardRef `json:"linkedRefs,omitempty"`
 	// ImageName — имя файла картинки в заметке.
 	ImageName string `json:"imageName,omitempty"`
 	// ImageKey — ключ вложения в хранилище Базы знаний. По нему картинка
@@ -618,6 +624,15 @@ func (s *Server) refreshSystemCards(ctx context.Context, updatedBy string) ([]Sy
 	if err != nil {
 		cached, _ := s.loadCachedSystemCards(ctx)
 		return cached, err
+	}
+	// Ссылки материалов состава (2026-11-09) читаются здесь, а не при печати:
+	// сборка документа смотрит только кеш. Справочник берём без синхронизации
+	// с карточками — она уже прошла выше; нужен он лишь чтобы по названию
+	// заметки найти материал и его note_id.
+	if materials, mErr := s.listMaterialsOnce(ctx, false); mErr == nil {
+		fresh = enrichLinkedRefs(ctx, s.kb, fresh, materials)
+	} else {
+		log.Printf("ссылки материалов: справочник не прочитан: %v", mErr)
 	}
 	if err := s.saveCachedSystemCards(ctx, fresh, updatedBy); err != nil {
 		return fresh, err

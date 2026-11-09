@@ -166,14 +166,45 @@ func TestLinksNodeRendersCollectedRefs(t *testing.T) {
 	if !contains(xml, "Ссылки") {
 		t.Fatal("заголовок раздела ссылок не попал в документ")
 	}
-	if !contains(xml, "https://nav.tn.ru/systems/tn-krovlya-avto/") {
-		t.Fatal("адрес страницы системы не попал в документ")
-	}
-	if !contains(xml, "https://nav.tn.ru/pim/x.pdf") {
-		t.Fatal("адрес техлиста не попал в документ")
-	}
+	// Подпись видна, адрес — только в отношении (2026-11-09): в тексте
+	// документа сырого адреса быть не должно.
 	if !contains(xml, "Страница системы") || !contains(xml, "Техлист") {
 		t.Fatal("подписи ссылок не попали в документ")
+	}
+	if contains(xml, "https://nav.tn.ru/systems/tn-krovlya-avto/") ||
+		contains(xml, "https://nav.tn.ru/pim/x.pdf") {
+		t.Fatal("адрес напечатан открытым текстом вместо ссылки")
+	}
+	rels := relsPartOf(t, data)
+	if !contains(rels, `Target="https://nav.tn.ru/systems/tn-krovlya-avto/"`) ||
+		!contains(rels, `Target="https://nav.tn.ru/pim/x.pdf"`) {
+		t.Fatalf("адреса не попали в отношения:\n%s", rels)
+	}
+}
+
+// Адрес с кавычкой в query (техлисты навигатора) всё равно становится ссылкой:
+// раньше такой адрес пропускался, и документ печатал голый текст без ссылки.
+func TestLinksNodeURLWithQuoteIsClickable(t *testing.T) {
+	form := formWithBlock(`[{"type":"links"}]`)
+	url := `https://nav.tn.ru/pim/x.pdf?response-content-disposition=filename="Техлист.pdf"`
+	refs := []skills.CardRef{{Label: "Техлист навигатора", URL: url, Kind: skills.RefKindDoc}}
+	data, err := renderOfferDocxFull(form, testOfferForBlocks(), nil, nil, refs)
+	if err != nil {
+		t.Fatalf("рендер упал: %v", err)
+	}
+	xml := docXMLOf(t, data)
+	if !contains(xml, `<w:hyperlink`) {
+		t.Fatal("адрес с кавычкой не стал ссылкой")
+	}
+	if contains(xml, "https://nav.tn.ru/pim/x.pdf") {
+		t.Fatal("адрес напечатан открытым текстом, а не подписью")
+	}
+	if !contains(xml, "Техлист навигатора") {
+		t.Fatal("подпись ссылки не напечатана")
+	}
+	rels := relsPartOf(t, data)
+	if !contains(rels, `filename=&quot;Техлист.pdf&quot;`) {
+		t.Fatalf("кавычка в адресе не экранирована в отношении:\n%s", rels)
 	}
 }
 

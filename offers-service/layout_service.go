@@ -378,15 +378,20 @@ func cellBody(markup string) string {
 
 // renderLayoutCardLinks — ссылки карточки кликабельными.
 //
-// Адреса печатаются через общий конвейер ссылок макета (linkLayoutDocument):
-// он превращает любой адрес в абзаце в настоящую гиперссылку. Второго
-// механизма не заводим — он разошёлся бы с первым.
+// Пункт печатается подписью с настоящей гиперссылкой (2026-11-09): адрес живёт
+// только в отношении, а не в видимом тексте. Раньше печаталось «подпись —
+// адрес», и общий обход linkLayoutDocument превращал ХВОСТ-адрес в ссылку с
+// сырым URL на виду — в живом КП 003/2026 так выглядели все техлисты.
+//
+// Отношения собираются здесь, а не в linkLayoutDocument: видимого адреса в
+// тексте больше нет, искать его там нечего. Сборщик один — lc.layout.links;
+// renderLayoutDocx пишет их вместе с найденными адресами.
 func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 	card, ok := layoutRowCard(lc, row)
 	if !ok {
 		return ""
 	}
-	refs := card.Refs
+	refs := cardAllRefs(card)
 	if len(refs) == 0 {
 		refs = lc.refs
 	}
@@ -398,12 +403,11 @@ func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 		if ref.URL == "" {
 			continue
 		}
-		label := strings.TrimSpace(ref.Label)
-		if label != "" && label != ref.URL {
-			sb.WriteString(listItemXML(label + " — " + ref.URL))
-			continue
+		relID := placeholderRelID(ref.URL)
+		sb.WriteString(hyperlinkListItemXML(relID, refDisplayText(ref)))
+		if lc.layout != nil {
+			lc.layout.links = appendLinkOnce(lc.layout.links, renderedLink{RelID: relID, URL: ref.URL})
 		}
-		sb.WriteString(listItemXML(ref.URL))
 	}
 	return sb.String()
 }

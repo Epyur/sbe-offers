@@ -34,6 +34,10 @@ type renderedLink struct {
 // Порядок: сначала системы в том порядке, в котором они попали в документ,
 // потом их ссылки по виду (страница раньше документа). Повторы по адресу
 // схлопываются: один техлист часто приложен к нескольким системам.
+//
+// В список входят и ссылки карточки (раздел «Ссылки»), и ссылки материалов, на
+// которые ведёт её состав (`LinkedRefs`, 2026-11-09): живой технолог просил,
+// чтобы в КП попадали документы не только систем, но и продуктов в них.
 func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 	if len(cards) == 0 {
 		return nil
@@ -41,7 +45,7 @@ func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 	seen := make(map[string]bool)
 	out := make([]skills.CardRef, 0, len(cards)*4)
 	for _, card := range cards {
-		for _, ref := range skills.SortCardRefs(card.Refs) {
+		for _, ref := range cardAllRefs(card) {
 			if ref.URL == "" || seen[ref.URL] {
 				continue
 			}
@@ -55,6 +59,18 @@ func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 	return out
 }
 
+// cardAllRefs — все ссылки карточки: её собственные и материалы состава.
+// Отсортированы общим правилом (страницы раньше документов).
+func cardAllRefs(card SystemCard) []skills.CardRef {
+	if len(card.LinkedRefs) == 0 {
+		return skills.SortCardRefs(card.Refs)
+	}
+	all := make([]skills.CardRef, 0, len(card.Refs)+len(card.LinkedRefs))
+	all = append(all, card.Refs...)
+	all = append(all, card.LinkedRefs...)
+	return skills.SortCardRefs(all)
+}
+
 // renderLinkSection печатает узел `links`. Второе значение — были ли ссылки:
 // пустой раздел не печатается вовсе.
 func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
@@ -66,19 +82,29 @@ func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
 	var sb strings.Builder
 	sb.WriteString(headingXMLOpts(title, node.Level, opts))
 	for _, ref := range refs {
-		// Без отношения печатаем адрес текстом: ссылка без кликабельности
-		// хуже, чем видимый адрес, который можно набрать руками.
-		if ref.Label != "" && ref.Label != ref.URL {
-			sb.WriteString(listItemXML(ref.Label + " — " + ref.URL))
-		} else {
-			sb.WriteString(listItemXML(ref.URL))
-		}
+		// Видимый текст пункта — подпись, а не адрес (2026-11-09). Раньше
+		// печаталось «подпись — адрес»: адрес с параметрами занимал полстроки
+		// и выглядел как сбой вёрстки. Адрес попадает только в отношение
+		// (`applyHyperlinks`), то есть в саму ссылку, и остаётся кликабельным.
+		// Подписи нет — показываем адрес: другого текста для пункта нет.
+		sb.WriteString(listItemXML(refDisplayText(ref)))
 	}
 	if len(refs) >= maxLinkRefs {
 		sb.WriteString(paragraphAligned(
 			"Ссылок в карточках больше — остальные есть в Базе знаний.", ""))
 	}
 	return sb.String(), true
+}
+
+// refDisplayText — то, что читатель видит вместо ссылки: подпись, если она
+// есть, иначе адрес. Одна функция на все места печати ссылок (раздел формы,
+// метка макета), иначе они разойдутся: где-то останется «подпись — адрес».
+func refDisplayText(ref skills.CardRef) string {
+	label := strings.TrimSpace(ref.Label)
+	if label != "" && label != ref.URL {
+		return label
+	}
+	return ref.URL
 }
 
 // applyHyperlinks превращает адреса в разделе ссылок в кликабельные.
@@ -94,11 +120,14 @@ func applyHyperlinks(bodyXML string, refs []skills.CardRef) (string, []renderedL
 	out := bodyXML
 	links := make([]renderedLink, 0, len(refs))
 	for _, ref := range refs {
-		if ref.URL == "" || strings.ContainsAny(ref.URL, `"<>`) {
-			// Отношение с кавычкой в адресе сломает XML; такой адрес rare,
-			// но печатать его текстом честнее, чем ломать документ.
+		if ref.URL == "" {
 			continue
 		}
+		// Кавычка в адресе — обычное дело у техлистов навигатора
+		// (`?response-content-disposition=filename="…"`). В атрибут отношения
+		// она попадает как `&quot;` (escapeXML), а Word читает её обратно
+		// кавычкой. Раньше такие адреса пропускались целиком, и документ
+		// печатал их голым текстом без ссылки (2026-11-09).
 		item := listItemXML(hyperlinkItemLabel(ref))
 		replacement := hyperlinkXML(placeholderRelID(ref.URL), hyperlinkItemLabel(ref), ref.URL)
 		if !strings.Contains(out, item) {
@@ -113,10 +142,34 @@ func applyHyperlinks(bodyXML string, refs []skills.CardRef) (string, []renderedL
 // hyperlinkItemLabel — текст пункта раздела ссылок. Одна функция на печать и на
 // замену: расхождение здесь значило бы «ссылку не нашли и не сделали».
 func hyperlinkItemLabel(ref skills.CardRef) string {
-	if ref.Label != "" && ref.Label != ref.URL {
-		return ref.Label + " — " + ref.URL
+	return refDisplayText(ref)
+}
+
+// hyperlinkListItemXML — пункт списка, в котором весь текст кликабелен.
+//
+// Нужен ровно там, где ссылку печатает метка макета: подпись видна читателю, а
+// адрес живёт только в отношении. Отдельный от hyperlinkXML, потому что там
+// абзац без маркера — у метки `{{ссылки}}` пункт был списком.
+func hyperlinkListItemXML(relID, text string) string {
+	if relID == "" {
+		return listItemXML(text)
 	}
-	return ref.URL
+	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
+		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
+		`<w:hyperlink r:id="` + escapeXML(relID) + `" w:history="1">` +
+		`<w:r><w:rPr><w:rStyle w:val="` + styleHyperlink + `"/></w:rPr>` +
+		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:hyperlink></w:p>`
+}
+
+// appendLinkOnce добавляет отношение, если адреса ещё нет. Один адрес — одно
+// отношение: тот же техлист бывает приложен к нескольким системам.
+func appendLinkOnce(links []renderedLink, link renderedLink) []renderedLink {
+	for _, existing := range links {
+		if existing.RelID == link.RelID || existing.URL == link.URL {
+			return links
+		}
+	}
+	return append(links, link)
 }
 
 // placeholderRelID — устойчивый id отношения. Индекс, а не адрес: id в Word

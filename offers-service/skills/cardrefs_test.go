@@ -98,6 +98,32 @@ func TestParseCardRefsAnyHeadingLevel(t *testing.T) {
 }
 
 // Ссылки попадают в карточку через разбор и не ломают состав и описание.
+// Адрес с пробелами и кавычками внутри имени файла разбирается целиком.
+//
+// Живой дефект КП 003/2026 (2026-11-09): техлисты навигатора приходят строкой
+// `[название](https://…pdf?response-content-disposition=filename="название.pdf")`,
+// и пробелы в имени файла ломали markdown-разбор. Ссылка проваливалась в
+// «голый адрес», обрезанный по кавычке, а подпись терялась — в документ уходил
+// сырой обрезок адреса вместо названия документа.
+func TestParseCardRefsURLWithSpacesAndQuotes(t *testing.T) {
+	md := "## Ссылки\n\n" +
+		`- [Техлист ДНС от ФУНДАМЕНТ Дренаж Проф](https://nav.tn.ru/pim/abc.pdf?response-content-disposition=filename="Техлист ДНС от ФУНДАМЕНТ.pdf")` + "\n"
+	refs := ParseCardRefs(md)
+	if len(refs) != 1 {
+		t.Fatalf("ожидали одну ссылку, получили %d: %#v", len(refs), refs)
+	}
+	want := `https://nav.tn.ru/pim/abc.pdf?response-content-disposition=filename="Техлист ДНС от ФУНДАМЕНТ.pdf"`
+	if refs[0].URL != want {
+		t.Fatalf("адрес разобран неверно:\n получили: %q\n ожидали: %q", refs[0].URL, want)
+	}
+	if refs[0].Label != "Техлист ДНС от ФУНДАМЕНТ Дренаж Проф" {
+		t.Fatalf("подпись потеряна: %q", refs[0].Label)
+	}
+	if refs[0].Kind != RefKindDoc {
+		t.Fatalf("техлист должен быть документом, а не %q", refs[0].Kind)
+	}
+}
+
 func TestParseSystemCardKeepsRefs(t *testing.T) {
 	card := ParseSystemCard(cardRefsSample)
 	if len(card.Refs) != 3 {

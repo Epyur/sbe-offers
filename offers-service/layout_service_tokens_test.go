@@ -302,8 +302,15 @@ func TestLayoutCardDataMarkers(t *testing.T) {
 		t.Fatalf("печать: %v", err)
 	}
 	body := string(docxEntry(t, out, "word/document.xml"))
-	if !strings.Contains(body, "https://tn.ru/sys/1") {
-		t.Fatalf("ссылки карточки не напечатаны:\n%s", body)
+	// Ссылка печатается подписью, адрес — только в отношении (2026-11-09).
+	if !strings.Contains(body, "Страница системы") {
+		t.Fatalf("подпись ссылки карточки не напечатана:\n%s", body)
+	}
+	if strings.Contains(body, "https://tn.ru/sys/1") {
+		t.Fatalf("адрес попал в видимый текст вместо подписи:\n%s", body)
+	}
+	if rels := relsPartOf(t, out); !strings.Contains(rels, `Target="https://tn.ru/sys/1"`) {
+		t.Fatalf("адрес не попал в отношения (ссылка нерабочая):\n%s", rels)
 	}
 	if !strings.Contains(body, "Срок службы") {
 		t.Fatalf("характеристики карточки не напечатаны:\n%s", body)
