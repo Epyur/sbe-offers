@@ -27,6 +27,7 @@ import type { BotDeps } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
 import {
   COMBAT_KEYBOARD,
+  combatAskQuery,
   combatIntro,
   combatListMessage,
   combatNotEmptyMessage,
@@ -745,27 +746,59 @@ async function loadOwnCombat(ctx: CallbackCtx, id: number): Promise<api.CombatSh
   }
 }
 
-/** «➕ Наша система»: показать наши системы для выбора стороны. */
+/** «➕ Наш продукт»: перейти к поиску нашего продукта (каталог + системы). */
 export async function onCombatOurSys(ctx: CallbackCtx): Promise<void> {
-  await showCombatPicker(ctx, 'our');
+  await startCombatPicker(ctx, 'our');
 }
 
-/** «🏷️ Добавить конкурента»: показать конкурентов. */
+/** «🏷️ Добавить конкурента»: перейти к поиску продукта конкурента. */
 export async function onCombatComp(ctx: CallbackCtx): Promise<void> {
-  await showCombatPicker(ctx, 'competitor');
+  await startCombatPicker(ctx, 'competitor');
 }
 
-/** Показать список выбора стороны: наш продукт или конкурент. */
-async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): Promise<void> {
+/**
+ * Начать выбор стороны: спросить запрос, а не вываливать список.
+ *
+ * Каталог нашего продукта — 1500+ записей (2026-11-09): список кнопками
+ * бесполезен, поэтому сначала текст, потом совпадения. Кнопка «▼ Все»
+ * открывает полный список для тех, кому так удобнее.
+ */
+export async function startCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): Promise<void> {
   if (!ctx.session.combat) {
     await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
     return;
   }
-  const items = await fetchCombatItems(ctx, side);
+  apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
+  const allRow = [{ text: '▼ Все продукты', callback_data: 'cb:all' }];
+  const backRow = [{ text: '< Назад', callback_data: 'cb:back' }];
+  await ctx.deps.send(ctx.chatId, combatAskQuery(side), {
+    inline_keyboard: [allRow, backRow],
+  });
+}
+
+/** «▼ Все продукты»: показать полный список стороны. */
+export async function onCombatAll(ctx: CallbackCtx): Promise<void> {
+  const side = ctx.session.combat?.picking ?? 'our';
+  await showCombatPicker(ctx, side, '');
+}
+
+/** Показать совпадения по запросу (пустой — весь список) кнопками. */
+async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor', query: string): Promise<void> {
+  if (!ctx.session.combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const items = await fetchCombatItems(ctx, side, query);
   if (!items) return;
-  const message = combatPickerMessage(items, side);
+  const message = combatPickerMessage(items, side, query);
   if (!message.show) {
-    await ctx.deps.send(ctx.chatId, message.text, COMBAT_KEYBOARD);
+    // Ничего не нашлось: даём путь назад, а не тупик.
+    await ctx.deps.send(ctx.chatId, message.text, {
+      inline_keyboard: [
+        [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
+        [{ text: '< Назад', callback_data: 'cb:back' }],
+      ],
+    });
     return;
   }
   const shown = items.slice(0, PAGE_SIZE);
@@ -773,16 +806,24 @@ async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): P
   ctx.rememberCombat?.(shown);
   apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
   const prefix = side === 'our' ? 'oursel' : 'compsel';
-  await ctx.deps.send(ctx.chatId, message.text, combatPickerKeyboard(shown, prefix));
+  const query2 = query.trim();
+  await ctx.deps.send(
+    ctx.chatId,
+    message.text,
+    combatPickerKeyboard(shown, prefix, query2 === ''),
+  );
 }
 
 /** Прочитать стороны для выбора; `null` — уже отправлена ошибка человеку. */
 async function fetchCombatItems(
   ctx: CallbackCtx,
   side: 'our' | 'competitor',
+  query = '',
 ): Promise<api.CombatSystemItem[] | null> {
   try {
-    const res = side === 'our' ? await api.combatSystems() : await api.combatCompetitors();
+    const res = side === 'our'
+      ? await api.combatSystems(query)
+      : await api.combatCompetitors(query);
     return res.cards ?? [];
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось получить список: ${(e as Error).message}`);
@@ -866,6 +907,33 @@ export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
   await showCombatSheet(ctx, sheet);
 }
 
+/**
+ * Текст в боевом листке — это запрос на поиск стороны (2026-11-09).
+ *
+ * Возвращает true, если текст поглощён. Принимается только когда бот ждёт
+ * запрос (`picking` выставлен кнопкой «➕»/«🏷️»): в остальное время в листке
+ * каталог не ищется, и свободная строка не должна никуда попадать.
+ * Если текст набран, а сторона ещё не выбирается, — один раз объясняем, что
+ * делать, и не валим разговор.
+ */
+export async function handleCombatText(ctx: CallbackCtx, text: string): Promise<boolean> {
+  const combat = ctx.session.combat;
+  if (!combat) return false;
+  if (!combat.picking) {
+    await ctx.deps.send(
+      ctx.chatId,
+      'В боевом листке наш продукт и конкурент выбираются кнопками ниже. ' +
+        'Чтобы найти по названию, нажмите «➕ Наш продукт» или «🏷️ Добавить конкурента».',
+      COMBAT_KEYBOARD,
+    );
+    return true;
+  }
+  const query = text.trim();
+  if (!query) return true;
+  await showCombatPicker(ctx, combat.picking, query);
+  return true;
+}
+
 /** Таблица кнопок по префиксу: точное совпадение или `prefix:число`. */
 export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   new: onNew,
@@ -888,6 +956,7 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   // Боевой листок (2026-11-09).
   'cb:oursys': onCombatOurSys,
   'cb:comp': onCombatComp,
+  'cb:all': onCombatAll,
   'cb:doc': onCombatDoc,
   'cb:done': onCombatDone,
   'cb:back': onCombatBack,

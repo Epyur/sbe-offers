@@ -48,6 +48,41 @@ func TestRemoveNoteRefMissingIsNoop(t *testing.T) {
 	}
 }
 
+// TestFilterCombatItems — поиск стороны по названию/коду (2026-11-09).
+//
+// Каталог 1500+ записей: перебирать списком невозможно, поэтому поиск обязан
+// находить частичные совпадения по всем словам и по коду, и терпеть «ё»/регистр.
+func TestFilterCombatItems(t *testing.T) {
+	items := []botSystemItem{
+		{NoteID: 1, Title: "Мембрана ПВХ Эксперт", SKU: "MAT-ПРОЧ-0001"},
+		{NoteID: 2, Title: "Гидроизоляция фундамента", SKU: "TN-FUND"},
+		{NoteID: 3, Title: "Кровельная мембрана", SKU: "MAT-КРОВ-0002"},
+	}
+	cases := []struct {
+		query string
+		want  []int64
+	}{
+		{"", []int64{1, 2, 3}},              // пусто — весь список
+		{"мембрана", []int64{1, 3}},         // часть названия
+		{"МЕМБРАНА кровельная", []int64{3}}, // все слова, регистр
+		{"фундамент", []int64{2}},           // «фундамента» по «фундамент»
+		{"пвх", []int64{1}},                 // короткое слово
+		{"MAT-КРОВ", []int64{3}},            // по коду
+		{"нет-такого", []int64{}},           // ничего
+	}
+	for _, tc := range cases {
+		got := filterCombatItems(items, tc.query)
+		if len(got) != len(tc.want) {
+			t.Fatalf("query %q: ожидалось %d, получено %d (%+v)", tc.query, len(tc.want), len(got), got)
+		}
+		for i := range got {
+			if got[i].NoteID != tc.want[i] {
+				t.Fatalf("query %q: на позиции %d ожидался %d, получен %d", tc.query, i, tc.want[i], got[i].NoteID)
+			}
+		}
+	}
+}
+
 func TestCombatItemsCarryNoteAndTitle(t *testing.T) {
 	items := combatItems([]SystemCard{
 		{NoteID: 100, Title: "Кровля", SKU: ""},

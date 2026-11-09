@@ -198,11 +198,18 @@ function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
       sheets.push(sheet);
       return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
     }
-    if (method === 'GET' && url.endsWith('/bot/combat/systems')) {
-      return json({ cards: [{ noteId: 10, title: 'Кровля' }, { noteId: 11, title: 'Фасад' }] });
+    if (method === 'GET' && url.includes('/bot/combat/systems')) {
+      // Поиск по q (2026-11-09): фильтруем по названию, как настоящий сервис.
+      const q = new URL(url).searchParams.get('q')?.toLowerCase() ?? '';
+      const all = [{ noteId: 10, title: 'Кровля' }, { noteId: 11, title: 'Фасад' }];
+      const cards = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
+      return json({ cards, total: cards.length });
     }
-    if (method === 'GET' && url.endsWith('/bot/combat/competitors')) {
-      return json({ cards: [{ noteId: 20, title: 'Конкурент А' }] });
+    if (method === 'GET' && url.includes('/bot/combat/competitors')) {
+      const q = new URL(url).searchParams.get('q')?.toLowerCase() ?? '';
+      const all = [{ noteId: 20, title: 'Конкурент А' }];
+      const cards = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
+      return json({ cards, total: cards.length });
     }
     if (method === 'GET' && url.includes('/bot/combat?') ) {
       return json({ sheets: sheets.map((s) => ({ ...s, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' })) });
@@ -236,31 +243,61 @@ describe('боевой листок в боте', () => {
     assert.equal(session(state)?.combat?.sheetId, 1);
   });
 
-  it('«Наша система» показывает список и добавляет выбранную', async () => {
+  it('«Наш продукт» просит название, ищем и добавляем выбранное', async () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '/combat', state);
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
-    assert.match(sent[0].text, /Выберите нашу систему/);
+    assert.match(sent[0].text, /Введите название/);
+    // Текст — это запрос; находим «кровлю» и выбираем.
     sent.length = 0;
+    await route.routeText(deps, '42', 'кровля', state);
+    assert.match(sent[0].text, /Нашлось по «кровля»/);
     await route.routeCallback(deps, '42', 'oursel:0', 'cb2', state);
     assert.match(sent[sent.length - 1].text, /Кровля/);
     assert.equal(server.current().ourNotes.length, 1);
     assert.equal(server.current().ourNotes[0].noteId, 10);
   });
 
-  it('«Добавить конкурента» показывает список и добавляет выбранного', async () => {
+  it('«▼ Все продукты» показывает весь список стороны', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:all', 'cb2', state);
+    assert.match(sent[0].text, /Выберите из списка/);
+  });
+
+  it('«Добавить конкурента» ищет по названию и добавляет выбранного', async () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '/combat', state);
     await route.routeCallback(deps, '42', 'cb:comp', 'cb1', state);
     sent.length = 0;
+    await route.routeText(deps, '42', 'конкурент', state);
     await route.routeCallback(deps, '42', 'compsel:0', 'cb2', state);
     assert.match(sent[sent.length - 1].text, /Конкурент А/);
     assert.equal(server.current().competitorNotes.length, 1);
+  });
+
+  it('можно добавить несколько сторон с каждой стороны', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    // Два наших продукта.
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeText(deps, '42', 'кровля', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c3', state);
+    await route.routeText(deps, '42', 'фасад', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c4', state);
+    assert.equal(server.current().ourNotes.length, 2);
   });
 
   it('текст в боевом листке не уходит в черновик КП', async () => {
@@ -269,8 +306,11 @@ describe('боевой листок в боте', () => {
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '/combat', state);
     sent.length = 0;
+    // Без выбора стороны текст объясняет, что делать, и в КП не попадает.
     await route.routeText(deps, '42', 'Монтаж | 12 | 850', state);
-    assert.match(sent[0].text, /В боевом листке стороны выбираются кнопками/);
+    assert.match(sent[0].text, /выбираются кнопками/);
+    const sess = state.sessions.get('42');
+    assert.equal(sess?.draft, undefined);
   });
 
   it('«Готово» закрывает листок и возвращает к меню', async () => {

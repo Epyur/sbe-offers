@@ -17,6 +17,8 @@ import (
 // folderKBStub — подставной kb-service с папками и заметками.
 type folderKBStub struct {
 	folders map[string]int64 // имя → id
+	// parents — id папки → id родителя, для обхода поддерева (2026-11-09).
+	parents map[int64]int64
 	notes   map[int64][]KBNoteSummary
 	bodies  map[int64]string
 	paths   []string
@@ -47,7 +49,12 @@ func (s *folderKBStub) handler() http.Handler {
 			sb.WriteString(itoa(int(id)))
 			sb.WriteString(`,"name":"`)
 			sb.WriteString(name)
-			sb.WriteString(`"}`)
+			sb.WriteString(`"`)
+			if parent, ok := s.parents[id]; ok {
+				sb.WriteString(`,"parent_id":`)
+				sb.WriteString(itoa(int(parent)))
+			}
+			sb.WriteString(`}`)
 		}
 		sb.WriteString(`]}`)
 		_, _ = w.Write([]byte(sb.String()))
@@ -140,6 +147,81 @@ func TestCompetitorsFromKBFolderCaseInsensitive(t *testing.T) {
 	}
 	if len(cards) != 1 || cards[0].Title != "Пеноплэкс конкурент" {
 		t.Fatalf("ожидалась одна карточка конкурента, получено: %+v", cards)
+	}
+}
+
+// TestCompetitorsFromKBWalksSubfolders — 2026-11-09: карточки берутся из всего
+// поддерева раздела, а не только из верхней папки. Менеджеры раскладывают
+// продукты конкурентов по подпапкам, и раньше была видна лишь «разводящая».
+func TestCompetitorsFromKBWalksSubfolders(t *testing.T) {
+	stub := &folderKBStub{
+		folders: map[string]int64{
+			competitorsFolderName: 1,
+			"ТехноНИКОЛЬ":         2,
+			"Пеноплэкс":           3,
+			"Пеноплэкс/Кровля":    4,
+		},
+		parents: map[int64]int64{2: 1, 3: 1, 4: 3},
+		notes: map[int64][]KBNoteSummary{
+			1: {{ID: 10, Title: "Разводящая"}},
+			2: {{ID: 20, Title: "ТехноНИКОЛЬ Кровля"}},
+			3: {{ID: 30, Title: "Пеноплэкс Фундамент"}},
+			4: {{ID: 40, Title: "Пеноплэкс Кровля"}},
+		},
+		bodies: map[int64]string{
+			10: "# Разводящая\n",
+			20: "# ТехноНИКОЛЬ Кровля\n\n## Описание системы\n\nАналог.\n",
+			30: "# Пеноплэкс Фундамент\n",
+			40: "# Пеноплэкс Кровля\n",
+		},
+	}
+	kb := newFolderKB(t, stub)
+	cards, found, err := CompetitorsFromKB(context.Background(), kb)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if !found {
+		t.Fatal("папка должна считаться найденной")
+	}
+	titles := map[string]bool{}
+	for _, c := range cards {
+		titles[c.Title] = true
+	}
+	for _, want := range []string{"Разводящая", "ТехноНИКОЛЬ Кровля", "Пеноплэкс Фундамент", "Пеноплэкс Кровля"} {
+		if !titles[want] {
+			t.Fatalf("в поддереве должна быть карточка %q, получено: %v", want, titles)
+		}
+	}
+	if len(cards) != 4 {
+		t.Fatalf("ожидалось 4 карточки, получено %d", len(cards))
+	}
+}
+
+// TestSubtreeFolderIDs — обход поддерева: папка + все потомки на любую глубину,
+// без повторов и без чужих веток (2026-11-09).
+func TestSubtreeFolderIDs(t *testing.T) {
+	stub := &folderKBStub{
+		folders: map[string]int64{
+			"раздел": 1, "A": 2, "B": 3, "A1": 4, "A1x": 5, "чужое": 6,
+		},
+		parents: map[int64]int64{2: 1, 3: 1, 4: 2, 5: 4},
+	}
+	kb := newFolderKB(t, stub)
+	got, err := kb.SubtreeFolderIDs(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	want := map[int64]bool{1: true, 2: true, 3: true, 4: true, 5: true}
+	if len(got) != len(want) {
+		t.Fatalf("ожидалось %d папок, получено %d: %v", len(want), len(got), got)
+	}
+	for _, id := range got {
+		if !want[id] {
+			t.Fatalf("в поддерево попала чужая папка %d: %v", id, got)
+		}
+	}
+	if _, err := kb.SubtreeFolderIDs(context.Background(), 999); err == nil {
+		t.Fatal("несуществующая папка должна быть ошибкой")
 	}
 }
 

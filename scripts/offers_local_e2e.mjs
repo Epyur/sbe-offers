@@ -2138,6 +2138,33 @@ async function sectionCombat() {
     (comps.json?.cards ?? []).some((c) => (c.title ?? '').includes('Конкурент')),
     JSON.stringify((comps.json?.cards ?? []).map((c) => c.title)),
   );
+  // Рекурсивный обход раздела (2026-11-09): карточка из ПОДПАПКИ тоже должна
+  // доехать. kb-stub держит «Пеноплэкс Фундамент» во вложенной папке 10.
+  ok(
+    'карточка конкурента из подпапки дошла',
+    (comps.json?.cards ?? []).some((c) => (c.title ?? '').includes('Пеноплэкс')),
+    JSON.stringify((comps.json?.cards ?? []).map((c) => c.title)),
+  );
+
+  // Поиск стороны в боте (2026-11-09): каталог велик, перебор не годится.
+  const botOurSearch = await call('GET', '/bot/combat/systems?q=кровля', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok(
+    'поиск нашего продукта в боте находит по названию',
+    botOurSearch.status === 200 &&
+      (botOurSearch.json?.cards ?? []).some((c) => /кровл/i.test(c.title ?? '')),
+    JSON.stringify((botOurSearch.json?.cards ?? []).map((c) => c.title)),
+  );
+  const botCompSearch = await call('GET', '/bot/combat/competitors?q=пеноплэкс', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok(
+    'поиск конкурента в боте находит по названию',
+    botCompSearch.status === 200 &&
+      (botCompSearch.json?.cards ?? []).some((c) => /пеноплэкс/i.test(c.title ?? '')),
+    JSON.stringify((botCompSearch.json?.cards ?? []).map((c) => c.title)),
+  );
 
   // Наш продукт — первая система из кеша систем (карточка 101 из kb-stub).
   const systems = await call('GET', '/systems', { token: ownerToken });

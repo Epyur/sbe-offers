@@ -18,6 +18,7 @@ import {
   BUTTONS,
   ID_BUTTONS,
   applyAttachConfirm,
+  handleCombatText,
   handleDraftText,
   handleMyCombat,
   onEditOffer,
@@ -268,10 +269,11 @@ export async function routeText(
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
-  // В боевом листке текст не означает ничего (2026-11-09): стороны выбираются
-  // кнопками. Иначе свободная строка «Монтаж | 12 | 850» попала бы в черновик КП.
+  // В боевом листке текст — это запрос на поиск стороны (2026-11-09): каталог
+  // 1500+ записей кнопками не выбрать. Свободная строка «Монтаж | 12 | 850»
+  // при этом в черновик КП не попадёт — листок живёт отдельно от КП.
   if (isCombat(session)) {
-    await deps.send(chatId, 'В боевом листке стороны выбираются кнопками ниже.', MAIN_KEYBOARD);
+    if (await handleCombatText(ctx, trimmed)) return;
     return;
   }
   if (await handleDraftText(ctx, trimmed)) return;

@@ -75,31 +75,52 @@ func (s *Server) handleRefreshCompetitors(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// CompetitorsFromKB читает карточки конкурентов из папки. Возвращает карточки и
-// признак «папка найдена»: отсутствие папки — не ошибка, её может ещё не быть.
+// CompetitorsFromKB читает карточки конкурентов из папки и ВСЕХ её подпапок
+// (2026-11-09). Возвращает карточки и признак «папка найдена»: отсутствие папки
+// — не ошибка, её может ещё не быть.
+//
+// Раньше читалась только верхняя папка раздела, а менеджеры раскладывают
+// продукты конкурентов по подпапкам — и видели лишь «разводящую» заметку.
+// Теперь обходятся все папки поддерева, а карточкой становится КАЖДАЯ заметка:
+// название — заголовок заметки, разбор по стандарту дополняет её, если он
+// удался (у произвольной заметки просто не будет состава и характеристик).
 func CompetitorsFromKB(ctx context.Context, kb *KBClient) ([]SystemCard, bool, error) {
 	if kb == nil || !kb.configured() {
 		return []SystemCard{}, false, nil
 	}
-	folderID, err := kb.FolderIDByName(ctx, competitorsFolderName)
+	rootID, err := kb.FolderIDByName(ctx, competitorsFolderName)
 	if err != nil {
 		// Нет папки — «не найдено», а не авария. Прочие ошибки (сеть, права)
 		// идут наверх: пустая папка и недоступная база знаний — разные вещи.
 		return []SystemCard{}, false, nil
 	}
-	notes, err := kb.FolderNotes(ctx, folderID)
+	folderIDs, err := kb.SubtreeFolderIDs(ctx, rootID)
 	if err != nil {
 		return []SystemCard{}, true, err
 	}
-	cards := make([]SystemCard, 0, len(notes))
-	for _, summary := range notes {
-		note, err := kb.Note(ctx, summary.ID)
-		// Одна сломанная карточка не скрывает остальные.
+	cards := make([]SystemCard, 0)
+	seen := make(map[int64]bool)
+	for _, folderID := range folderIDs {
+		notes, err := kb.FolderNotes(ctx, folderID)
 		if err != nil {
+			// Одна недоступная папка не скрывает остальные ветки раздела.
 			continue
 		}
-		parsed := skills.ParseSystemCard(note.ContentMD)
-		cards = append(cards, systemCardFromParsed(summary, note, parsed))
+		for _, summary := range notes {
+			if seen[summary.ID] {
+				continue
+			}
+			seen[summary.ID] = true
+			note, err := kb.Note(ctx, summary.ID)
+			// Одна сломанная карточка не скрывает остальные.
+			if err != nil {
+				continue
+			}
+			parsed := skills.ParseSystemCard(note.ContentMD)
+			// Название берётся из заголовка заметки, если стандарт не разобрался:
+			// карточкой конкурента может быть произвольная заметка в подпапке.
+			cards = append(cards, systemCardFromParsed(summary, note, parsed))
+		}
 	}
 	return attachImageKeys(ctx, kb, cards), true, nil
 }

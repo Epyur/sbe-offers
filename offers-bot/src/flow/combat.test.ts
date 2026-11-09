@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   COMBAT_KEYBOARD,
+  combatAskQuery,
   combatIntro,
   combatListMessage,
   combatNotEmptyMessage,
@@ -75,14 +76,36 @@ describe('боевой листок: выбор стороны', () => {
     const kb = combatPickerKeyboard(items, 'oursel') as { inline_keyboard: Array<Array<{ callback_data: string }>> };
     assert.equal(kb.inline_keyboard[0][0].callback_data, 'oursel:0');
     assert.equal(kb.inline_keyboard[1][0].callback_data, 'oursel:1');
-    // Кнопка «Назад» — последняя строка.
+    // «Назад» — последняя строка, перед ней «▼ Все продукты».
     assert.equal(kb.inline_keyboard[kb.inline_keyboard.length - 1][0].callback_data, 'cb:back');
+    assert.equal(kb.inline_keyboard[kb.inline_keyboard.length - 2][0].callback_data, 'cb:all');
+  });
+
+  it('при поиске кнопки «▼ Все» нет — список уже сужен', () => {
+    const items: CombatSystemItem[] = [{ noteId: 10, title: 'Кровля' }];
+    const kb = combatPickerKeyboard(items, 'oursel', true) as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const ids = kb.inline_keyboard.flat().map((b) => b.callback_data);
+    assert.ok(!ids.includes('cb:all'));
+    assert.equal(ids[ids.length - 1], 'cb:back');
   });
 
   it('замечания к карточке видны в подписи кнопки', () => {
     const items: CombatSystemItem[] = [{ noteId: 20, title: 'Фасад', problems: ['нет ссылки'] }];
     const kb = combatPickerKeyboard(items, 'compsel') as { inline_keyboard: Array<Array<{ text: string }>> };
     assert.match(kb.inline_keyboard[0][0].text, /есть замечания/);
+  });
+
+  it('пустой поиск по запросу объясняет причину и не теряет путь назад', () => {
+    const res = combatPickerMessage([], 'our', 'несуществующий');
+    assert.equal(res.show, false);
+    assert.match(res.text, /несуществующий/);
+  });
+
+  it('приглашение просит название, а не показывает список', () => {
+    assert.match(combatAskQuery('our'), /название/);
+    assert.match(combatAskQuery('competitor'), /конкурента/);
   });
 
   it('сообщение об добавлении согласуется по роду', () => {

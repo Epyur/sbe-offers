@@ -302,6 +302,29 @@ func (c *KBClient) FolderNotes(ctx context.Context, folderID int64) ([]KBNoteSum
 	return c.notes(ctx, "folder_id", folderID)
 }
 
+// KBFolder — папка Базы знаний вместе с родителем (2026-11-09).
+//
+// ParentID нужен, чтобы обойти ПОДДЕРЕВО раздела, а не только его верхний
+// уровень: у конкурентов продукты разложены по папкам, и ценность в том, чтобы
+// видеть их все.
+type KBFolder struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	ParentID *int64 `json:"parent_id"`
+}
+
+// Folders — все папки Базы знаний. Пагинации у ручки нет: сервис отдаёт дерево
+// целиком.
+func (c *KBClient) Folders(ctx context.Context) ([]KBFolder, error) {
+	var out struct {
+		Folders []KBFolder `json:"folders"`
+	}
+	if err := c.get(ctx, "/api/kb/folders", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Folders, nil
+}
+
 // FolderIDByName — id папки базы знаний по имени. Папки нет — ошибка: карточки
 // искать негде, и вызывающий должен отличить «папки нет» от «папка пуста».
 //
@@ -309,22 +332,68 @@ func (c *KBClient) FolderNotes(ctx context.Context, folderID int64) ([]KBNoteSum
 // человек, и «Материалы и системы конкурентов» против «материалы и системы
 // конкурентов» — одна и та же папка.
 func (c *KBClient) FolderIDByName(ctx context.Context, name string) (int64, error) {
-	var out struct {
-		Folders []struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
-		} `json:"folders"`
-	}
-	if err := c.get(ctx, "/api/kb/folders", nil, &out); err != nil {
+	folders, err := c.Folders(ctx)
+	if err != nil {
 		return 0, err
 	}
 	want := strings.ToLower(strings.TrimSpace(name))
-	for _, f := range out.Folders {
+	for _, f := range folders {
 		if strings.ToLower(strings.TrimSpace(f.Name)) == want {
 			return f.ID, nil
 		}
 	}
 	return 0, fmt.Errorf("в базе знаний нет папки %q", name)
+}
+
+// SubtreeFolderIDs — id папки и всех её потомков на любую глубину.
+//
+// Обход в ширину по карте parent→children: дерево строим один раз из того же
+// ответа /api/kb/folders, поэтому циклов и «потерянных» веток быть не может.
+// Папки, чей родитель не найден (отвязанные), в поддерево не попадают: они не
+// принадлежат разделу.
+func (c *KBClient) SubtreeFolderIDs(ctx context.Context, rootID int64) ([]int64, error) {
+	if rootID <= 0 {
+		return nil, fmt.Errorf("неверный идентификатор папки %d", rootID)
+	}
+	folders, err := c.Folders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	children, exists := folderChildren(folders)
+	if !exists[rootID] {
+		return nil, fmt.Errorf("в базе знаний нет папки %d", rootID)
+	}
+	out := make([]int64, 0, len(folders))
+	queue := []int64{rootID}
+	seen := map[int64]bool{rootID: true}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		out = append(out, id)
+		for _, kid := range children[id] {
+			if seen[kid] {
+				continue
+			}
+			seen[kid] = true
+			queue = append(queue, kid)
+		}
+	}
+	return out, nil
+}
+
+// folderChildren строит карту parent→children и множество существующих папок.
+// Одна функция на два ответа: карта нужна обходу, а «папка вообще есть» —
+// проверке входа. Разделять их значило бы дважды пройти один список.
+func folderChildren(folders []KBFolder) (map[int64][]int64, map[int64]bool) {
+	children := make(map[int64][]int64, len(folders))
+	exists := make(map[int64]bool, len(folders))
+	for _, f := range folders {
+		exists[f.ID] = true
+		if f.ParentID != nil {
+			children[*f.ParentID] = append(children[*f.ParentID], f.ID)
+		}
+	}
+	return children, exists
 }
 
 // notes — общий цикл по страницам для чтения заметок по любому фильтру:

@@ -535,18 +535,28 @@ export interface CombatSheet {
   updatedAt: string;
 }
 
-/** Наши системы для выбора стороны. */
-export async function combatSystems(): Promise<{ cards: CombatSystemItem[]; error?: string }> {
-  return call('GET', '/bot/combat/systems');
+/**
+ * Наш продукт для выбора стороны: материалы каталога и системы Базы знаний.
+ *
+ * `q` — поиск по названию и коду: каталог 1500+ записей, списком его не выбрать
+ * (2026-11-09).
+ */
+export async function combatSystems(
+  q = '',
+): Promise<{ cards: CombatSystemItem[]; total?: number; error?: string }> {
+  const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return call('GET', `/bot/combat/systems${query}`);
 }
 
-/** Продукты конкурентов для выбора стороны. */
-export async function combatCompetitors(): Promise<{
+/** Продукты конкурентов для выбора стороны (всё поддерево папки), поиск по `q`. */
+export async function combatCompetitors(q = ''): Promise<{
   cards: CombatSystemItem[];
   folderFound?: boolean;
+  total?: number;
   error?: string;
 }> {
-  return call('GET', '/bot/combat/competitors');
+  const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return call('GET', `/bot/combat/competitors${query}`);
 }
 
 /** «Мои боевые листки» этого чата. */

@@ -48,22 +48,54 @@ func combatItems(cards []SystemCard) []botSystemItem {
 	return items
 }
 
-// handleBotCombatSystems — наши системы для выбора стороны в боевом листке.
+// normalizeCombatQuery приводит запрос к нижнему регистру, «ё»→«е» и схлопывает
+// пробелы: менеджер пишет с телефона, и «кров laatste»/«КРОВЛЯ» — один запрос.
+func normalizeCombatQuery(raw string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(raw))), " ")
+}
+
+// filterCombatItems — поиск стороны по названию и коду.
 //
-// Берётся кеш (как и в плагине): экран не ходит в Базу знаний на каждый показ.
+// Все слова запроса обязаны найтись (в названии или коде) — тот же приём, что у
+// каталога: «кровля мембрана» не ловится одной подстрокой. Пустой запрос
+// возвращает весь список: без поиска сторона выбирается из первых, а полный
+// перечень менеджеру не нужен.
+func filterCombatItems(items []botSystemItem, query string) []botSystemItem {
+	q := normalizeCombatQuery(query)
+	if q == "" {
+		return items
+	}
+	words := strings.Fields(q)
+	out := make([]botSystemItem, 0, len(items))
+	for _, item := range items {
+		haystack := normalizeCombatQuery(item.Title + " " + item.SKU)
+		matched := true
+		for _, w := range words {
+			if !strings.Contains(haystack, w) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// handleBotCombatSystems — наш продукт для выбора стороны в боевом листке.
+//
+// Набор — материалы КАТАЛОГА и карточки систем Базы знаний вместе (2026-11-09):
+// менеджер спорит с конкурентом конкретным товаром, а его код и цену он знает
+// по каталогу. Каталог — 1500+ записей, перебирать их списком бессмысленно,
+// поэтому `q` обязателен по смыслу: без него отдаём первый срез, а с ним —
+// совпадения по названию.
+//
+// Кеш карточек (как и в плагине): экран не ходит в Базу знаний на каждый показ.
 // Если кеша нет, но База знаний настроена, читаем один раз — иначе первый запуск
 // бота давал пустой список без объяснения.
 func (s *Server) handleBotCombatSystems(w http.ResponseWriter, r *http.Request) {
-	cards, err := s.loadCachedSystemCards(r.Context())
-	if err == nil && len(cards) == 0 && s.kb != nil && s.kb.configured() {
-		materials, merr := s.listMaterials(r.Context(), true)
-		if merr == nil {
-			cards, err = SystemsFromKB(r.Context(), s.kb, materials)
-			if err == nil {
-				_ = s.saveCachedSystemCards(r.Context(), cards, "")
-			}
-		}
-	}
+	items, err := s.combatOurItems(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"cards": []any{},
@@ -71,13 +103,82 @@ func (s *Server) handleBotCombatSystems(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cards": combatItems(cards)})
+	query := r.URL.Query().Get("q")
+	filtered := filterCombatItems(items, query)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cards": filtered,
+		"total": len(filtered),
+	})
+}
+
+// combatOurItems — список нашего продукта для боевого листка: материалы каталога
+// и системы Базы знаний в одной форме выбора.
+//
+// Материал без заметки Базы знаний в листок попасть не может (у него нет
+// карточки для документа), поэтому такие строки отбрасываются здесь, а не
+// молча падают потом при сохранении стороны.
+func (s *Server) combatOurItems(ctx context.Context) ([]botSystemItem, error) {
+	materials, err := s.listMaterials(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]botSystemItem, 0, len(materials))
+	seen := make(map[int64]bool)
+	// Материалы — основной набор: это то, что продаётся и что менеджер ищет
+	// по каталогу.
+	for _, m := range materials {
+		if m.NoteID <= 0 || m.Archived || seen[m.NoteID] {
+			continue
+		}
+		seen[m.NoteID] = true
+		items = append(items, botSystemItem{NoteID: m.NoteID, Title: m.Name, SKU: m.SKU})
+	}
+	// Системы добавляются вторым проходом и вытесняются теми же заметками, если
+	// материал уже занял эту карточку (одна и та же заметка не должна быть в
+	// списке дважды — листок хранит сторону по заметке).
+	for _, card := range s.systemCardsForCombat(ctx, materials) {
+		if card.NoteID <= 0 || seen[card.NoteID] {
+			continue
+		}
+		seen[card.NoteID] = true
+		items = append(items, botSystemItem{
+			NoteID:   card.NoteID,
+			Title:    card.Title,
+			SKU:      card.SKU,
+			Problems: card.Problems,
+		})
+	}
+	return items, nil
+}
+
+// systemCardsForCombat — системы для списка сторон: кеш карточек, а при пустом
+// кеше — разовое чтение из Базы знаний с сохранением результата.
+//
+// Ошибку гасим намеренно: системы дополняют материалы, и их недоступность не
+// должна гасить весь список нашего продукта (материалы уже прочитаны). Пустой
+// кеш при живом сбое Базы знаний вернётся пустым списком — это лучше, чем
+// отказ всей стороны.
+func (s *Server) systemCardsForCombat(ctx context.Context, materials []Material) []SystemCard {
+	cards, err := s.loadCachedSystemCards(ctx)
+	if err != nil {
+		return nil
+	}
+	if len(cards) == 0 && s.kb != nil && s.kb.configured() {
+		fresh, ferr := SystemsFromKB(ctx, s.kb, materials)
+		if ferr != nil {
+			return nil
+		}
+		_ = s.saveCachedSystemCards(ctx, fresh, "")
+		return fresh
+	}
+	return cards
 }
 
 // handleBotCombatCompetitors — продукты конкурентов для выбора стороны.
 //
-// Источник — кеш конкурентов (combat.go/competitors.go), а не новая выборка:
-// та же папка, тот же разбор, что и в плагине.
+// Источник — кеш конкурентов (competitors.go): всё поддерево папки «материалы и
+// системы конкурентов». `q` — поиск по названию: продуктов конкурентов тоже
+// сотни, и перебирать их кнопками неудобно.
 func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Request) {
 	cards, found, err := s.loadCachedCompetitors(r.Context())
 	if err == nil && len(cards) == 0 && s.kb != nil && s.kb.configured() {
@@ -91,9 +192,13 @@ func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Reque
 		})
 		return
 	}
+	items := combatItems(cards)
+	query := r.URL.Query().Get("q")
+	filtered := filterCombatItems(items, query)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"cards":       combatItems(cards),
+		"cards":       filtered,
 		"folderFound": found,
+		"total":       len(filtered),
 	})
 }
 
