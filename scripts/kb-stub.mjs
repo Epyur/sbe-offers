@@ -4,7 +4,9 @@
  * Отдаёт ровно те ручки, которые зовёт offers-service:
  *
  *   GET /api/kb/tags                      {tags:[{id,name}]}
+ *   GET /api/kb/folders                   {folders:[{id,name,parent_id,position}]}
  *   GET /api/kb/notes?tag_id=&size=       {notes:[{id,uuid,title,path,updated_at}]}
+ *   GET /api/kb/notes?folder_id=&size=    то же, с фильтром по папке
  *   GET /api/kb/notes/{id}                {id,title,path,content_md,tags,updated_at}
  *   GET /api/kb/notes/{id}/attachments    {attachments:[{filename,mime,key}]}
  *   GET /api/kb/file-link?key=            {url}
@@ -171,6 +173,39 @@ const NOTES = [
     ].join('\n'),
     tags: [{ id: 7, name: 'commercial_propose' }, { id: 8, name: 'material' }],
   },
+  {
+    // Карточка продукта КОНКУРЕНТА (2026-11-08, «Боевой листок»). Лежит не в
+    // теге, а в папке «материалы и системы конкурентов»: у конкурентов своего
+    // тега нет, их файл — раздел Базы знаний. Без неё стенд не проверит, что
+    // список конкурентов доходит до плагина и что фильтр по `folder_id` работает.
+    id: 201,
+    uuid: '44444444-5555-6666-7777-888888888888',
+    title: 'Конкурент: ТехноНИКОЛЬ Кровля',
+    path: 'База знаний/материалы и системы конкурентов/ТехноНИКОЛЬ Кровля.md',
+    updated_at: '2026-11-08T09:00:00Z',
+    folder_id: 9,
+    content_md: [
+      '---',
+      'sbe_kb_id: 44444444-5555-6666-7777-888888888888',
+      '---',
+      '# Конкурент: ТехноНИКОЛЬ Кровля',
+      '',
+      '## Описание системы',
+      'Аналог нашей кровельной системы от конкурента: наплавляемая кровля.',
+      '',
+      '## Состав системы',
+      '- 1 Битумная мембрана конкурента',
+    ].join('\n'),
+    // Тегов нет намеренно: конкурент не должен попадать ни в «Системы», ни в
+    // «Контекст КП» — он живёт только в своей папке.
+    tags: [],
+  },
+];
+
+// Папки Базы знаний (2026-11-08): нужны для карточек конкурентов. Имя папки —
+// то же, что ищет сервис (`competitorsFolderName`).
+const FOLDERS = [
+  { id: 9, name: 'материалы и системы конкурентов', parent_id: null, position: 0 },
 ];
 
 function send(res, status, body) {
@@ -207,8 +242,21 @@ http
       });
     }
 
+    if (req.method === 'GET' && path === '/api/kb/folders') {
+      return send(res, 200, { folders: FOLDERS });
+    }
+
     if (req.method === 'GET' && path === '/api/kb/notes') {
       const tagID = Number(url.searchParams.get('tag_id') ?? 0);
+      const folderID = Number(url.searchParams.get('folder_id') ?? 0);
+      // Фильтр по папке (2026-11-08): карточка конкурента выбирается из папки,
+      // а не по тегу. Без этой ветки стенд возвращал бы пусто, и «конкуренты
+      // не доходят» выглядело бы нормой.
+      if (folderID) {
+        const items = NOTES.filter((n) => n.folder_id === folderID)
+          .map(({ content_md, ...rest }) => rest);
+        return send(res, 200, { items, total: items.length, page: 1, size: 200 });
+      }
       // Фильтр по тегу, как в настоящем сервисе: карточка попадает в выдачу,
       // только если у неё есть этот тег. Раньше заглушка отдавала все заметки
       // на тег 7 и НИ ОДНОЙ на тег 8 — и «материалы из карточек» на стенде не

@@ -2121,9 +2121,91 @@ async function sectionServiceMarkers() {
   ok('КП меток убрано', true);
 }
 
+/**
+ * Боевой листок (2026-11-08): карточки конкурентов из папки Базы знаний и
+ * сам листок — создание, список, чтение, сохранение, удаление. Проверяем по
+ * HTTP, как это делает плагин, а не функции в изоляции.
+ */
+async function sectionCombat() {
+  console.log('\nБоевой листок');
+
+  // Папка конкурентов в kb-stub → карточка конкурента доезжает до сервиса.
+  const comps = await call('GET', '/competitors', { token: ownerToken });
+  ok('список конкурентов отвечает 200', comps.status === 200, `статус ${comps.status}`);
+  ok('папка конкурентов найдена', comps.json?.folderFound === true);
+  ok(
+    'карточка конкурента из папки дошла',
+    (comps.json?.cards ?? []).some((c) => (c.title ?? '').includes('Конкурент')),
+    JSON.stringify((comps.json?.cards ?? []).map((c) => c.title)),
+  );
+
+  // Наш продукт — первая система из кеша систем (карточка 101 из kb-stub).
+  const systems = await call('GET', '/systems', { token: ownerToken });
+  const ourSystem = (systems.json?.systems ?? [])[0];
+  ok('есть система для нашего продукта', Boolean(ourSystem), JSON.stringify(systems.json?.error));
+  const compCard = (comps.json?.cards ?? [])[0];
+
+  const created = await call('POST', '/combat', {
+    token: ownerToken,
+    body: {
+      title: 'Сравнение с конкурентом',
+      ourNotes: ourSystem ? [{ noteId: ourSystem.noteId, title: ourSystem.title }] : [],
+      competitorNotes: compCard ? [{ noteId: compCard.noteId, title: compCard.title }] : [],
+      formValues: { object_name: 'ЖК Поэма' },
+      status: 'draft',
+    },
+  });
+  ok('боевой листок создан', created.status === 200 && created.json?.id > 0, `статус ${created.status}`);
+  ok('номер вида NNN/YYYY', /^\d{3,}\/\d{4}$/.test(created.json?.number ?? ''), created.json?.number);
+  const combatId = created.json?.id;
+
+  const list = await call('GET', '/combat', { token: ownerToken });
+  ok('боевой листок в списке', (list.json?.sheets ?? []).some((s) => s.id === combatId));
+
+  const got = await call('GET', `/combat/${combatId}`, { token: ownerToken });
+  ok('чтение боевого листка', got.status === 200 && (got.json?.competitorNotes ?? []).length === 1);
+
+  const emptyTitle = await call('PUT', `/combat/${combatId}`, {
+    token: ownerToken,
+    body: { title: '   ' },
+  });
+  ok('пустое название не сохраняется', emptyTitle.status === 400, `статус ${emptyTitle.status}`);
+
+  const saved = await call('PUT', `/combat/${combatId}`, {
+    token: ownerToken,
+    body: { ...got.json, status: 'final' },
+  });
+  ok('боевой листок сохранён как готовый', saved.status === 200 && saved.json?.status === 'final');
+
+  // DOCX боевого листка (2026-11-08, вторая партия): печать по форме combat.
+  const exportRes = await fetch(`${BASE}/api/offers/combat/${combatId}/export`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  ok('DOCX боевого листка собирается → 200', exportRes.status === 200, `статус ${exportRes.status}`);
+  const combatDocx = Buffer.from(await exportRes.arrayBuffer());
+  ok('боевой листок — это zip (docx)', combatDocx.slice(0, 2).toString() === 'PK' && combatDocx.length > 2000,
+    `размер ${combatDocx.length}`);
+  if (exportRes.status === 200) {
+    const combatXml = unzipEntrySafe(combatDocx, 'word/document.xml');
+    ok('в боевом листке есть наш продукт и конкурент',
+      combatXml.includes('Наш продукт') && combatXml.includes('Продукты конкурентов'));
+    ok('в боевом листке нет незаполненных плейсхолдеров',
+      !combatXml.includes('{{') && !combatXml.includes('}}'));
+  }
+
+  // Чужой editor не видит чужой листок.
+  const foreignGet = await call('GET', `/combat/${combatId}`, { token: makeJwt('other@tn.ru') });
+  ok('чужой боевой листок недоступен', foreignGet.status === 403, `статус ${foreignGet.status}`);
+
+  const del = await call('DELETE', `/combat/${combatId}`, { token: ownerToken });
+  ok('боевой листок удалён', del.status === 200);
+}
+
 await sectionLayout();
 await sectionSystemTexts();
 await sectionServiceMarkers();
+await sectionCombat();
 
-console.log(`\nИтого: ${passed} прошло, ${failed} провалилось`);
+console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

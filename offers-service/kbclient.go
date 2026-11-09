@@ -289,9 +289,51 @@ func (c *KBClient) TagID(ctx context.Context, name string) (int64, error) {
 // запрос при ЛЮБОМ size, но сообщает total. Раньше клиент просил size=200,
 // получал 50 и считал, что это всё, — из 588 карточек плагин видел 50.
 func (c *KBClient) Notes(ctx context.Context, tagID int64) ([]KBNoteSummary, error) {
+	return c.notes(ctx, "tag_id", tagID)
+}
+
+// FolderNotes — карточки из папки базы знаний (2026-11-08, «Боевой листок»).
+//
+// Папка — не тег: карточки конкурентов лежат в разделе «материалы и системы
+// конкурентов», у них нет собственного тега. Фильтр по `folder_id` есть у
+// kb-service (`GET /api/kb/notes?folder_id=…`), и пагинация у него та же, что
+// по тегу.
+func (c *KBClient) FolderNotes(ctx context.Context, folderID int64) ([]KBNoteSummary, error) {
+	return c.notes(ctx, "folder_id", folderID)
+}
+
+// FolderIDByName — id папки базы знаний по имени. Папки нет — ошибка: карточки
+// искать негде, и вызывающий должен отличить «папки нет» от «папка пуста».
+//
+// Сравнение имён — без учёта регистра и лишних пробелов: имя папки набирает
+// человек, и «Материалы и системы конкурентов» против «материалы и системы
+// конкурентов» — одна и та же папка.
+func (c *KBClient) FolderIDByName(ctx context.Context, name string) (int64, error) {
+	var out struct {
+		Folders []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"folders"`
+	}
+	if err := c.get(ctx, "/api/kb/folders", nil, &out); err != nil {
+		return 0, err
+	}
+	want := strings.ToLower(strings.TrimSpace(name))
+	for _, f := range out.Folders {
+		if strings.ToLower(strings.TrimSpace(f.Name)) == want {
+			return f.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("в базе знаний нет папки %q", name)
+}
+
+// notes — общий цикл по страницам для чтения заметок по любому фильтру:
+// `tag_id` или `folder_id`. Одно место на пагинацию: второй такой цикл
+// разошёлся бы с первым в пределе страниц, как уже было с `size`.
+func (c *KBClient) notes(ctx context.Context, filterKey string, filterID int64) ([]KBNoteSummary, error) {
 	out := make([]KBNoteSummary, 0, kbPageSize)
 	for page := 1; page <= maxKBPages; page++ {
-		items, total, err := c.notesPage(ctx, tagID, page)
+		items, total, err := c.notesPage(ctx, filterKey, filterID, page)
 		if err != nil {
 			return nil, err
 		}
@@ -309,9 +351,9 @@ func (c *KBClient) Notes(ctx context.Context, tagID int64) ([]KBNoteSummary, err
 }
 
 // notesPage — одна страница списка заметок и заявленное всего.
-func (c *KBClient) notesPage(ctx context.Context, tagID int64, page int) ([]KBNoteSummary, int, error) {
+func (c *KBClient) notesPage(ctx context.Context, filterKey string, filterID int64, page int) ([]KBNoteSummary, int, error) {
 	q := url.Values{}
-	q.Set("tag_id", fmt.Sprintf("%d", tagID))
+	q.Set(filterKey, fmt.Sprintf("%d", filterID))
 	q.Set("size", fmt.Sprintf("%d", kbPageSize))
 	q.Set("page", fmt.Sprintf("%d", page))
 	var out struct {

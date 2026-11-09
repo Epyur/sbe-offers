@@ -146,6 +146,9 @@ func validateForm(f OfferForm) string {
 // «форма не настроена», а сохранённая пустая форма остаётся пустой (правило
 // 2026-10-27, живой дефект с подменой формы).
 func defaultForm(mode string) OfferForm {
+	if mode == combatFormMode {
+		return combatDefaultForm()
+	}
 	return OfferForm{
 		Mode:  mode,
 		Title: "Коммерческое предложение",
@@ -228,8 +231,99 @@ const (
 	]`
 )
 
+// combatFormMode — режим формы боевого листка в таблице offers_form.
+//
+// Форма боевого листка — ТА ЖЕ форма КП (тот же редактор блоков), только под
+// другим режимом. Отдельная таблица не заводится: блоки, поля и макет .docx у
+// двух документов одинаковой природы, и вторая таблица разошлась бы с первой
+// при первой же правке редактора.
+const combatFormMode = "combat"
+
+// combatDefaultForm — форма боевого листка по умолчанию.
+//
+// Отличие от КП — в назначении: это справка-сравнение для менеджера, а не
+// письмо заказчику. Поэтому в ней титул с названием и датой, блок нашего
+// предложения и блок конкурентов, а также свободный блок аргументации. Редактор
+// администратора может перестроить всё это, как и форму КП.
+func combatDefaultForm() OfferForm {
+	return OfferForm{
+		Mode:  combatFormMode,
+		Title: "Боевой листок",
+		Placeholders: []Placeholder{
+			{ID: "supplier_name", Label: "Наша компания"},
+			{ID: "object_name", Label: "Объект"},
+			{ID: "client_name", Label: "Заказчик"},
+			{ID: "manager", Label: "Менеджер"},
+			{ID: "conclusion", Label: "Вывод для менеджера"},
+		},
+		Blocks: []Block{
+			{
+				ID:           "cover",
+				Title:        "Титул",
+				Content:      json.RawMessage(combatCoverBlockJSON),
+				ShowInClient: true,
+			},
+			{
+				ID:              "ours",
+				Title:           "Наш продукт",
+				Content:         json.RawMessage(combatOursBlockJSON),
+				ShowInClient:    true,
+				PageBreakBefore: true,
+			},
+			{
+				ID:            "competitors",
+				Title:         "Продукты конкурентов",
+				Content:       json.RawMessage(combatCompetitorsBlockJSON),
+				ShowInClient:  true,
+				SpacingBefore: 12,
+			},
+			{
+				ID:            "argument",
+				Title:         "Вывод и аргументы",
+				Content:       json.RawMessage(combatArgumentBlockJSON),
+				ShowInClient:  true,
+				SpacingBefore: 12,
+			},
+		},
+		RequiredFields: []string{"object_name"},
+	}
+}
+
+// Блоки формы боевого листка по умолчанию. Текст «по промту» здесь — задел на
+// следующую партию (сборка документа): сейчас блоки правятся администратором,
+// а сборка DOCX появится отдельной партией. Значения полей — через {{поле}}.
+const (
+	combatCoverBlockJSON = `[
+		{"type":"paragraph","text":"Боевой листок № {{offer_number}} от {{offer_date}}","align":"center"},
+		{"type":"paragraph","text":"{{supplier_name}}","align":"center"},
+		{"type":"paragraph","text":"Объект: {{object_name}}","align":"center"},
+		{"type":"paragraph","text":"Заказчик: {{client_name}}","align":"center"}
+	]`
+
+	combatOursBlockJSON = `[
+		{"type":"heading","text":"Наш продукт","level":2},
+		{"type":"paragraph","text":"Describe our offer system, materials and why they fit the object."}
+	]`
+
+	combatCompetitorsBlockJSON = `[
+		{"type":"heading","text":"Продукты конкурентов","level":2},
+		{"type":"paragraph","text":"What the competitor offers on this object and its weak points."}
+	]`
+
+	combatArgumentBlockJSON = `[
+		{"type":"heading","text":"Вывод для менеджера","level":2},
+		{"type":"paragraph","text":"{{conclusion}}"}
+	]`
+)
+
 func (s *Server) seedForms(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO offers_form (mode) VALUES ('client') ON CONFLICT (mode) DO NOTHING`)
+	// Форму КП сеем пустой строкой: она «настроена», админ правит её в
+	// конфигураторе, а до первой правки `loadForm` отдаёт форму по умолчанию
+	// только когда строки нет. Для боевого листка строку НЕ сеем намеренно:
+	// пока админ не сохранил свою форму, `loadForm` отдаёт `combatDefaultForm`,
+	// а пустая "настроенная" строка показала бы пустую форму вместо заготовки.
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO offers_form (mode) VALUES ('client') ON CONFLICT (mode) DO NOTHING`)
 	return err
 }
 

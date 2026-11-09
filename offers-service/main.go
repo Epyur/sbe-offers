@@ -148,6 +148,23 @@ func main() {
 	// разложить по узлам; правку он всё равно делает руками.
 	mux.HandleFunc("POST /api/offers/form/describe", s.requirePerm("admin")(s.handleDescribeBlock))
 
+	// Боевой листок (2026-11-08): быстрая справка-сравнение нашего продукта с
+	// продуктами конкурентов. Та же схема прав, что у КП: смотрят все, кто видит
+	// приложение (своё — владельцу, всё — admin); собирают и правят — editor.
+	mux.HandleFunc("GET /api/offers/combat", s.requirePerm("viewer")(s.handleListCombat))
+	mux.HandleFunc("GET /api/offers/combat/{id}", s.requirePerm("viewer")(s.handleGetCombat))
+	mux.HandleFunc("POST /api/offers/combat", s.requirePerm("editor")(s.handleSaveCombat))
+	mux.HandleFunc("PUT /api/offers/combat/{id}", s.requirePerm("editor")(s.handleSaveCombat))
+	mux.HandleFunc("DELETE /api/offers/combat/{id}", s.requirePerm("editor")(s.handleDeleteCombat))
+	// Сборка DOCX боевого листка (2026-11-08): печать по форме combat, карточки
+	// сторон — из кешей систем и конкурентов. Смотреть документ может любой, кто
+	// видит листок, поэтому роль viewer.
+	mux.HandleFunc("POST /api/offers/combat/{id}/export", s.requirePerm("viewer")(s.handleExportCombat))
+	// Продукты конкурентов (2026-11-08): карточки из папки Базы знаний
+	// «материалы и системы конкурентов». Список — из кеша; перечитывает admin.
+	mux.HandleFunc("GET /api/offers/competitors", s.requirePerm("viewer")(s.handleListCompetitors))
+	mux.HandleFunc("POST /api/offers/competitors/refresh", s.requirePerm("admin")(s.handleRefreshCompetitors))
+
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
 	mux.HandleFunc("GET /api/offers/offers/{id}", s.requirePerm("viewer")(s.handleGetOffer))
 	mux.HandleFunc("POST /api/offers/offers", s.requirePerm("editor")(s.handleSaveOffer))
@@ -461,6 +478,26 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		// Системы из старого каталога архивируются: у них больше нет места в
 		// списке материалов, но строка нужна старым предложениям.
 		`UPDATE offers_catalog SET archived = true WHERE kind = 'system' AND NOT archived`,
+
+		// Боевой листок (2026-11-08) — быстрая справка-сравнение нашего продукта
+		// с продуктами конкурентов. Снапшот, как и КП: номер и набор заметок
+		// фиксируются при сохранении. Наш продукт — our_notes, конкурентный —
+		// competitor_notes; оба — массивы {noteId,title}. Текст карточек берётся
+		// из Базы знаний по noteId (кеш конкурентов), а не копируется сюда.
+		`CREATE TABLE IF NOT EXISTS offers_combat_sheet (
+			id               BIGSERIAL PRIMARY KEY,
+			number           TEXT NOT NULL UNIQUE,
+			owner_email      TEXT NOT NULL,
+			title            TEXT NOT NULL DEFAULT 'Боевой листок',
+			offer_id         BIGINT NULL,
+			our_notes        JSONB NOT NULL DEFAULT '[]',
+			competitor_notes JSONB NOT NULL DEFAULT '[]',
+			form_values      JSONB NOT NULL DEFAULT '{}',
+			status           TEXT NOT NULL DEFAULT 'draft',
+			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_owner ON offers_combat_sheet (lower(owner_email))`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {

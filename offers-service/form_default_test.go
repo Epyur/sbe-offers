@@ -110,3 +110,21 @@ func TestDefaultFormPartiesBlockSpaced(t *testing.T) {
 		t.Fatal("описанию нужен отступ до — иначе оно липнет к таблице сторон")
 	}
 }
+
+// Боевой листок (2026-11-08): форма по умолчанию под режимом combat.
+// Без строки в БД адаптер обязан отдать заготовку, а не пустую форму.
+func TestCombatDefaultFormValid(t *testing.T) {
+	form := defaultForm(combatFormMode)
+	if form.Mode != combatFormMode {
+		t.Fatalf("режим формы %q, ожидался %q", form.Mode, combatFormMode)
+	}
+	if form.Title != "Боевой листок" {
+		t.Fatalf("заголовок %q, ожидался «Боевой листок»", form.Title)
+	}
+	if msg := validateForm(form); msg != "" {
+		t.Fatalf("форма боевого листка не проходит проверку: %q", msg)
+	}
+	if len(form.Blocks) == 0 {
+		t.Fatal("у формы боевого листка должны быть блоки по умолчанию")
+	}
+}
