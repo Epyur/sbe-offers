@@ -30,10 +30,10 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.0**, built and checked 2026-11-08 (stand 333/0), **not yet
-committed, deployed or self-hosted** — waits for the «Фиксируй» command. Code
-commits of the last release (0.8.2): `backend` `6930e50`, `main` `ab15448`
-(`check_docs_state.mjs` looks at the last commit that touched code).
+Current version = **0.9.0**, released 2026-11-09 (stand 333/0): deployed,
+self-hosted, registry updated. Code commits: `backend` `cae15f5`, `main`
+`d1ec743` (the plugin part is byte-identical across branches; `check_docs_state.mjs`
+looks at the last commit that touched code).
 
 ## Purpose (current)
 
