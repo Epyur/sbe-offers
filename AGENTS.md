@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.3**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `4eca311`, `main` `MAIN_CODE_SHA`
+registry updated. Code commits: `backend` `4eca311`, `main` `99e3c79`
 (the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
 at the last commit that touched code). This release makes the combat sheet
 usable with the 1500+-entry catalogue: our product and competitor sides are
