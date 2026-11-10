@@ -31,8 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.8**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `bc553da` (plugin part +
-`offers-service`), `main` `abb3bcf` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `829d2c1` (plugin part +
+`offers-service`), `main` `e9650a2` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.8: the «Добавить выбранные» button no longer vanishes in the
 "all found" mode (it used to need `picked`, which that mode clears), and the bot
