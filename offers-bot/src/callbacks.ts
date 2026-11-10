@@ -41,7 +41,7 @@ import {
   combatAskHint,
   combatHintKeyboard,
   combatAnalogueMessage,
-  combatNeedCompetitorMessage,
+  combatNeedOurProductMessage,
 } from './flow/combat.ts';
 import {
   NO_OFFER_FOR_FILE,
@@ -1251,25 +1251,22 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
     await noCombatMessage(ctx);
     return;
   }
-  // Конкурент берётся из памяти разговора, а если её нет (листок открыт заново
-  // или после перезапуска бота) — из самого листка: последний выбранный
-  // конкурент и есть тот, к кому подбираем аналог.
-  let competitor = ctx.lastCompetitor;
-  if (!competitor) {
-    const notes = sheet.competitorNotes ?? [];
-    const last = notes[notes.length - 1];
-    if (last) competitor = { noteId: last.noteId, title: last.title };
-  }
-  if (!competitor) {
-    await ctx.deps.send(ctx.chatId, combatNeedCompetitorMessage(), COMBAT_KEYBOARD);
+  // Подбор идёт ОТ НАШЕГО продукта (2026-11-11, исправление): менеджер
+  // защищает свой продукт и ищет, с чем его сравнить. Раньше подбор был в
+  // обратную сторону — от конкурента, — и в листке без конкурентов не работал
+  // вовсе, хотя наш продукт там уже выбран.
+  const our = sheet.ourNotes ?? [];
+  const source = our[our.length - 1];
+  if (!source) {
+    await ctx.deps.send(ctx.chatId, combatNeedOurProductMessage(), COMBAT_KEYBOARD);
     return;
   }
   try {
-    const res = await api.combatAnalogues(competitor.noteId);
+    const res = await api.combatAnalogues(source.noteId);
     const cards = res.cards ?? [];
     ctx.foundAnalogs = cards;
     ctx.rememberAnalogs?.(cards);
-    const message = combatAnalogueMessage(competitor.title, cards);
+    const message = combatAnalogueMessage(source.title, cards);
     await ctx.deps.send(ctx.chatId, message.text, message.keyboard);
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось подобрать аналоги: ${(e as Error).message}`);
@@ -1290,12 +1287,14 @@ export async function onCombatAnalogPick(ctx: CallbackCtx, noteId: number): Prom
     return;
   }
   try {
-    const updated = await api.addCombatSide(combat.sheetId, ctx.chatId, 'our', {
+    // Подобранный аналог — продукт КОНКУРЕНТА: наше место занято продуктом,
+    // от которого шёл подбор.
+    const updated = await api.addCombatSide(combat.sheetId, ctx.chatId, 'competitor', {
       noteId: card.noteId,
       title: card.title,
     });
     apply(ctx, { ...ctx.session, combat: { ...combat, picking: undefined } });
-    await showCombatSheet(ctx, updated, combatSideAddedMessage('our', card.title));
+    await showCombatSheet(ctx, updated, combatSideAddedMessage('competitor', card.title));
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
   }

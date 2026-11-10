@@ -540,24 +540,38 @@ describe('боевой листок в боте', () => {
     assert.equal(server.current().hint, '');
   });
 
-  it('«Подобрать аналоги» находит наш продукт и добавляет его', async () => {
+  it('«Найти аналоги и сравнить» подбирает конкурентов к нашему продукту', async () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '/combat', state);
-    // Выбрать конкурента — запоминается последний, по нему и ищем аналог.
-    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
-    await route.routeText(deps, '42', 'конкурент', state);
-    await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
-    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    // Наш продукт выбран, конкурентов нет — ровно листок 005 из жалобы.
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c4', state);
     sent.length = 0;
-    await route.routeCallback(deps, '42', 'cb:analog', 'c4', state);
-    assert.match(sent[sent.length - 1].text, /аналоги/);
-    await route.routeCallback(deps, '42', 'cban:530', 'c5', state);
+    await route.routeCallback(deps, '42', 'cb:analog', 'c5', state);
+    const text = sent[sent.length - 1].text;
+    assert.ok(!/Наш продукт»|не нашлось|Сначала нажмите/.test(text), `подбор не сработал: ${text}`);
+    assert.match(text, /Конкуренты, похожие на наш/);
+    // Подобранный продукт добавляется на сторону КОНКУРЕНТА.
+    await route.routeCallback(deps, '42', 'cban:510', 'c6', state);
     assert.ok(
-      server.current().ourNotes.some((n) => n.noteId === 530),
-      'аналог не добавлен как наш продукт',
+      server.current().competitorNotes.some((n) => n.noteId === 510),
+      'аналог не добавлен как конкурент',
     );
+    assert.equal(server.current().ourNotes.length, 1, 'наш продукт не должен меняться');
+  });
+
+  it('без нашего продукта подбор объясняет, что выбрать', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:analog', 'c1', state);
+    assert.match(sent[sent.length - 1].text, /Наш продукт/);
   });
 
   it('аналог подбирается и по конкуренту из листка (после перезапуска бота)', async () => {

@@ -2,88 +2,116 @@ package main
 
 import "testing"
 
-// «Подобрать аналог» (2026-11-11): подбор нашего продукта по карточке
-// конкурента.
+// «Найти аналоги и сравнить» (2026-11-11) — поиск КОНКУРЕНТОВ к нашему
+// продукту.
 //
-// Проверяем поведение, которое видит менеджер: по названию конкурента
-// находится наш продукт того же класса, а не первая строка каталога; пустой
-// подбор — законный ответ.
+// Живые жалобы, которые эти тесты закрывают:
+//  1. листок 5: наш продукт выбран, конкурентов нет — кнопка ничего не находила;
+//  2. листок 1: к PIR-плите подбирался «МОСТОФЛЕКС» — общее слово в описании.
 
-func TestFindAnaloguesByName(t *testing.T) {
-	competitor := SystemCard{
-		NoteID:      20,
-		Title:       "PIRRO Мембрана ПВХ",
-		Description: "Гидроизоляционная мембрана из пластифицированного ПВХ.",
+func TestFindAnaloguesCompetitorByClass(t *testing.T) {
+	// Наш продукт — PIR-плита; аналоги — продукты конкурентов того же класса.
+	our := SystemCard{
+		NoteID:      6363,
+		Title:       "Теплоизоляционные плиты LOGICPIR PROF",
+		Description: "Плиты из пенополиизоцианурата для кровли.",
 	}
-	catalog := []SystemCard{
-		{NoteID: 1, Title: "Плита минеральная", Description: "Теплоизоляция из каменной ваты."},
-		{NoteID: 2, Title: "Мембрана ПВХ LOGICROOF", Description: "Гидроизоляционная мембрана."},
-		{NoteID: 3, Title: "Анкер-втулка", Description: "Крепёж для теплоизоляции."},
+	competitors := []SystemCard{
+		{NoteID: 7847, Title: "PIRRO Термо", Description: "Теплоизоляционная PIR-плита."},
+		{NoteID: 6118, Title: "МОСТОФЛЕКС 250", Description: "Вяжущее для холодного применения."},
+		{NoteID: 7184, Title: "Теплоизоляционная плита СмартПанель", Description: "Плита для фасада."},
 	}
-	got := findAnalogues(competitor, catalog, 3)
+	got := findAnalogues(our, competitors, 3)
 	if len(got) == 0 {
-		t.Fatal("аналог не найден")
+		t.Fatal("аналоги-конкуренты не найдены")
 	}
-	if got[0].NoteID != 2 {
-		t.Fatalf("первым должен быть продукт того же класса, получено: %+v", got)
-	}
-	// Совсем непохожие продукты в подбор не попадают.
 	for _, card := range got {
-		if card.NoteID == 1 || card.NoteID == 3 {
-			t.Fatalf("непохожий продукт попал в аналоги: %+v", card)
+		if card.NoteID == 6118 {
+			t.Fatalf("нерелевантный продукт попал в аналоги: %+v", card)
 		}
 	}
 }
 
-func TestFindAnaloguesTitleOutweighsDescription(t *testing.T) {
-	competitor := SystemCard{NoteID: 20, Title: "Мембрана ПВХ", Description: "Мембрана кровельная."}
+// TestFindAnaloguesRequiresTitleClassHit — совпадения только в описании мало.
+//
+// Прежний подбор считал любое пересечение слов совпадением, и к PIR-плите
+// попадал МОСТОФЛЕКС (общее слово «применения»).
+func TestFindAnaloguesRequiresTitleClassHit(t *testing.T) {
+	our := SystemCard{NoteID: 1, Title: "Мембрана ПВХ", Description: "Для кровли."}
 	catalog := []SystemCard{
-		// Название совпадает, описание — нет.
-		{NoteID: 1, Title: "Мембрана ПВХ", Description: "Рулонный материал."},
-		// Совпадение только в описании, и оно длиннее.
-		{NoteID: 2, Title: "Профиль", Description: "Для кровли: мембрана, крепёж, мембрана."},
+		// Слово «мембран» только в описании — не аналог по классу.
+		{NoteID: 2, Title: "Профиль крепёжный", Description: "Мембрана крепится к профилю."},
 	}
-	got := findAnalogues(competitor, catalog, 2)
-	if len(got) < 2 || got[0].NoteID != 1 {
-		t.Fatalf("название должно весить больше описания, получено: %+v", got)
+	if got := findAnalogues(our, catalog, 3); len(got) != 0 {
+		t.Fatalf("совпадения в описании не должны давать аналог: %+v", got)
 	}
 }
 
-func TestFindAnaloguesLimit(t *testing.T) {
-	competitor := SystemCard{NoteID: 99, Title: "Мембрана кровельная"}
-	catalog := make([]SystemCard, 0, 10)
-	for i := 1; i <= 10; i++ {
-		catalog = append(catalog, SystemCard{NoteID: int64(i), Title: "Мембрана кровельная"})
+func TestFindAnaloguesTitleMatchWins(t *testing.T) {
+	our := SystemCard{NoteID: 1, Title: "Плита теплоизоляционная"}
+	catalog := []SystemCard{
+		{NoteID: 2, Title: "Плита теплоизоляционная PIR", Description: ""},
+		{NoteID: 3, Title: "Клей", Description: "Для плит теплоизоляционных."},
 	}
-	if got := findAnalogues(competitor, catalog, 3); len(got) != 3 {
-		t.Fatalf("ожидалось 3 аналога, получено %d", len(got))
+	got := findAnalogues(our, catalog, 2)
+	if len(got) == 0 || got[0].NoteID != 2 {
+		t.Fatalf("совпадение по названию должно идти первым: %+v", got)
 	}
 }
 
-func TestFindAnaloguesNothingMatches(t *testing.T) {
-	competitor := SystemCard{NoteID: 20, Title: "Асбестоцементный лист"}
-	catalog := []SystemCard{{NoteID: 1, Title: "Мембрана ПВХ"}}
-	if got := findAnalogues(competitor, catalog, 3); len(got) != 0 {
-		t.Fatalf("непохожий продукт не должен попадать в аналоги: %+v", got)
+func TestFindAnaloguesEmptyWhenNoMatch(t *testing.T) {
+	our := SystemCard{NoteID: 1, Title: "Асбестоцементный лист"}
+	catalog := []SystemCard{{NoteID: 2, Title: "Мембрана ПВХ"}}
+	if got := findAnalogues(our, catalog, 3); len(got) != 0 {
+		t.Fatalf("нерелевантные продукты не должны попадать: %+v", got)
 	}
 }
 
 func TestFindAnaloguesSkipsItself(t *testing.T) {
 	card := SystemCard{NoteID: 7, Title: "Мембрана ПВХ"}
 	if got := findAnalogues(card, []SystemCard{card}, 3); len(got) != 0 {
-		t.Fatalf("сам конкурент не может быть своим аналогом: %+v", got)
+		t.Fatalf("продукт не может быть своим аналогом: %+v", got)
 	}
 }
 
-func TestAnalogWordsDropsStopWords(t *testing.T) {
-	got := analogWords("Для мембраны ПВХ и систем кровли")
-	// «для», «и» и короткие обрывки отброшены; слова приведены к нижнему регистру.
-	for _, w := range got {
-		if w == "для" || w == "и" {
-			t.Fatalf("служебное слово осталось: %+v", got)
+func TestFindAnaloguesLimit(t *testing.T) {
+	our := SystemCard{NoteID: 99, Title: "Мембрана кровельная"}
+	catalog := make([]SystemCard, 0, 10)
+	for i := 1; i <= 10; i++ {
+		catalog = append(catalog, SystemCard{NoteID: int64(i), Title: "Мембрана кровельная"})
+	}
+	if got := findAnalogues(our, catalog, 3); len(got) != 3 {
+		t.Fatalf("ожидалось 3 аналога, получено %d", len(got))
+	}
+}
+
+// TestAnalogWordsStems — словоформы одного слова дают одну основу.
+func TestAnalogWordsStems(t *testing.T) {
+	pairs := [][2]string{
+		{"плиты", "плита"},
+		{"мембрана", "мембраны"},
+		{"теплоизоляция", "теплоизоляционные"},
+	}
+	for _, pair := range pairs {
+		a := analogWords(pair[0])
+		b := analogWords(pair[1])
+		if len(a) == 0 || len(b) == 0 {
+			t.Fatalf("%q/%q: слова потеряны", pair[0], pair[1])
+		}
+		if a[0] != b[0] {
+			t.Fatalf("%q и %q дали разные основы: %q / %q", pair[0], pair[1], a[0], b[0])
 		}
 	}
-	if len(got) == 0 {
-		t.Fatal("значимые слова потеряны")
+}
+
+func TestAnalogScoreSplitsTitleAndBody(t *testing.T) {
+	words := analogWords("Мембрана кровельная")
+	score, classHit := analogScore(words, "Мембрана ПВХ", "")
+	if !classHit || score < 3 {
+		t.Fatalf("совпадение названия должно давать класс: %d %v", score, classHit)
+	}
+	score, classHit = analogScore(words, "Профиль", "Для мембрана кровельная")
+	if classHit || score != 2 {
+		t.Fatalf("совпадение только в описании не даёт класс: %d %v", score, classHit)
 	}
 }

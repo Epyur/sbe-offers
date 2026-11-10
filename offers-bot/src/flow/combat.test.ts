@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
   COMBAT_KEYBOARD,
   COMBAT_PICKER_KEYBOARD,
-  combatNeedCompetitorMessage,
+  combatNeedOurProductMessage,
   type CombatPickerPage,
   combatAskQuery,
   combatIntro,
@@ -214,8 +214,8 @@ describe('боевой листок: подбор аналогов в меню',
     assert.ok(picker.some((b) => b.callback_data === 'cb:analog'));
   });
 
-  it('без конкурента нажатие объясняет следующий шаг, а не молчит', () => {
-    assert.match(combatNeedCompetitorMessage(), /Добавить конкурента/);
+  it('без нашего продукта нажатие объясняет следующий шаг, а не молчит', () => {
+    assert.match(combatNeedOurProductMessage(), /Наш продукт/);
   });
 });
 
@@ -240,10 +240,12 @@ describe('боевой листок: уточнение и аналоги', () =
   });
 
   it('аналоги показываются номерами, кнопка несёт заметку', () => {
-    const res = combatAnalogueMessage('Продукт конкурента', [
-      { noteId: 7, title: 'Наш аналог', sku: 'MAT-1' },
+    const res = combatAnalogueMessage('Наш продукт', [
+      { noteId: 7, title: 'Конкурент А', sku: 'MAT-1' },
     ]);
-    assert.match(res.text, /Наш аналог/);
+    assert.match(res.text, /Конкурент А/);
+    // Подбор идёт ОТ нашего продукта: в тексте — он, а не конкурент.
+    assert.match(res.text, /Наш продукт/);
     const kb = res.keyboard as { inline_keyboard: Array<Array<{ callback_data: string }>> };
     assert.equal(kb.inline_keyboard[0][0].callback_data, 'cban:7');
   });

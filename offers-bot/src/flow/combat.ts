@@ -248,28 +248,29 @@ export function combatHintKeyboard(hasHint: boolean): Record<string, unknown> {
  * случайного конкурента из списка.
  */
 /**
- * Просьба выбрать конкурента, если аналог искать ещё не под что.
+ * Просьба выбрать наш продукт, если сравнивать ещё нечего.
  *
- * Аналог подбирается к продукту конкурента — без него искать нечего. Ведём
- * человека прямо к кнопке, а не оставляем в тупике.
+ * Подбор идёт ОТ НАШЕГО продукта: к нему ищутся продукты конкурентов того же
+ * класса. Без нашего продукта подбирать не от чего — ведём к нужной кнопке.
  */
-export function combatNeedCompetitorMessage(): string {
+export function combatNeedOurProductMessage(): string {
   return (
-    'Аналоги подбираются к продукту конкурента.\n\n' +
-    'Сначала нажмите «🏷️ Добавить конкурента» и выберите продукт — ' +
-    'после этого «🔍 Найти аналоги и сравнить» найдёт наш аналог и предложит добавить его в листок.'
+    'Аналоги подбираются к нашему продукту.\n\n' +
+    'Сначала нажмите «➕ Наш продукт» и выберите продукт — после этого ' +
+    '«🔍 Найти аналоги и сравнить» найдёт похожие продукты конкурентов в Базе знаний ' +
+    'и предложит добавить их в листок.'
   );
 }
 
 export function combatAnalogueMessage(
-  competitorTitle: string,
+  ourTitle: string,
   analogues: CombatSystemItem[],
 ): { text: string; keyboard: Record<string, unknown> } {
   if (analogues.length === 0) {
     return {
       text:
-        `По «${competitorTitle}» аналога в Базе знаний не нашлось.\n\n` +
-        'Добавьте наш продукт руками: «➕ Наш продукт».',
+        `По «${ourTitle}» похожих продуктов конкурентов в Базе знаний не нашлось.\n\n` +
+        'Добавьте конкурента руками: «🏷️ Добавить конкурента».',
       keyboard: { inline_keyboard: [[{ text: '< Назад', callback_data: 'cb:back' }]] },
     };
   }
@@ -279,7 +280,9 @@ export function combatAnalogueMessage(
   ]);
   rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
   return {
-    text: `Наши аналоги по «${competitorTitle}»:\n\n${lines.join('\n')}\n\nНажмите номер, чтобы добавить.`,
+    text:
+      `Конкуренты, похожие на наш «${ourTitle}»:\n\n${lines.join('\n')}\n\n` +
+      'Нажмите номер, чтобы добавить конкурента в листок.',
     keyboard: { inline_keyboard: rows },
   };
 }
