@@ -14,12 +14,11 @@ testdata/out.docx
 # Локальные артефакты go build: бинарь Windows на 19 МБ в репозитории не нужен.
 offers-service/offers
 offers-service/offers.exe
+offers-service/offers-stand
 offers-service/*.test
 offers-bot/dist/
-
-# Серверные папки живут только на ветке backend: main — чистый релизный срез плагина.
-offers-service/
-offers-bot/
-
-# Отчёты инструментов ub-mode (crapper/dryer): локальные, в репозиторий не нужны.
+offers-service/cover
+offers-service/target/
+# Анализ кода (crapper/dryer): отчёты .metrics/ - артефакт инструмента, не код.
 .metrics/
+offers-service/.metrics/

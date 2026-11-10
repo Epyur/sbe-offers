@@ -30,25 +30,33 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.12**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `b07beb5` (plugin part +
-`offers-service`), `main` `64ad9bd` (plugin part byte-identical across branches;
-`offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.12: combat buttons re-open the sheet after a bot restart
-(`ensureCombat`), instead of answering «листок не открыт». Previous release —
-0.9.11: «🔍 Найти аналоги и сравнить» sits in the combat sheet's
-main menu (it used to appear only after picking a competitor in the same bot
-session), and the competitor for the match comes from the sheet itself.
-Previous release — 0.9.10: layout upload no longer crashes on an empty marker
-list (nil slices were sent as `null`), and `{{сравнение}}` shows in the marker
-list. Previous release — 0.9.9: the combat sheet has NO form — content is always the product
-list plus the comparison; the layout is printed with a single `{{сравнение}}`
-marker; the manager's hint steers the model; «Подобрать аналоги» finds our
-product for a competitor. Previous release — 0.9.8: the «Добавить выбранные»
-button no longer vanishes in the "all found" mode.
-Previous release — 0.9.6 (2026-11-10): competitors from the `competitor` tag
-plus the KB folder, the bot's side picker as a numbered, paged, multi-select
-list with «выбрать все найденные».
+Current version = **0.9.13** — **in progress, NOT released** (0.9.13 lives on
+`backend` as uncommitted changes on top of code HEAD `58551c3`; the deployed
+build, the self-hosted files and the registry are still **0.9.12**; `main` code
+HEAD is `64ad9bd`).
+`check_docs_state.mjs` is expected to fail until the release is finished — do not
+"fix" it by editing docs.
+
+In 0.9.13 two things ship together (details and the list of what was broken on
+the way: `HANDOFF.md`, «Что изменилось в 0.9.13»):
+
+1. **The layout-mode defect** — an offer was printed as an empty combat sheet.
+   Each document has its own `.docx` master (`offers_form.layout_docx` per
+   `mode`), and the upload response never said which mode it wrote to, so a
+   master uploaded "into the wrong document" looked like success. The response
+   now carries `mode`, the plugin's Notice names the target document and warns
+   on a mismatch, and the stand has a check for it.
+2. **The rebuilt analogue picker** — it now searches **from our product** for
+   **competitor products of the same class**, first via the **competitor
+   journal** (grouping + target note links) with the model, then via the model
+   over cards, then with a word-class fallback.
+
+Previous release — 0.9.12 (2026-11-11, released): combat buttons re-open the
+sheet after a bot restart (`ensureCombat`). Before that: 0.9.11 (analogue button
+in the main menu), 0.9.10 (layout upload no longer crashes on `null`),
+0.9.9 (no form — `{{сравнение}}`, hint, analogues), 0.9.8 («Добавить выбранные»
+in the "all found" mode), 0.9.7 (two H1s, journal excluded), 0.9.6 (`competitor`
+tag, numbered paged picker).
 
 **Release 0.9.7 (2026-11-11, server + bot change; plugin-side `main.js` logic
 unchanged, version bumped for the CUP news).** Live complaints after 0.9.6:
@@ -96,6 +104,31 @@ longer form-driven:
 4. «Подобрать аналоги» (`combat_analog.go`) matches our product to a competitor
    card by significant words; a title hit weighs more than a description hit.
    Checks: `go test ./...` green, bot **134 passing**, OpenAPI 89/66.
+
+**Release 0.9.13 (2026-11-11, IN PROGRESS — deployed to the service, not
+released).** The user's "find analogues" flow, rebuilt three times in one day:
+
+1. **Direction**: analogues are searched FROM OUR product (`ourNotes`) for
+   competitor products of the same class; picked ones are added on the
+   **competitor** side. Without our product the bot says which button to press.
+2. **Chain** (`findAnaloguesSmart`, `combat_analog_llm.go`):
+   journal → model over cards → word-class fallback.
+3. **Journal** (`combat_journal.go`): `parseCompetitorJournal` reads the
+   «Журнал материалов конкурентов» note (tag `journal`). Competitor and catalog
+   section are BOTH `##` and are told apart by the item counter in the heading
+   («— 28 шт.»); table rows give `title | url | [[note]]`, and the wikilink
+   resolves to the real catalogue card. Sections are pre-filtered by
+   `relevantJournalSections` — the journal is huge (FACHMANN 1738 rows, SIKA
+   385) and its first 120 rows belong to one competitor.
+4. **Limits**: `analogLLMTimeout` 60 s, `analogJournalRowLimit` 120,
+   `analogCandidateLimit` 60, `analogLLMLimit` 5, `combatAnalogLimit` 5.
+5. **`cban:all`** — "add every found" — is parsed as a word, id 0
+   (`parseCallbackData`).
+
+**What to fix first if it stops working**: read the service log for
+`журнал дал N аналогов` and `context deadline exceeded` — the chain falls back
+silently, and the fallback result looks like a wrong selection rather than an
+error.
 
 ## Purpose (current)
 
@@ -225,7 +258,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
-| `scripts/offers_local_e2e.mjs` | the stand: **339 checks**, 25 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **351 checks**, 26 sections |
+| `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -299,12 +333,12 @@ cd ../offers-bot && npm run typecheck && npm run build && node --test "src/**/*.
 cd .. && node ../scripts/check_offers_openapi.mjs
 docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
+python scripts/check_layout_mode_defect.py http://127.0.0.1:18080
 ```
 
-Expected on 0.9.3: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
-`check_marker_registry` 24/24, `check_docs_state` EXIT=0, `go test` green,
-OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.3: the plugin-side
-stand count is unchanged, and the added combat checks run in the Docker stand).
+Expected on 0.9.13: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+`check_marker_registry` 24/24, `go test` green, OpenAPI 89/66, stand
+**351/0** (the layout-mode section is 12 of them).
 The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
 `node --test "src/**/*.test.ts"` **112 passing** (combat flow — search, folder
 subtree, multiple sides — covered by route tests against a faked service).
@@ -370,6 +404,16 @@ measurements) are in the archive.
 
 ### Building and the stand
 
+- **A layout belongs to a MODE, and the mode must be visible in the answer.**
+  (2026-11-11, lived defect: the offer was exported as an empty combat sheet.)
+  `offers_form` keeps one `layout_docx` per `mode` (`client`/`combat`) — that
+  part was always right. What was missing: `POST /form/layout` answered only
+  `hasLayout`/`layoutName`, so a master uploaded for the wrong mode looked like
+  success and the fault surfaced at print time. `uploadLayoutResponse` now
+  returns `mode`, the plugin's Notice says which document took the file and
+  warns on a mismatch, and the stand section «Макеты: у КП и у боевого листка —
+  свои» proves both directions. **Any upload that writes into a per-mode or
+  per-entity row must say which row it wrote to.**
 - **`up -d` without `--force-recreate` may not recreate the container.** Check
   `CREATED` in `docker ps`, not the word `Started` in compose output.
 - **Piping a remote script through `tail` returns `tail`'s exit code.**
@@ -579,6 +623,27 @@ measurements) are in the archive.
   открыт». `ensureCombat` loads the sheet from the session or falls back to the
   chat's last sheet (`api.listCombat`) and refills the session; all sheet-level
   buttons go through it. Any new button that needs `session.combat` must too.
+
+- **A "similar products" picker must decide the CLASS of the product, not
+  count shared words** (2026-11-11, three live complaints in a row). Counting
+  words over title+description made a PIR board an analogue of «МОСТОФЛЕКС»
+  (both mention «применения») and of «ШАЙБА КРОВЕЛЬНАЯ» (both «кровельная»),
+  while real analogues (PLASTFOIL) were missing. Rules that now hold:
+  the class comes from the **title only** (`analogClassOf`), application words
+  («кровельная», «фасадная») never define a class (`analogWeakWords`), and
+  «активатор»/«очиститель»/«шайба» are their OWN classes — the order of
+  `analogClasses` decides the first match, so specific words go before general
+  ones. The best source is the **journal**, which already groups products by
+  catalog section; it is chosen by the model, not by words.
+- **The competitor journal has two heading levels that look alike.** Both the
+  competitor («PLASTFOIL (plastfoil.ru/catalog/)») and the catalog section
+  («ПВХ-мембраны — 28 шт.») are `##`. They are distinguished by the **item
+  counter** in the heading; a heading without a counter is a competitor. Markdown
+  table separators (`| --- | --- |`) parse as a row — filter them out.
+- **Model calls need the provider's real latency budget.** `analogLLMTimeout`
+  at 20 s silently forced the fallback on every request (`context deadline
+  exceeded` in the log) — the model answers in 20-40 s on a long journal. 60 s
+  is the working value; `llmDefaultTimeoutMS` is 180 s.
 
 - **A button gated on `picked` disappears exactly when "all found" is chosen**
   (2026-11-11, live complaint «выбрал все — конкуренты не добавились»). The
