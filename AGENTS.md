@@ -30,10 +30,10 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.13** — **in progress, NOT released** (0.9.13 lives on
-`backend` as uncommitted changes on top of code HEAD `58551c3`; the deployed
-build, the self-hosted files and the registry are still **0.9.12**; `main` code
-HEAD is `64ad9bd`).
+Current version = **0.9.13** — **released 2026-11-11**. `backend` code + docs
+HEAD `82919d8`; `main` HEAD `37f7592`; the service and the bot run 0.9.13, the
+self-hosted files and `registry.json` are 0.9.13 (hashes verified over https).
+`main` code HEAD before this release was `64ad9bd`.
 `check_docs_state.mjs` is expected to fail until the release is finished — do not
 "fix" it by editing docs.
 
