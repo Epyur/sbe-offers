@@ -163,13 +163,18 @@ func competitorTaggedNotes(ctx context.Context, kb *KBClient) ([]KBNoteSummary, 
 func cardsForSummaries(ctx context.Context, kb *KBClient, notes []KBNoteSummary, seen map[int64]bool) []SystemCard {
 	out := make([]SystemCard, 0, len(notes))
 	for _, summary := range notes {
-		if seen[summary.ID] || isCompetitorJournal(summary) {
+		if seen[summary.ID] {
 			continue
 		}
 		seen[summary.ID] = true
 		note, err := kb.Note(ctx, summary.ID)
 		// Одна сломанная карточка не скрывает остальные.
 		if err != nil {
+			continue
+		}
+		// Журнал индексации — служебная сводка. Теги есть только в полной
+		// заметке: строка списка их не несёт (см. isCompetitorJournal).
+		if isCompetitorJournal(note) {
 			continue
 		}
 		parsed := skills.ParseSystemCard(note.ContentMD)
@@ -253,8 +258,14 @@ func competitorCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.
 // на карточки. В списке выбора она не нужна: её выбирают случайно и получают в
 // сравнении таблицу из сотен строк вместо продукта. Отсев по тегу, а не по
 // названию: название — свободный текст и может измениться.
-func isCompetitorJournal(summary KBNoteSummary) bool {
-	for _, tag := range summary.Tags {
+//
+// Брать теги надо из ПОЛНОЙ заметки (`KBNote.Tags`), а не из строки списка:
+// `GET /api/kb/notes` теги не отдаёт вовсе (`scanNoteSummary` в kb-service
+// читает только идентификатор, путь и время), и отсев по `summary.Tags` молча
+// не срабатывал — журнал оставался первым в списке (2026-11-11, проверено на
+// боевой базе).
+func isCompetitorJournal(note KBNote) bool {
+	for _, tag := range note.Tags {
 		if strings.EqualFold(strings.TrimSpace(tag.Name), competitorJournalTagName) {
 			return true
 		}

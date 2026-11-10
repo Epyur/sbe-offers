@@ -30,6 +30,22 @@ type folderKBStub struct {
 	tagged map[int64][]KBNoteSummary
 	// tagLists — сколько раз просили /api/kb/tags (лишних запросов быть не должно).
 	tagLists int
+	// noteTags — теги ПОЛНОЙ заметки (json-теги в /api/kb/notes/{id}).
+	noteTags map[int64][]KBTag
+}
+
+// tagsJSON — массив тегов для подстановки в JSON заглушки.
+func tagsJSON(tags []KBTag) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, t := range tags {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(`{"id":` + itoa(int(t.ID)) + `,"name":"` + t.Name + `"}`)
+	}
+	sb.WriteString("]")
+	return sb.String()
 }
 
 func (s *folderKBStub) handler() http.Handler {
@@ -126,7 +142,9 @@ func (s *folderKBStub) handler() http.Handler {
 		tail := strings.TrimPrefix(r.URL.Path, "/api/kb/notes/")
 		id := atoi10(tail)
 		body := s.bodies[id]
-		_, _ = w.Write([]byte(`{"id":` + itoa(int(id)) + `,"content_md":` + jsonString(body) + `}`))
+		// Настоящий kb-service отдаёт теги только в ПОЛНОЙ заметке, а не в
+		// строке списка (2026-11-11) — заглушка повторяет это поведение.
+		_, _ = w.Write([]byte(`{"id":` + itoa(int(id)) + `,"content_md":` + jsonString(body) + `,"tags":` + tagsJSON(s.noteTags[id]) + `}`))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Вложения и прочее — пусто.
@@ -389,9 +407,11 @@ func TestCompetitorJournalExcluded(t *testing.T) {
 		folders: map[string]int64{},
 		tags:    map[string]int64{competitorTagName: 8},
 		tagged: map[int64][]KBNoteSummary{8: {
-			{ID: 30, Title: "Журнал материалов конкурентов", Tags: []KBTag{{ID: 9, Name: "journal"}}},
+			{ID: 30, Title: "Журнал материалов конкурентов"},
 			{ID: 31, Title: "АНКЕР-ВТУЛКА PROPLUG"},
 		}},
+		// Теги — у полной заметки: список их не несёт.
+		noteTags: map[int64][]KBTag{30: {{ID: 9, Name: "journal"}}},
 		bodies: map[int64]string{
 			30: "# Журнал материалов конкурентов\n\n## PLASTFOIL\n",
 			31: "# АНКЕР-ВТУЛКА PROPLUG\n",
