@@ -309,9 +309,12 @@ func (s *Server) analogSourceCard(r *http.Request, noteID int64) (SystemCard, bo
 // минуты менеджер уже не ждёт список, поэтому дальше — откат.
 const analogLLMTimeout = 60 * time.Second
 
-// combatAnalogLimit — сколько аналогов подсказывать. Три: больше — это уже
-// список, и менеджер снова выбирает из него руками.
-const combatAnalogLimit = 3
+// combatAnalogLimit — сколько аналогов подсказывать.
+//
+// Пять, а не три (2026-11-11, живая проверка): у PIR-плиты в журнале нашлось
+// пять аналогов, а три места занимал один — карточки разных конкурентов про
+// один товар. Пять помещается на экран номерами и даёт выбор без листания.
+const combatAnalogLimit = 5
 
 // parseIDParam разбирает числовой параметр запроса; неверный — 0.
 func parseIDParam(raw string) int64 {
