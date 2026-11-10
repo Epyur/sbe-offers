@@ -130,16 +130,15 @@ var analogWeakClasses = map[string]bool{
 	"креп": true, "крепеж": true, "лист": true,
 }
 
-// analogClassOf — класс продукта по НАЗВАНИЮ (описание — запасной путь).
+// analogClassOf — класс продукта ТОЛЬКО по названию.
 //
-// Возвращает первое найденное классовое слово-основу; пусто — класс не
-// распознан. Название важнее описания: в описании слово класса может стоять в
-// общем перечислении («кровельная система с мембраной и крепежом»).
-func analogClassOf(title, description string) string {
-	if class := analogClassIn(title); class != "" {
-		return class
-	}
-	return analogClassIn(description)
+// Описание не участвует: там слово класса стоит в общем перечислении, и добавка
+// для бетона с «теплоизоляцией» в описании становилась аналогом плиты
+// (2026-11-11, живая проверка на боевой базе: Sika в аналогах PIR-плиты).
+// Нет класса в названии — карточка не участвует в подборе вовсе: это честнее,
+// чем угадывать по описанию.
+func analogClassOf(title string) string {
+	return analogClassIn(title)
 }
 
 // analogClassIn — первое классовое слово в тексте.
@@ -208,7 +207,7 @@ func analogScore(words []string, title, description string) int {
 func findAnalogues(source SystemCard, catalog []SystemCard, limit int) []SystemCard {
 	sourceText := source.Title + " " + source.Description
 	words := analogWords(sourceText)
-	sourceClass := analogClassOf(source.Title, source.Description)
+	sourceClass := analogClassOf(source.Title)
 	if len(words) == 0 {
 		return nil
 	}
@@ -218,7 +217,7 @@ func findAnalogues(source SystemCard, catalog []SystemCard, limit int) []SystemC
 			continue
 		}
 		cardText := card.Description + " " + strings.Join(card.Composition, " ")
-		class := analogClassOf(card.Title, cardText)
+		class := analogClassOf(card.Title)
 		// Класс обязателен и должен совпасть. Нераспознанный класс у источника —
 		// повод не подбирать вовсе: подставлять «похожее по словам» хуже, чем
 		// честно сказать, что аналогов нет.

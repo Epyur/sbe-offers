@@ -149,7 +149,7 @@ func TestAnalogClassOf(t *testing.T) {
 		{"Активатор для ПВХ мембран, 1 л", "активатор"},
 	}
 	for _, c := range cases {
-		if got := analogClassOf(c.title, ""); got != c.want {
+		if got := analogClassOf(c.title); got != c.want {
 			t.Fatalf("%q: класс %q, ожидался %q", c.title, got, c.want)
 		}
 	}
