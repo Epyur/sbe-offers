@@ -83,6 +83,77 @@ func filterCombatItems(items []botSystemItem, query string) []botSystemItem {
 	return out
 }
 
+// botCombatPage — что отдаётся боту для выбора стороны: страница списка и
+// сколько всего совпадений. Пагинация обязательна (2026-11-10): каталог 1500+
+// записей, а Telegram не любит длинные сообщения и большие клавиатуры.
+type botCombatPage struct {
+	Items   []botSystemItem
+	Total   int
+	Offset  int
+	HasMore bool
+}
+
+// combatPageSizeDefault — сколько строк на страницу, если бот не попросил своё.
+// Совпадает с размером страницы в боте документов: восемь строк читаются на
+// телефоне без прокрутки, а номера кнопок помещаются в один ряд.
+const combatPageSizeDefault = 8
+
+// combatPageSizeMax — потолок: бот просит размер сам, но сервер не отдаёт
+// больше этого, чтобы одна клавиатура не перестала отправляться.
+const combatPageSizeMax = 50
+
+// paginateCombatItems берёт запрошенную страницу из отфильтрованного списка.
+//
+// Значения `offset`/`limit` приходят от бота, поэтому проверяются здесь: малое
+// или нечитаемое, оно молча становится умолчанием, а не ломает ответ. Потолок
+// у `limit` и нижняя граница у `offset` — единственные ограничения.
+func paginateCombatItems(items []botSystemItem, offset, limit int) botCombatPage {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = combatPageSizeDefault
+	}
+	if limit > combatPageSizeMax {
+		limit = combatPageSizeMax
+	}
+	total := len(items)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	hasMore := end < total
+	if end > total {
+		end = total
+	}
+	page := append([]botSystemItem{}, items[offset:end]...)
+	return botCombatPage{Items: page, Total: total, Offset: offset, HasMore: hasMore}
+}
+
+// parseCombatPage разбирает `offset` и `limit` из запроса.
+func parseCombatPage(r *http.Request) (offset, limit int) {
+	q := r.URL.Query()
+	offset, _ = strconv.Atoi(q.Get("offset"))
+	limit, _ = strconv.Atoi(q.Get("limit"))
+	return offset, limit
+}
+
+// writeCombatPage отвечает страницей списка сторон: карточки, всего, смещение и
+// признак «есть ещё». Флаг `found` здесь не используется — только конкурентам
+// важно, найден ли источник; наш продукт всегда есть в кеше или в каталоге.
+func writeCombatPage(w http.ResponseWriter, page botCombatPage, extra map[string]any) {
+	body := map[string]any{
+		"cards":   page.Items,
+		"total":   page.Total,
+		"offset":  page.Offset,
+		"hasMore": page.HasMore,
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
 // handleBotCombatSystems — наш продукт для выбора стороны в боевом листке.
 //
 // Набор — материалы КАТАЛОГА и карточки систем Базы знаний вместе (2026-11-09):
@@ -105,10 +176,8 @@ func (s *Server) handleBotCombatSystems(w http.ResponseWriter, r *http.Request) 
 	}
 	query := r.URL.Query().Get("q")
 	filtered := filterCombatItems(items, query)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"cards": filtered,
-		"total": len(filtered),
-	})
+	offset, limit := parseCombatPage(r)
+	writeCombatPage(w, paginateCombatItems(filtered, offset, limit), nil)
 }
 
 // combatOurItems — список нашего продукта для боевого листка: материалы каталога
@@ -176,9 +245,10 @@ func (s *Server) systemCardsForCombat(ctx context.Context, materials []Material)
 
 // handleBotCombatCompetitors — продукты конкурентов для выбора стороны.
 //
-// Источник — кеш конкурентов (competitors.go): всё поддерево папки «материалы и
-// системы конкурентов». `q` — поиск по названию: продуктов конкурентов тоже
-// сотни, и перебирать их кнопками неудобно.
+// Источник — кеш конкурентов (competitors.go): тег `competitor` и всё поддерево
+// папки «материалы и системы конкурентов» (2026-11-10; раньше — только папка).
+// `q` — поиск по названию: продуктов конкурентов тоже сотни, и перебирать их
+// кнопками неудобно.
 func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Request) {
 	cards, found, err := s.loadCachedCompetitors(r.Context())
 	if err == nil && len(cards) == 0 && s.kb != nil && s.kb.configured() {
@@ -195,10 +265,9 @@ func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Reque
 	items := combatItems(cards)
 	query := r.URL.Query().Get("q")
 	filtered := filterCombatItems(items, query)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"cards":       filtered,
+	offset, limit := parseCombatPage(r)
+	writeCombatPage(w, paginateCombatItems(filtered, offset, limit), map[string]any{
 		"folderFound": found,
-		"total":       len(filtered),
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"mailers/offers/skills"
 )
@@ -28,6 +29,13 @@ import (
 // оно разойдётся по коду, раздел молча покажет пустоту.
 const competitorsFolderName = "материалы и системы конкурентов"
 
+// competitorTagName — тег, которым менеджеры помечают карточки конкурентов
+// (2026-11-10). Второй источник рядом с папкой, а не замена ей: тег надёжнее —
+// карточку легко положить мимо раздела, а тег виден и в поиске Базы знаний.
+// Обе выборки сливаются по id заметки, поэтому заметка, помеченная и тегом, и
+// лежащая в папке, попадает в список один раз.
+const competitorTagName = "competitor"
+
 // competitorsCacheMode — ключ строки кеша конкурентов в offers_context.
 // Отдельно от system_cards и systems: это третий, самостоятельный набор.
 const competitorsCacheMode = "competitors"
@@ -42,8 +50,9 @@ type CompetitorCard struct {
 }
 
 // handleListCompetitors — карточки конкурентов из кеша (раздел и выбор в
-// боевом листке). Пустой кеш читается из Базы знаний один раз; папки нет —
-// `folderFound:false` без ошибки: боевой листок всё равно собирается.
+// боевом листке). Пустой кеш читается из Базы знаний один раз; источников нет
+// (ни тега, ни папки) — `folderFound:false` без ошибки: боевой листок всё равно
+// собирается.
 func (s *Server) handleListCompetitors(w http.ResponseWriter, r *http.Request) {
 	cards, found, err := s.loadCachedCompetitors(r.Context())
 	if err == nil && len(cards) == 0 && s.kb != nil && s.kb.configured() {
@@ -75,54 +84,109 @@ func (s *Server) handleRefreshCompetitors(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// CompetitorsFromKB читает карточки конкурентов из папки и ВСЕХ её подпапок
-// (2026-11-09). Возвращает карточки и признак «папка найдена»: отсутствие папки
-// — не ошибка, её может ещё не быть.
+// CompetitorsFromKB читает карточки конкурентов из ДВУХ источников и сливает
+// их по идентификатору заметки (2026-11-10):
 //
-// Раньше читалась только верхняя папка раздела, а менеджеры раскладывают
-// продукты конкурентов по подпапкам — и видели лишь «разводящую» заметку.
-// Теперь обходятся все папки поддерева, а карточкой становится КАЖДАЯ заметка:
-// название — заголовок заметки, разбор по стандарту дополняет её, если он
-// удался (у произвольной заметки просто не будет состава и характеристик).
+//  1. тег `competitor` — карточки, которые менеджеры пометили вручную;
+//  2. папка «материалы и системы конкурентов» и ВСЕ её подпапки — исторический
+//     источник, добавлен 2026-11-08/09.
+//
+// Второй источник оставлен, чтобы ничего не пропало: заметки, положенные в
+// раздел до появления тега, продолжают работать. Заметка, помеченная и тегом,
+// и лежащая в папке, попадает в список ровно один раз (слияние по id).
+//
+// Возвращает карточки и признак «источник найден»: тег без карточек — это
+// найденный источник с пустым результатом, отсутствие и тега, и папки — не
+// найден. Отсутствие источников — не ошибка, раздел может быть ещё не заведён.
 func CompetitorsFromKB(ctx context.Context, kb *KBClient) ([]SystemCard, bool, error) {
 	if kb == nil || !kb.configured() {
 		return []SystemCard{}, false, nil
 	}
-	rootID, err := kb.FolderIDByName(ctx, competitorsFolderName)
-	if err != nil {
-		// Нет папки — «не найдено», а не авария. Прочие ошибки (сеть, права)
-		// идут наверх: пустая папка и недоступная база знаний — разные вещи.
-		return []SystemCard{}, false, nil
-	}
-	folderIDs, err := kb.SubtreeFolderIDs(ctx, rootID)
-	if err != nil {
-		return []SystemCard{}, true, err
-	}
 	cards := make([]SystemCard, 0)
 	seen := make(map[int64]bool)
-	for _, folderID := range folderIDs {
-		notes, err := kb.FolderNotes(ctx, folderID)
-		if err != nil {
-			// Одна недоступная папка не скрывает остальные ветки раздела.
-			continue
+	found := false
+
+	// 1. По тегу. Ошибка «тега нет» — не авария: тег заводит менеджер, и до
+	// первого проставления его в базе может не быть вовсе.
+	if tagged, ok, err := competitorTaggedNotes(ctx, kb); err != nil {
+		return []SystemCard{}, found, err
+	} else if ok {
+		found = true
+		cards = append(cards, cardsForSummaries(ctx, kb, tagged, seen)...)
+	}
+
+	// 2. Из папки и её подпапок. Нет папки — «не найдено», прочие ошибки (сеть,
+	// права) идут наверх: пустая папка и недоступная база знаний — разные вещи.
+	rootID, err := kb.FolderIDByName(ctx, competitorsFolderName)
+	if err == nil {
+		found = true
+		folderIDs, ferr := kb.SubtreeFolderIDs(ctx, rootID)
+		if ferr != nil {
+			return cards, true, ferr
 		}
-		for _, summary := range notes {
-			if seen[summary.ID] {
+		for _, folderID := range folderIDs {
+			notes, nerr := kb.FolderNotes(ctx, folderID)
+			if nerr != nil {
+				// Одна недоступная папка не скрывает остальные ветки раздела.
 				continue
 			}
-			seen[summary.ID] = true
-			note, err := kb.Note(ctx, summary.ID)
-			// Одна сломанная карточка не скрывает остальные.
-			if err != nil {
-				continue
-			}
-			parsed := skills.ParseSystemCard(note.ContentMD)
-			// Название берётся из заголовка заметки, если стандарт не разобрался:
-			// карточкой конкурента может быть произвольная заметка в подпапке.
-			cards = append(cards, systemCardFromParsed(summary, note, parsed))
+			cards = append(cards, cardsForSummaries(ctx, kb, notes, seen)...)
 		}
 	}
-	return attachImageKeys(ctx, kb, cards), true, nil
+
+	return attachImageKeys(ctx, kb, cards), found, nil
+}
+
+// competitorTaggedNotes — заметки с тегом `competitor`.
+//
+// Второе значение — «тег существует»: у kb-service отсутствие тега —
+// ошибка (`TagID`), а пустой тег и отсутствующий — разные вещи. Ошибку
+// отсутствующего тега гасим здесь, прочие (сеть, права) отдаём наверх.
+func competitorTaggedNotes(ctx context.Context, kb *KBClient) ([]KBNoteSummary, bool, error) {
+	tagID, err := kb.TagID(ctx, competitorTagName)
+	if err != nil {
+		return nil, false, nil
+	}
+	notes, err := kb.Notes(ctx, tagID)
+	if err != nil {
+		return nil, true, err
+	}
+	return notes, true, nil
+}
+
+// cardsForSummaries читает тела заметок и собирает карточки, пропуская уже
+// виденные (слияние источников по id заметки).
+func cardsForSummaries(ctx context.Context, kb *KBClient, notes []KBNoteSummary, seen map[int64]bool) []SystemCard {
+	out := make([]SystemCard, 0, len(notes))
+	for _, summary := range notes {
+		if seen[summary.ID] {
+			continue
+		}
+		seen[summary.ID] = true
+		note, err := kb.Note(ctx, summary.ID)
+		// Одна сломанная карточка не скрывает остальные.
+		if err != nil {
+			continue
+		}
+		parsed := skills.ParseSystemCard(note.ContentMD)
+		out = append(out, competitorCardFromParsed(summary, note, parsed))
+	}
+	return out
+}
+
+// competitorCardFromParsed собирает карточку конкурента из заметки.
+//
+// Отличие от систем: НАЗВАНИЕ всегда берётся из заголовка заметки, а не из
+// тела (2026-11-10). Карточки конкурентов — произвольные заметки, а не карточки
+// по стандарту; разбор тела подменял название первой содержательной строкой и в
+// списке появлялись чужие фразы вместо названия продукта. Тело по-прежнему даёт
+// описание, состав и ссылки — только не название.
+func competitorCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.SystemCard) SystemCard {
+	card := systemCardFromParsed(summary, note, parsed)
+	if title := strings.TrimSpace(summary.Title); title != "" {
+		card.Title = title
+	}
+	return card
 }
 
 // loadCachedCompetitors читает карточки конкурентов из кеша и признак «папка

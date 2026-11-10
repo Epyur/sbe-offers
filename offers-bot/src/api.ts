@@ -539,24 +539,69 @@ export interface CombatSheet {
  * Наш продукт для выбора стороны: материалы каталога и системы Базы знаний.
  *
  * `q` — поиск по названию и коду: каталог 1500+ записей, списком его не выбрать
- * (2026-11-09).
+ * (2026-11-09). `offset`/`limit` — страница: бот листает список, как в режиме
+ * «Документы» (2026-11-10).
  */
 export async function combatSystems(
   q = '',
-): Promise<{ cards: CombatSystemItem[]; total?: number; error?: string }> {
-  const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  return call('GET', `/bot/combat/systems${query}`);
+  offset = 0,
+  limit = 8,
+): Promise<{ cards: CombatSystemItem[]; total?: number; offset?: number; hasMore?: boolean; error?: string }> {
+  return call('GET', `/bot/combat/systems?${combatPageQuery(q, offset, limit)}`);
 }
 
-/** Продукты конкурентов для выбора стороны (всё поддерево папки), поиск по `q`. */
-export async function combatCompetitors(q = ''): Promise<{
+/** Продукты конкурентов для выбора стороны (тег `competitor` + всё поддерево
+ *  папки), поиск по `q` и страница (`offset`/`limit`). */
+export async function combatCompetitors(q = '', offset = 0, limit = 8): Promise<{
   cards: CombatSystemItem[];
   folderFound?: boolean;
   total?: number;
+  offset?: number;
+  hasMore?: boolean;
   error?: string;
 }> {
-  const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  return call('GET', `/bot/combat/competitors${query}`);
+  return call('GET', `/bot/combat/competitors?${combatPageQuery(q, offset, limit)}`);
+}
+
+/** Строка запроса списка сторон: поиск `q` и страница `offset`/`limit` — одна
+ *  сборка на обе стороны, чтобы параметры не разошлись. */
+function combatPageQuery(q: string, offset: number, limit: number): string {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set('q', q.trim());
+  params.set('offset', String(offset));
+  params.set('limit', String(limit));
+  return params.toString();
+}
+
+/** Потолок страницы на сервере (`combatPageSizeMax` в botcombat.go). */
+const COMBAT_BULK_LIMIT = 50;
+
+/**
+ * Все совпадения по запросу стороны — для «✓ Добавить все» (2026-11-10).
+ *
+ * Сервер отдаёт страницы с потолком 50 строк, поэтому собираем по страницам,
+ * пока `hasMore`. `total` из первого ответа — предел: если сервис обещает
+ * больше, чем реально пришло, останавливаемся на нём, а не крутимся вечно.
+ * Повтором `q` между страницами не рискуем: запрос неизменен во время сбора.
+ */
+export async function combatAllPaged(
+  side: CombatSide,
+  q = '',
+): Promise<CombatSystemItem[]> {
+  const all: CombatSystemItem[] = [];
+  let offset = 0;
+  for (let page = 0; page < 100; page++) {
+    const res = side === 'our'
+      ? await combatSystems(q, offset, COMBAT_BULK_LIMIT)
+      : await combatCompetitors(q, offset, COMBAT_BULK_LIMIT);
+    const cards = res.cards ?? [];
+    all.push(...cards);
+    const total = res.total ?? all.length;
+    if (!res.hasMore || cards.length === 0 || all.length >= total) break;
+    offset = res.offset ?? offset;
+    offset += cards.length;
+  }
+  return all;
 }
 
 /** «Мои боевые листки» этого чата. */

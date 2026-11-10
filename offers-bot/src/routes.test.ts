@@ -47,6 +47,7 @@ function makeDeps(initial?: ChatSession): {
     sessions: new Map(),
     foundSystems: new Map(),
     foundCombat: new Map(),
+    combatPicker: new Map(),
   };
   const current = initial ?? newSession();
   const deps: BotDeps = {
@@ -181,6 +182,20 @@ interface FakeCombat {
   competitorNotes: Array<{ noteId: number; title: string }>;
 }
 
+/** Длинный хвост нашего каталога: проверкам листания и «выбрать всё» нужно
+ *  больше одной страницы. */
+function manyItems(): Array<{ noteId: number; title: string }> {
+  return Array.from({ length: 12 }, (_, i) => ({ noteId: 100 + i, title: `Материал ${i + 1}` }));
+}
+
+/** Страница списка, как её отдаёт offers-service: offset/limit/total/hasMore. */
+function pageOf<T>(items: T[], params: URLSearchParams): { cards: T[]; total: number; offset: number; hasMore: boolean } {
+  const offset = Number(params.get('offset') ?? '0') || 0;
+  const limit = Number(params.get('limit') ?? '8') || 8;
+  const page = items.slice(offset, offset + limit);
+  return { cards: page, total: items.length, offset, hasMore: offset + limit < items.length };
+}
+
 function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
   const calls: string[] = [];
   let nextId = 1;
@@ -199,17 +214,20 @@ function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
       return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
     }
     if (method === 'GET' && url.includes('/bot/combat/systems')) {
-      // Поиск по q (2026-11-09): фильтруем по названию, как настоящий сервис.
-      const q = new URL(url).searchParams.get('q')?.toLowerCase() ?? '';
-      const all = [{ noteId: 10, title: 'Кровля' }, { noteId: 11, title: 'Фасад' }];
-      const cards = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
-      return json({ cards, total: cards.length });
+      // Поиск и страница (2026-11-10): фильтруем по названию, режем по offset/limit,
+      // как настоящий сервис.
+      const params = new URL(url).searchParams;
+      const q = params.get('q')?.toLowerCase() ?? '';
+      const all = [{ noteId: 10, title: 'Кровля' }, { noteId: 11, title: 'Фасад' }, ...manyItems()];
+      const filtered = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
+      return json(pageOf(filtered, params));
     }
     if (method === 'GET' && url.includes('/bot/combat/competitors')) {
-      const q = new URL(url).searchParams.get('q')?.toLowerCase() ?? '';
+      const params = new URL(url).searchParams;
+      const q = params.get('q')?.toLowerCase() ?? '';
       const all = [{ noteId: 20, title: 'Конкурент А' }];
-      const cards = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
-      return json({ cards, total: cards.length });
+      const filtered = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
+      return json(pageOf(filtered, params));
     }
     if (method === 'GET' && url.includes('/bot/combat?') ) {
       return json({ sheets: sheets.map((s) => ({ ...s, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' })) });
@@ -255,7 +273,12 @@ describe('боевой листок в боте', () => {
     sent.length = 0;
     await route.routeText(deps, '42', 'кровля', state);
     assert.match(sent[0].text, /Нашлось по «кровля»/);
+    // Номер строки переключает отметку, а не добавляет сразу (2026-11-10).
     await route.routeCallback(deps, '42', 'oursel:0', 'cb2', state);
+    assert.match(sent[sent.length - 1].text, /Кровля/);
+    assert.equal(server.current().ourNotes.length, 0, 'отметка не добавляет сторону');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'cb3', state);
     assert.match(sent[sent.length - 1].text, /Кровля/);
     assert.equal(server.current().ourNotes.length, 1);
     assert.equal(server.current().ourNotes[0].noteId, 10);
@@ -269,7 +292,7 @@ describe('боевой листок в боте', () => {
     await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:all', 'cb2', state);
-    assert.match(sent[0].text, /Выберите из списка/);
+    assert.match(sent[0].text, /Всего: 14/);
   });
 
   it('«Добавить конкурента» ищет по названию и добавляет выбранного', async () => {
@@ -281,6 +304,7 @@ describe('боевой листок в боте', () => {
     sent.length = 0;
     await route.routeText(deps, '42', 'конкурент', state);
     await route.routeCallback(deps, '42', 'compsel:0', 'cb2', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'cb3', state);
     assert.match(sent[sent.length - 1].text, /Конкурент А/);
     assert.equal(server.current().competitorNotes.length, 1);
   });
@@ -290,14 +314,95 @@ describe('боевой листок в боте', () => {
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '/combat', state);
-    // Два наших продукта.
+    // Два наших продукта: ищем, отмечаем, добавляем (2026-11-10).
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeText(deps, '42', 'кровля', state);
     await route.routeCallback(deps, '42', 'oursel:0', 'c2', state);
-    await route.routeCallback(deps, '42', 'cb:oursys', 'c3', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c4', state);
     await route.routeText(deps, '42', 'фасад', state);
-    await route.routeCallback(deps, '42', 'oursel:0', 'c4', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c5', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c6', state);
     assert.equal(server.current().ourNotes.length, 2);
+  });
+
+  it('несколько отмеченных строк добавляются одной кнопкой', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    // «▼ Все» — обе стороны в одном списке, отметить надо обе.
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
+    await route.routeCallback(deps, '42', 'oursel:1', 'c4', state);
+    assert.equal(server.current().ourNotes.length, 0, 'отметки ещё не добавили стороны');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c5', state);
+    assert.equal(server.current().ourNotes.length, 2);
+    assert.deepEqual(server.current().ourNotes.map((n) => n.noteId), [10, 11]);
+    assert.match(sent[sent.length - 1].text, /Кровля, Фасад/);
+  });
+
+  it('«Выбрать все найденные» берёт совпадения со всех страниц', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    // Запрос сужает до списка длиннее одной страницы: «Кровля» плюс много позиций.
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:pickall', 'c3', state);
+    // Кнопка «Добавить» теперь считает всё найденное, а не строку экрана.
+    assert.equal(state.combatPicker.get('42')?.allPicked, true);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c4', state);
+    assert.equal(server.current().ourNotes.length, 2 + manyItems().length);
+  });
+
+  it('«Снять все отметки» возвращает пустой выбор', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    await route.routeCallback(deps, '42', 'cb:pickall', 'c3', state);
+    await route.routeCallback(deps, '42', 'cb:unpickall', 'c4', state);
+    assert.equal(state.combatPicker.get('42')?.allPicked, false);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c5', state);
+    assert.equal(server.current().ourNotes.length, 0);
+  });
+
+  it('повторное нажатие номера снимает отметку', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'oursel:0', 'c4', state);
+    // Кнопка расчерчена без «✓» на первой строке: отметка снята.
+    assert.ok(state.combatPicker.get('42')?.picked.length === 0);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c5', state);
+    assert.equal(server.current().ourNotes.length, 0);
+  });
+
+  it('листание зависит от общего числа совпадений', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    // Список из двух строк помещается на одну страницу — «Дальше» нет.
+    assert.ok(!/Дальше/.test(sent[0].text));
+    // Смещение растёт от нажатия, даже если строк на странице меньше.
+    await route.routeCallback(deps, '42', 'cb:more', 'c3', state);
+    assert.equal(state.combatPicker.get('42')?.offset, 8);
   });
 
   it('текст в боевом листке не уходит в черновик КП', async () => {

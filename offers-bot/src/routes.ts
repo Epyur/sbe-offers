@@ -69,6 +69,29 @@ export interface RouterState {
    * кнопка несёт индекс, а не заметку/название.
    */
   foundCombat: Map<string, api.CombatSystemItem[]>;
+  /**
+   * Страница выбора стороны боевого листка (2026-11-10): сторона, запрос,
+   * смещение и отмеченные строки. Номер строки в кнопке — ОТ НАЧАЛА списка,
+   * поэтому picked переживает перелистывание, а смена запроса его стирает:
+   * индексы относятся к прежнему набору совпадений.
+   */
+  combatPicker: Map<string, CombatPickerState>;
+}
+
+/** Состояние выбора стороны: что показано и что отмечено. */
+export interface CombatPickerState {
+  side: 'our' | 'competitor';
+  query: string;
+  offset: number;
+  /** Индексы отмеченных строк от начала текущего набора совпадений. */
+  picked: number[];
+  /**
+   * Взято всё найденное по запросу (2026-11-10, кнопка «Выбрать все
+   * найденные»). Отдельной отметкой, а не заполнением picked: найденное может
+   * быть в сотни строк, и складывать их номера незачем. picked тогда пуст,
+   * и он же — признак, что часть отметок менеджер снял вручную.
+   */
+  allPicked?: boolean;
 }
 
 export function newRouterState(): RouterState {
@@ -79,6 +102,7 @@ export function newRouterState(): RouterState {
     sessions: new Map(),
     foundSystems: new Map(),
     foundCombat: new Map(),
+    combatPicker: new Map(),
   };
 }
 
@@ -266,6 +290,8 @@ export async function routeText(
     rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
     foundCombat: state.foundCombat.get(chatId) ?? [],
     rememberCombat: (items) => state.foundCombat.set(chatId, items),
+    combatPicker: state.combatPicker.get(chatId),
+    rememberCombatPicker: (picker) => state.combatPicker.set(chatId, picker),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
@@ -355,6 +381,8 @@ export async function routeCallback(
     rememberSystems: (systems) => state.foundSystems.set(chatId, systems),
     foundCombat: state.foundCombat.get(chatId) ?? [],
     rememberCombat: (items) => state.foundCombat.set(chatId, items),
+    combatPicker: state.combatPicker.get(chatId),
+    rememberCombatPicker: (picker) => state.combatPicker.set(chatId, picker),
   };
 
   const exact = BUTTONS[data];

@@ -98,3 +98,77 @@ func TestCombatItemsCarryNoteAndTitle(t *testing.T) {
 		t.Fatalf("код и замечания должны доехать до бота: %+v", items[1])
 	}
 }
+
+// TestPaginateCombatItems — пагинация выдачи выбора стороны (2026-11-10).
+//
+// Менеджер листает список постранично, поэтому сервер обязан отдавать срез
+// запрошенного размера, честный total и признак «есть ещё».
+func TestPaginateCombatItems(t *testing.T) {
+	items := make([]botSystemItem, 20)
+	for i := range items {
+		items[i] = botSystemItem{NoteID: int64(i + 1), Title: "Продукт"}
+	}
+
+	first := paginateCombatItems(items, 0, 8)
+	if len(first.Items) != 8 || first.Total != 20 || !first.HasMore || first.Offset != 0 {
+		t.Fatalf("первая страница неверна: %+v", first)
+	}
+	if first.Items[0].NoteID != 1 {
+		t.Fatalf("первая страница должна начинаться с первого продукта, получено %d", first.Items[0].NoteID)
+	}
+
+	last := paginateCombatItems(items, 16, 8)
+	if len(last.Items) != 4 || last.HasMore || last.Offset != 16 {
+		t.Fatalf("последняя страница неверна: %+v", last)
+	}
+	if last.Items[0].NoteID != 17 {
+		t.Fatalf("последняя страница должна начинаться с 17-го, получено %d", last.Items[0].NoteID)
+	}
+
+	// За краем списка — пустая страница без паники.
+	beyond := paginateCombatItems(items, 100, 8)
+	if len(beyond.Items) != 0 || beyond.HasMore || beyond.Total != 20 {
+		t.Fatalf("за краем — пусто, получено: %+v", beyond)
+	}
+}
+
+// TestPaginateCombatItemsDefaults — нечитаемое и нулевое «смещение/размер» не
+// ломают ответ: молча становится умолчанием.
+func TestPaginateCombatItemsDefaults(t *testing.T) {
+	items := make([]botSystemItem, 30)
+	got := paginateCombatItems(items, -5, 0)
+	if got.Offset != 0 || len(got.Items) != combatPageSizeDefault {
+		t.Fatalf("умолчание не применилось: %+v", got)
+	}
+}
+
+// TestPaginateCombatItemsCapsLimit — бот не может попросить больше потолка:
+// одна клавиатура с сотнями кнопок не должна отправиться.
+func TestPaginateCombatItemsCapsLimit(t *testing.T) {
+	items := make([]botSystemItem, 1000)
+	got := paginateCombatItems(items, 0, 5000)
+	if len(got.Items) != combatPageSizeMax {
+		t.Fatalf("потолок размера страницы не сработал: %d", len(got.Items))
+	}
+}
+
+// TestFilterThenPaginate — поиск сужает список ДО пагинации: то, что менеджер
+// видит первую страницу «по запросу», не должно терять совпадения с других
+// страниц (кнопка «Дальше» внутри поиска листает именно совпадения).
+func TestFilterThenPaginate(t *testing.T) {
+	items := make([]botSystemItem, 0, 20)
+	for i := 0; i < 10; i++ {
+		items = append(items, botSystemItem{NoteID: int64(i + 1), Title: "Мембрана"})
+		items = append(items, botSystemItem{NoteID: int64(i + 101), Title: "Плитка"})
+	}
+	filtered := filterCombatItems(items, "мембрана")
+	page := paginateCombatItems(filtered, 0, 8)
+	if page.Total != 10 || !page.HasMore {
+		t.Fatalf("фильтр должен оставить 10 совпадений с остатком: %+v", page)
+	}
+	for _, it := range page.Items {
+		if it.Title != "Мембрана" {
+			t.Fatalf("в выдаче по запросу чужой продукт: %+v", it)
+		}
+	}
+}

@@ -23,10 +23,12 @@ import {
   systemAddedMessage,
 } from './flow/build.ts';
 import * as api from './api.ts';
-import type { BotDeps } from './routes.ts';
+import type { BotDeps, CombatPickerState } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
 import {
   COMBAT_KEYBOARD,
+  COMBAT_PAGE_SIZE,
+  type CombatPickerPage,
   combatAskQuery,
   combatIntro,
   combatListMessage,
@@ -92,6 +94,13 @@ export interface CallbackCtx {
   foundCombat?: api.CombatSystemItem[];
   /** Запомнить список сторон, чтобы `oursel:<индекс>`/`compsel:<индекс>` его нашли. */
   rememberCombat?: (items: api.CombatSystemItem[]) => void;
+  /**
+   * Страница выбора стороны боевого листка (2026-11-10): запрос, смещение и
+   * отмеченные строки. Живёт в памяти поллера рядом с найденными сторонами.
+   */
+  combatPicker?: CombatPickerState;
+  /** Сохранить состояние выбора после листания или отметки строки. */
+  rememberCombatPicker?: (picker: CombatPickerState) => void;
 }
 
 /**
@@ -769,31 +778,80 @@ export async function startCombatPicker(ctx: CallbackCtx, side: 'our' | 'competi
     return;
   }
   apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
-  const allRow = [{ text: '▼ Все продукты', callback_data: 'cb:all' }];
-  const backRow = [{ text: '< Назад', callback_data: 'cb:back' }];
+  // Смена стороны — новый набор совпадений: отмеченные и запрос прошлой
+  // стороны к этой не относятся.
+  savePicker(ctx, { side, query: '', offset: 0, picked: [], allPicked: false });
   await ctx.deps.send(ctx.chatId, combatAskQuery(side), {
-    inline_keyboard: [allRow, backRow],
+    inline_keyboard: [
+      [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
+      [{ text: '< Назад', callback_data: 'cb:back' }],
+    ],
   });
 }
 
-/** «▼ Все продукты»: показать полный список стороны. */
-export async function onCombatAll(ctx: CallbackCtx): Promise<void> {
-  const side = ctx.session.combat?.picking ?? 'our';
-  await showCombatPicker(ctx, side, '');
+/** Текущее состояние выбора: из контекста, а если его нет — пустое для стороны. */
+function currentPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): CombatPickerState {
+  const saved = ctx.combatPicker;
+  if (saved && saved.side === side) return saved;
+  return { side, query: '', offset: 0, picked: [] };
 }
 
-/** Показать совпадения по запросу (пустой — весь список) кнопками. */
-async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor', query: string): Promise<void> {
+/** Запомнить состояние выбора и в контексте, и в памяти поллера. */
+function savePicker(ctx: CallbackCtx, picker: CombatPickerState): void {
+  ctx.combatPicker = picker;
+  ctx.rememberCombatPicker?.(picker);
+}
+
+/** Сторона, которая выбирается сейчас: из сессии, иначе из сохранённой страницы. */
+function pickingSide(ctx: CallbackCtx): 'our' | 'competitor' {
+  return ctx.session.combat?.picking ?? ctx.combatPicker?.side ?? 'our';
+}
+
+/** «▼ Все продукты»: показать полный список стороны сначала. */
+export async function onCombatAll(ctx: CallbackCtx): Promise<void> {
+  const side = pickingSide(ctx);
+  await renderCombatPicker(ctx, { side, query: '', offset: 0, picked: [] });
+}
+
+/** «Дальше ▸»: следующая страница текущего набора совпадений. */
+export async function onCombatMore(ctx: CallbackCtx): Promise<void> {
+  const picker = currentPicker(ctx, pickingSide(ctx));
+  await renderCombatPicker(ctx, { ...picker, offset: picker.offset + COMBAT_PAGE_SIZE });
+}
+
+/** «◀ В начало»: первая страница; отмеченное сохраняется. */
+export async function onCombatFirst(ctx: CallbackCtx): Promise<void> {
+  const picker = currentPicker(ctx, pickingSide(ctx));
+  await renderCombatPicker(ctx, { ...picker, offset: 0 });
+}
+
+/**
+ * Показать страницу выбора стороны (2026-11-10).
+ *
+ * Один экран на весь поиск: текст пронумерованным списком, номера — кнопками,
+ * листание и «Добавить выбранные». Повторяет приём режима «Документы» в
+ * Telegram-боте, но добавление отдельное: боевой листок принимает несколько
+ * сторон сразу.
+ */
+async function renderCombatPicker(
+  ctx: CallbackCtx,
+  picker: CombatPickerState,
+  found?: CombatPickerPage,
+): Promise<void> {
   if (!ctx.session.combat) {
     await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
     return;
   }
-  const items = await fetchCombatItems(ctx, side, query);
-  if (!items) return;
-  const message = combatPickerMessage(items, side, query);
-  if (!message.show) {
+  const side = picker.side;
+  // Страница приходит готовой от навигации (уже есть данные) либо читается при
+  // поиске. Так нажатие «Дальше» не повторяет запрос к сервису — сервер отдаёт
+  // страницу за нас, а лежащий рядом набор совпадений свежий.
+  const page = found ?? (await fetchCombatPage(ctx, picker));
+  if (!page) return;
+  savePicker(ctx, { ...picker, offset: page.offset });
+  if (page.total === 0) {
     // Ничего не нашлось: даём путь назад, а не тупик.
-    await ctx.deps.send(ctx.chatId, message.text, {
+    await ctx.deps.send(ctx.chatId, combatPickerMessage(page, side, picker.query), {
       inline_keyboard: [
         [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
         [{ text: '< Назад', callback_data: 'cb:back' }],
@@ -801,59 +859,156 @@ async function showCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor', qu
     });
     return;
   }
-  const shown = items.slice(0, PAGE_SIZE);
-  ctx.foundCombat = shown;
-  ctx.rememberCombat?.(shown);
+  ctx.foundCombat = page.items;
+  ctx.rememberCombat?.(page.items);
   apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
   const prefix = side === 'our' ? 'oursel' : 'compsel';
-  const query2 = query.trim();
   await ctx.deps.send(
     ctx.chatId,
-    message.text,
-    combatPickerKeyboard(shown, prefix, query2 === ''),
+    combatPickerMessage(page, side, picker.query),
+    combatPickerKeyboard(
+      page,
+      prefix,
+      new Set(picker.picked),
+      picker.query.trim() === '',
+      picker.allPicked === true,
+    ),
   );
 }
 
-/** Прочитать стороны для выбора; `null` — уже отправлена ошибка человеку. */
-async function fetchCombatItems(
+/** Прочитать страницу стороны; `null` — уже отправлена ошибка человеку. */
+async function fetchCombatPage(
   ctx: CallbackCtx,
-  side: 'our' | 'competitor',
-  query = '',
-): Promise<api.CombatSystemItem[] | null> {
+  picker: CombatPickerState,
+): Promise<CombatPickerPage | null> {
   try {
-    const res = side === 'our'
-      ? await api.combatSystems(query)
-      : await api.combatCompetitors(query);
-    return res.cards ?? [];
+    const res = picker.side === 'our'
+      ? await api.combatSystems(picker.query, picker.offset, COMBAT_PAGE_SIZE)
+      : await api.combatCompetitors(picker.query, picker.offset, COMBAT_PAGE_SIZE);
+    const items = res.cards ?? [];
+    return {
+      items,
+      total: res.total ?? items.length,
+      offset: res.offset ?? picker.offset,
+      hasMore: res.hasMore ?? false,
+    };
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось получить список: ${(e as Error).message}`);
     return null;
   }
 }
 
-/** Выбор стороны из списка: `oursel:<индекс>` / `compsel:<индекс>`. */
+/**
+ * Отметка стороны строки: `oursel:<номер>` / `compsel:<номер>`.
+ *
+ * Номер — от НАЧАЛА списка. Нажатие переключает отметку и перерисовывает ту же
+ * страницу: видно, что уже отмечено, и можно отметить несколько. Сторона
+ * добавляется в листок только кнопкой «✓ Добавить выбранные».
+ */
 export async function onCombatPick(ctx: CallbackCtx, index: number): Promise<void> {
+  const picker = currentPicker(ctx, pickingSide(ctx));
+  const item = (ctx.foundCombat ?? []).find((_it, i) => picker.offset + i === index);
+  if (!item) {
+    await ctx.deps.send(ctx.chatId, 'Список устарел — откройте выбор стороны ещё раз.');
+    return;
+  }
+  const picked = picker.picked.includes(index)
+    ? picker.picked.filter((n) => n !== index)
+    : [...picker.picked, index];
+  // Ручная отметка отменяет «всё найдено»: менеджер правит набор, а не берёт
+  // его целиком.
+  await renderCombatPicker(ctx, { ...picker, picked, allPicked: false });
+  return;
+}
+
+/**
+ * «☑ Выбрать все найденные»: взять всё, что нашлось по запросу (2026-11-10).
+ *
+ * `allPicked` — отдельный признак, а не заполненный `picked`: совпадений бывает
+ * сотни, складывать их номера незачем. Отметки отдельных строк сбрасываются —
+ * «всё» уже включает их. Экран перерисовывается на той же странице.
+ */
+export async function onCombatPickAll(ctx: CallbackCtx): Promise<void> {
+  await rerenderPicker(ctx, [], true);
+}
+
+/** «✖ Снять все отметки»: вернуть пустой выбор, не трогая список. */
+export async function onCombatDropAll(ctx: CallbackCtx): Promise<void> {
+  await rerenderPicker(ctx, [], false);
+}
+
+/** Перерисовать ту же страницу выбора с новым набором отметок. */
+async function rerenderPicker(
+  ctx: CallbackCtx,
+  picked: number[],
+  allPicked: boolean,
+): Promise<void> {
+  const picker = currentPicker(ctx, pickingSide(ctx));
+  await renderCombatPicker(ctx, { ...picker, picked, allPicked });
+}
+
+/**
+ * «✓ Добавить выбранные»: положить в листок всё отмеченное разом (2026-11-10).
+ *
+ * Обычный путь — отметить номера на странице и нажать кнопку. Второй путь —
+ * «Выбрать все найденные»: тогда берём ВЕСЬ список по запросу, листая страницы
+ * сервера (`combatAllPaged`), а не только видимую — иначе сравнение «наш
+ * продукт против всех аналогов» требовало бы помнить отметки между экранами.
+ */
+export async function onCombatAddPicked(ctx: CallbackCtx): Promise<void> {
   const sheet = ctx.session.combat;
   if (!sheet) {
     await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
     return;
   }
-  const side = sheet.picking ?? 'our';
-  const item = (ctx.foundCombat ?? [])[index];
-  if (!item) {
-    await ctx.deps.send(ctx.chatId, 'Список устарел — откройте выбор стороны ещё раз.');
+  const picker = currentPicker(ctx, pickingSide(ctx));
+  let chosen: api.CombatSystemItem[];
+  try {
+    chosen = picker.allPicked
+      ? await api.combatAllPaged(picker.side, picker.query)
+      : visiblePicked(ctx, picker);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить список: ${(e as Error).message}`);
+    return;
+  }
+  if (chosen.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'Ничего не отмечено — нажмите номер строки, чтобы отметить.');
     return;
   }
   try {
-    const updated = await api.addCombatSide(sheet.sheetId, ctx.chatId, side, {
-      noteId: item.noteId,
-      title: item.title,
-    });
+    let updated: api.CombatSheet | null = null;
+    // По одной: так у частичного сбоя остаётся честное «что успели». Сервер
+    // пропускает уже добавленную сторону, повтор не плодит записей.
+    for (const item of chosen) {
+      updated = await api.addCombatSide(sheet.sheetId, ctx.chatId, picker.side, {
+        noteId: item.noteId,
+        title: item.title,
+      });
+    }
+    // Отметки сбрасываются: листок пополнен, следующий выбор начинается заново.
+    savePicker(ctx, { ...picker, picked: [], allPicked: false, offset: 0 });
     apply(ctx, { ...ctx.session, combat: { ...sheet, picking: undefined } });
-    await showCombatSheet(ctx, updated, combatSideAddedMessage(side, item.title));
+    if (updated) await showCombatSheet(ctx, updated, combatSideAddedMessage(picker.side, chosenSummary(chosen)));
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
   }
+}
+
+/** Отмеченные строки ТЕКУЩЕЙ страницы: номер — от начала списка. */
+function visiblePicked(ctx: CallbackCtx, picker: CombatPickerState): api.CombatSystemItem[] {
+  const visible = ctx.foundCombat ?? [];
+  return picker.picked
+    .map((n) => visible[n - picker.offset])
+    .filter((it): it is api.CombatSystemItem => !!it);
+}
+
+/**
+ * Подпись добавленного: пара названий и «и ещё N» вместо простыни из сотни
+ * имён — сообщение иначе не прочитать.
+ */
+function chosenSummary(items: api.CombatSystemItem[]): string {
+  const head = items.slice(0, 3).map((i) => i.title).join(', ');
+  return items.length > 3 ? `${head} и ещё ${items.length - 3}` : head;
 }
 
 /** «⬇ DOCX»: собрать файл боевого листка. */
@@ -902,6 +1057,9 @@ export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
     return;
   }
   apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: undefined } });
+  // Выбор стороны брошен — невидимая страница не должна всплыть при следующем
+  // «➕» со старой отметкой.
+  savePicker(ctx, { side: ctx.combatPicker?.side ?? 'our', query: '', offset: 0, picked: [] });
   const sheet = await loadOwnCombat(ctx, ctx.session.combat.sheetId);
   if (!sheet) return;
   await showCombatSheet(ctx, sheet);
@@ -930,7 +1088,8 @@ export async function handleCombatText(ctx: CallbackCtx, text: string): Promise<
   }
   const query = text.trim();
   if (!query) return true;
-  await showCombatPicker(ctx, combat.picking, query);
+  // Новый запрос — новый набор совпадений: прежние отметки к нему не относятся.
+  await renderCombatPicker(ctx, { side: combat.picking, query, offset: 0, picked: [], allPicked: false });
   return true;
 }
 
@@ -957,6 +1116,11 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'cb:oursys': onCombatOurSys,
   'cb:comp': onCombatComp,
   'cb:all': onCombatAll,
+  'cb:more': onCombatMore,
+  'cb:first': onCombatFirst,
+  'cb:pickall': onCombatPickAll,
+  'cb:unpickall': onCombatDropAll,
+  'cb:addpicked': onCombatAddPicked,
   'cb:doc': onCombatDoc,
   'cb:done': onCombatDone,
   'cb:back': onCombatBack,

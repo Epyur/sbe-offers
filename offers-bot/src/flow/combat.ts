@@ -19,6 +19,30 @@ export const COMBAT_KEYBOARD = {
   ],
 };
 
+/** Сколько строк списка выбора на одной странице. Как в режиме «Документы»:
+ *  восемь строк читаются на телефоне без прокрутки, номера помещаются в ряд. */
+export const COMBAT_PAGE_SIZE = 8;
+
+/**
+ * Страница списка выбора стороны (2026-11-10).
+ *
+ * Повторяет приём режима «Документы» в Telegram-боте: по запросу выводится
+ * ПРОНУМЕРОВАННЫЙ ТЕКСТ, ниже — кнопки-номера (не названия: длинные названия не
+ * помещаются на экран и не читаются кнопкой). Нажатие номера переключает выбор,
+ * «Дальше»/«В начало» листают, «✓ Добавить выбранные» добавляет всё отмеченное
+ * разом.
+ */
+export interface CombatPickerPage {
+  /** Строки текущей страницы (уже сдвинуты на offset). */
+  items: CombatSystemItem[];
+  /** Сколько всего совпадений по запросу. */
+  total: number;
+  /** Смещение: номер строки, с которого начинается страница. */
+  offset: number;
+  /** Есть ли ещё строки после этой страницы. */
+  hasMore: boolean;
+}
+
 /** Приветствие и первый шаг. */
 export function combatIntro(number: string): string {
   return (
@@ -57,58 +81,89 @@ export function combatAskQuery(side: 'our' | 'competitor'): string {
   const who = side === 'our' ? 'нашего продукта' : 'продукта конкурента';
   return (
     `Введите название ${who} — можно часть слова или код.\n\n` +
-    'Я покажу совпадения кнопками. Чтобы увидеть весь список, нажмите «▼ Все».'
+    'Я покажу совпадения списком: нажмите номер, чтобы отметить одну или несколько позиций, ' +
+    'и «✓ Добавить выбранные». Чтобы увидеть весь список, нажмите «▼ Все».'
   );
 }
 
-/** Клавиатура выбора стороны: `oursel:<индекс>` / `compsel:<индекс>`. */
+/** Строка списка выбора: `N. Название (код) — замечания`. */
+export function formatCombatLine(n: number, item: CombatSystemItem): string {
+  const title = item.title || '(без названия)';
+  const parts = [`${n}. ${title}`];
+  if (item.sku) parts.push(`(${item.sku})`);
+  const line = parts.join(' ');
+  return item.problems && item.problems.length > 0 ? `${line} — есть замечания` : line;
+}
+
+/**
+ * Текст страницы выбора стороны: пронумерованный список и подсказка, что делать
+ * (2026-11-10). Пустой список — честное объяснение с учётом запроса.
+ */
+export function combatPickerMessage(page: CombatPickerPage, side: 'our' | 'competitor', query = ''): string {
+  const q = query.trim();
+  if (page.total === 0) {
+    if (q) return `По запросу «${q}» ничего не нашлось. Попробуйте другое слово или нажмите «▼ Все продукты».`;
+    return side === 'our'
+      ? 'Наших продуктов в каталоге и системах не нашлось. Их заводит администратор — разделы «Материалы» и «Системы».'
+      : 'Продуктов конкурентов нет: в Базе знаний не найдены карточки с тегом competitor и папка «материалы и системы конкурентов». ' +
+          'Добавьте конкурентов — раздел «Конкуренты» в плагине.';
+  }
+  const title = side === 'our' ? 'Наш продукт' : 'Продукт конкурента';
+  const head = q ? `${title}. Нашлось по «${q}»: ${page.total}` : `${title}. Всего: ${page.total}`;
+  const lines = page.items.map((it, i) => formatCombatLine(page.offset + i + 1, it));
+  return `${head}\n\n${lines.join('\n')}`;
+}
+
+/**
+ * Клавиатура выбора стороны (2026-11-10): кнопки-номера текущей страницы,
+ * перелистывание и добавление отмеченного.
+ *
+ * `picked` — индексы отмеченных строк ОТ НАЧАЛА списка: так «✓ Добавить
+ * выбранные» добавляет их все разом, даже если отметили на разных страницах.
+ * Номер кнопки — `page.offset + i + 1`, поэтому «Дальше» и «Назад» продолжают
+ * нумерацию, а не начинают с единицы.
+ *
+ * `allPicked` — отмечено всё найденное по запросу (в том числе с других
+ * страниц): тогда кнопка «выбрать всё» меняется на «снять все отметки», иначе
+ * менеджер не видит, что набор уже взят целиком.
+ */
 export function combatPickerKeyboard(
-  items: CombatSystemItem[],
+  page: CombatPickerPage,
   prefix: 'oursel' | 'compsel',
+  picked: ReadonlySet<number>,
   showAll = false,
+  allPicked = false,
 ): Record<string, unknown> {
-  const rows = items.map((item, index) => [
-    {
-      text: item.problems && item.problems.length > 0 ? `${item.title} (есть замечания)` : item.title,
-      callback_data: `${prefix}:${index}`,
-    },
-  ]);
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  const numbers = page.items.map((_, i) => {
+    const index = page.offset + i;
+    const mark = picked.has(index) ? '✓ ' : '';
+    return { text: `${mark}${index + 1}`, callback_data: `${prefix}:${index}` };
+  });
+  // По четыре номера в ряд: на телефоне помещается без переноса.
+  for (let i = 0; i < numbers.length; i += 4) rows.push(numbers.slice(i, i + 4));
+
+  const nav: Array<{ text: string; callback_data: string }> = [];
+  if (page.offset > 0) nav.push({ text: '◀ В начало', callback_data: 'cb:first' });
+  if (page.hasMore) nav.push({ text: 'Дальше ▸', callback_data: 'cb:more' });
+  if (nav.length > 0) rows.push(nav);
+
+  // Всё найденное — одной кнопкой: сравнить «наш продукт против всех
+  // аналогов» или взять весь каталог по поиску, не листая страницы.
+  if (allPicked) {
+    rows.push([{ text: '✖ Снять все отметки', callback_data: 'cb:unpickall' }]);
+  } else if (page.total > page.items.length) {
+    // Кнопка осмысленна, только когда найденное не поместилось на экран.
+    rows.push([{ text: `☑ Выбрать все найденные (${page.total})`, callback_data: 'cb:pickall' }]);
+  }
+  if (picked.size > 0) {
+    rows.push([{ text: `✓ Добавить выбранные (${allPicked ? page.total : picked.size})`, callback_data: 'cb:addpicked' }]);
+  }
   // «▼ Все» показываем, только когда это осмысленно: при поиске — чтобы не
   // гадать, правильно ли набран запрос; при полном списке кнопка ни к чему.
   if (!showAll) rows.push([{ text: '▼ Все продукты', callback_data: 'cb:all' }]);
   rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
   return { inline_keyboard: rows };
-}
-
-/**
- * Текст перед списком выбора стороны; пустой список — честное объяснение.
- *
- * `query` — то, что искал менеджер: без него «ничего не нашлось» читается как
- * «продуктов нет вовсе».
- */
-export function combatPickerMessage(
-  items: CombatSystemItem[],
-  side: 'our' | 'competitor',
-  query = '',
-): { text: string; show: boolean } {
-  const q = query.trim();
-  if (items.length === 0) {
-    if (q) {
-      return {
-        text: `По запросу «${q}» ничего не нашлось. Попробуйте другое слово или нажмите «▼ Все продукты».`,
-        show: false,
-      };
-    }
-    const text =
-      side === 'our'
-        ? 'Наших продуктов в каталоге и системах не нашлось. Их заводит администратор — разделы «Материалы» и «Системы».'
-        : 'Продуктов конкурентов нет: в Базе знаний не найдена папка «материалы и системы конкурентов» ' +
-          'или она пуста. Добавьте конкурентов — раздел «Конкуренты» в плагине.';
-    return { text, show: false };
-  }
-  const title = side === 'our' ? 'Наш продукт' : 'Продукт конкурента';
-  const found = q ? `Нашлось по «${q}» — нажмите нужное:` : 'Выберите из списка:';
-  return { text: `${title}. ${found}`, show: true };
 }
 
 /** Сообщение после добавления стороны. */
