@@ -590,16 +590,20 @@ export async function combatAllPaged(
 ): Promise<CombatSystemItem[]> {
   const all: CombatSystemItem[] = [];
   let offset = 0;
-  for (let page = 0; page < 100; page++) {
+  // Всего найдено: сервер отвечает `total` в КАЖДОМ снимке списка, поэтому
+  // опираемся и на число, и на `hasMore`. Без `total` (старый сервис) цикл
+  // идёт по `hasMore`, а пределы не дают ему крутиться вечно.
+  let total = Number.POSITIVE_INFINITY;
+  for (let page = 0; page < 100 && all.length < total; page++) {
     const res = side === 'our'
       ? await combatSystems(q, offset, COMBAT_BULK_LIMIT)
       : await combatCompetitors(q, offset, COMBAT_BULK_LIMIT);
     const cards = res.cards ?? [];
+    if (cards.length === 0) break;
     all.push(...cards);
-    const total = res.total ?? all.length;
-    if (!res.hasMore || cards.length === 0 || all.length >= total) break;
-    offset = res.offset ?? offset;
-    offset += cards.length;
+    if (typeof res.total === 'number' && res.total >= 0) total = res.total;
+    if (!res.hasMore || all.length >= total) break;
+    offset = (res.offset ?? offset) + cards.length;
   }
   return all;
 }

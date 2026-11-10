@@ -182,6 +182,12 @@ interface FakeCombat {
   competitorNotes: Array<{ noteId: number; title: string }>;
 }
 
+/** Хвост списка конкурентов: проверкам поиска и «выбрать всё» нужно больше
+ *  одной страницы, а названия — с «pir», как в живой жалобе. */
+function manyCompetitors(): Array<{ noteId: number; title: string }> {
+  return Array.from({ length: 12 }, (_, i) => ({ noteId: 200 + i, title: `PIRRO продукт ${i + 1}` }));
+}
+
 /** Длинный хвост нашего каталога: проверкам листания и «выбрать всё» нужно
  *  больше одной страницы. */
 function manyItems(): Array<{ noteId: number; title: string }> {
@@ -196,8 +202,14 @@ function pageOf<T>(items: T[], params: URLSearchParams): { cards: T[]; total: nu
   return { cards: page, total: items.length, offset, hasMore: offset + limit < items.length };
 }
 
-function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
+function fakeCombatServer(): {
+  calls: string[];
+  current: () => FakeCombat;
+  /** Номера заметок, которые сервис отверг при добавлении стороны. */
+  failures: () => string[];
+} {
   const calls: string[] = [];
+  const sideAddFailures: string[] = [];
   let nextId = 1;
   const sheets: FakeCombat[] = [];
 
@@ -225,7 +237,7 @@ function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
     if (method === 'GET' && url.includes('/bot/combat/competitors')) {
       const params = new URL(url).searchParams;
       const q = params.get('q')?.toLowerCase() ?? '';
-      const all = [{ noteId: 20, title: 'Конкурент А' }];
+      const all = [{ noteId: 30, title: 'Конкурент А' }, ...manyCompetitors()];
       const filtered = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
       return json(pageOf(filtered, params));
     }
@@ -235,10 +247,18 @@ function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
     const sideAdd = url.match(/\/bot\/combat\/(\d+)\/(our|competitor)$/);
     if (method === 'POST' && sideAdd) {
       const sheet = sheets.find((s) => s.id === Number(sideAdd[1]));
-      const body = JSON.parse(String(init?.body ?? '{}')) as { noteId: number; title: string };
+      const body = JSON.parse(String(init?.body ?? '{}')) as { noteId?: number; title?: string };
       if (!sheet) return json({ error: 'нет листка' }, 404);
+      // Номер заметки — обязателен: листок хранит сторону по заметке.
+      if (!Number.isFinite(body.noteId) || Number(body.noteId) <= 0) {
+        sideAddFailures.push(String(body.noteId));
+        return json({ error: 'not found' }, 404);
+      }
       const target = sideAdd[2] === 'our' ? sheet.ourNotes : sheet.competitorNotes;
-      if (!target.some((n) => n.noteId === body.noteId)) target.push({ noteId: body.noteId, title: body.title });
+      const noteId = Number(body.noteId);
+      if (!target.some((n) => n.noteId === noteId)) {
+        target.push({ noteId, title: String(body.title ?? '') });
+      }
       return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
     }
     return json({ ok: true });
@@ -247,6 +267,7 @@ function fakeCombatServer(): { calls: string[]; current: () => FakeCombat } {
   return {
     calls,
     current: () => sheets[sheets.length - 1],
+    failures: () => sideAddFailures,
   };
 }
 
@@ -358,6 +379,39 @@ describe('боевой листок в боте', () => {
     assert.equal(state.combatPicker.get('42')?.allPicked, true);
     await route.routeCallback(deps, '42', 'cb:addpicked', 'c4', state);
     assert.equal(server.current().ourNotes.length, 2 + manyItems().length);
+  });
+
+  it('поиск + «Выбрать все найденные» + «Добавить» кладёт всех конкурентов', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
+    // Живой сценарий жалобы: набрали «pir», взяли все найденные, добавили.
+    await route.routeText(deps, '42', 'pir', state);
+    await route.routeCallback(deps, '42', 'cb:pickall', 'c2', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    assert.deepEqual(server.failures(), [], 'сервис отверг часть сторон');
+    assert.ok(server.current().competitorNotes.length > 0, 'конкуренты не добавились');
+    assert.ok(server.current().competitorNotes.every((n) => n.noteId > 0));
+  });
+
+  it('отметка только номерами строк тоже доходит до листка', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
+    await route.routeText(deps, '42', 'pir', state);
+    // «pir» находит и «Конкурент А»? Нет: только PIRRO-хвост. Первая строка —
+    // первый PIRRO, и именно она должна доехать до листка.
+    await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    assert.deepEqual(server.failures(), []);
+    assert.equal(server.current().competitorNotes.length, 1);
+    assert.equal(server.current().competitorNotes[0].noteId, 200);
   });
 
   it('«Снять все отметки» возвращает пустой выбор', async () => {

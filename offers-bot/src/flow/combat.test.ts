@@ -148,6 +148,19 @@ describe('боевой листок: выбор стороны', () => {
     assert.ok(!ids.includes('cb:pickall'));
   });
 
+  it('в режиме «всё найдено» кнопка «Добавить» остаётся, даже если номера не отмечены', () => {
+    const items: CombatSystemItem[] = [{ noteId: 10, title: 'Кровля' }];
+    // Живой сценарий: «Выбрать все найденные» очищает picked — и раньше
+    // кнопка «Добавить» из-за этого исчезала.
+    const kb = combatPickerKeyboard(page(items, 21, 0, true), 'compsel', new Set(), false, true) as {
+      inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+    };
+    const ids = kb.inline_keyboard.flat().map((b) => b.callback_data);
+    assert.ok(ids.includes('cb:addpicked'), 'кнопки «Добавить» нет в режиме «всё найдено»');
+    const add = kb.inline_keyboard.flat().find((b) => b.callback_data === 'cb:addpicked');
+    assert.match(add!.text, /21/);
+  });
+
   it('при «выбрано всё» кнопка меняется на снятие и считает всё найденное', () => {
     const items: CombatSystemItem[] = [{ noteId: 10, title: 'Кровля' }];
     const kb = combatPickerKeyboard(page(items, 20, 0, true), 'oursel', new Set([0]), false, true) as {

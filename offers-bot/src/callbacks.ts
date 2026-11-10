@@ -991,6 +991,12 @@ export async function onCombatAddPicked(ctx: CallbackCtx): Promise<void> {
     await ctx.deps.send(ctx.chatId, 'Ничего не отмечено — нажмите номер строки, чтобы отметить.');
     return;
   }
+  // Обратная связь до цикла: добавление сотни сторон идёт полсекунды-секунду,
+  // и без сообщения человек нажимает кнопку второй раз.
+  await ctx.deps.send(
+    ctx.chatId,
+    chosen.length > 1 ? `Добавляю в листок: ${chosen.length}…` : `Добавляю «${chosen[0].title}»…`,
+  ).catch(() => {});
   try {
     let updated: api.CombatSheet | null = null;
     // По одной: так у частичного сбоя остаётся честное «что успели». Сервер
