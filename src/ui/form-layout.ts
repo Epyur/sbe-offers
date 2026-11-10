@@ -101,9 +101,12 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
       upload.setText('⏳ Загружаю…');
       try {
         const res = await view.plugin.offersService.uploadLayout(picked.data, picked.name, mode);
-        new Notice(
-          `Макет «${res.layoutName}» загружен: полей ${res.layoutFields.length}, промтов ${res.layoutPrompts.length}`,
-        );
+        const mark = mode === 'combat'
+          ? (res.layoutPrompts.includes('сравнение') || res.layoutFields.includes('сравнение')
+            ? 'метка {{сравнение}} найдена'
+            : 'метки {{сравнение}} в макете нет — листок в неё не подставится')
+          : `полей ${res.layoutFields.length}, промтов ${res.layoutPrompts.length}`;
+        new Notice(`Макет «${res.layoutName}» загружен: ${mark}`, 8000);
         deps.onChanged();
       } catch (e: unknown) {
         new Notice(`Не удалось загрузить макет: ${errorMessage(e)}`, 8000);
@@ -183,8 +186,10 @@ export async function copyMarker(marker: string): Promise<void> {
 
 /** Какие метки нашла система. */
 function renderLayoutTokens(card: HTMLElement, form: OfferForm): void {
-  const fields = form.layoutFields ?? [];
-  const prompts = form.layoutPrompts ?? [];
+  // Ответ старого сервиса мог прийти с `null`: `.length` у него роняло всю
+  // карточку (2026-11-11).
+  const fields = Array.isArray(form.layoutFields) ? form.layoutFields : [];
+  const prompts = Array.isArray(form.layoutPrompts) ? form.layoutPrompts : [];
   if (fields.length === 0 && prompts.length === 0) return;
   const box = card.createDiv({ cls: 'tn-offers-layout-tokens' });
   if (fields.length > 0) {

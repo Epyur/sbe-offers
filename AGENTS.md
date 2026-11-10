@@ -30,11 +30,13 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.9**, released 2026-11-11: deployed, self-hosted,
+Current version = **0.9.10**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `6134cdb` (plugin part +
 `offers-service`), `main` `1c22c47` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.9: the combat sheet has NO form — content is always the product
+last commit that touched code). 0.9.10: layout upload no longer crashes on an empty marker
+list (nil slices were sent as `null`), and `{{сравнение}}` shows in the marker
+list. Previous release — 0.9.9: the combat sheet has NO form — content is always the product
 list plus the comparison; the layout is printed with a single `{{сравнение}}`
 marker; the manager's hint steers the model; «Подобрать аналоги» finds our
 product for a competitor. Previous release — 0.9.8: the «Добавить выбранные»
@@ -557,6 +559,14 @@ measurements) are in the archive.
   («Журнал материалов конкурентов», tag `journal`) must be filtered out
   (`isCompetitorJournal`): it lives in the folder root and would otherwise be
   the first row of «Все продукты».
+- **An empty list in a JSON response must be an ARRAY, never `null`**
+  (2026-11-11, live crash «Cannot read properties of null (reading 'length')»
+  right after uploading a layout). Go's `encoding/json` writes a nil slice as
+  `null`, and any client doing `fields.length` throws. `describeLayout` now
+  returns `[]string{}`; the plugin also normalizes the response on the boundary
+  (`normalizeLayoutResponse`). Regression test reads the RAW JSON — a decoded
+  nil slice and an empty one are indistinguishable.
+
 - **A button gated on `picked` disappears exactly when "all found" is chosen**
   (2026-11-11, live complaint «выбрал все — конкуренты не добавились»). The
   "all found" mode is a flag (`allPicked`) and it CLEARS `picked`, so any
