@@ -326,13 +326,19 @@ FROM offers_form WHERE mode = $1`, mode).
 //
 // Разбор терпимый: испорченный макет не должен ломать загрузку формы — иначе
 // один неудачный файл скрыл бы от человека весь конфигуратор.
+// describeLayout — метки, которые система нашла в макете.
+//
+// Пустой срез, а не nil: `encoding/json` пишет nil-срез как `null`, а клиент
+// читает `fields.length` — и падает «Cannot read properties of null» на первом
+// же макете без полей или с текстом вместо меток (2026-11-11). Правило общее:
+// пустой набор в JSON отдаём массивом.
 func describeLayout(layout []byte) (fields, prompts []string) {
 	if len(layout) == 0 {
-		return nil, nil
+		return []string{}, []string{}
 	}
 	files, _, err := readZipEntries(layout)
 	if err != nil {
-		return nil, nil
+		return []string{}, []string{}
 	}
 	doc := string(files["word/document.xml"])
 	seenField := map[string]bool{}
@@ -343,6 +349,22 @@ func describeLayout(layout []byte) (fields, prompts []string) {
 				seenPrompt[token.Inner] = true
 				prompts = append(prompts, token.Inner)
 			}
+			continue
+		}
+		// `{{сравнение}}` — служебная метка боевого листка (2026-11-11). В списке
+		// «полей» она была бы неправдой: полем её никто не заполняет. Называем её
+		// отдельный списком промтов, чтобы плагин видел, что метка в макете есть.
+		if token.Kind == layoutTokenComparison {
+			if !seenPrompt[token.Inner] {
+				seenPrompt[token.Inner] = true
+				prompts = append(prompts, token.Inner)
+			}
+			continue
+		}
+		// Прочие служебные метки (`{{система}}` и т.п.) — не поля формы:
+		// значением их не подставить, и в списке «Подставляемые поля» они
+		// читались бы как незаполненные. Показываем их вместе с промтами.
+		if isServiceKind(token.Kind) {
 			continue
 		}
 		if !seenField[token.Inner] {

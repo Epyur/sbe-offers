@@ -101,6 +101,23 @@ export interface SystemText {
 }
 
 /** Что система поняла из загруженного макета .docx (2026-11-05). */
+/**
+ * Приводит ответ о макете к безопасной форме (2026-11-11).
+ *
+ * Сервер мог отдать `null` вместо пустого массива (так `encoding/json` пишет
+ * nil-срез), а карточка читает `layoutFields.length` — отсюда «Cannot read
+ * properties of null (reading 'length')» сразу после загрузки. Проверяем на
+ * границе: внутри плагина этим полям верим.
+ */
+function normalizeLayoutResponse(res: LayoutResponse): LayoutResponse {
+  return {
+    ...res,
+    layoutName: res.layoutName ?? '',
+    layoutFields: Array.isArray(res.layoutFields) ? res.layoutFields : [],
+    layoutPrompts: Array.isArray(res.layoutPrompts) ? res.layoutPrompts : [],
+  };
+}
+
 export interface LayoutResponse {
   hasLayout: boolean;
   layoutName: string;
@@ -305,7 +322,7 @@ export class OffersService {
       if (res.status < 200 || res.status >= 300) {
         throw new OffersError(this.extractError(res.text, res.status), res.status);
       }
-      return JSON.parse(res.text) as LayoutResponse;
+      return normalizeLayoutResponse(JSON.parse(res.text) as LayoutResponse);
     });
   }
 
