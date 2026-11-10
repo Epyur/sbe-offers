@@ -13,7 +13,7 @@ import { applyLogin, newSession, type ChatSession } from './session.ts';
 import type { BotDeps, RouterState } from './routes.ts';
 
 const REAL_ENV = { ...process.env };
-const sent: Array<{ chatId: string; text: string }> = [];
+const sent: Array<{ chatId: string; text: string; keyboard?: Record<string, unknown> }> = [];
 
 function stubTelegram(): void {
   globalThis.fetch = (async () => new Response('{"ok":true}', { status: 200 })) as typeof fetch;
@@ -52,8 +52,8 @@ function makeDeps(initial?: ChatSession): {
   const current = initial ?? newSession();
   const deps: BotDeps = {
     now: () => 1_000_000,
-    send: async (chatId: string, text: string) => {
-      sent.push({ chatId, text });
+    send: async (chatId: string, text: string, keyboard?: Record<string, unknown>) => {
+      sent.push({ chatId, text, keyboard });
     },
     identity: async () => ({ email: '' }),
     // Стенд ведёт себя как sessionRestored: в памяти нет — спрашиваем identity.
@@ -388,6 +388,47 @@ describe('боевой листок в боте', () => {
     assert.ok(state.combatPicker.get('42')?.picked.length === 0);
     await route.routeCallback(deps, '42', 'cb:addpicked', 'c5', state);
     assert.equal(server.current().ourNotes.length, 0);
+  });
+
+  it('отметка не слетает при «Дальше» и «Все продукты», выбор работает дальше', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    // Отметить первую строку.
+    await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
+    assert.deepEqual(state.combatPicker.get('42')?.picked, [0]);
+    // «Дальше» — отметка и запрос остаются прежними.
+    await route.routeCallback(deps, '42', 'cb:more', 'c4', state);
+    assert.deepEqual(state.combatPicker.get('42')?.picked, [0], 'перелистывание сбрасывает отметку');
+    assert.equal(state.combatPicker.get('42')?.query, '');
+    // «▼ Все продукты» — это тот же полный список, а не новый поиск: отметка жива.
+    await route.routeCallback(deps, '42', 'cb:all', 'c5', state);
+    assert.deepEqual(state.combatPicker.get('42')?.picked, [0], '«Все продукты» сбрасывает отметку');
+    // И выбор строки после этого работает, а не отвечает «список устарел».
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'oursel:1', 'c6', state);
+    assert.ok(!/устарел/.test(sent[sent.length - 1].text), 'выбор после листания сломан');
+    assert.deepEqual(state.combatPicker.get('42')?.picked, [0, 1]);
+  });
+
+  it('страница выбора сохраняет главное меню боевого листка', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    const kb = sent[sent.length - 1].keyboard as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const ids = kb.inline_keyboard.flat().map((b) => b.callback_data);
+    for (const want of ['cb:oursys', 'cb:comp', 'cb:doc', 'cb:done']) {
+      assert.ok(ids.includes(want), `на странице выбора нет кнопки ${want}`);
+    }
   });
 
   it('листание зависит от общего числа совпадений', async () => {

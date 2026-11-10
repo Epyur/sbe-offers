@@ -36,6 +36,10 @@ const competitorsFolderName = "материалы и системы конкур
 // лежащая в папке, попадает в список один раз.
 const competitorTagName = "competitor"
 
+// competitorJournalTagName — тег СВОДКИ, а не продукта (2026-11-11). Так
+// помечен «Журнал материалов конкурентов»; в выбор он не попадает.
+const competitorJournalTagName = "journal"
+
 // competitorsCacheMode — ключ строки кеша конкурентов в offers_context.
 // Отдельно от system_cards и systems: это третий, самостоятельный набор.
 const competitorsCacheMode = "competitors"
@@ -159,7 +163,7 @@ func competitorTaggedNotes(ctx context.Context, kb *KBClient) ([]KBNoteSummary, 
 func cardsForSummaries(ctx context.Context, kb *KBClient, notes []KBNoteSummary, seen map[int64]bool) []SystemCard {
 	out := make([]SystemCard, 0, len(notes))
 	for _, summary := range notes {
-		if seen[summary.ID] {
+		if seen[summary.ID] || isCompetitorJournal(summary) {
 			continue
 		}
 		seen[summary.ID] = true
@@ -174,19 +178,88 @@ func cardsForSummaries(ctx context.Context, kb *KBClient, notes []KBNoteSummary,
 	return out
 }
 
+// competitorDisclaimer — первая строка H1 в карточках конкурентов.
+//
+// Живые заметки (2026-11-11) размечены ДВУМЯ заголовками первого уровня:
+//
+//	# Материал конкурента, использовать только для критического сравнения
+//	# АНКЕР-ВТУЛКА PROPLUG
+//
+// первый — предупреждение, второй — название продукта. Разбор карточки брал
+// первую строку и весь список конкурентов назывался одним предупреждением.
+// Здесь одна строка на всю систему: и разбор названия, и отсев журналов.
+const competitorDisclaimer = "материал конкурента, использовать только для критического сравнения"
+
+// isCompetitorDisclaimer — строка-предупреждение, а не название продукта.
+func isCompetitorDisclaimer(s string) bool {
+	norm := strings.ToLower(strings.Join(strings.Fields(s), " "))
+	// «Материал конкурента, использовать только для критического сравнения» и
+	// «Материал конкурента» — одно и то же предупреждение, обрезанное по-разному.
+	return strings.HasPrefix(norm, competitorDisclaimer) ||
+		norm == "материал конкурента" ||
+		norm == "материалы конкурентов"
+}
+
+// competitorTitles — все H1 заметки по порядку (без служебных).
+//
+// Заголовок заметки (summary.Title) — надёжное название, но у конкурентов
+// карточку пишет скрипт индексации, и его первая строка часто предупреждение.
+// Берём второй H1 — это название продукта; если его нет, остаётся заголовок
+// заметки.
+func competitorTitles(markdown string) []string {
+	out := make([]string, 0, 2)
+	inFence := false
+	for _, line := range strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Заголовок внутри блока кода — не заголовок заметки.
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !strings.HasPrefix(trimmed, "# ") {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
+		if title == "" || isCompetitorDisclaimer(title) {
+			continue
+		}
+		out = append(out, title)
+	}
+	return out
+}
+
 // competitorCardFromParsed собирает карточку конкурента из заметки.
 //
-// Отличие от систем: НАЗВАНИЕ всегда берётся из заголовка заметки, а не из
-// тела (2026-11-10). Карточки конкурентов — произвольные заметки, а не карточки
-// по стандарту; разбор тела подменял название первой содержательной строкой и в
-// списке появлялись чужие фразы вместо названия продукта. Тело по-прежнему даёт
-// описание, состав и ссылки — только не название.
+// Название (2026-11-11, живая жалоба): берётся ПЕРВЫЙ содержательный H1, а не
+// заголовок заметки целиком и не первая строка тела. У заметек конкурентов
+// первая строка H1 — предупреждение, и прежний разбор давал весь список одним
+// дисклеймером. Порядок: H1 из тела → заголовок заметки → разобранное название.
+// Тело по-прежнему даёт описание, состав и ссылки — только не название.
 func competitorCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.SystemCard) SystemCard {
 	card := systemCardFromParsed(summary, note, parsed)
-	if title := strings.TrimSpace(summary.Title); title != "" {
+	if titles := competitorTitles(note.ContentMD); len(titles) > 0 {
+		card.Title = titles[0]
+		return card
+	}
+	if title := strings.TrimSpace(summary.Title); title != "" && !isCompetitorDisclaimer(title) {
 		card.Title = title
 	}
 	return card
+}
+
+// isCompetitorJournal — заметка-журнал индексации, а не продукт.
+//
+// «Журнал материалов конкурентов» (тег journal) — служебная сводка со ссылками
+// на карточки. В списке выбора она не нужна: её выбирают случайно и получают в
+// сравнении таблицу из сотен строк вместо продукта. Отсев по тегу, а не по
+// названию: название — свободный текст и может измениться.
+func isCompetitorJournal(summary KBNoteSummary) bool {
+	for _, tag := range summary.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag.Name), competitorJournalTagName) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadCachedCompetitors читает карточки конкурентов из кеша и признак «папка

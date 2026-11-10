@@ -102,7 +102,19 @@ func (s *folderKBStub) handler() http.Handler {
 			sb.WriteString(itoa(int(n.ID)))
 			sb.WriteString(`,"title":"`)
 			sb.WriteString(n.Title)
-			sb.WriteString(`"}`)
+			sb.WriteString(`"`)
+			// Теги важны: по ним отсеивается журнал индексации (2026-11-11).
+			if len(n.Tags) > 0 {
+				sb.WriteString(`,"tags":[`)
+				for j, tg := range n.Tags {
+					if j > 0 {
+						sb.WriteString(",")
+					}
+					sb.WriteString(`{"id":` + itoa(int(tg.ID)) + `,"name":"` + tg.Name + `"}`)
+				}
+				sb.WriteString(`]`)
+			}
+			sb.WriteString(`}`)
 		}
 		sb.WriteString(`],"total":`)
 		sb.WriteString(itoa(len(list)))
@@ -345,6 +357,68 @@ func TestCompetitorsByTagWithoutFolderIsFound(t *testing.T) {
 	}
 	if len(cards) != 1 || cards[0].Title != "Только по тегу" {
 		t.Fatalf("ожидалась карточка по тегу, получено: %+v", cards)
+	}
+}
+
+// TestCompetitorTitleSkipsDisclaimerHeading — 2026-11-11, живая жалоба: в
+// заметках конкурентов ДВА H1, первый — предупреждение, второй — название.
+// Раньше весь список назывался предупреждением.
+func TestCompetitorTitleSkipsDisclaimerHeading(t *testing.T) {
+	body := "# Материал конкурента, использовать только для критического сравнения\n\n" +
+		"# АНКЕР-ВТУЛКА PROPLUG\n\n## Описание\n\nКрепёж.\n"
+	stub := &folderKBStub{
+		folders: map[string]int64{},
+		tags:    map[string]int64{competitorTagName: 8},
+		tagged:  map[int64][]KBNoteSummary{8: {{ID: 30, Title: "Материал конкурента, использовать только для критического сравнения"}}},
+		bodies:  map[int64]string{30: body},
+	}
+	kb := newFolderKB(t, stub)
+	cards, _, err := CompetitorsFromKB(context.Background(), kb)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(cards) != 1 || cards[0].Title != "АНКЕР-ВТУЛКА PROPLUG" {
+		t.Fatalf("название должно браться из второго H1, получено: %+v", cards)
+	}
+}
+
+// TestCompetitorJournalExcluded — 2026-11-11: «Журнал материалов конкурентов»
+// (тег journal) — служебная сводка, в выборе сторон её быть не должно.
+func TestCompetitorJournalExcluded(t *testing.T) {
+	stub := &folderKBStub{
+		folders: map[string]int64{},
+		tags:    map[string]int64{competitorTagName: 8},
+		tagged: map[int64][]KBNoteSummary{8: {
+			{ID: 30, Title: "Журнал материалов конкурентов", Tags: []KBTag{{ID: 9, Name: "journal"}}},
+			{ID: 31, Title: "АНКЕР-ВТУЛКА PROPLUG"},
+		}},
+		bodies: map[int64]string{
+			30: "# Журнал материалов конкурентов\n\n## PLASTFOIL\n",
+			31: "# АНКЕР-ВТУЛКА PROPLUG\n",
+		},
+	}
+	kb := newFolderKB(t, stub)
+	cards, _, err := CompetitorsFromKB(context.Background(), kb)
+	if err != nil {
+		t.Fatalf("ошибка: %v", err)
+	}
+	if len(cards) != 1 || cards[0].Title != "АНКЕР-ВТУЛКА PROPLUG" {
+		t.Fatalf("журнал не должен попадать в список: %+v", cards)
+	}
+}
+
+// TestCompetitorTitlesSkipsServiceHeadings — чистые случаи разбора названия.
+func TestCompetitorTitlesSkipsServiceHeadings(t *testing.T) {
+	md := "# Материал конкурента\n# Мембрана ПВХ\n## Описание\n# Ещё заголовок\n"
+	got := competitorTitles(md)
+	if len(got) != 2 || got[0] != "Мембрана ПВХ" || got[1] != "Ещё заголовок" {
+		t.Fatalf("ожидались два содержательных H1, получено: %+v", got)
+	}
+	if isCompetitorDisclaimer("Материал конкурента, использовать только для критического сравнения ") != true {
+		t.Fatal("дисклеймер должен распознаваться и с хвостовым пробелом")
+	}
+	if isCompetitorDisclaimer("АНКЕР-ВТУЛКА PROPLUG") {
+		t.Fatal("название продукта не должно считаться дисклеймером")
 	}
 }
 

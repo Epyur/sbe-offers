@@ -28,6 +28,7 @@ import type { ChatSession, OfferDraft } from './session.ts';
 import {
   COMBAT_KEYBOARD,
   COMBAT_PAGE_SIZE,
+  withCombatMenu,
   type CombatPickerPage,
   combatAskQuery,
   combatIntro,
@@ -807,10 +808,18 @@ function pickingSide(ctx: CallbackCtx): 'our' | 'competitor' {
   return ctx.session.combat?.picking ?? ctx.combatPicker?.side ?? 'our';
 }
 
-/** «▼ Все продукты»: показать полный список стороны сначала. */
+/**
+ * «▼ Все продукты»: показать полный список стороны сначала.
+ *
+ * Это ТОТ ЖЕ список, а не новый поиск: запрос пустой у обоих, поэтому
+ * отмеченные строки сохраняются. Раньше здесь строился пустой выбор, и у
+ * человека, отметившего позицию и нажавшего «Все продукты», отметка молча
+ * пропадала — а кнопка «Добавить выбранные» отвечала «Ничего не отмечено».
+ */
 export async function onCombatAll(ctx: CallbackCtx): Promise<void> {
   const side = pickingSide(ctx);
-  await renderCombatPicker(ctx, { side, query: '', offset: 0, picked: [] });
+  const prev = currentPicker(ctx, side);
+  await renderCombatPicker(ctx, { ...prev, side, query: '', offset: 0 });
 }
 
 /** «Дальше ▸»: следующая страница текущего набора совпадений. */
@@ -848,31 +857,38 @@ async function renderCombatPicker(
   // страницу за нас, а лежащий рядом набор совпадений свежий.
   const page = found ?? (await fetchCombatPage(ctx, picker));
   if (!page) return;
+  // ВАЖНО: `picked` и `allPicked` не пересобираются из ответа сервера — сервер
+  // о них не знает. Сюда приходит только страница; отметки живут в picker и
+  // переживают листание. Раньше `savePicker` получал `{...picker}` и это
+  // работало лишь до тех пор, пока вызывающий не строил picker заново.
   savePicker(ctx, { ...picker, offset: page.offset });
   if (page.total === 0) {
     // Ничего не нашлось: даём путь назад, а не тупик.
-    await ctx.deps.send(ctx.chatId, combatPickerMessage(page, side, picker.query), {
-      inline_keyboard: [
+    await ctx.deps.send(
+      ctx.chatId,
+      combatPickerMessage(page, side, picker.query),
+      withCombatMenu([
         [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
         [{ text: '< Назад', callback_data: 'cb:back' }],
-      ],
-    });
+      ]),
+    );
     return;
   }
   ctx.foundCombat = page.items;
   ctx.rememberCombat?.(page.items);
   apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
   const prefix = side === 'our' ? 'oursel' : 'compsel';
+  const keyboard = combatPickerKeyboard(
+    page,
+    prefix,
+    new Set(picker.picked),
+    picker.query.trim() === '',
+    picker.allPicked === true,
+  );
   await ctx.deps.send(
     ctx.chatId,
     combatPickerMessage(page, side, picker.query),
-    combatPickerKeyboard(
-      page,
-      prefix,
-      new Set(picker.picked),
-      picker.query.trim() === '',
-      picker.allPicked === true,
-    ),
+    withCombatMenu(keyboard.inline_keyboard as unknown[]),
   );
 }
 
