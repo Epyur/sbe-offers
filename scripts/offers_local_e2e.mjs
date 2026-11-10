@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Интеграционный прогон offers-service через HTTP на живом контейнере
  * (локальный docker-compose.local.yml). Проверяет поведение, а не реализацию:
  * те же запросы, что делает плагин и бот.
@@ -107,14 +107,15 @@ async function call(method, path, { token, body, headers = {} } = {}) {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const text = await res.text();
+  const rawBuf = Buffer.from(await res.arrayBuffer());
+  const text = rawBuf.toString('utf8');
   let json;
   try {
     json = text ? JSON.parse(text) : undefined;
   } catch {
     json = undefined;
   }
-  return { status: res.status, json, text, headers: res.headers };
+  return { status: res.status, json, text, raw: rawBuf, headers: res.headers };
 }
 
 const ownerToken = makeJwt('owner@tn.ru');
@@ -641,7 +642,8 @@ let linkedChatId = 0;
       headers: { 'X-Service-Secret': BOT_SECRET, 'X-File-Name': encodeURIComponent(fileName), ...headers },
       body: bytes,
     });
-    const text = await res.text();
+const rawBuf = Buffer.from(await res.arrayBuffer());
+  const text = rawBuf.toString('utf8');
     let json;
     try {
       json = text ? JSON.parse(text) : undefined;
@@ -2247,7 +2249,80 @@ async function sectionCombat() {
   ok('боевой листок удалён', del.status === 200);
 }
 
+/**
+ * У КП и боевого листка СВОЙ макет (2026-11-11).
+ *
+ * Живой дефект: «вместо КП выгружался пустой макет боевого листка». Проверяем
+ * ровно то, что тогда не сработало: загрузка в один режим не трогает другой,
+ * форма называет СВОЙ макет, и КП печатается своим содержимым.
+ */
+async function sectionLayoutMode() {
+  console.log('\nМакеты: у КП и у боевого листка — свои (2026-11-11)');
+
+  const example = await call('GET', '/form/layout/example', { token: ownerToken });
+  ok('образец макета скачан', example.status === 200);
+  const exampleBuf = example.raw;
+
+  const upload = async (mode, name) => {
+    const res = await fetch(`${BASE}/api/offers/form/layout?name=${encodeURIComponent(name)}&mode=${mode}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ownerToken}`,
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+      body: exampleBuf,
+    });
+    return { status: res.status, json: await res.json().catch(() => undefined) };
+  };
+
+  const upClient = await upload('client', 'КП.docx');
+  ok('макет КП загружен → 200', upClient.status === 200, `${upClient.status}`);
+  ok('ответ загрузки КП называет mode=client', upClient.json?.mode === 'client',
+    JSON.stringify(upClient.json?.mode));
+
+  const upCombat = await upload('combat', 'БЛ.docx');
+  ok('макет боевого листка загружен → 200', upCombat.status === 200, `${upCombat.status}`);
+  ok('ответ загрузки листка называет mode=combat', upCombat.json?.mode === 'combat',
+    JSON.stringify(upCombat.json?.mode));
+
+  // Форма каждого режима видит СВОЙ макет, и загрузка листка не подменила КП.
+  const clientForm = await call('GET', '/form?mode=client', { token: ownerToken });
+  ok('форма КП видит свой макет', clientForm.json?.hasLayout === true &&
+    clientForm.json?.layoutName === 'КП.docx', JSON.stringify(clientForm.json?.layoutName));
+  const combatForm = await call('GET', '/form?mode=combat', { token: ownerToken });
+  ok('форма листка видит свой макет', combatForm.json?.hasLayout === true &&
+    combatForm.json?.layoutName === 'БЛ.docx', JSON.stringify(combatForm.json?.layoutName));
+
+  // Сам дефект: КП печатается содержимым, а не меткой боевого листка.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'Заказчик режимов', contact: 'почта' },
+      items: [{ name: 'Материал режимов', unit: 'м2', qty: 2, price: 50, sum: 100 }],
+      total: 100, status: 'draft',
+      formValues: { object_name: 'Объект режимов' },
+    },
+  });
+  const offerId = created.json?.id;
+  const doc = Buffer.from(await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer());
+  const xml = unzipEntrySafe(doc, 'word/document.xml');
+  ok('КП под макетом листка не печатает заголовок «Боевой листок №»',
+    !xml.includes('Боевой листок №'), xml.slice(0, 200));
+  ok('КП под макетом листка не печатает метку {{сравнение}}', !xml.includes('{{сравнение}}'));
+  ok('КП под макетом листка сохраняет данные заказа', xml.includes('Объект режимов') ||
+    xml.includes('Материал режимов'), xml.slice(0, 300));
+
+  await call('DELETE', `/offers/${offerId}`, { token: ownerToken });
+  const delClient = await call('DELETE', '/form/layout?mode=client', { token: ownerToken });
+  ok('макет КП убран', delClient.status === 200);
+  const delCombat = await call('DELETE', '/form/layout?mode=combat', { token: ownerToken });
+  ok('макет листка убран', delCombat.status === 200);
+}
+
 await sectionLayout();
+await sectionLayoutMode();
 await sectionSystemTexts();
 await sectionServiceMarkers();
 await sectionCombat();

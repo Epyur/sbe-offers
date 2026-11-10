@@ -74,12 +74,31 @@ UPDATE offers_form SET layout_docx = $2, layout_name = $3, updated_at = now() WH
 	}
 	fields, prompts := describeLayout(body)
 	writeJSON(w, http.StatusOK, map[string]any{
+		"mode":          mode,
 		"hasLayout":     true,
 		"layoutName":    name,
 		"layoutFields":  fields,
 		"layoutPrompts": prompts,
 		"bytes":         len(body),
 	})
+}
+
+// uploadLayoutResponse — ответ на загрузку макета.
+//
+// Ответ называет РЕЖИМ, в который попал файл (2026-11-11): иначе загрузка
+// макета в чужой документ выглядит успехом, и об этом узнают только при
+// печати — когда вместо КП выходит пустой макет другого документа. Тем же
+// ответом пользуются тесты: судить надо то, что видит клиент.
+func uploadLayoutResponse(mode string, body []byte, name string) map[string]any {
+	fields, prompts := describeLayout(body)
+	return map[string]any{
+		"mode":          mode,
+		"hasLayout":     true,
+		"layoutName":    name,
+		"layoutFields":  fields,
+		"layoutPrompts": prompts,
+		"bytes":         len(body),
+	}
 }
 
 // handleDeleteLayout убирает макет: печать возвращается к блокам формы.

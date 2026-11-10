@@ -30,17 +30,26 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.13** — **in progress, NOT released** (plugin part and
-`offers-service` code live on `backend` `07d379b` (docs tip `58551c3`); the deployed build, the
-self-hosted files and the registry are still **0.9.12**; `main` code HEAD is `64ad9bd`, docs tip `8245dda`).
+Current version = **0.9.13** — **in progress, NOT released** (0.9.13 lives on
+`backend` as uncommitted changes on top of code HEAD `58551c3`; the deployed
+build, the self-hosted files and the registry are still **0.9.12**; `main` code
+HEAD is `64ad9bd`).
 `check_docs_state.mjs` is expected to fail until the release is finished — do not
 "fix" it by editing docs.
 
-0.9.13: the combat sheet's analogue picker was rebuilt — it now searches
-**from our product** for **competitor products of the same class**, first via the
-**competitor journal** (grouping + target note links) with the model, then via
-the model over cards, then with a word-class fallback. Details and the list of
-what was broken on the way: `HANDOFF.md`, "Что изменилось в 0.9.13".
+In 0.9.13 two things ship together (details and the list of what was broken on
+the way: `HANDOFF.md`, «Что изменилось в 0.9.13»):
+
+1. **The layout-mode defect** — an offer was printed as an empty combat sheet.
+   Each document has its own `.docx` master (`offers_form.layout_docx` per
+   `mode`), and the upload response never said which mode it wrote to, so a
+   master uploaded "into the wrong document" looked like success. The response
+   now carries `mode`, the plugin's Notice names the target document and warns
+   on a mismatch, and the stand has a check for it.
+2. **The rebuilt analogue picker** — it now searches **from our product** for
+   **competitor products of the same class**, first via the **competitor
+   journal** (grouping + target note links) with the model, then via the model
+   over cards, then with a word-class fallback.
 
 Previous release — 0.9.12 (2026-11-11, released): combat buttons re-open the
 sheet after a bot restart (`ensureCombat`). Before that: 0.9.11 (analogue button
@@ -249,7 +258,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
-| `scripts/offers_local_e2e.mjs` | the stand: **339 checks**, 25 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **351 checks**, 26 sections |
+| `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -323,12 +333,12 @@ cd ../offers-bot && npm run typecheck && npm run build && node --test "src/**/*.
 cd .. && node ../scripts/check_offers_openapi.mjs
 docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
+python scripts/check_layout_mode_defect.py http://127.0.0.1:18080
 ```
 
-Expected on 0.9.3: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
-`check_marker_registry` 24/24, `check_docs_state` EXIT=0, `go test` green,
-OpenAPI 87/64, stand **333/0** (stand not re-run for 0.9.3: the plugin-side
-stand count is unchanged, and the added combat checks run in the Docker stand).
+Expected on 0.9.13: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+`check_marker_registry` 24/24, `go test` green, OpenAPI 89/66, stand
+**351/0** (the layout-mode section is 12 of them).
 The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
 `node --test "src/**/*.test.ts"` **112 passing** (combat flow — search, folder
 subtree, multiple sides — covered by route tests against a faked service).
@@ -394,6 +404,16 @@ measurements) are in the archive.
 
 ### Building and the stand
 
+- **A layout belongs to a MODE, and the mode must be visible in the answer.**
+  (2026-11-11, lived defect: the offer was exported as an empty combat sheet.)
+  `offers_form` keeps one `layout_docx` per `mode` (`client`/`combat`) — that
+  part was always right. What was missing: `POST /form/layout` answered only
+  `hasLayout`/`layoutName`, so a master uploaded for the wrong mode looked like
+  success and the fault surfaced at print time. `uploadLayoutResponse` now
+  returns `mode`, the plugin's Notice says which document took the file and
+  warns on a mismatch, and the stand section «Макеты: у КП и у боевого листка —
+  свои» proves both directions. **Any upload that writes into a per-mode or
+  per-entity row must say which row it wrote to.**
 - **`up -d` without `--force-recreate` may not recreate the container.** Check
   `CREATED` in `docker ps`, not the word `Started` in compose output.
 - **Piping a remote script through `tail` returns `tail`'s exit code.**

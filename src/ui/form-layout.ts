@@ -101,12 +101,19 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
       upload.setText('⏳ Загружаю…');
       try {
         const res = await view.plugin.offersService.uploadLayout(picked.data, picked.name, mode);
+        // Куда реально лёг файл (2026-11-11). Живой дефект: макет боевого
+        // листка оказался макетом КП, и человек узнал об этом только по
+        // пустому документу. Сервер теперь называет режим в ответе; при
+        // расхождении говорим прямо, а не «загружен».
+        const target = res.mode && res.mode !== mode
+          ? `ВНИМАНИЕ: файл записан как макет «${res.mode === 'combat' ? 'боевого листка' : 'КП'}»`
+          : 'записан в этот документ';
         const mark = mode === 'combat'
           ? (res.layoutPrompts.includes('сравнение') || res.layoutFields.includes('сравнение')
             ? 'метка {{сравнение}} найдена'
             : 'метки {{сравнение}} в макете нет — листок в неё не подставится')
           : `полей ${res.layoutFields.length}, промтов ${res.layoutPrompts.length}`;
-        new Notice(`Макет «${res.layoutName}» загружен: ${mark}`, 8000);
+        new Notice(`Макет «${res.layoutName}» — ${target}: ${mark}`, 10000);
         deps.onChanged();
       } catch (e: unknown) {
         new Notice(`Не удалось загрузить макет: ${errorMessage(e)}`, 8000);

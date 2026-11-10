@@ -121,6 +121,14 @@ function normalizeLayoutResponse(res: LayoutResponse): LayoutResponse {
 export interface LayoutResponse {
   hasLayout: boolean;
   layoutName: string;
+  /**
+   * Режим, в который записан макет: `client` (КП) или `combat` (боевой листок).
+   *
+   * Сервер отвечает им с 0.9.13. Раньше ответ молчал, и загрузка макета «не в
+   * тот документ» выглядела успехом: «макет загружен» — а печать КП выходила
+   * пустым макетом боевого листка (живой дефект 2026-11-11).
+   */
+  mode?: string;
   /** Метки `[…]` — жёсткие подстановки значений. */
   layoutFields: string[];
   /** Метки `{…}` — подсказки модели. */
