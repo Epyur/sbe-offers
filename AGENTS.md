@@ -30,16 +30,25 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.5**, released 2026-11-10: deployed, self-hosted,
-registry updated. Code commits: `backend` `64b2067` (plugin part +
-`offers-service`; earlier code commit `f928ae4`), `main` `ddbbfb0` (plugin part
-byte-identical across branches;
+Current version = **0.9.6**, released 2026-11-10: deployed, self-hosted,
+registry updated. Code commits: `backend` `0956d20` (plugin part +
+`offers-service`), `main` `HEAD` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.5: the link section of the exported offer is
-printed **by groups and numbered**, and the model's text is printed **as
-paragraphs** with normalised typography. Previous release — 0.9.4 (2026-11-09):
-hyperlink text is the document title, URLs with spaces/quotes parse, material
-links collected (one level).
+last commit that touched code). 0.9.6: combat-sheet competitors are loaded by
+the `competitor` tag (plus the KB folder), and the bot's side picker is a
+numbered, paged, multi-select list with «выбрать все найденные». Previous
+release — 0.9.5 (2026-11-10): the link section is printed by groups and
+numbered, the model's text as paragraphs with normalised typography.
+
+**Release 0.9.6 (2026-11-10, server + bot change; plugin-side `main.js` logic
+unchanged, version bumped for the CUP news).** Two user requests:
+1. competitor products are read from the **`competitor` tag** as well as the KB
+   folder (merged by note id), and the card title is the **note heading**
+   (`competitors.go`);
+2. the bot's side picker is a **numbered, paged, multi-select list** with
+   «☑ Выбрать все найденные» — see the "side picker" gotcha below.
+   Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, bot **121
+   passing**, OpenAPI 87/64, `crapper` ≤ CC 9, `dryer` no new duplicates.
 
 **Release 0.9.5 (2026-11-10, server-only change — `main.js` logic unchanged,
 version bumped only for the CUP news).** Two user requests:
@@ -101,23 +110,36 @@ renamed accordingly.
   *competitor* products. Snapshot like an offer: `number` `{NNN}/{yyyy}` with
   its **own** year counter, `our_notes`/`competitor_notes` are `{noteId,title}`
   lists, `form_values` under `mode='combat'`, `status`. Competitor products are
-  **not** a new table — they are KB notes in the folder **«материалы и системы
-  конкурентов»**, read through `KBClient.FolderIDByName`/`FolderNotes`, cached
-  in `offers_context` under `mode='competitors'` and refreshed by an admin
-  button. The combat form is the **same form editor as КП** under `mode='combat'`
-  (no second editor). DOCX export is done (`combat_docx.go`): rendered from the
-  combat form, our and competitor cards printed as two sections.
-  **In the bot (2026-11-09, search since 0.9.3)**: «⚔️ Боевой листок» creates
-  an empty sheet with a number. Sides are picked by **name search**, not from a
-  long list: «➕ Наш продукт» (materials catalogue + systems) or «🏷️ Добавить
-  конкурента» asks for a name, the typed text becomes the query, matching
-  products come back as buttons, and «▼ Все продукты» shows the whole list. The
-  same product can be added on each side several times. «⬇ DOCX» sends the file;
+  **not** a new table — they are KB notes **tagged `competitor`** (2026-11-10)
+  **and** notes in the folder **«материалы и системы конкурентов»** (historical
+  source, merged by note id), read through `KBClient.TagID`/`Notes` and
+  `KBClient.FolderIDByName`/`SubtreeFolderIDs`/`FolderNotes`, cached in
+  `offers_context` under `mode='competitors'` and refreshed by an admin
+  button. A competitor card's **title is the note heading**, never the first
+  body line. The combat form is the **same form editor as КП** under
+  `mode='combat'` (no second editor). DOCX export is done (`combat_docx.go`):
+  rendered from the combat form, our and competitor cards printed as two
+  sections.
+  **In the bot (2026-11-09, document-style picker since 2026-11-10)**: «⚔️
+  Боевой листок» creates an empty sheet with a number. Sides are picked by
+  **name search** as a **numbered text list** with number buttons, paging
+  («Дальше ▸»/«◀ В начало») and a **checkbox-style multi-select**: tap a number
+  to toggle it (✓), then «✓ Добавить выбранные» adds everything picked at once.
+  When the search returns more rows than fit one page, a **«☑ Выбрать все
+  найденные (N)»** button takes the whole match set (it becomes «✖ Снять все
+  отметки» once taken); adding then pages through the server and loads every
+  match, not just the visible screen (`api.combatAllPaged`). Tapping a number
+  manually drops the "all" mode, because the manager is then editing the set.
+  This mirrors the portal Telegram bot's «Документы» mode — long product names
+  overflowed the button and only a handful of cards were reachable before.
+  «➕ Наш продукт» (materials catalogue + systems) and «🏷️ Добавить
+  конкурента» ask for a name; «▼ Все продукты» opens the full list. The same
+  product can be added on each side several times. «⬇ DOCX» sends the file;
   «📂 Мои боевые листки» lists the chat's sheets. `botcombat.go` reuses the
   plugin's entity and renderer; the owner is the chat's bound email, and text
   typed **outside** a side pick never lands in an offer draft.
-  Competitor cards come from the **whole subtree** of the «материалы и системы
-  конкурентов» folder (`KBClient.SubtreeFolderIDs`), each note becoming a card.
+  Competitor cards come from the tag **and** the **whole subtree** of the
+  «материалы и системы конкурентов» folder.
 
 ## Architecture
 
@@ -182,13 +204,15 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 `systems_links.go`, `botcatalog.go`, `botapi.go`, `form.go`, `offers.go`,
 `brief.go`, `briefstep.go`, `copystep.go`, `attach.go`, `kbclient.go`,
 `combat.go` (combat-sheet entity, own number counter, CRUD; 2026-11-08),
-`competitors.go` (competitor cards from the KB folder, cache in
-`offers_context` `mode='competitors'`),
+`competitors.go` (competitor cards from the **`competitor` tag** and the KB
+folder subtree, merged by note id, cache in `offers_context`
+`mode='competitors'`),
 `combat_docx.go` (combat-sheet DOCX: blocks by the combat form, both sides printed
 as card sections; reuses the block/text pipeline),
 `botcombat.go` (combat sheet in the bot, 2026-11-09: our product = catalogue
-materials + systems, competitors = whole folder subtree; name search via `q`
-(`combatOurItems`, `filterCombatItems`), create, add/remove a side, DOCX —
+materials + systems, competitors = tag + whole folder subtree; name search and
+server-side paging `offset`/`limit` (`combatOurItems`, `filterCombatItems`,
+`paginateCombatItems`, `parseCombatPage`), create, add/remove a side, DOCX —
 reuses `combat.go`/`combat_docx.go`, owner is the chat's bound email),
 `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
@@ -479,6 +503,31 @@ measurements) are in the archive.
 - **A saved offer opens for editing** (`edit:<id>` or the number as text); the
   stage jumps to `positions` — do not restore the context stage, that
   repeat-quizzes the manager.
+- **A side picker that sends every product as a button hits two walls at once**
+  (2026-11-10, live complaint): long product names overflow the screen, and only
+  the first handful of cards is reachable. Use the «Документы» pattern — a
+  numbered TEXT list plus number buttons, server-side paging (`offset`/`limit`,
+  `total`, `hasMore`), toggle-style multi-select keyed by the **number from the
+  start of the list** (so it survives paging), and one «✓ Добавить выбранные».
+  `combatPickerKeyboard`/`combatPickerMessage` in `flow/combat.ts`; selection
+  state lives in `RouterState.combatPicker` (`{side, query, offset, picked,
+  allPicked}`); the query change resets `picked`, because indices belong to the
+  old match set.
+- **"Add every match" must not be faked by marking the visible page**
+  (2026-11-10, user request to compare one product against all competitors).
+  `allPicked` is a flag, not hundreds of indices; when it is set,
+  `onCombatAddPicked` loads the whole match set through `api.combatAllPaged`
+  (pages of 50 until `hasMore` is false), and the button reads «Добавить
+  выбранные (total)». A manual number tap clears the flag — otherwise «add all»
+  would silently override what the manager just deselected. The button only
+  appears when `page.total > page.items.length`: with everything already on the
+  screen it would do the same as tapping each number.
+- **Competitor cards are found by tag `competitor` first, then by folder**
+  (2026-11-10). The body of a competitor note is arbitrary — the card title must
+  come from the note heading (`competitorCardFromParsed`), never the parsed
+  body's first line, or the list shows sentences instead of product names. The
+  folder source stays for notes added before the tag existed; both are merged by
+  note id so a note in both places appears once.
 
 ### Files, parsing and context
 
