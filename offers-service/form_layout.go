@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -26,10 +27,19 @@ const (
 	// 12 МБ хватает и на картинки внутри документа, а больше — это уже не
 	// макет, а повод проверить, что загружают.
 	maxLayoutBytes = 12 << 20
-	// layoutMode — режим формы, к которому относится макет. Один на всё:
-	// клиентский документ. Внутренний режим макетом не печатается.
-	layoutMode = "client"
 )
+
+// layoutModeFrom — режим формы, к которому относится запрос макета.
+//
+// `mode` в запросе: `client` (обычное КП) или `combat` (боевой листок). Всё
+// остальное — клиентский документ: режим — короткая строка, и опечатка в ней не
+// должна уносить макет в неизвестную форму.
+func layoutModeFrom(r *http.Request) string {
+	if strings.TrimSpace(r.URL.Query().Get("mode")) == combatFormMode {
+		return combatFormMode
+	}
+	return clientFormMode
+}
 
 // handleUploadLayout принимает .docx и сохраняет его как макет формы.
 func (s *Server) handleUploadLayout(w http.ResponseWriter, r *http.Request) {
@@ -52,9 +62,13 @@ func (s *Server) handleUploadLayout(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "макет.docx"
 	}
+	// Режим берётся из запроса (2026-11-11): у обычного КП макет свой, у боевого
+	// листка — свой. До этого режим был зашит в «client», и боевой листок
+	// загрузить макет не мог вовсе.
+	mode := layoutModeFrom(r)
 	if _, err := s.pool.Exec(r.Context(), `
 UPDATE offers_form SET layout_docx = $2, layout_name = $3, updated_at = now() WHERE mode = $1`,
-		layoutMode, body, name); err != nil {
+		mode, body, name); err != nil {
 		dbError(w, "upload layout", err)
 		return
 	}
@@ -72,7 +86,7 @@ UPDATE offers_form SET layout_docx = $2, layout_name = $3, updated_at = now() WH
 func (s *Server) handleDeleteLayout(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.pool.Exec(r.Context(), `
 UPDATE offers_form SET layout_docx = NULL, layout_name = '', updated_at = now() WHERE mode = $1`,
-		layoutMode); err != nil {
+		layoutModeFrom(r)); err != nil {
 		dbError(w, "delete layout", err)
 		return
 	}
@@ -86,7 +100,7 @@ func (s *Server) handleDownloadLayout(w http.ResponseWriter, r *http.Request) {
 	var name string
 	if err := s.pool.QueryRow(r.Context(),
 		`SELECT layout_docx, layout_name FROM offers_form WHERE mode = $1`,
-		layoutMode).Scan(&data, &name); err != nil || len(data) == 0 {
+		layoutModeFrom(r)).Scan(&data, &name); err != nil || len(data) == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "макет не загружен"})
 		return
 	}
@@ -174,11 +188,26 @@ func exampleLayoutDocx() ([]byte, error) {
 	return zipFiles(files, names)
 }
 
+// loadLayoutForMode — байты макета формы по режиму.
+//
+// Отдельно от `loadLayout`: тот берёт режим из запроса (админ грузит и
+// скачивает макет), а печать работает сама, без запроса, и ей нужен макет
+// своего режима. nil, nil — макета нет, это не ошибка.
+func (s *Server) loadLayoutForMode(ctx context.Context, mode string) ([]byte, error) {
+	var data []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT layout_docx FROM offers_form WHERE mode = $1`, mode).Scan(&data)
+	if err != nil || len(data) == 0 {
+		return nil, nil
+	}
+	return data, nil
+}
+
 // loadLayout читает макет формы. nil, nil — макета нет, печать по блокам.
 func (s *Server) loadLayout(r *http.Request) ([]byte, error) {
 	var data []byte
 	err := s.pool.QueryRow(r.Context(),
-		`SELECT layout_docx FROM offers_form WHERE mode = $1`, layoutMode).Scan(&data)
+		`SELECT layout_docx FROM offers_form WHERE mode = $1`, layoutModeFrom(r)).Scan(&data)
 	if err != nil {
 		// Строки нет или макет пуст — это не ошибка, а «макета нет».
 		return nil, nil

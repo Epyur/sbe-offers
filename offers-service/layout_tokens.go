@@ -58,6 +58,11 @@ const (
 	layoutTokenSpecs    = "specs"    // {{характеристики: система}}
 	layoutTokenText     = "text"     // {{текст: система: description|advantages}}
 	layoutTokenMaterial = "material" // {{материал}} — строка состава по позиции
+	// layoutTokenComparison — `{{сравнение}}`: весь боевой листок одним куском
+	// (2026-11-11). Перечень продуктов, затем сравнение — общее и по каждому.
+	// Единственная метка боевого листка: форму с блоками у него убрали, и
+	// администратор вставляет в макет ровно её.
+	layoutTokenComparison = "comparison"
 )
 
 // serviceLayoutMarkers — слова-ключи служебных меток.
@@ -77,6 +82,7 @@ var serviceLayoutMarkers = []struct {
 	{layoutTokenBlock, "block"},
 	{layoutTokenSystem, "систем"},
 	{layoutTokenMaterial, "материал"},
+	{layoutTokenComparison, "сравнени"},
 }
 
 // parseLayoutServiceSpec узнаёт служебную метку по содержимому.
@@ -156,6 +162,8 @@ func serviceLayoutKindOf(key, head string) string {
 		return layoutTokenBlock
 	case "текст", "text":
 		return layoutTokenText
+	case "сравнение", "comparison":
+		return layoutTokenComparison
 	}
 	for _, marker := range serviceLayoutMarkers {
 		if !strings.HasPrefix(key, marker.key) {
@@ -241,6 +249,9 @@ func (s layoutServiceSpec) withKind(kind, rest string) (layoutServiceSpec, bool)
 		if strings.Contains(normalizeFieldKey(rest), "таблиц") {
 			s.variant = "table"
 		}
+	case layoutTokenComparison:
+		// `{{сравнение}}` — метка без уточнений: весь боевой листок одним куском.
+		// Остаток игнорируется, чтобы «сравнение продуктов» тоже сработало.
 	}
 	return s, true
 }
@@ -632,7 +643,8 @@ func layoutFieldValue(inner string, values map[string]string) string {
 func isServiceKind(kind string) bool {
 	switch kind {
 	case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
-		layoutTokenSpecs, layoutTokenText, layoutTokenMaterial:
+		layoutTokenSpecs, layoutTokenText, layoutTokenMaterial,
+		layoutTokenComparison:
 		return true
 	}
 	return false

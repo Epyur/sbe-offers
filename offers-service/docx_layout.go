@@ -83,6 +83,20 @@ type layoutContext struct {
 	// `offers_system_text` делала метку мёртвой для всех живых систем.
 	// nil в тестах и в сборках без БД: метка тогда печатает только сохранённое.
 	systemText func(card SystemCard, block string) string
+	// combat — данные боевого листка для метки `{{сравнение}}` (2026-11-11).
+	// nil — это не боевой листок, метка молчит. Указатель, потому что несёт
+	// готовый markup: печать сравнения живёт в combat_docx.go и знает про
+	// карточки обеих сторон, а контекст макета — общий с КП.
+	combat *combatLayoutData
+}
+
+// combatLayoutData — что нужно метке `{{сравнение}}`.
+//
+// Всё уже посчитано к моменту печати: карточки сторон и тексты сравнения.
+// Метка только вставляет markup — модель здесь не зовётся (правило шага C).
+type combatLayoutData struct {
+	// markup — готовый XML боевого листка, собранный renderCombatBody.
+	markup string
 }
 
 // selectionHandle — набор выбранных систем для ключей кэша текстов.
@@ -443,7 +457,7 @@ func splitReplacedByParagraph(spans struct {
 				replacement[i] = lc.prompt(token.Inner)
 			}
 		case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
-			layoutTokenSpecs, layoutTokenText, layoutTokenMaterial:
+			layoutTokenSpecs, layoutTokenText, layoutTokenMaterial, layoutTokenComparison:
 			// Служебные метки (шаг C, 2026-11-06): печатают данные предложения
 			// и карточки, модель не зовут вовсе. Их разметка — готовый XML
 			// (таблица, список, картинка), поэтому она идёт полем `blockMarkup`,

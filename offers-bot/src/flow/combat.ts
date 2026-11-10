@@ -14,6 +14,9 @@ export const COMBAT_KEYBOARD = {
   inline_keyboard: [
     [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
     [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
+    // Уточнение для разбора — единственная настройка листка (2026-11-11):
+    // содержание всегда одно, а акцент менеджер задаёт сам.
+    [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
     [{ text: '⬇ DOCX', callback_data: 'cb:doc' }],
     [{ text: '✅ Готово', callback_data: 'cb:done' }],
   ],
@@ -37,6 +40,7 @@ export const COMBAT_PICKER_KEYBOARD = {
   inline_keyboard: [
     [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
     [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
+    [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
     [{ text: '⬇ DOCX', callback_data: 'cb:doc' }],
     [{ text: '✅ Готово', callback_data: 'cb:done' }],
   ],
@@ -200,6 +204,63 @@ export function combatPickerKeyboard(
   if (!showAll) rows.push([{ text: '▼ Все продукты', callback_data: 'cb:all' }]);
   rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
   return { inline_keyboard: rows };
+}
+
+/**
+ * Приглашение ввести уточнение для разбора (2026-11-11).
+ *
+ * У боевого листка нет формы: содержание всегда одно — продукты и их сравнение.
+ * Менеджер задаёт только акцент: на чём ИИ должен сфокусироваться в разборе.
+ * Пустое сообщение снимает уточнение.
+ */
+export function combatAskHint(current = ''): string {
+  const head =
+    'Уточнение для разбора.\n\n' +
+    'Напишите, на чём сделать акцент в сравнении — например, «огнестойкость», ' +
+    '«срок службы», «стоимость владения», «что спросить у проектировщика». ' +
+    'Содержание листка не меняется: продукты и сравнение остаются прежними.';
+  if (current.trim()) {
+    return `${head}\n\nСейчас: «${current.trim()}».\nПришлите новый текст или точку — чтобы снять.`;
+  }
+  return `${head}\n\nЧтобы снять уточнение, пришлите точку.`;
+}
+
+/** Клавиатура приглашения: «Назад» и (если есть) «Снять». */
+export function combatHintKeyboard(hasHint: boolean): Record<string, unknown> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (hasHint) rows.push([{ text: '✖ Снять уточнение', callback_data: 'cb:hintclear' }]);
+  rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
+  return { inline_keyboard: rows };
+}
+
+/**
+ * Кнопка «Подобрать аналоги» показана у продукта конкурента (2026-11-11).
+ *
+ * Нажатие подбирает наш аналог по Базе знаний и предлагает добавить его в
+ * листок: сравнение «наш продукт против своего же аналога» полезнее, чем против
+ * случайного конкурента из списка.
+ */
+export function combatAnalogueMessage(
+  competitorTitle: string,
+  analogues: CombatSystemItem[],
+): { text: string; keyboard: Record<string, unknown> } {
+  if (analogues.length === 0) {
+    return {
+      text:
+        `По «${competitorTitle}» аналога в Базе знаний не нашлось.\n\n` +
+        'Добавьте наш продукт руками: «➕ Наш продукт».',
+      keyboard: { inline_keyboard: [[{ text: '< Назад', callback_data: 'cb:back' }]] },
+    };
+  }
+  const lines = analogues.map((a, i) => `${i + 1}. ${a.title}${a.sku ? ` (${a.sku})` : ''}`);
+  const rows = analogues.map((a, i) => [
+    { text: `${i + 1}`, callback_data: `cban:${a.noteId}` },
+  ]);
+  rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
+  return {
+    text: `Наши аналоги по «${competitorTitle}»:\n\n${lines.join('\n')}\n\nНажмите номер, чтобы добавить.`,
+    keyboard: { inline_keyboard: rows },
+  };
 }
 
 /** Сообщение после добавления стороны. */

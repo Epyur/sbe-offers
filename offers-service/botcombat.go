@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -435,6 +436,72 @@ func (s *Server) handleBotCombatSide(w http.ResponseWriter, r *http.Request, sid
 	writeJSON(w, http.StatusOK, saved)
 }
 
+// botCombatHintRequest — уточнение менеджера для разбора.
+type botCombatHintRequest struct {
+	ChatID string `json:"chat_id"`
+	Hint   string `json:"hint"`
+}
+
+// handleBotCombatHint — сохранить уточнение боевого листка (2026-11-11).
+//
+// Уточнение — единственная настройка листка: на чём сравнение должно сделать
+// акцент. Хранится в `form_values["hint"]`; поля формы у листка больше нет, так
+// что ключ занят только этим.
+func (s *Server) handleBotCombatHint(w http.ResponseWriter, r *http.Request) {
+	s.botCombatHintHandler(w, r)
+}
+
+func (s *Server) botCombatHintHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid id"})
+		return
+	}
+	var req botCombatHintRequest
+	if err := decodeJSON(w, r, &req, 1<<20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		return
+	}
+	email, ok := s.emailForChat(w, r, req.ChatID)
+	if !ok {
+		return
+	}
+	sheet, err := s.loadCombatSheet(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "боевой листок не найден"})
+		return
+	}
+	if !strings.EqualFold(sheet.OwnerEmail, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваш боевой листок"})
+		return
+	}
+	if sheet.FormValues == nil {
+		sheet.FormValues = map[string]string{}
+	}
+	// Пустое уточнение не сохраняется пустой строкой, а снимается совсем: иначе
+	// листкок носил бы «» и в промпте появлялась бы пустая строка акцента.
+	if hint := strings.TrimSpace(req.Hint); hint != "" {
+		sheet.FormValues[combatHintField] = hint
+	} else {
+		delete(sheet.FormValues, combatHintField)
+	}
+	cols, err := combatColumns(sheet)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
+	if err := s.updateCombat(r.Context(), id, sheet, cols); err != nil {
+		dbError(w, "bot combat hint", err)
+		return
+	}
+	saved, err := s.loadCombatSheet(r.Context(), id)
+	if err != nil {
+		dbError(w, "bot combat hint reload", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
 // combatSideOur / combatSideCompetitor — две стороны листка. Строки, а не
 // перечисление: то же значение serves и маршруту, и подписи в ответе.
 const (
@@ -475,10 +542,11 @@ func (s *Server) handleBotExportCombat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	form, err := s.loadForm(r.Context(), combatFormMode)
+	// Содержание листка фиксировано, от формы нужен только макет (2026-11-11).
+	layout, err := s.loadLayoutForMode(r.Context(), combatFormMode)
 	if err != nil {
-		dbError(w, "bot combat form", err)
-		return
+		log.Printf("боевой листок: макет не прочитан: %v", err)
+		layout = nil
 	}
 	ourCards := s.resolveCombatCards(r.Context(), sheet.OurNotes, s.loadCachedSystemCards)
 	compCards := s.resolveCombatCards(r.Context(), sheet.CompetitorNotes,
@@ -486,7 +554,7 @@ func (s *Server) handleBotExportCombat(w http.ResponseWriter, r *http.Request) {
 			cards, _, err := s.loadCachedCompetitors(ctx)
 			return cards, err
 		})
-	data, err := renderCombatDocx(form, sheet, ourCards, compCards, NewKBImageSource(s.kb))
+	data, err := renderCombatDocx(layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

@@ -140,6 +140,9 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       void load(view, container, mode);
     },
     onPickFile: pickLayoutFile,
+    // Режим нужен, чтобы макет боевого листка загружался в свою форму, а не
+    // подменял макет КП (2026-11-11).
+    mode,
   });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });

@@ -48,6 +48,8 @@ function makeDeps(initial?: ChatSession): {
     foundSystems: new Map(),
     foundCombat: new Map(),
     combatPicker: new Map(),
+    lastCompetitor: new Map(),
+    foundAnalogs: new Map(),
   };
   const current = initial ?? newSession();
   const deps: BotDeps = {
@@ -180,6 +182,7 @@ interface FakeCombat {
   number: string;
   ourNotes: Array<{ noteId: number; title: string }>;
   competitorNotes: Array<{ noteId: number; title: string }>;
+  hint?: string;
 }
 
 /** Хвост списка конкурентов: проверкам поиска и «выбрать всё» нужно больше
@@ -243,6 +246,18 @@ function fakeCombatServer(): {
     }
     if (method === 'GET' && url.includes('/bot/combat?') ) {
       return json({ sheets: sheets.map((s) => ({ ...s, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' })) });
+    }
+    const hintPut = url.match(/\/bot\/combat\/(\d+)\/hint$/);
+    if (method === 'PUT' && hintPut) {
+      const sheet = sheets.find((sh) => sh.id === Number(hintPut[1]));
+      if (!sheet) return json({ error: 'нет листка' }, 404);
+      const body = JSON.parse(String(init?.body ?? '{}')) as { hint?: string };
+      sheet.hint = String(body.hint ?? '');
+      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: { hint: sheet.hint }, status: 'draft', createdAt: '', updatedAt: '' });
+    }
+    if (method === 'GET' && url.includes('/bot/combat/analogues')) {
+      const noteId = Number(new URL(url).searchParams.get('noteId') ?? '0');
+      return json({ cards: [{ noteId: 500 + noteId, title: `Наш аналог ${noteId}` }] });
     }
     const sideAdd = url.match(/\/bot\/combat\/(\d+)\/(our|competitor)$/);
     if (method === 'POST' && sideAdd) {
@@ -498,6 +513,51 @@ describe('боевой листок в боте', () => {
     // Смещение растёт от нажатия, даже если строк на странице меньше.
     await route.routeCallback(deps, '42', 'cb:more', 'c3', state);
     assert.equal(state.combatPicker.get('42')?.offset, 8);
+  });
+
+  it('«Уточнение для разбора» сохраняет акцент и не добавляет стороны', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:hint', 'c1', state);
+    sent.length = 0;
+    await route.routeText(deps, '42', 'огнестойкость', state);
+    assert.equal(server.current().hint, 'огнестойкость');
+    assert.equal(server.current().ourNotes.length, 0);
+    assert.match(sent[sent.length - 1].text, /Уточнение сохранено/);
+  });
+
+  it('точка снимает уточнение', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:hint', 'c1', state);
+    await route.routeText(deps, '42', 'срок службы', state);
+    await route.routeCallback(deps, '42', 'cb:hint', 'c2', state);
+    await route.routeText(deps, '42', '.', state);
+    assert.equal(server.current().hint, '');
+  });
+
+  it('«Подобрать аналоги» находит наш продукт и добавляет его', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    // Выбрать конкурента — запоминается последний, по нему и ищем аналог.
+    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
+    await route.routeText(deps, '42', 'конкурент', state);
+    await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:analog', 'c4', state);
+    assert.match(sent[sent.length - 1].text, /аналоги/);
+    await route.routeCallback(deps, '42', 'cban:530', 'c5', state);
+    assert.ok(
+      server.current().ourNotes.some((n) => n.noteId === 530),
+      'аналог не добавлен как наш продукт',
+    );
   });
 
   it('текст в боевом листке не уходит в черновик КП', async () => {

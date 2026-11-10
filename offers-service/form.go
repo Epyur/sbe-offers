@@ -239,6 +239,9 @@ const (
 // при первой же правке редактора.
 const combatFormMode = "combat"
 
+// clientFormMode — режим обычного коммерческого предложения.
+const clientFormMode = "client"
+
 // combatDefaultForm — форма боевого листка по умолчанию.
 //
 // Отличие от КП — в назначении: это справка-сравнение для менеджера, а не
@@ -246,75 +249,24 @@ const combatFormMode = "combat"
 // предложения и блок конкурентов, а также свободный блок аргументации. Редактор
 // администратора может перестроить всё это, как и форму КП.
 func combatDefaultForm() OfferForm {
+	// У боевого листка формы как таковой НЕТ (2026-11-11, решение
+	// пользователя): содержание всегда одно — перечень продуктов, затем их
+	// сравнение. Настройка осталась одна: УТОЧНЕНИЕ менеджера, на чём сделать
+	// акцент в разборе. Прежние поля (наша компания, объект, заказчик,
+	// менеджер) были невалидны: заказчика у внутренней справки нет.
 	return OfferForm{
 		Mode:  combatFormMode,
 		Title: "Боевой листок",
 		Placeholders: []Placeholder{
-			{ID: "supplier_name", Label: "Наша компания"},
-			{ID: "object_name", Label: "Объект"},
-			{ID: "client_name", Label: "Заказчик"},
-			{ID: "manager", Label: "Менеджер"},
-			{ID: "conclusion", Label: "Вывод для менеджера"},
+			{ID: combatHintField, Label: "Уточнение для разбора"},
 		},
-		Blocks: []Block{
-			{
-				ID:           "cover",
-				Title:        "Титул",
-				Content:      json.RawMessage(combatCoverBlockJSON),
-				ShowInClient: true,
-			},
-			{
-				ID:              "ours",
-				Title:           "Наш продукт",
-				Content:         json.RawMessage(combatOursBlockJSON),
-				ShowInClient:    true,
-				PageBreakBefore: true,
-			},
-			{
-				ID:            "competitors",
-				Title:         "Продукты конкурентов",
-				Content:       json.RawMessage(combatCompetitorsBlockJSON),
-				ShowInClient:  true,
-				SpacingBefore: 12,
-			},
-			{
-				ID:            "argument",
-				Title:         "Вывод и аргументы",
-				Content:       json.RawMessage(combatArgumentBlockJSON),
-				ShowInClient:  true,
-				SpacingBefore: 12,
-			},
-		},
-		RequiredFields: []string{"object_name"},
+		// Блоков нет намеренно: печать листка их не читает. Пустой список
+		// честно говорит администратору, что конфигуратор здесь ни на что не
+		// влияет, — вместо вида, который кажется настраиваемым.
+		Blocks:         []Block{},
+		RequiredFields: []string{},
 	}
 }
-
-// Блоки формы боевого листка по умолчанию. Текст «по промту» здесь — задел на
-// следующую партию (сборка документа): сейчас блоки правятся администратором,
-// а сборка DOCX появится отдельной партией. Значения полей — через {{поле}}.
-const (
-	combatCoverBlockJSON = `[
-		{"type":"paragraph","text":"Боевой листок № {{offer_number}} от {{offer_date}}","align":"center"},
-		{"type":"paragraph","text":"{{supplier_name}}","align":"center"},
-		{"type":"paragraph","text":"Объект: {{object_name}}","align":"center"},
-		{"type":"paragraph","text":"Заказчик: {{client_name}}","align":"center"}
-	]`
-
-	combatOursBlockJSON = `[
-		{"type":"heading","text":"Наш продукт","level":2},
-		{"type":"paragraph","text":"Describe our offer system, materials and why they fit the object."}
-	]`
-
-	combatCompetitorsBlockJSON = `[
-		{"type":"heading","text":"Продукты конкурентов","level":2},
-		{"type":"paragraph","text":"What the competitor offers on this object and its weak points."}
-	]`
-
-	combatArgumentBlockJSON = `[
-		{"type":"heading","text":"Вывод для менеджера","level":2},
-		{"type":"paragraph","text":"{{conclusion}}"}
-	]`
-)
 
 func (s *Server) seedForms(ctx context.Context) error {
 	// Форму КП сеем пустой строкой: она «настроена», админ правит её в
@@ -329,7 +281,7 @@ func (s *Server) seedForms(ctx context.Context) error {
 
 func (s *Server) loadForm(ctx context.Context, mode string) (OfferForm, error) {
 	if strings.TrimSpace(mode) == "" {
-		mode = "client"
+		mode = clientFormMode
 	}
 	var form OfferForm
 	var placeholders, blocks, required []byte
@@ -433,7 +385,7 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(form.Mode) == "" {
-		form.Mode = "client"
+		form.Mode = clientFormMode
 	}
 	if form.Blocks == nil {
 		form.Blocks = []Block{}

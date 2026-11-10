@@ -39,15 +39,40 @@ func docxFileNameFor(title, number string) string {
 // `ourCards`/`competitorCards` приходят уже разрешёнными (по noteId из кеша
 // систем и конкурентов). Пустые списки допустимы: листок собирается и без
 // одной из сторон.
-func renderCombatDocx(form OfferForm, sheet CombatSheet, ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
-	// Синтетическое «предложение» — только чтобы конвейер блоков увидел значения
-	// служебных полей (номер, дата, менеджер) и связал их с карточками. Позиций
-	// нет намеренно: их у боевого листка нет.
+// renderCombatDocx собирает DOCX боевого листка.
+//
+// Содержание боевого листка ОДНО И ТО ЖЕ и местом его задаёт только макет
+// (2026-11-11, решение пользователя): формы с блоками и полями у листка больше
+// нет. Порядок всегда такой:
+//
+//  1. перечень продуктов — наш и продукты конкурентов;
+//  2. сравнение — общее по всем и по каждому продукту отдельно (модель, с
+//     учётом уточнения менеджера).
+//
+// Макет (.docx на фирменном бланке) вставляется меткой `{{сравнение}}`: там, где
+// она стоит, печатается весь листок. Без макета — тот же листок печатается
+// встроенным оформлением, чтобы файл никогда не был пустым.
+//
+// `form` больше не несёт содержание: из неё нужен только загруженный макет.
+func renderCombatDocx(layout []byte, sheet CombatSheet, ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
+	body, refs, links, media, err := buildCombatBody(sheet, ourCards, competitorCards, images)
+	if err != nil {
+		return nil, err
+	}
+	return packCombatDocx(layout, sheet, body, refs, links, media, images)
+}
+
+// buildCombatBody собирает XML тела листка и всё, что нужно упаковке:
+// ссылки, сборщик и медиа. Отдельно от упаковки — потому что одна и та же
+// сборка идёт и в макет (через метку), и во встроенный вид.
+func buildCombatBody(sheet CombatSheet, ourCards, competitorCards []SystemCard,
+	images ImageSource) (string, []skills.CardRef, *layoutRuntime, *docxMedia, error) {
+	// Синтетическое «предложение» — только чтобы конвейер увидел служебные поля
+	// (номер, дата) и связал их с карточками. Позиций у листка нет.
 	offer := combatAsOffer(sheet)
 
-	// Ссылки — из обеих сторон сравнения: страница продукта и техдокументация
-	// нужны менеджеру независимо от того, чей это продукт. Объединение списков
-	// может дать дубль URL — убираем повторы по адресу.
+	// Ссылки — из обеих сторон: страница продукта и техдокументация нужны
+	// менеджеру независимо от того, чей это продукт. Повторы по адресу убираем.
 	refs := dedupCardRefs(append(collectOfferRefs(ourCards), collectOfferRefs(competitorCards)...))
 
 	media := newTemplateMedia()
@@ -65,28 +90,57 @@ func renderCombatDocx(form OfferForm, sheet CombatSheet, ourCards, competitorCar
 	}
 
 	var sb strings.Builder
-	// Титула-бланка нет: боевой листок печатают по своей форме, где титул —
-	// обычный блок. Пустая форма — соберём хотя бы заголовок, чтобы файл не был
-	// пустым (та же политика, что у КП).
-	blocks := visibleBlocks(form)
-	if len(blocks) == 0 {
-		sb.WriteString(headingXML(titleOr(form.Title), 1))
-	}
-	for _, block := range blocks {
-		content, err := renderBlockContentCtx(block, rc)
-		if err != nil {
-			return nil, err
+	sb.WriteString(headingXML("Боевой листок № "+sheet.Number, 1))
+	// Перечень продуктов — первым, как просил пользователь: сначала кто с кем
+	// сравнивается, потом само сравнение.
+	sb.WriteString(headingXML("Продукты сравнения", 2))
+	sb.WriteString(combatProductList(ourCards, competitorCards))
+	// Сравнение пишет модель. Ошибка модели не гасит документ: перечень продуктов
+	// уже есть, и менеджеру нужен хотя бы он.
+	sb.WriteString(renderCombatComparison(rc, sheet, ourCards, competitorCards))
+
+	return sb.String(), refs, links, media, nil
+}
+
+// packCombatDocx упаковывает тело: по макету, если он загружен, иначе — как
+// есть.
+func packCombatDocx(layout []byte, sheet CombatSheet, body string, refs []skills.CardRef,
+	links *layoutRuntime, media *docxMedia, images ImageSource) ([]byte, error) {
+	if len(layout) > 0 {
+		offer := combatAsOffer(sheet)
+		lc := layoutContext{
+			values:  offer.FormValues,
+			refs:    refs,
+			service: serviceValuesWithCards(offer, nil),
+			images:  images,
+			offer:   offer,
+			layout:  links,
+			combat:  &combatLayoutData{markup: body},
 		}
-		sb.WriteString(content)
+		return renderLayoutDocx(layout, lc)
 	}
+	return buildBodyWithLinks(body, refs, links, media)
+}
 
-	// Наш продукт и продукты конкурентов — двумя разделами. Печатаем всегда,
-	// даже если администратор не завёл под них блок в форме: сравнение без
-	// одной из сторон — это не боевой листок.
-	writeCombatCards(&sb, "Наш продукт", ourCards, images, media)
-	writeCombatCards(&sb, "Продукты конкурентов", competitorCards, images, media)
-
-	return buildBodyWithLinks(sb.String(), refs, links, media)
+// combatProductList печатает перечень продуктов обеих сторон.
+//
+// Это ОГЛАВЛЕНИЕ сравнения, а не описание: одно название на строку. Полные
+// карточки и разбор идут в сравнении — иначе документ повторял бы себя.
+func combatProductList(ourCards, competitorCards []SystemCard) string {
+	var sb strings.Builder
+	if len(ourCards) > 0 {
+		sb.WriteString(headingXML("Наш продукт", 3))
+		for _, card := range ourCards {
+			sb.WriteString(listItemXML(titleOr(card.Title)))
+		}
+	}
+	if len(competitorCards) > 0 {
+		sb.WriteString(headingXML("Продукты конкурентов", 3))
+		for _, card := range competitorCards {
+			sb.WriteString(listItemXML(titleOr(card.Title)))
+		}
+	}
+	return sb.String()
 }
 
 // dedupCardRefs убирает ссылки с повторяющимся адресом. Обе стороны сравнения

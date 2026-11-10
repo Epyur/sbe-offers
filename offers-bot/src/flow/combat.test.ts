@@ -17,6 +17,9 @@ import {
   combatPickerMessage,
   combatSheetMessage,
   combatSideAddedMessage,
+  combatAskHint,
+  combatHintKeyboard,
+  combatAnalogueMessage,
 } from './combat.ts';
 import type { CombatSheet, CombatSystemItem } from '../api.ts';
 
@@ -198,6 +201,41 @@ describe('боевой листок: выбор стороны', () => {
   });
 });
 
+describe('боевой листок: уточнение и аналоги', () => {
+  it('приглашение просит акцент, а не новые поля', () => {
+    const text = combatAskHint();
+    assert.match(text, /акцент/);
+    // Пустое уточнение снимается точкой — так сказано человеку.
+    assert.match(text, /точку/);
+  });
+
+  it('приглашение показывает текущее уточнение и кнопку снятия', () => {
+    const text = combatAskHint('огнестойкость');
+    assert.match(text, /огнестойкость/);
+    const kb = combatHintKeyboard(true) as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    assert.ok(kb.inline_keyboard.flat().some((b) => b.callback_data === 'cb:hintclear'));
+  });
+
+  it('без уточнения кнопки снятия нет', () => {
+    const kb = combatHintKeyboard(false) as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    assert.ok(!kb.inline_keyboard.flat().some((b) => b.callback_data === 'cb:hintclear'));
+  });
+
+  it('аналоги показываются номерами, кнопка несёт заметку', () => {
+    const res = combatAnalogueMessage('Продукт конкурента', [
+      { noteId: 7, title: 'Наш аналог', sku: 'MAT-1' },
+    ]);
+    assert.match(res.text, /Наш аналог/);
+    const kb = res.keyboard as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    assert.equal(kb.inline_keyboard[0][0].callback_data, 'cban:7');
+  });
+
+  it('пустой подбор честно говорит, что аналога нет', () => {
+    const res = combatAnalogueMessage('Экзотика', []);
+    assert.match(res.text, /не нашлось/);
+  });
+});
+
 describe('боевой листок: прочее', () => {
   it('пустой листок не даёт выгрузить файл', () => {
     assert.match(combatNotEmptyMessage(), /нечего сравнивать/);
@@ -219,6 +257,7 @@ describe('боевой листок: прочее', () => {
   it('кнопки боевого листка ведут в свои обработчики', () => {
     const kb = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string }>;
     const ids = kb.map((b) => b.callback_data);
-    assert.deepEqual(ids, ['cb:oursys', 'cb:comp', 'cb:doc', 'cb:done']);
+    // «Уточнение для разбора» — единственная настройка листка (2026-11-11).
+    assert.deepEqual(ids, ['cb:oursys', 'cb:comp', 'cb:hint', 'cb:doc', 'cb:done']);
   });
 });

@@ -38,6 +38,9 @@ import {
   combatPickerMessage,
   combatSheetMessage,
   combatSideAddedMessage,
+  combatAskHint,
+  combatHintKeyboard,
+  combatAnalogueMessage,
 } from './flow/combat.ts';
 import {
   NO_OFFER_FOR_FILE,
@@ -102,6 +105,14 @@ export interface CallbackCtx {
   combatPicker?: CombatPickerState;
   /** Сохранить состояние выбора после листания или отметки строки. */
   rememberCombatPicker?: (picker: CombatPickerState) => void;
+  /** Последний выбранный конкурент — для «Подобрать аналоги» (2026-11-11). */
+  lastCompetitor?: api.CombatSystemItem;
+  /** Запомнить конкурента после выбора стороны. */
+  rememberCompetitor?: (item: api.CombatSystemItem) => void;
+  /** Наши аналоги, показанные кнопками. */
+  foundAnalogs?: api.CombatSystemItem[];
+  /** Запомнить показанные аналоги, чтобы `cban:<noteId>` их нашёл. */
+  rememberAnalogs?: (items: api.CombatSystemItem[]) => void;
 }
 
 /**
@@ -704,7 +715,28 @@ export async function startCombat(ctx: CallbackCtx): Promise<void> {
 
 /** Показать сводку по листку с клавиатурой действий. */
 async function showCombatSheet(ctx: CallbackCtx, sheet: api.CombatSheet, hint?: string): Promise<void> {
-  await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), COMBAT_KEYBOARD);
+  const keyboard = combatSheetKeyboard(ctx, sheet);
+  await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), keyboard);
+}
+
+/**
+ * Клавиатура сводки: обычный боевой листок плюс «Подобрать аналоги», когда
+ * сравнивать есть с чем.
+ *
+ * Кнопка появляется только при выбранном конкуренте: без него искать аналог
+ * нечего, а кнопка-пустышка только сбивает. Ведёт по последнему выбранному
+ * конкуренту — это тот, с кем менеджер сейчас спорит.
+ */
+function combatSheetKeyboard(
+  ctx: CallbackCtx,
+  sheet: api.CombatSheet,
+): Record<string, unknown> {
+  const rows = [...COMBAT_KEYBOARD.inline_keyboard];
+  if (ctx.lastCompetitor && sheet.competitorNotes.length > 0) {
+    const at = Math.max(rows.length - 2, 1);
+    rows.splice(at, 0, [{ text: '🔍 Подобрать аналоги', callback_data: 'cb:analog' }]);
+  }
+  return { inline_keyboard: rows };
 }
 
 /** «📂 Мои боевые листки»: последние листки этого чата. */
@@ -1010,6 +1042,11 @@ export async function onCombatAddPicked(ctx: CallbackCtx): Promise<void> {
     // Отметки сбрасываются: листок пополнен, следующий выбор начинается заново.
     savePicker(ctx, { ...picker, picked: [], allPicked: false, offset: 0 });
     apply(ctx, { ...ctx.session, combat: { ...sheet, picking: undefined } });
+    // Выбранный конкурент запоминается: «Подобрать аналоги» ищет НАШ продукт
+    // именно под него (2026-11-11).
+    if (picker.side === 'competitor' && chosen.length > 0) {
+      ctx.rememberCompetitor?.(chosen[0]);
+    }
     if (updated) await showCombatSheet(ctx, updated, combatSideAddedMessage(picker.side, chosenSummary(chosen)));
   } catch (e) {
     await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
@@ -1096,9 +1133,133 @@ export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
  * Если текст набран, а сторона ещё не выбирается, — один раз объясняем, что
  * делать, и не валим разговор.
  */
+/**
+ * «🎯 Уточнение для разбора» (2026-11-11).
+ *
+ * У боевого листка нет формы — содержание всегда одно. Менеджер задаёт только
+ * акцент сравнения; следующий его текст (в режиме `combat.hinting`) сохраняется
+ * в `form_values["hint"]` и уходит в промпт модели.
+ */
+export async function onCombatHint(ctx: CallbackCtx): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const sheet = await loadOwnCombat(ctx, combat.sheetId);
+  if (!sheet) return;
+  const current = sheet.formValues?.hint ?? '';
+  // Ждём текст: в остальное время свободная строка не должна попадать в листок.
+  apply(ctx, { ...ctx.session, combat: { ...combat, hinting: true } });
+  await ctx.deps.send(ctx.chatId, combatAskHint(current), combatHintKeyboard(!!current.trim()));
+}
+
+/** «✖ Снять уточнение»: стереть акцент и вернуться к сводке. */
+export async function onCombatHintClear(ctx: CallbackCtx): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  try {
+    const updated = await api.setCombatHint(combat.sheetId, ctx.chatId, '');
+    apply(ctx, { ...ctx.session, combat: { ...combat, hinting: false } });
+    await showCombatSheet(ctx, updated, 'Уточнение снято.');
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось снять уточнение: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Текст в режиме уточнения: сохранить и вернуться к сводке.
+ *
+ * Точка — способ снять уточнение словами: Telegram не всегда даёт нажать
+ * кнопку, а точка не бывает содержательным уточнением.
+ */
+async function handleCombatHintText(ctx: CallbackCtx, text: string): Promise<boolean> {
+  const combat = ctx.session.combat;
+  if (!combat) return false;
+  if (!combat.hinting) return false;
+  const value = text.trim();
+  const hint = value === '.' ? '' : value;
+  try {
+    const updated = await api.setCombatHint(combat.sheetId, ctx.chatId, hint);
+    apply(ctx, { ...ctx.session, combat: { ...combat, hinting: false } });
+    await showCombatSheet(
+      ctx,
+      updated,
+      hint ? `Уточнение сохранено: «${hint}».` : 'Уточнение снято.',
+    );
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось сохранить уточнение: ${(e as Error).message}`);
+  }
+  return true;
+}
+
+/**
+ * «🔍 Подобрать аналоги»: наши продукты, ближайшие к продукту конкурента.
+ *
+ * Показываются названия и номера; выбранный добавляется в листок как наш
+ * продукт. Подбор идёт по Базе знаний (`/bot/combat/analogues`), а не по
+ * каталогу конкурентов: аналог — это НАШ продукт, с которым сравниваем.
+ */
+export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const competitor = ctx.lastCompetitor;
+  if (!competitor) {
+    await ctx.deps.send(
+      ctx.chatId,
+      'Чтобы подобрать аналог, сначала выберите продукт конкурента: «🏷️ Добавить конкурента».',
+      COMBAT_KEYBOARD,
+    );
+    return;
+  }
+  try {
+    const res = await api.combatAnalogues(competitor.noteId);
+    const cards = res.cards ?? [];
+    ctx.foundAnalogs = cards;
+    ctx.rememberAnalogs?.(cards);
+    const message = combatAnalogueMessage(competitor.title, cards);
+    await ctx.deps.send(ctx.chatId, message.text, message.keyboard);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось подобрать аналоги: ${(e as Error).message}`);
+  }
+}
+
+/** Выбор аналога: `cban:<noteId>`. Аналог — НАШ продукт. */
+export async function onCombatAnalogPick(ctx: CallbackCtx, noteId: number): Promise<void> {
+  const combat = ctx.session.combat;
+  if (!combat) {
+    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const card = (ctx.foundAnalogs ?? []).find((c) => c.noteId === noteId);
+  if (!card) {
+    // Список мог смениться — перечитываем по номеру из кеша бота.
+    await ctx.deps.send(ctx.chatId, 'Список устарел — нажмите «🔍 Подобрать аналоги» ещё раз.');
+    return;
+  }
+  try {
+    const updated = await api.addCombatSide(combat.sheetId, ctx.chatId, 'our', {
+      noteId: card.noteId,
+      title: card.title,
+    });
+    apply(ctx, { ...ctx.session, combat: { ...combat, picking: undefined } });
+    await showCombatSheet(ctx, updated, combatSideAddedMessage('our', card.title));
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
+  }
+}
+
 export async function handleCombatText(ctx: CallbackCtx, text: string): Promise<boolean> {
   const combat = ctx.session.combat;
   if (!combat) return false;
+  // Уточнение перехватывает текст раньше поиска стороны: это отдельный режим.
+  if (await handleCombatHintText(ctx, text)) return true;
   if (!combat.picking) {
     await ctx.deps.send(
       ctx.chatId,
@@ -1140,6 +1301,9 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'cb:all': onCombatAll,
   'cb:more': onCombatMore,
   'cb:first': onCombatFirst,
+  'cb:hint': onCombatHint,
+  'cb:hintclear': onCombatHintClear,
+  'cb:analog': onCombatAnalogues,
   'cb:pickall': onCombatPickAll,
   'cb:unpickall': onCombatDropAll,
   'cb:addpicked': onCombatAddPicked,
@@ -1162,6 +1326,8 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   cbx: onCombatFile,
   oursel: onCombatPick,
   compsel: onCombatPick,
+  // Аналог — НАШ продукт: кнопка несёт заметку, а не индекс.
+  cban: onCombatAnalogPick,
 };
 
 export { answerCallback, editMessage };

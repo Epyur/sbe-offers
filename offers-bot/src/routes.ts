@@ -76,6 +76,14 @@ export interface RouterState {
    * индексы относятся к прежнему набору совпадений.
    */
   combatPicker: Map<string, CombatPickerState>;
+  /**
+   * Последний выбранный продукт конкурента (2026-11-11): по нему «Подобрать
+   * аналоги» ищет наш аналог. Живёт в памяти поллера — это подсказка
+   * разговора, а не данные листка.
+   */
+  lastCompetitor: Map<string, api.CombatSystemItem>;
+  /** Наши аналоги, показанные кнопками: номер кнопки — заметка. */
+  foundAnalogs: Map<string, api.CombatSystemItem[]>;
 }
 
 /** Состояние выбора стороны: что показано и что отмечено. */
@@ -103,6 +111,8 @@ export function newRouterState(): RouterState {
     foundSystems: new Map(),
     foundCombat: new Map(),
     combatPicker: new Map(),
+    lastCompetitor: new Map(),
+    foundAnalogs: new Map(),
   };
 }
 
@@ -292,6 +302,10 @@ export async function routeText(
     rememberCombat: (items) => state.foundCombat.set(chatId, items),
     combatPicker: state.combatPicker.get(chatId),
     rememberCombatPicker: (picker) => state.combatPicker.set(chatId, picker),
+    lastCompetitor: state.lastCompetitor.get(chatId),
+    rememberCompetitor: (item) => state.lastCompetitor.set(chatId, item),
+    foundAnalogs: state.foundAnalogs.get(chatId) ?? [],
+    rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
@@ -383,6 +397,10 @@ export async function routeCallback(
     rememberCombat: (items) => state.foundCombat.set(chatId, items),
     combatPicker: state.combatPicker.get(chatId),
     rememberCombatPicker: (picker) => state.combatPicker.set(chatId, picker),
+    lastCompetitor: state.lastCompetitor.get(chatId),
+    rememberCompetitor: (item) => state.lastCompetitor.set(chatId, item),
+    foundAnalogs: state.foundAnalogs.get(chatId) ?? [],
+    rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
   };
 
   const exact = BUTTONS[data];

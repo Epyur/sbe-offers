@@ -30,14 +30,15 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.8**, released 2026-11-11: deployed, self-hosted,
+Current version = **0.9.9**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `829d2c1` (plugin part +
 `offers-service`), `main` `e9650a2` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.8: the «Добавить выбранные» button no longer vanishes in the
-"all found" mode (it used to need `picked`, which that mode clears), and the bot
-confirms what it is adding. Previous release — 0.9.7: competitor titles from the
-first real H1, the indexing journal excluded, marks kept while paging.
+last commit that touched code). 0.9.9: the combat sheet has NO form — content is always the product
+list plus the comparison; the layout is printed with a single `{{сравнение}}`
+marker; the manager's hint steers the model; «Подобрать аналоги» finds our
+product for a competitor. Previous release — 0.9.8: the «Добавить выбранные»
+button no longer vanishes in the "all found" mode.
 Previous release — 0.9.6 (2026-11-10): competitors from the `competitor` tag
 plus the KB folder, the bot's side picker as a numbered, paged, multi-select
 list with «выбрать все найденные».
@@ -74,6 +75,20 @@ version bumped only for the CUP news).** Two user requests:
    (`generatedTextFor`) and in the `prompt_text` node. The block system prompt
    also asks for paragraphs and correct punctuation (`skills/prompt.go`).
    Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, stand **339/0**.
+
+**Release 0.9.9 (2026-11-11, server + bot + plugin).** The combat sheet is no
+longer form-driven:
+1. `combatDefaultForm` has **no blocks and no fields** except the hint; the old
+   «наша компания / объект / заказчик / менеджер» fields were invalid for an
+   internal note.
+2. Printing is a layout plus ONE marker `{{сравнение}}` (`packCombatDocx`,
+   `combatLayoutData`): the marker prints the whole sheet; without a layout the
+   built-in view is used. Form blocks are never read by the combat renderer.
+3. The comparison is written by the model (`combat_compare.go`) — overall, then
+   per competitor product, steered by the hint; facts only from the cards.
+4. «Подобрать аналоги» (`combat_analog.go`) matches our product to a competitor
+   card by significant words; a title hit weighs more than a description hit.
+   Checks: `go test ./...` green, bot **134 passing**, OpenAPI 89/66.
 
 ## Purpose (current)
 

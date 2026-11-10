@@ -648,6 +648,27 @@ export async function removeCombatSide(
   return call('DELETE', `/bot/combat/${id}/${side}`, { chat_id: chatId, noteId });
 }
 
+/** Уточнение для разбора боевого листка (2026-11-11).
+ *
+ * Это единственная настройка листка: содержание всегда одно (перечень продуктов
+ * и сравнение), а уточнение говорит, на чём сравнение должно сделать акцент.
+ * Пустая строка стирает уточнение.
+ */
+export async function setCombatHint(
+  id: number,
+  chatId: string,
+  hint: string,
+): Promise<CombatSheet> {
+  return call('PUT', `/bot/combat/${id}/hint`, { chat_id: chatId, hint });
+}
+
+/** Наши продукты, ближайшие к продукту конкурента («Подобрать аналоги»). */
+export async function combatAnalogues(
+  noteId: number,
+): Promise<{ cards: CombatSystemItem[]; competitor?: { noteId: number; title: string }; error?: string }> {
+  return call('GET', `/bot/combat/analogues?noteId=${encodeURIComponent(String(noteId))}`);
+}
+
 /** DOCX боевого листка: та же печать, что в плагине. */
 export async function combatDocx(
   id: number,

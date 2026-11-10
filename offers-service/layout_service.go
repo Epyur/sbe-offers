@@ -59,6 +59,13 @@ func renderLayoutService(token layoutToken, lc layoutContext, row layoutServiceR
 		return renderLayoutCardText(lc, row, spec.textBlock)
 	case layoutTokenMaterial:
 		return renderLayoutMaterial(lc, row)
+	case layoutTokenComparison:
+		// Боевой листок целиком: перечень продуктов и сравнение. Готовый
+		// markup — метка ничего не читает и никого не зовёт.
+		if lc.combat == nil {
+			return ""
+		}
+		return lc.combat.markup
 	}
 	return ""
 }

@@ -40,7 +40,7 @@ func TestRenderCombatDocxBasics(t *testing.T) {
 		CompetitorNotes: []CombatNoteRef{{NoteID: 20, Title: "Продукт конкурента"}},
 		FormValues:      map[string]string{"object_name": "ЖК Поэма", "conclusion": "Берём нашу систему"},
 	}
-	data, err := renderCombatDocx(defaultForm(combatFormMode), sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка упала: %v", err)
 	}
@@ -52,11 +52,18 @@ func TestRenderCombatDocxBasics(t *testing.T) {
 	if !strings.Contains(xml, "Боевой листок") {
 		t.Fatal("в документе нет названия боевого листка")
 	}
-	if !strings.Contains(xml, "ЖК Поэма") {
-		t.Fatal("поле объекта не подставлено")
+	// Полей формы у боевого листка больше нет (2026-11-11): объекта, заказчика
+	// и вывода в документе быть не должно, а перечень продуктов — должен.
+	for _, gone := range []string{"ЖК Поэма", "Берём нашу систему"} {
+		if strings.Contains(xml, gone) {
+			t.Fatalf("в документе осталось поле формы %q", gone)
+		}
 	}
-	if !strings.Contains(xml, "Берём нашу систему") {
-		t.Fatal("поле вывода не подставлено")
+	if !strings.Contains(xml, "Продукты сравнения") {
+		t.Fatal("нет перечня продуктов")
+	}
+	if !strings.Contains(xml, "Сравнение") {
+		t.Fatal("нет раздела сравнения")
 	}
 	// Наши системы и конкуренты — обе стороны сравнения в документе.
 	if !strings.Contains(xml, "Наша система") {
@@ -74,7 +81,7 @@ func TestRenderCombatDocxNoPlaceholdersFromEmptyFields(t *testing.T) {
 	// Пустые поля формы не должны ронять сборку — их просто нечем подставить.
 	our, competitor := combatTestCards()
 	sheet := CombatSheet{Number: "001/2026", Title: "Сравнение", FormValues: map[string]string{}}
-	data, err := renderCombatDocx(defaultForm(combatFormMode), sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка упала на пустых полях: %v", err)
 	}
@@ -88,7 +95,7 @@ func TestRenderCombatDocxEmptyCompetitors(t *testing.T) {
 	// Конкурентов не выбрали — документ всё равно собирается.
 	our, _ := combatTestCards()
 	sheet := CombatSheet{Number: "002/2026", Title: "Без конкурентов"}
-	data, err := renderCombatDocx(defaultForm(combatFormMode), sheet, []SystemCard{our}, nil, nil)
+	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, nil, nil)
 	if err != nil {
 		t.Fatalf("сборка без конкурентов упала: %v", err)
 	}

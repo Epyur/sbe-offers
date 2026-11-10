@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -373,10 +374,13 @@ func (s *Server) handleExportCombat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	form, err := s.loadForm(r.Context(), combatFormMode)
+	// Содержание листка фиксировано, поэтому от формы нужен только макет
+	// (2026-11-11). Ошибка чтения макета не гасит печать: без макета листок
+	// печатается встроенным оформлением.
+	layout, err := s.loadLayoutForMode(r.Context(), combatFormMode)
 	if err != nil {
-		dbError(w, "combat form", err)
-		return
+		log.Printf("боевой листок: макет не прочитан: %v", err)
+		layout = nil
 	}
 	ourCards := s.resolveCombatCards(r.Context(), sheet.OurNotes, s.loadCachedSystemCards)
 	compCards := s.resolveCombatCards(r.Context(), sheet.CompetitorNotes,
@@ -384,7 +388,7 @@ func (s *Server) handleExportCombat(w http.ResponseWriter, r *http.Request) {
 			cards, _, err := s.loadCachedCompetitors(ctx)
 			return cards, err
 		})
-	data, err := renderCombatDocx(form, sheet, ourCards, compCards, NewKBImageSource(s.kb))
+	data, err := renderCombatDocx(layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

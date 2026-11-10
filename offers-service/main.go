@@ -239,6 +239,11 @@ func main() {
 		s.handleBotCombatSide(w, r, combatSideCompetitor, false)
 	}))
 	mux.HandleFunc("POST /api/offers/bot/combat/{id}/export", s.requireServiceSecret(s.handleBotExportCombat))
+	// «Подобрать аналог» (2026-11-11): наш продукт, ближайший к продукту
+	// конкурента, по названию и описанию карточек Базы знаний.
+	mux.HandleFunc("GET /api/offers/bot/combat/analogues", s.requireServiceSecret(s.handleBotCombatAnalogues))
+	// Уточнение для разбора (2026-11-11): единственная настройка боевого листка.
+	mux.HandleFunc("PUT /api/offers/bot/combat/{id}/hint", s.requireServiceSecret(s.handleBotCombatHint))
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

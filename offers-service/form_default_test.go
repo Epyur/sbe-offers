@@ -124,7 +124,19 @@ func TestCombatDefaultFormValid(t *testing.T) {
 	if msg := validateForm(form); msg != "" {
 		t.Fatalf("форма боевого листка не проходит проверку: %q", msg)
 	}
-	if len(form.Blocks) == 0 {
-		t.Fatal("у формы боевого листка должны быть блоки по умолчанию")
+	// С 2026-11-11 форма боевого листка НЕ настраивается: содержание всегда
+	// одно, а блоки печатью не читаются. Единственная настройка — уточнение.
+	if len(form.Blocks) != 0 {
+		t.Fatalf("у боевого листка не должно быть блоков, получено %d", len(form.Blocks))
+	}
+	if len(form.Placeholders) != 1 || form.Placeholders[0].ID != combatHintField {
+		t.Fatalf("единственное поле — уточнение, получено: %+v", form.Placeholders)
+	}
+	for _, gone := range []string{"supplier_name", "object_name", "client_name", "manager"} {
+		for _, ph := range form.Placeholders {
+			if ph.ID == gone {
+				t.Fatalf("поле %q не должно быть у боевого листка", gone)
+			}
+		}
 	}
 }

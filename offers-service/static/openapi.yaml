@@ -377,7 +377,8 @@ paths:
         одна и та же система получает один и тот же текст во всех КП.
 
         stale: true — карточку изменили после того, как текст написали.
-        Пересчитать можно ручкой ecalculate.
+        значения пересчитать.
+
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -2075,6 +2076,60 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CombatSheet'
+  /api/offers/bot/combat/analogues:
+    get:
+      summary: Наши аналоги для продукта конкурента («Подобрать аналоги»)
+      description: |
+        Ищет в карточках нашего продукта (материалы каталога и системы) те, что
+        ближе всего к продукту конкурента по названию и описанию (2026-11-11).
+        Совпадение в названии весит больше, чем в описании. Это подсказка, а не
+        решение: бот показывает названия и даёт добавить выбранное.
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: noteId
+          in: query
+          required: true
+          description: Заметка Базы знаний продукта конкурента
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Карточки наших аналогов (до трёх) и сам продукт конкурента
+        '404':
+          description: Продукт конкурента не найден в кеше — нужно перечитать раздел
+  /api/offers/bot/combat/{id}/hint:
+    put:
+      summary: Уточнение для разбора боевого листка
+      description: |
+        У боевого листка нет формы: содержание всегда одно — перечень продуктов
+        и сравнение. Единственная настройка — уточнение, на чём сделать акцент
+        (2026-11-11). Хранится в `form_values["hint"]`; пустая строка снимает.
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id]
+              properties:
+                chat_id:
+                  type: string
+                hint:
+                  type: string
+      responses:
+        '200':
+          description: Обновлённый боевой листок
+        '403':
+          description: Это не боевой листок этого чата
   /api/offers/bot/combat/{id}/export:
     post:
       summary: DOCX боевого листка (base64) для отправки в чат
