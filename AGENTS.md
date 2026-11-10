@@ -30,15 +30,25 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.6**, released 2026-11-10: deployed, self-hosted,
+Current version = **0.9.7**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `0956d20` (plugin part +
 `offers-service`), `main` `bd6376f` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.6: combat-sheet competitors are loaded by
-the `competitor` tag (plus the KB folder), and the bot's side picker is a
-numbered, paged, multi-select list with «выбрать все найденные». Previous
-release — 0.9.5 (2026-11-10): the link section is printed by groups and
-numbered, the model's text as paragraphs with normalised typography.
+last commit that touched code). 0.9.7: competitor card titles come from the
+first real H1 (the first heading is a disclaimer), the indexing journal is
+excluded from side picking, and the bot's picker keeps marks while paging.
+Previous release — 0.9.6 (2026-11-10): competitors from the `competitor` tag
+plus the KB folder, the bot's side picker as a numbered, paged, multi-select
+list with «выбрать все найденные».
+
+**Release 0.9.7 (2026-11-11, server + bot change; plugin-side `main.js` logic
+unchanged, version bumped for the CUP news).** Live complaints after 0.9.6:
+1. competitor notes carry TWO H1s (a disclaimer, then the product) — the title
+   now comes from the first real one (`competitorTitles`), and the indexing
+   journal (tag `journal`) is dropped from side picking;
+2. the bot's picker lost marks on «Все продукты» and had no main menu
+   (`withCombatMenu`) — see the "side picker" gotcha below.
+   Checks: `gofmt`/`go vet`/`go test ./...` green, bot **123 passing**.
 
 **Release 0.9.6 (2026-11-10, server + bot change; plugin-side `main.js` logic
 unchanged, version bumped for the CUP news).** Two user requests:
@@ -522,6 +532,24 @@ measurements) are in the archive.
   would silently override what the manager just deselected. The button only
   appears when `page.total > page.items.length`: with everything already on the
   screen it would do the same as tapping each number.
+- **A competitor note starts with TWO H1s** (2026-11-11, live complaint: the
+  whole picker read «Материал конкурента, использовать только для критического
+  сравнения»). The indexing script writes a disclaimer heading, then the real
+  product name. Take the first heading that is NOT the disclaimer
+  (`competitorTitles`/`isCompetitorDisclaimer`), never just `H1[0]` and never
+  the raw body's first line. The same note is also the reason the journal
+  («Журнал материалов конкурентов», tag `journal`) must be filtered out
+  (`isCompetitorJournal`): it lives in the folder root and would otherwise be
+  the first row of «Все продукты».
+- **A Telegram button's keyboard is per message, and returning to a picker page
+  must rebuild the marks from state, not from the server response.** 0.9.6
+  built an empty picker on «▼ Все продукты», so a mark made a second earlier
+  vanished and «Добавить выбранные» answered «Ничего не отмечено»; the page
+  also shipped without `cb:oursys`/`cb:comp`/`cb:doc`/`cb:done`, so after
+  paging the user was stuck. `pick` state lives in `RouterState.combatPicker`
+  only — the server knows nothing about it — and every picker page is wrapped in
+  `withCombatMenu`.
+
 - **Competitor cards are found by tag `competitor` first, then by folder**
   (2026-11-10). The body of a competitor note is arbitrary — the card title must
   come from the note heading (`competitorCardFromParsed`), never the parsed
