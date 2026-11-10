@@ -30,14 +30,29 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.4**, released 2026-11-09: deployed, self-hosted,
-registry updated. Code commits: `backend` `5632f7f` (0.9.4 + два серверных хотфикса: «документ не открывался» и «`{{ссылки}}` без системы»), `main` `ca45438`
-(the plugin part is byte-identical across branches; `check_docs_state.mjs` looks
-at the last commit that touched code). This release fixes and extends the link
-section of the exported offer: the visible hyperlink text is the document title
-(a bare URL no longer shows), URLs with spaces/quotes inside
-`response-content-disposition` parse correctly, and links are collected from the
-materials a system's composition points to (one level, deduplicated by URL).
+Current version = **0.9.5**, released 2026-11-10: deployed, self-hosted,
+registry updated. Code commits: `backend` `f928ae4` (plugin part +
+`offers-service`), `main` `ddbbfb0` (plugin part byte-identical across branches;
+`offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
+last commit that touched code). 0.9.5: the link section of the exported offer is
+printed **by groups and numbered**, and the model's text is printed **as
+paragraphs** with normalised typography. Previous release — 0.9.4 (2026-11-09):
+hyperlink text is the document title, URLs with spaces/quotes parse, material
+links collected (one level).
+
+**Release 0.9.5 (2026-11-10, server-only change — `main.js` logic unchanged,
+version bumped only for the CUP news).** Two user requests:
+1. the link section is printed **by groups and numbered** — `page` (systems
+   before materials) → `sto` → `techlist` (systems before materials) → `uzly` →
+   `cert` (materials before systems); see the "Links in the document" gotcha
+   below;
+2. the model's text is printed **as paragraphs** and its typography is normalised
+   (double spaces, stray spaces before punctuation, missing space after a
+   sentence end) — `normalizeBodyTypography` + `paragraphsXML` in
+   `docx_text.go`/`docx.go`, applied on write (`cleanBlockText`), on read
+   (`generatedTextFor`) and in the `prompt_text` node. The block system prompt
+   also asks for paragraphs and correct punctuation (`skills/prompt.go`).
+   Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, stand **339/0**.
 
 ## Purpose (current)
 
@@ -154,7 +169,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
-| `scripts/offers_local_e2e.mjs` | the stand: **333 checks**, 25 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **339 checks**, 25 sections |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
 
 ## Server structure
@@ -418,6 +433,36 @@ measurements) are in the archive.
   The `{{ссылки: система}}` spelling behaves the same outside a repeat. A marker
   that silently does nothing is the worst outcome — a bare key must either
   print or be rejected, not be sent to the model.
+- **Links in the document are printed by GROUPS, as a NUMBERED list**
+  (2026-11-10, user request). Groups and their order: `page` (product page on
+  nav.tn.ru, systems before materials) → `sto` → `techlist` (systems before
+  materials) → `uzly` → `cert` (certificates/declarations/instructions and
+  anything else, **materials before systems**). Each group gets its own
+  `<w:numId>` from the numbering plan, so numbering restarts at 1 per group.
+  One classification rule lives in `skills/cardrefs.go` (`cardRefGroupOf`,
+  `SortCardRefsGrouped`, `GroupCardRefsByGroup`); `CardRef` now carries
+  `group` + `owner`, and `TagCardRefsOwner` sets the owner where the card is
+  known (`cardAllRefs`: `Refs`→system, `LinkedRefs`→material). Both the `links`
+  node (`renderLinkSection`) and the `{{ссылки}}` marker
+  (`renderLayoutCardLinks`) sort again before printing, so externally-supplied
+  refs are ordered too. **`applyHyperlinks` now locates the numbered item by its
+  text and wraps only its run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the
+  paragraph as a plain `hyperlinkXML` would silently drop the number.
+  Old caches without `group`/`owner` are classified on the fly
+  (`effectiveGroup`/`effectiveOwner`), so they print in the right groups without
+  a KB re-read.
+- **Model text is printed as paragraphs, and its typography is normalised**
+  (2026-11-10, user request: «вставлялся единым массивом», «пропуски точек,
+  двойные пробелы»). `normalizeBodyTypography` (double spaces → one, no space
+  before `.,;:!?…`, space after a sentence end/punctuation when a letter
+  follows) runs on write (`cleanBlockText`), on read (`generatedTextFor`) and in
+  `paragraphsXML` for the `prompt_text` node. The **space-after-dot rule only
+  fires before an UPPERCASE letter**, so `nav.tn.ru` and `т.е.` survive; the
+  space-before-punctuation rule and the comma/semicolon rule always fire. The
+  `prompt_text` node prints multi-paragraph text with `paragraphsXML` (one
+  `<w:p>` per non-empty line), not one `<w:p>` — that was the "single massive
+  array". The block system prompt (`skills/prompt.go`) also asks for paragraphs
+  and correct punctuation. Tests: `docx_text_typography_test.go`.
 
 ### Bot and rights
 
