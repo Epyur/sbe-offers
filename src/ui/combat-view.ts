@@ -8,7 +8,7 @@ import {
   type SystemCard,
 } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
-import { renderFormEditor } from './form-editor';
+import { pickLayoutFile, renderLayoutCard } from './form-layout';
 
 /** Сторона выбора в боевом листке: наш продукт или конкурент. */
 type CombatSide = 'our' | 'competitor';
@@ -43,6 +43,38 @@ function filterCandidates(items: CombatCandidate[], query: string): CombatCandid
  * из папки Базы знаний «материалы и системы конкурентов». Сборка DOCX
  * появится отдельной партией; сейчас листок сохраняется и показывается.
  */
+/**
+ * Ключ уточнения для разбора в `formValues` листка (2026-11-11).
+ *
+ * Один ключ на плагин и бота: у боевого листка нет формы, и это единственное
+ * значение, которое человек вводит руками. Совпадает с `combatHintField` в
+ * offers-service.
+ */
+export const COMBAT_HINT_FIELD = 'hint';
+
+/**
+ * Карточка макета боевого листка (2026-11-11).
+ *
+ * У листка нет формы — только макет на фирменном бланке с меткой
+ * `{{сравнение}}`. Читаем форму режима combat и отдаём карточку макета, привязанную
+ * к этому режиму: загрузка не подменит макет КП.
+ */
+async function renderCombatLayoutCard(view: OffersView, container: HTMLElement): Promise<void> {
+  try {
+    const form = await view.plugin.offersService.getForm('combat');
+    renderLayoutCard(view, container, form, {
+      onChanged: () => {
+        container.empty();
+        void renderCombatLayoutCard(view, container);
+      },
+      onPickFile: pickLayoutFile,
+      mode: 'combat',
+    });
+  } catch (e: unknown) {
+    container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить макет: ${errorMessage(e)}` });
+  }
+}
+
 export function renderCombatView(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка боевых листков…' });
   void load(view, container);
@@ -57,16 +89,21 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
       void openEditor(view, container, null);
     });
   }
-  // Форма боевого листка — тот же конфигуратор, что у КП, под режимом combat.
+  // Формы у боевого листка НЕТ (2026-11-11, решение пользователя): содержание
+  // всегда одно — перечень продуктов и сравнение. Настраивается только МАКЕТ
+  // (.docx с меткой `{{сравнение}}`) — поэтому здесь только он, без
+  // конфигуратора блоков: тот выглядел настраиваемым, ни на что не влиял и
+  // сбивал с толку.
   if (view.admin) {
-    const formBtn = actions.createEl('button', { text: '⚙️ Форма боевого листка', cls: 'tn-btn tn-btn-ghost' });
-    formBtn.addEventListener('click', () => {
+    const layoutBtn = actions.createEl('button', { text: '📄 Макет боевого листка', cls: 'tn-btn tn-btn-ghost' });
+    layoutBtn.addEventListener('click', () => {
       container.empty();
       const back = container.createEl('button', { text: '← К списку', cls: 'tn-btn tn-btn-ghost' });
       back.addEventListener('click', () => {
         void load(view, container);
       });
-      renderFormEditor(view, container, 'combat');
+      const card = container.createDiv();
+      void renderCombatLayoutCard(view, card);
     });
   }
   const reload = actions.createEl('button', { text: '↻ Обновить', cls: 'tn-btn tn-btn-ghost' });
@@ -231,26 +268,28 @@ async function openEditor(view: OffersView, container: HTMLElement, sheet: Comba
     },
   });
 
-  // Поля формы боевого листка — те же подстановки, что в форме КП, но под
-  // режимом combat.
+  // Уточнение для разбора — единственная настройка листка (2026-11-11).
+  // Содержание документа фиксировано, а здесь менеджер говорит, на чём ИИ
+  // должен сделать акцент в сравнении. Хранится в `formValues["hint"]`, как в
+  // боте: один ключ на оба интерфейса.
   const formValues: Record<string, string> = { ...(current.formValues ?? {}) };
-  const formCard = container.createDiv({ cls: 'tn-offers-card' });
-  formCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы' });
-  try {
-    const form = await view.plugin.offersService.getForm('combat');
-    for (const p of form.placeholders) {
-      const row = formCard.createDiv({ cls: 'tn-offers-row' });
-      row.createSpan({ cls: 'tn-offers-form-label', text: p.label });
-      const input = row.createEl('input', { cls: 'tn-offers-input tn-offers-grow' });
-      input.value = formValues[p.id] ?? '';
-      if (form.requiredFields.includes(p.id)) input.addClass('is-required');
-      input.addEventListener('input', () => {
-        formValues[p.id] = input.value;
-      });
-    }
-  } catch (e: unknown) {
-    formCard.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить форму: ${errorMessage(e)}` });
-  }
+  const hintCard = container.createDiv({ cls: 'tn-offers-card' });
+  hintCard.createDiv({ cls: 'tn-offers-muted', text: 'Уточнение для разбора' });
+  hintCard.createDiv({
+    cls: 'tn-offers-muted',
+    text:
+      'Содержание боевого листка всегда одинаковое: сначала перечень продуктов, ' +
+      'затем их сравнение. Здесь — на чём сделать акцент, например «огнестойкость» ' +
+      'или «стоимость владения».',
+  });
+  const hintInput = hintCard.createEl('textarea', { cls: 'tn-offers-input tn-offers-grow' });
+  hintInput.rows = 3;
+  hintInput.value = formValues[COMBAT_HINT_FIELD] ?? '';
+  hintInput.addEventListener('input', () => {
+    const value = hintInput.value.trim();
+    if (value) formValues[COMBAT_HINT_FIELD] = value;
+    else delete formValues[COMBAT_HINT_FIELD];
+  });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
   const saveBtn = actions.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });

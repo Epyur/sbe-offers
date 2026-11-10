@@ -19,18 +19,36 @@ import { MARKER_GROUPS } from './markers';
 export interface LayoutCardDeps {
   onChanged: () => void;
   onPickFile: (view: OffersView) => Promise<{ name: string; data: ArrayBuffer } | null>;
+  /**
+   * Режим формы, к которому относится макет (2026-11-11): `client` — обычное
+   * КП, `combat` — боевой листок. У них свои макеты: у КП документ — письмо
+   * заказчику, у боевого листка — внутренняя справка на том же бланке.
+   */
+  mode?: string;
 }
 
 /** Рисует карточку макета. */
 export function renderLayoutCard(view: OffersView, container: HTMLElement, form: OfferForm, deps: LayoutCardDeps): void {
+  const mode = deps.mode ?? 'client';
   const card = container.createDiv({ cls: 'tn-offers-card tn-offers-layout-card' });
   card.createDiv({ cls: 'tn-offers-muted', text: 'Макет документа .docx (необязательно)' });
 
+  const isCombat = mode === 'combat';
   if (form.hasLayout) {
     const active = card.createDiv({ cls: 'tn-offers-warn' });
     active.createDiv({
-      text: `Сейчас КП печатается по макету «${form.layoutName || 'макет.docx'}». ` +
-        'Блоки ниже сохранены, но в документ не идут — удалите макет, чтобы вернуться к ним.',
+      text: isCombat
+        ? `Боевой листок печатается по макету «${form.layoutName || 'макет.docx'}». ` +
+          'В нём должна стоять метка {{сравнение}} — туда подставляется весь листок.'
+        : `Сейчас КП печатается по макету «${form.layoutName || 'макет.docx'}». ` +
+          'Блоки ниже сохранены, но в документ не идут — удалите макет, чтобы вернуться к ним.',
+    });
+  } else if (isCombat) {
+    card.createDiv({
+      cls: 'tn-offers-muted',
+      text: 'Без макета боевой листок печатается встроенным оформлением: перечень ' +
+        'продуктов, затем их сравнение. Загрузите макет с фирменным бланком и вставьте ' +
+        'метку {{сравнение}} — листок напечатается на вашем бланке.',
     });
   } else {
     card.createDiv({
@@ -82,7 +100,7 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
       if (!picked) return;
       upload.setText('⏳ Загружаю…');
       try {
-        const res = await view.plugin.offersService.uploadLayout(picked.data, picked.name);
+        const res = await view.plugin.offersService.uploadLayout(picked.data, picked.name, mode);
         new Notice(
           `Макет «${res.layoutName}» загружен: полей ${res.layoutFields.length}, промтов ${res.layoutPrompts.length}`,
         );
@@ -99,7 +117,7 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
     download.addEventListener('click', () => {
       void (async () => {
         try {
-          const data = await view.plugin.offersService.downloadLayout();
+          const data = await view.plugin.offersService.downloadLayout(mode);
           const name = form.layoutName || 'макет.docx';
           const path = await view.app.vault.createBinary(
             uniqueVaultPath(view, name),
@@ -116,8 +134,10 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
     remove.addEventListener('click', () => {
       void (async () => {
         try {
-          await view.plugin.offersService.deleteLayout();
-          new Notice('Макет удалён — КП снова печатается по блокам формы');
+          await view.plugin.offersService.deleteLayout(mode);
+          new Notice(mode === 'combat'
+            ? 'Макет удалён — боевой листок снова печатается встроенным оформлением'
+            : 'Макет удалён — КП снова печатается по блокам формы');
           deps.onChanged();
         } catch (e: unknown) {
           new Notice(`Не удалось удалить макет: ${errorMessage(e)}`);

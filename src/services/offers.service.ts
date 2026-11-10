@@ -284,10 +284,14 @@ export class OffersService {
    * целиком, со стилями и картинками. Имя передаётся в query, чтобы сервер
    * мог показать его в форме.
    */
-  async uploadLayout(data: ArrayBuffer, name: string): Promise<LayoutResponse> {
+  async uploadLayout(
+    data: ArrayBuffer,
+    name: string,
+    mode = 'client',
+  ): Promise<LayoutResponse> {
     return this.withTokenRetry(async (token) => {
       const res = await requestUrl({
-        url: `${this.base()}/api/offers/form/layout?name=${encodeURIComponent(name)}`,
+        url: `${this.base()}/api/offers/form/layout?name=${encodeURIComponent(name)}&mode=${encodeURIComponent(mode)}`,
         method: 'POST',
         headers: {
           'Content-Type':
@@ -305,16 +309,16 @@ export class OffersService {
     });
   }
 
-  /** Удалить макет: печать снова пойдёт по блокам формы. */
-  async deleteLayout(): Promise<void> {
-    await this.request<unknown>('DELETE', '/form/layout');
+  /** Удалить макет: печать снова пойдёт встроенным оформлением. */
+  async deleteLayout(mode = 'client'): Promise<void> {
+    await this.request<unknown>('DELETE', `/form/layout?mode=${encodeURIComponent(mode)}`);
   }
 
   /** Скачать загруженный макет, чтобы поправить метки в Word. */
-  async downloadLayout(): Promise<ArrayBuffer> {
+  async downloadLayout(mode = 'client'): Promise<ArrayBuffer> {
     return this.withTokenRetry(async (token) => {
       const res = await requestUrl({
-        url: `${this.base()}/api/offers/form/layout`,
+        url: `${this.base()}/api/offers/form/layout?mode=${encodeURIComponent(mode)}`,
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
         throw: false,
