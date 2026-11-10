@@ -582,6 +582,28 @@ describe('боевой листок в боте', () => {
     assert.ok(server.current().competitorNotes.length > 0);
   });
 
+  it('кнопки листка работают после перезапуска бота (сессия восстановлена без combat)', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
+    await route.routeText(deps, '42', 'конкурент', state);
+    await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    // Имитация перезапуска: сессия восстановлена по привязке, листка в ней нет.
+    state.sessions.set('42', { step: 'authed', email: 'm@tn.ru' });
+    state.lastCompetitor.delete('42');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:analog', 'c4', state);
+    const last = sent[sent.length - 1].text;
+    assert.ok(!/не открыт|Боевых листков пока нет/.test(last), `листок не восстановлен: ${last}`);
+    assert.match(last, /аналоги/i);
+    assert.ok(server.current().competitorNotes.length > 0);
+    // И сам листок снова открыт в сессии — дальше по нему работают кнопки.
+    assert.ok((state.sessions.get('42')?.combat?.sheetId ?? 0) > 0);
+  });
+
   it('текст в боевом листке не уходит в черновик КП', async () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();

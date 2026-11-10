@@ -1068,13 +1068,11 @@ function chosenSummary(items: api.CombatSystemItem[]): string {
 
 /** «⬇ DOCX»: собрать файл боевого листка. */
 export async function onCombatDoc(ctx: CallbackCtx): Promise<void> {
-  const combat = ctx.session.combat;
-  if (!combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
-  const sheet = await loadOwnCombat(ctx, combat.sheetId);
-  if (!sheet) return;
   await sendCombatDocx(ctx, sheet);
 }
 
@@ -1096,13 +1094,13 @@ async function sendCombatDocx(ctx: CallbackCtx, sheet: api.CombatSheet): Promise
 
 /** «✅ Готово»: выходим из боевого листка к меню. */
 export async function onCombatDone(ctx: CallbackCtx): Promise<void> {
-  const combat = ctx.session.combat;
-  if (!combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт.', MAIN_KEYBOARD);
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
   apply(ctx, { ...ctx.session, combat: undefined });
-  await ctx.deps.send(ctx.chatId, `Боевой листок № ${combat.number} закрыт.`, MAIN_KEYBOARD);
+  await ctx.deps.send(ctx.chatId, `Боевой листок № ${sheet.number} закрыт.`, MAIN_KEYBOARD);
 }
 
 /** «< Назад» из списка выбора: вернуться к сводке листка. */
@@ -1137,16 +1135,16 @@ export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
  * в `form_values["hint"]` и уходит в промпт модели.
  */
 export async function onCombatHint(ctx: CallbackCtx): Promise<void> {
-  const combat = ctx.session.combat;
-  if (!combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
-  const sheet = await loadOwnCombat(ctx, combat.sheetId);
-  if (!sheet) return;
-  const current = sheet.formValues?.hint ?? '';
+  // formValues может прийти `null` (пустой объект Go пишет как {} только если
+  // он не nil): читаем через защиту, иначе кнопка падала бы молча.
+  const current = (sheet.formValues ?? {})[COMBAT_HINT_KEY] ?? '';
   // Ждём текст: в остальное время свободная строка не должна попадать в листок.
-  apply(ctx, { ...ctx.session, combat: { ...combat, hinting: true } });
+  apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number, hinting: true } });
   await ctx.deps.send(ctx.chatId, combatAskHint(current), combatHintKeyboard(!!current.trim()));
 }
 
@@ -1199,10 +1197,58 @@ async function handleCombatHintText(ctx: CallbackCtx, text: string): Promise<boo
  * продукт. Подбор идёт по Базе знаний (`/bot/combat/analogues`), а не по
  * каталогу конкурентов: аналог — это НАШ продукт, с которым сравниваем.
  */
+/**
+ * Ключ уточнения в `formValues` листка — тот же, что у сервера
+ * (`combatHintField`) и плагина.
+ */
+const COMBAT_HINT_KEY = 'hint';
+
+/**
+ * Боевой листок разговора, восстановленный при необходимости (2026-11-11).
+ *
+ * Сессия бота живёт в памяти и после перезапуска восстанавливается только по
+ * привязке «чат → e-mail» — без открытого листка. Кнопки в меню при этом
+ * остаются, и без восстановления любая из них отвечала «листок не открыт»,
+ * хотя человек его только что открыл (жалоба: нажал «Найти аналоги и
+ * сравнить» — ничего не произошло).
+ *
+ * Возвращает листок: из сессии, а если её нет — последний листок этого чата.
+ * `null` — у чата боевых листков нет вовсе.
+ */
+async function ensureCombat(ctx: CallbackCtx): Promise<api.CombatSheet | null> {
+  const current = ctx.session.combat;
+  if (current) {
+    try {
+      return await loadOwnCombat(ctx, current.sheetId);
+    } catch {
+      // Упавший запрос не должен стирать сессию — идём за последним листком.
+    }
+  }
+  try {
+    const sheets = await api.listCombat(ctx.chatId);
+    const last = sheets[sheets.length - 1];
+    if (!last) return null;
+    apply(ctx, { ...ctx.session, combat: { sheetId: last.id, number: last.number } });
+    return last;
+  } catch {
+    return null;
+  }
+}
+
+/** Сообщение, когда листка нет вовсе. */
+async function noCombatMessage(ctx: CallbackCtx): Promise<void> {
+  await ctx.deps.send(
+    ctx.chatId,
+    'Боевых листков пока нет. Начните кнопкой «⚔️ Боевой листок».',
+    MAIN_KEYBOARD,
+  );
+}
+
 export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
-  const combat = ctx.session.combat;
-  if (!combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+  // Листок восстанавливается и после перезапуска бота (2026-11-11).
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
   // Конкурент берётся из памяти разговора, а если её нет (листок открыт заново
@@ -1210,17 +1256,9 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
   // конкурент и есть тот, к кому подбираем аналог.
   let competitor = ctx.lastCompetitor;
   if (!competitor) {
-    try {
-      // Отдельной ручки «один листок» у бота нет — берём список своих и ищем.
-      const sheets = await api.listCombat(ctx.chatId);
-      const sheet = sheets.find((sh) => sh.id === combat.sheetId);
-      const notes = sheet?.competitorNotes ?? [];
-      const last = notes[notes.length - 1];
-      if (last) competitor = { noteId: last.noteId, title: last.title };
-    } catch (e) {
-      await ctx.deps.send(ctx.chatId, `Не удалось открыть листок: ${(e as Error).message}`);
-      return;
-    }
+    const notes = sheet.competitorNotes ?? [];
+    const last = notes[notes.length - 1];
+    if (last) competitor = { noteId: last.noteId, title: last.title };
   }
   if (!competitor) {
     await ctx.deps.send(ctx.chatId, combatNeedCompetitorMessage(), COMBAT_KEYBOARD);

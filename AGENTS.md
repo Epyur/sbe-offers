@@ -30,11 +30,13 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.11**, released 2026-11-11: deployed, self-hosted,
+Current version = **0.9.12**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `9725b92` (plugin part +
 `offers-service`), `main` `9937aaa` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.11: «🔍 Найти аналоги и сравнить» sits in the combat sheet's
+last commit that touched code). 0.9.12: combat buttons re-open the sheet after a bot restart
+(`ensureCombat`), instead of answering «листок не открыт». Previous release —
+0.9.11: «🔍 Найти аналоги и сравнить» sits in the combat sheet's
 main menu (it used to appear only after picking a competitor in the same bot
 session), and the competitor for the match comes from the sheet itself.
 Previous release — 0.9.10: layout upload no longer crashes on an empty marker
@@ -569,6 +571,14 @@ measurements) are in the archive.
   returns `[]string{}`; the plugin also normalizes the response on the boundary
   (`normalizeLayoutResponse`). Regression test reads the RAW JSON — a decoded
   nil slice and an empty one are indistinguishable.
+
+- **Bot session state does not survive a restart; the sheet must be
+  re-derived** (2026-11-11, live complaint «нажал — ничего не произошло»).
+  `restoreSession` rebuilds only `{step, email}`, so `session.combat` is gone
+  while every combat button is still on screen — and each answered «листок не
+  открыт». `ensureCombat` loads the sheet from the session or falls back to the
+  chat's last sheet (`api.listCombat`) and refills the session; all sheet-level
+  buttons go through it. Any new button that needs `session.combat` must too.
 
 - **A button gated on `picked` disappears exactly when "all found" is chosen**
   (2026-11-11, live complaint «выбрал все — конкуренты не добавились»). The
