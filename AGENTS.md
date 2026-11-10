@@ -31,8 +31,9 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.5**, released 2026-11-10: deployed, self-hosted,
-registry updated. Code commits: `backend` `f928ae4` (plugin part +
-`offers-service`), `main` `ddbbfb0` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `64b2067` (plugin part +
+`offers-service`; earlier code commit `f928ae4`), `main` `ddbbfb0` (plugin part
+byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.5: the link section of the exported offer is
 printed **by groups and numbered**, and the model's text is printed **as
