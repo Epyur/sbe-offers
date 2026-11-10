@@ -120,3 +120,36 @@ func TestBuildJournalPromptCarriesSections(t *testing.T) {
 		t.Fatalf("нумерация строк потеряна:\n%s", prompt)
 	}
 }
+
+// TestRelevantJournalSections — модель видит разделы про тот же товар, а не
+// первые 120 строк журнала (2026-11-11: для LOGICPIR журнал дал 0 аналогов,
+// потому что первыми шли разделы про мембраны).
+func TestRelevantJournalSections(t *testing.T) {
+	sections := []journalSection{
+		{Heading: "ПВХ-мембраны — 28 шт.", Owner: "PLASTFOIL"},
+		{Heading: "Теплоизоляция — 12 шт.", Owner: "ПИРРОГРУПП"},
+		{Heading: "Комплектующие — 9 шт.", Owner: "PLASTFOIL"},
+	}
+	source := SystemCard{Title: "Теплоизоляционные плиты LOGICPIR PROF"}
+	got := relevantJournalSections(source, sections)
+	if len(got) == 0 {
+		t.Fatal("близких разделов не найдено")
+	}
+	if got[0].Heading != "Теплоизоляция — 12 шт." {
+		t.Fatalf("первым должен идти раздел того же класса, получено: %+v", got)
+	}
+	for _, section := range got {
+		if section.Heading == "ПВХ-мембраны — 28 шт." {
+			t.Fatalf("чужой класс попал в отбор: %+v", got)
+		}
+	}
+}
+
+// TestRelevantJournalSectionsFallback — совпадений нет, отдаём журнал как есть.
+func TestRelevantJournalSectionsFallback(t *testing.T) {
+	sections := []journalSection{{Heading: "ПВХ-мембраны — 28 шт."}}
+	got := relevantJournalSections(SystemCard{Title: "Нечто неопознанное"}, sections)
+	if len(got) != 1 {
+		t.Fatalf("запасной путь не сработал: %+v", got)
+	}
+}

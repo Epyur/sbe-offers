@@ -290,7 +290,7 @@ func (s *Server) findAnaloguesViaJournal(ctx context.Context, source SystemCard,
 	if len(sections) == 0 {
 		return nil, nil
 	}
-	shown, _ := journalSectionCandidates(sections, analogJournalRowLimit)
+	shown, _ := journalSectionCandidates(relevantJournalSections(source, sections), analogJournalRowLimit)
 	if len(shown) == 0 {
 		return nil, nil
 	}
@@ -307,6 +307,49 @@ func (s *Server) findAnaloguesViaJournal(ctx context.Context, source SystemCard,
 	}
 	log.Printf("боевой листок: журнал дал %d аналогов для «%s»", len(items), source.Title)
 	return resolveJournalItems(items, catalog), nil
+}
+
+// relevantJournalSections — разделы журнала, близкие к нашему продукту.
+//
+// Журнал большой: у FACHMANN 1738 строк, у SIKA 385, и первые 120 строк — это
+// разделы одного конкурента. Модель, которой показать только их, честно ответит
+// «аналогов нет» про PIR-плиту, если эти строки — про мембраны (2026-11-11,
+// живой случай: журнал дал 0 аналогов для LOGICPIR).
+//
+// Поэтому сначала отбираем разделы по словам названия нашего продукта и класса,
+// а уже из них режем строки. Совпадений нет — отдаём журнал как есть: пусть
+// модель видит, что есть.
+func relevantJournalSections(source SystemCard, sections []journalSection) []journalSection {
+	words := analogWords(source.Title)
+	class := analogClassOf(source.Title)
+	if len(words) == 0 && class == "" {
+		return sections
+	}
+	// Класс продукта — сильнее слов: «ПВХ-мембраны» к мембране ближе, чем
+	// раздел, где случайно встретилось «кровельная».
+	strong := make([]journalSection, 0, len(sections))
+	weak := make([]journalSection, 0, len(sections))
+	for _, section := range sections {
+		heading := strings.ToLower(section.Heading)
+		if class != "" && strings.Contains(heading, class[:min(len(class), 5)]) {
+			strong = append(strong, section)
+			continue
+		}
+		for _, w := range words {
+			if analogWeakWords[w] {
+				continue
+			}
+			if strings.Contains(heading, w[:min(len(w), 5)]) {
+				weak = append(weak, section)
+				break
+			}
+		}
+	}
+	out := append(strong, weak...)
+	if len(out) == 0 {
+		return sections
+	}
+	return out
 }
 
 // analogJournalRowLimit — сколько строк журнала показывать модели.
