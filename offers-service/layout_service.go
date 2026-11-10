@@ -401,18 +401,32 @@ func cellBody(markup string) string {
 // каждый проход печатал бы весь комплект.
 func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 	refs := layoutLinksFor(lc, row)
+	// Порядок групп — здесь, а не только в сборщике: lc.refs могли собрать
+	// раньше по другому правилу, а метка обязана печатать так же, как узел
+	// `links` (SortCardRefsGrouped не меняет вход).
+	refs = skills.SortCardRefsGrouped(refs)
 	if len(refs) > maxLinkRefs {
 		refs = refs[:maxLinkRefs]
 	}
+	// Группами и нумерованным списком (2026-11-10, та же выдача, что у узла
+	// `links`): метка макета и узел формы печатают ссылки одинаково. Номер
+	// начинается с единицы в каждой группе — свой numId из плана сборки.
 	var sb strings.Builder
-	for _, ref := range refs {
-		if ref.URL == "" {
-			continue
+	for _, group := range skills.GroupCardRefsByGroup(refs) {
+		sb.WriteString(headingXMLOpts(group.Title, linkGroupHeadingLevel, paraOpts{Before: 6}))
+		numID := styleListNumbered
+		if plan := lc.numberingPlan(); plan != nil {
+			numID = plan.newList()
 		}
-		relID := placeholderRelID(ref.URL)
-		sb.WriteString(hyperlinkListItemXML(relID, refDisplayText(ref)))
-		if lc.layout != nil {
-			lc.layout.links = appendLinkOnce(lc.layout.links, renderedLink{RelID: relID, URL: ref.URL})
+		for _, ref := range group.Refs {
+			if ref.URL == "" {
+				continue
+			}
+			relID := placeholderRelID(ref.URL)
+			sb.WriteString(hyperlinkListItemNumXML(relID, refDisplayText(ref), numID))
+			if lc.layout != nil {
+				lc.layout.links = appendLinkOnce(lc.layout.links, renderedLink{RelID: relID, URL: ref.URL})
+			}
 		}
 	}
 	return sb.String()

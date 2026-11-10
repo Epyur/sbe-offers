@@ -178,3 +178,20 @@ func TestRenderBlockSystemForbidsCostUnlessAsked(t *testing.T) {
 		t.Fatal("явный запрос стоимости не распознан")
 	}
 }
+
+// Абзацы и типографика в промпте (2026-11-10).
+//
+// Живая жалоба пользователя: текст модели приходил единым массивом и с ошибками
+// пробелов. Правила в промпте — первая линия защиты; вторая — очистка ответа в
+// docx_text.go. Здесь проверяется, что просьба «абзацы и правильные пробелы»
+// действительно уходит модели.
+func TestRenderBlockSystemAsksForParagraphs(t *testing.T) {
+	sys := RenderBlockSystem("Опиши систему для заказчика", "", 300)
+	lower := strings.ToLower(sys)
+	if !strings.Contains(lower, "абзац") {
+		t.Fatalf("в промпте нет правила про абзацы:\n%s", sys)
+	}
+	if !strings.Contains(lower, "пробел") && !strings.Contains(lower, "пунктуац") {
+		t.Fatalf("в промпте нет правила про пробелы и знаки препинания:\n%s", sys)
+	}
+}

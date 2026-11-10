@@ -257,18 +257,6 @@ func pageBreakRunXML() string {
 	return `<w:p><w:r><w:br w:type="page"/></w:r></w:p>`
 }
 
-// hyperlinkXML — внешняя ссылка. Отношение создаётся в docx_links.go; здесь
-// только разметка, чтобы печать ссылок не разъезжалась с печатью текста.
-func hyperlinkXML(relID, text, url string) string {
-	if relID == "" {
-		return paragraphAligned(url, "")
-	}
-	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/></w:pPr>` +
-		`<w:hyperlink r:id="` + escapeXML(relID) + `" w:history="1">` +
-		`<w:r><w:rPr><w:rStyle w:val="` + styleHyperlink + `"/></w:rPr>` +
-		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:hyperlink></w:p>`
-}
-
 func listItemXML(text string) string {
 	return listItemXMLOpts(text, paraOpts{})
 }
@@ -726,7 +714,7 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			started = true
 			continue
 		case "links":
-			links, ok := renderLinkSection(node, rc.refs)
+			links, ok := renderLinkSection(node, rc.refs, rc.numbering)
 			if ok {
 				sb.WriteString(links)
 				started = true
@@ -747,7 +735,12 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 		case "prompt_text":
 			text := generatedTextFor(rc, block.ID, i)
 			if text != "" {
-				sb.WriteString(paragraphXMLOpts(text, node.Align, opts))
+				// Ответ модели печатается ПО АБЗАЦАМ (2026-11-10): раньше весь
+				// текст уходил в один `<w:p>`, и в документе он был единым
+				// массивом, даже если модель разделила его абзацами. Флаги
+				// размещения (отступы, «с новой страницы») относятся к первому
+				// напечатанному абзацу — их забирает paragraphsXML.
+				sb.WriteString(paragraphsXML(text, node.Align, opts))
 				started = true
 			}
 			continue

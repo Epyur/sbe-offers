@@ -21,6 +21,10 @@ import (
 // для промпта модели, и второй копии быть не должно.
 
 // Виды ссылок карточки.
+//
+// Kind — СТАРОЕ поле «страница или документ» (2026-11-01). Оно остаётся ради
+// совместимости со старым кешем карточек: решать судьбу ссылки по нему больше
+// нельзя — теперь ссылку описывают группе печати и владельцу (см. ниже).
 const (
 	// RefKindPage — страница материала или системы на корпоративном сайте.
 	RefKindPage = "page"
@@ -28,16 +32,60 @@ const (
 	RefKindDoc = "doc"
 )
 
+// Группы ссылок — порядок печати в документе (2026-11-10, требование
+// пользователя). Числовой ранг задаёт, какая группа идёт раньше; порядок
+// констант здесь и в cardRefGroupRank — одна правда.
+const (
+	// RefGroupPage — страница продукта на корпоративном сайте (nav.tn.ru).
+	RefGroupPage = "page"
+	// RefGroupSTO — стандарт организации (СТО).
+	RefGroupSTO = "sto"
+	// RefGroupTechList — технический лист (техлист).
+	RefGroupTechList = "techlist"
+	// RefGroupUzly — альбом узлов.
+	RefGroupUzly = "uzly"
+	// RefGroupCert — сертификаты, декларации и всё остальное, что не попало в
+	// группы выше. Сюда же идут инструкции и руководства: отдельной группы для
+	// них пользователь не завёл, а «остальное» — это и есть их место.
+	RefGroupCert = "cert"
+)
+
+// Владелец ссылки: чья карточка её дала. От него зависит порядок ВНУТРИ
+// группы — «сначала системы, потом материалы» (у сертификатов наоборот).
+const (
+	// RefOwnerSystem — ссылка из карточки системы.
+	RefOwnerSystem = "system"
+	// RefOwnerMaterial — ссылка из карточки материала (в том числе из ссылок
+	// материала, на который ведёт состав).
+	RefOwnerMaterial = "material"
+)
+
 // CardRef — ссылка из раздела «Ссылки» карточки.
 //
 // Label — то, как её назвал человек; пустая подпись заменяется адресом, иначе
-// в документе получилась бы строка « — https://…». Kind нужен, чтобы модель
-// знала, о чём речь (страница или документ), и чтобы в документе ссылки
-// группировались.
+// в документе получилась бы строка « — https://…».
+//
+// Group — группа печати (страница, СТО, техлист, узлы, сертификаты), Owner —
+// чья карточка дала ссылку (система или материал). Вместе они задают порядок
+// печати в документе. Пустая группа у ссылки, прочитанной старым кешем, — не
+// ошибка: её выведет cardRefGroupOf по Kind и адресу.
 type CardRef struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`
-	Kind  string `json:"kind"`
+	Kind  string `json:"kind,omitempty"`
+	Group string `json:"group,omitempty"`
+	Owner string `json:"owner,omitempty"`
+}
+
+// CardRefGroup — группа ссылок, готовая к печати: заголовок и её ссылки.
+//
+// Печать идёт группой, а не сплошным списком (2026-11-10): «Страницы
+// продуктов», «Стандарты организации (СТО)», «Технические листы», «Узлы»,
+// «Сертификаты и декларации». Нумерация в каждой группе начинается с единицы.
+type CardRefGroup struct {
+	Group string
+	Title string
+	Refs  []CardRef
 }
 
 var (
@@ -126,21 +174,31 @@ func cardRefSectionLines(markdown string) []string {
 // подписывается сам собой.
 func cardRefFromLine(line string) (CardRef, bool) {
 	if m := reCardRefMarkdown.FindStringSubmatch(line); m != nil {
-		label := strings.TrimSpace(m[1])
-		if label == "" {
-			label = m[2]
-		}
-		return CardRef{Label: label, URL: m[2], Kind: cardRefKind(label, m[2])}, true
+		return newCardRef(strings.TrimSpace(m[1]), m[2]), true
 	}
 	url := reCardRefURL.FindString(line)
 	if url == "" {
 		return CardRef{}, false
 	}
-	label := cardRefLabelFromText(line, url)
-	if label == "" {
+	return newCardRef(cardRefLabelFromText(line, url), url), true
+}
+
+// newCardRef собирает ссылку: пустая подпись заменяется адресом, группа и вид
+// выводятся из подписи и адреса.
+//
+// Owner здесь НЕ выставляется: он зависит от того, чья карточка дала ссылку,
+// а это знание есть только у сборщика ссылок предложения, а не у разбора
+// одной строки (см. cardRefsOfCard).
+func newCardRef(label, url string) CardRef {
+	if strings.TrimSpace(label) == "" {
 		label = url
 	}
-	return CardRef{Label: label, URL: url, Kind: cardRefKind(label, url)}, true
+	return CardRef{
+		Label: label,
+		URL:   url,
+		Kind:  cardRefKind(label, url),
+		Group: cardRefGroupOf(label, url),
+	}
 }
 
 // cardRefLabelFromText — подпись из строки вида «Страница системы: https://…».
@@ -175,24 +233,211 @@ func cardRefKind(label, url string) string {
 	return RefKindPage
 }
 
-// SortCardRefs ставит страницы перед документами, внутри вида — по подписи:
-// человеку читать сверху вниз, и в КП важно сначала «где посмотреть систему».
-func SortCardRefs(refs []CardRef) []CardRef {
+// reCardRefSTO — стандарт организации в подписи: «СТО 72746455-4.8.1-2023 …».
+// Граница слева явная, а не `\b`: в Go `\b` считается по ASCII и на кириллице
+// не находит ничего (грабля поймана трижды — см. skills/systemcard.go).
+var reCardRefSTO = regexp.MustCompile(`(?:^|[^А-ЯЁа-яёA-Za-z])сто\s`)
+
+// cardRefGroupOf — группа печати ссылки по её подписи и адресу.
+//
+// Порядок проверок — от точного признака к общему (2026-11-10). Адрес решает
+// первым: страница навигатора `/systems/` и `/catalog/` — всегда страница
+// продукта, что бы ни было написано в подписи. Затем подпись: «СТО», «узлы»,
+// «техлист»; всё остальное — сертификаты и декларации (сюда же инструкции и
+// руководства, отдельной группы для них пользователь не завёл).
+//
+// Живые данные (замер по 375 системам и 1166 материалам): страницы систем —
+// `/systems/…`, страницы материалов — `/catalog/…`, техлисты и узлы и СТО лежат
+// под `/pim/…pdf`. По подписи без адреса решается то, что стоит на `/pim/`:
+// там и СТО, и техлисты, и узлы, и инструкции.
+func cardRefGroupOf(label, url string) string {
+	lowerURL := strings.ToLower(url)
+	switch {
+	case strings.Contains(lowerURL, "/systems/"), strings.Contains(lowerURL, "/catalog/"),
+		strings.Contains(lowerURL, "/catalogue/"):
+		return RefGroupPage
+	}
+	lower := strings.ToLower(strings.TrimSpace(label))
+	if reCardRefSTO.MatchString(lower) {
+		return RefGroupSTO
+	}
+	// «Узлы», «Узлов», «узел» — корень «узл», а не «узел»: в живых подписях
+	// пишут «Узлы PDF …», а в слове «узлы» буквы «е» нет, и поиск по «узел»
+	// оставлял альбом узлов в группе «остальное» (замер 2026-11-10).
+	if strings.Contains(lower, "узл") {
+		return RefGroupUzly
+	}
+	if strings.Contains(lower, "техлист") || strings.Contains(lower, "тех. лист") ||
+		strings.Contains(lower, "тех.лист") || strings.Contains(lower, "технический лист") ||
+		strings.HasPrefix(lower, "тл ") {
+		return RefGroupTechList
+	}
+	// Не страница и не документ известного вида — «остальное»: сертификаты,
+	// декларации, инструкции, руководства. Пользователь просил заложить эту
+	// группу заранее, даже пока сертификатов в карточках нет.
+	return RefGroupCert
+}
+
+// CardRefGroupTitle — заголовок группы для документа.
+func CardRefGroupTitle(group string) string {
+	switch group {
+	case RefGroupPage:
+		return "Страницы продуктов"
+	case RefGroupSTO:
+		return "Стандарты организации (СТО)"
+	case RefGroupTechList:
+		return "Технические листы"
+	case RefGroupUzly:
+		return "Узлы"
+	default:
+		return "Сертификаты и декларации"
+	}
+}
+
+// cardRefGroupRank — место группы в порядке печати: меньше — раньше.
+func cardRefGroupRank(group string) int {
+	switch group {
+	case RefGroupPage:
+		return 0
+	case RefGroupSTO:
+		return 1
+	case RefGroupTechList:
+		return 2
+	case RefGroupUzly:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// effectiveGroup — группа ссылки; у старого кеша поле пустое — выводим по
+// подписи и адресу. Одна точка вывода: второй копии быть не должно.
+func (r CardRef) effectiveGroup() string {
+	if r.Group != "" {
+		return r.Group
+	}
+	return cardRefGroupOf(r.Label, r.URL)
+}
+
+// effectiveOwner — владелец ссылки. Пустой у старого кеша: такой кеш приходит
+// только из карточек систем (материальные ссылки связываются заново), поэтому
+// система и есть честное умолчание.
+func (r CardRef) effectiveOwner() string {
+	if r.Owner != "" {
+		return r.Owner
+	}
+	return RefOwnerSystem
+}
+
+// TagCardRefsOwner ставит владельца ссылкам карточки (2026-11-10).
+//
+// Разбор одной строки не знает, чья это карточка — системы или материала, —
+// а порядок внутри группы от этого зависит. Владелец выставляется там, где он
+// известен: при чтении карточки системы (`RefOwnerSystem`) и при чтении ссылок
+// материала, на который ведёт состав (`RefOwnerMaterial`).
+//
+// Исходный срез не меняется, иначе кеш карточки получил бы владельца одного
+// вида на все свои ссылки после второго вызова с другим владельцем.
+func TagCardRefsOwner(refs []CardRef, owner string) []CardRef {
+	out := make([]CardRef, len(refs))
+	for i, r := range refs {
+		r.Owner = owner
+		if r.Group == "" {
+			r.Group = cardRefGroupOf(r.Label, r.URL)
+		}
+		out[i] = r
+	}
+	return out
+}
+
+// SortCardRefsGrouped упорядочивает ссылки по группам для печати (2026-11-10).
+//
+// Порядок: страницы продуктов → СТО → техлисты → узлы → сертификаты и прочее.
+// Внутри группы — «сначала системы, потом материалы» (у сертификатов наоборот:
+// сертификаты на материалы приходят первыми), внутри одного владельца — по
+// подписи, регистр и «ё» не для читателя не важны.
+//
+// Исходный срез не меняется: вызывающий держит его как кеш карточки.
+func SortCardRefsGrouped(refs []CardRef) []CardRef {
 	out := make([]CardRef, len(refs))
 	copy(out, refs)
-	// Простая вставка: ссылок десятки, сортировка по подписи дешевле любых
-	// наворотов, а порядок стабилен при равных подписях.
+	// Простая вставка: ссылок десятки, сортировка по ключу дешевле любых
+	// наворотов, а порядок стабилен при равных ключах.
 	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && cardRefLess(out[j], out[j-1]); j-- {
+		for j := i; j > 0 && cardRefGroupLess(out[j], out[j-1]); j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
 	}
 	return out
 }
 
-func cardRefLess(a, b CardRef) bool {
-	if a.Kind != b.Kind {
-		return a.Kind == RefKindPage
+// cardRefGroupLess — правило порядка двух ссылок в разделе.
+func cardRefGroupLess(a, b CardRef) bool {
+	ga, gb := a.effectiveGroup(), b.effectiveGroup()
+	if ga != gb {
+		return cardRefGroupRank(ga) < cardRefGroupRank(gb)
 	}
-	return strings.ToLower(a.Label) < strings.ToLower(b.Label)
+	// Внутри группы — владелец: у основной массы групп система раньше
+	// материала, у сертификатов наоборот.
+	if ao, bo := ownerRankInGroup(ga, a.effectiveOwner()), ownerRankInGroup(gb, b.effectiveOwner()); ao != bo {
+		return ao < bo
+	}
+	return normalizeCardRefLabel(a.Label) < normalizeCardRefLabel(b.Label)
+}
+
+// ownerRankInGroup — место владельца внутри группы: меньше — раньше.
+//
+// В общем случае системы идут первыми (пользователь: «сначала ссылки на
+// страницы систем, потом на страницы продуктов»; та же логика у техлистов).
+// Сертификаты — исключение: материала сначала, системы потом.
+func ownerRankInGroup(group, owner string) int {
+	systemFirst := group != RefGroupCert
+	if owner == RefOwnerSystem {
+		if systemFirst {
+			return 0
+		}
+		return 1
+	}
+	if systemFirst {
+		return 1
+	}
+	return 0
+}
+
+// normalizeCardRefLabel — ключ сравнения подписей: регистр и «ё» не важны.
+func normalizeCardRefLabel(label string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(label), "ё", "е"))
+}
+
+// GroupCardRefsByGroup раскладывает ссылки на группы в порядке печати.
+//
+// Вход берётся уже отсортированным (SortCardRefsGrouped): здесь только
+// разрезание на группы для печати заголовков. Пустые группы не попадают:
+// заголовок без ссылок в документе читается как пропуск.
+func GroupCardRefsByGroup(refs []CardRef) []CardRefGroup {
+	if len(refs) == 0 {
+		return nil
+	}
+	var out []CardRefGroup
+	index := make(map[string]int, 5)
+	for _, ref := range refs {
+		group := ref.effectiveGroup()
+		i, ok := index[group]
+		if !ok {
+			index[group] = len(out)
+			out = append(out, CardRefGroup{Group: group, Title: CardRefGroupTitle(group)})
+			i = len(out) - 1
+		}
+		out[i].Refs = append(out[i].Refs, ref)
+	}
+	return out
+}
+
+// SortCardRefs ставит страницы перед документами, внутри вида — по подписи.
+//
+// Оставлена ради старых проверок и мест, где групп ещё нет; печать документа
+// пользуется SortCardRefsGrouped (2026-11-10). Одно правило порядка лучше
+// делить на два: «страницы раньше документов» — частный случай групп.
+func SortCardRefs(refs []CardRef) []CardRef {
+	return SortCardRefsGrouped(refs)
 }

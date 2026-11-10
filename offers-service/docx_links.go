@@ -31,13 +31,17 @@ type renderedLink struct {
 
 // collectOfferRefs собирает ссылки предложения из карточек систем.
 //
-// Порядок: сначала системы в том порядке, в котором они попали в документ,
-// потом их ссылки по виду (страница раньше документа). Повторы по адресу
-// схлопываются: один техлист часто приложен к нескольким системам.
+// Повторы по адресу схлопываются: один техлист часто приложен к нескольким
+// системам.
 //
 // В список входят и ссылки карточки (раздел «Ссылки»), и ссылки материалов, на
 // которые ведёт её состав (`LinkedRefs`, 2026-11-09): живой технолог просил,
 // чтобы в КП попадали документы не только систем, но и продуктов в них.
+//
+// Порядок — групповой (2026-11-10): страницы продуктов → СТО → техлисты → узлы
+// → сертификаты и прочее. Сортировка идёт ПОСЛЕ схлопывания повторов: иначе
+// первая встреченная копия адреса могла бы получить «хуже» владельца, и ссылка
+// встала бы не на своё место внутри группы.
 func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 	if len(cards) == 0 {
 		return nil
@@ -52,42 +56,69 @@ func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 			seen[ref.URL] = true
 			out = append(out, ref)
 			if len(out) >= maxLinkRefs {
-				return out
+				return skills.SortCardRefsGrouped(out)
 			}
 		}
 	}
-	return out
+	return skills.SortCardRefsGrouped(out)
 }
 
 // cardAllRefs — все ссылки карточки: её собственные и материалы состава.
-// Отсортированы общим правилом (страницы раньше документов).
+//
+// Порядок — групповой (2026-11-10): страницы продуктов, СТО, техлисты, узлы,
+// сертификаты и прочее; внутри группы система раньше материала, у сертификатов
+// материал раньше системы. Владелец ссылки проставляется здесь: разбор строки
+// не знает, чья это карточка, а без владельца порядок внутри группы не
+// выстроить. `Refs` принадлежат системе, `LinkedRefs` — материалам состава.
 func cardAllRefs(card SystemCard) []skills.CardRef {
-	if len(card.LinkedRefs) == 0 {
-		return skills.SortCardRefs(card.Refs)
-	}
 	all := make([]skills.CardRef, 0, len(card.Refs)+len(card.LinkedRefs))
-	all = append(all, card.Refs...)
-	all = append(all, card.LinkedRefs...)
-	return skills.SortCardRefs(all)
+	all = append(all, skills.TagCardRefsOwner(card.Refs, skills.RefOwnerSystem)...)
+	all = append(all, skills.TagCardRefsOwner(card.LinkedRefs, skills.RefOwnerMaterial)...)
+	return skills.SortCardRefsGrouped(all)
 }
 
 // renderLinkSection печатает узел `links`. Второе значение — были ли ссылки:
 // пустой раздел не печатается вовсе.
-func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
+//
+// Раздел печатается ГРУППАМИ и НУМЕРОВАННЫМ списком (2026-11-10, требование
+// пользователя). Группы и их порядок:
+//
+//  1. страницы продуктов на nav.tn.ru (сначала систем, потом материалов);
+//  2. стандарты организации (СТО);
+//  3. технические листы (сначала систем, потом материалов);
+//  4. узлы;
+//  5. сертификаты и декларации (сначала материалов, потом систем) — сюда же
+//     всё остальное.
+//
+// Нумерация в каждой группе начинается с единицы: у каждого списка свой numId
+// из плана сборки (plan.newList), и Word не продолжает счёт предыдущей группы.
+// plan == nil (печать без плана) — сквозной номер бланка, как раньше.
+func renderLinkSection(node blockNode, refs []skills.CardRef, plan *numberingPlan) (string, bool) {
 	if len(refs) == 0 {
 		return "", false
 	}
-	title := "Ссылки"
+	// Сортировка здесь, а не только в сборщике: ссылки могут прийти снаружи
+	// (renderOfferDocxFull), и порядок групп не должен зависеть от того, кто
+	// их передал. SortCardRefsGrouped не меняет вход.
+	refs = skills.SortCardRefsGrouped(refs)
 	opts := paraOpts{Before: 12}
 	var sb strings.Builder
-	sb.WriteString(headingXMLOpts(title, node.Level, opts))
-	for _, ref := range refs {
-		// Видимый текст пункта — подпись, а не адрес (2026-11-09). Раньше
-		// печаталось «подпись — адрес»: адрес с параметрами занимал полстроки
-		// и выглядел как сбой вёрстки. Адрес попадает только в отношение
-		// (`applyHyperlinks`), то есть в саму ссылку, и остаётся кликабельным.
-		// Подписи нет — показываем адрес: другого текста для пункта нет.
-		sb.WriteString(listItemXML(refDisplayText(ref)))
+	sb.WriteString(headingXMLOpts("Ссылки", node.Level, opts))
+	for _, group := range skills.GroupCardRefsByGroup(refs) {
+		// Заголовок группы — четвёртый уровень: это подраздел внутри «Ссылок»,
+		// и он не должен попадать в оглавление как раздел документа.
+		sb.WriteString(headingXMLOpts(group.Title, linkGroupHeadingLevel, paraOpts{Before: 6}))
+		numID := styleListNumbered
+		if plan != nil {
+			numID = plan.newList()
+		}
+		for _, ref := range group.Refs {
+			// Видимый текст пункта — подпись, а не адрес (2026-11-09). Раньше
+			// печаталось «подпись — адрес»: адрес с параметрами занимал полстроки
+			// и выглядел как сбой вёрстки. Адрес попадает только в отношение
+			// (`applyHyperlinks`), то есть в саму ссылку, и остаётся кликабельным.
+			sb.WriteString(listItemNumXML(refDisplayText(ref), numID, paraOpts{}))
+		}
 	}
 	if len(refs) >= maxLinkRefs {
 		sb.WriteString(paragraphAligned(
@@ -95,6 +126,9 @@ func renderLinkSection(node blockNode, refs []skills.CardRef) (string, bool) {
 	}
 	return sb.String(), true
 }
+
+// linkGroupHeadingLevel — уровень заголовка группы ссылок в документе.
+const linkGroupHeadingLevel = 4
 
 // refDisplayText — то, что читатель видит вместо ссылки: подпись, если она
 // есть, иначе адрес. Одна функция на все места печати ссылок (раздел формы,
@@ -144,34 +178,117 @@ func applyHyperlinks(bodyXML string, refs []skills.CardRef) (string, []renderedL
 		// она попадает как `&quot;` (escapeXML), а Word читает её обратно
 		// кавычкой. Раньше такие адреса пропускались целиком, и документ
 		// печатал их голым текстом без ссылки (2026-11-09).
-		item := listItemXML(hyperlinkItemLabel(ref))
-		replacement := hyperlinkXML(placeholderRelID(ref.URL), hyperlinkItemLabel(ref), ref.URL)
-		if !strings.Contains(out, item) {
+		//
+		// Пункт теперь нумерованный (2026-11-10): у него свой numId у каждой
+		// группы, поэтому точную разметку пункта не собрать наперёд. Ищем
+		// абзац по тексту и делаем кликабельным его прогон — так пункт
+		// остаётся пунктом своей группы, а подпись — ссылкой.
+		updated, ok := hyperlinkParagraphByText(out, hyperlinkItemLabel(ref), ref.URL)
+		if !ok {
 			continue
 		}
-		out = strings.Replace(out, item, replacement, 1)
+		out = updated
 		links = append(links, renderedLink{RelID: placeholderRelID(ref.URL), URL: ref.URL})
 	}
 	return out, links
 }
 
+// hyperlinkParagraphByText находит в теле абзац-пункт с текстом text и делает
+// его прогон кликабельной ссылкой на url. Второй результат — нашли ли: нет
+// текста — нет и отношения (иначе в rels появится ссылка без тела).
+//
+// Ищется именно пункт (у него есть <w:numPr>), а не любой абзац: в документе
+// тот же текст мог напечатать человек, и превращать его в ссылку — не просьба.
+//
+// Сохраняется ВЕСЬ абзац, включая `<w:pPr>` с номером: ссылка меняет только
+// прогон с подписью, а нумерация группы остаётся на месте (2026-11-10). Раньше
+// пункт был маркированным, и замену собирали целиком; с нумерацией номер ставит
+// Word по `<w:numPr>`, и выбросить его значит оставить пункт без номера.
+func hyperlinkParagraphByText(bodyXML, text, url string) (string, bool) {
+	needle := `<w:t xml:space="preserve">` + escapeXML(text) + `</w:t>`
+	idx := strings.Index(bodyXML, needle)
+	if idx < 0 {
+		return bodyXML, false
+	}
+	start := strings.LastIndex(bodyXML[:idx], "<w:p>")
+	if start < 0 {
+		return bodyXML, false
+	}
+	end := strings.Index(bodyXML[idx:], "</w:p>")
+	if end < 0 {
+		return bodyXML, false
+	}
+	paragraph := bodyXML[start : idx+end+len("</w:p>")]
+	if !strings.Contains(paragraph, "<w:numPr>") {
+		// Не пункт списка — раздел ссылок печатает только пункты. Не трогаем:
+		// абзац мог напечатать человек тем же текстом.
+		return bodyXML, false
+	}
+	replacement := hyperlinkRunsInParagraph(paragraph, text, url)
+	if replacement == paragraph {
+		return bodyXML, false
+	}
+	replaced := strings.Replace(bodyXML, paragraph, replacement, 1)
+	return replaced, replaced != bodyXML
+}
+
+// hyperlinkRunsInParagraph оборачивает прогон с подписью в <w:hyperlink>,
+// сохраняя <w:pPr> абзаца (стиль, отступ, номер пункта) как есть.
+func hyperlinkRunsInParagraph(paragraph, text, url string) string {
+	run := `<w:r><w:rPr><w:rStyle w:val="` + styleHyperlink + `"/></w:rPr>` +
+		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r>`
+	hyperlink := `<w:hyperlink r:id="` + placeholderRelID(url) + `" w:history="1">` + run + `</w:hyperlink>`
+	// Прогон пункта собирается тем же runsXML, что и обычный текст (без
+	// особого rPr). Заменяем первый такой прогон с нужным текстом.
+	plainRun := `<w:r><w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r>`
+	if strings.Contains(paragraph, plainRun) {
+		return strings.Replace(paragraph, plainRun, hyperlink, 1)
+	}
+	// runsXML мог добавить rPr (например, оформление) — тогда ищем <w:t> и
+	// оборачиваем весь прогон вокруг него.
+	return wrapRunAroundText(paragraph, text, hyperlink)
+}
+
+// wrapRunAroundText оборачивает в готовую разметку целиком тот <w:r>, внутри
+// которого стоит <w:t> с нужным текстом. Узкий запасной путь: обычный пункт
+// раздела ссылок проходит проверку выше.
+func wrapRunAroundText(paragraph, text, markup string) string {
+	needle := `<w:t xml:space="preserve">` + escapeXML(text) + `</w:t>`
+	idx := strings.Index(paragraph, needle)
+	if idx < 0 {
+		return paragraph
+	}
+	runStart := strings.LastIndex(paragraph[:idx], "<w:r>")
+	runEnd := strings.Index(paragraph[idx:], "</w:r>")
+	if runStart < 0 || runEnd < 0 {
+		return paragraph
+	}
+	runEnd += idx + len("</w:r>")
+	return paragraph[:runStart] + markup + paragraph[runEnd:]
+}
+
 // hyperlinkItemLabel — текст пункта раздела ссылок. Одна функция на печать и на
 // замену: расхождение здесь значило бы «ссылку не нашли и не сделали».
 func hyperlinkItemLabel(ref skills.CardRef) string {
-	return refDisplayText(ref)
+	// plainText — то же преобразование, что делает печать пункта
+	// (`listItemNumXML` → `runsXML(plainText(...))`). Без него подпись с
+	// разметкой («**жирный**», вики-ссылка) после печати выглядела бы иначе,
+	// и «текст пункта» не нашёлся бы в теле при замене на ссылку.
+	return plainText(refDisplayText(ref))
 }
 
-// hyperlinkListItemXML — пункт списка, в котором весь текст кликабелен.
+// hyperlinkListItemNumXML — нумерованный пункт списка, в котором весь текст
+// кликабелен.
 //
-// Нужен ровно там, где ссылку печатает метка макета: подпись видна читателю, а
-// адрес живёт только в отношении. Отдельный от hyperlinkXML, потому что там
-// абзац без маркера — у метки `{{ссылки}}` пункт был списком.
-func hyperlinkListItemXML(relID, text string) string {
+// Нужен там, где ссылку печатает метка макета: подпись видна читателю, а адрес
+// живёт только в отношении. Номер ставит Word по `<w:numPr>` с numId группы; в
+// тексте пункта числа нет (2026-11-10).
+func hyperlinkListItemNumXML(relID, text, numID string) string {
 	if relID == "" {
-		return listItemXML(text)
+		return listItemNumXML(text, numID, paraOpts{})
 	}
 	return `<w:p><w:pPr><w:pStyle w:val="` + styleNormal + `"/><w:ind w:firstLine="0"/>` +
-		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + styleListBullet + `"/></w:numPr></w:pPr>` +
+		`<w:numPr><w:ilvl w:val="0"/><w:numId w:val="` + escapeXML(numID) + `"/></w:numPr></w:pPr>` +
 		`<w:hyperlink r:id="` + escapeXML(relID) + `" w:history="1">` +
 		`<w:r><w:rPr><w:rStyle w:val="` + styleHyperlink + `"/></w:rPr>` +
 		`<w:t xml:space="preserve">` + escapeXML(text) + `</w:t></w:r></w:hyperlink></w:p>`

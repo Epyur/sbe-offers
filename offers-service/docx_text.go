@@ -193,7 +193,11 @@ func generatedTextFor(rc renderCtx, blockID string, nodeIndex int) string {
 	// documentText и здесь: КП, собранные до 2026-11-05, держат в кэше пометку
 	// [НУЖНО: …], и без чистки при чтении она уйдёт клиенту при следующем
 	// скачивании того же файла.
-	return documentText(strings.TrimSpace(rc.values[key]))
+	//
+	// Типографика тоже здесь (2026-11-10): тексты, закэшированные до этой
+	// правки, содержат двойные пробелы и слипшиеся фразы; печать чинит их, не
+	// дожидаясь перегенерации (старые КП перечитаются без обращения к модели).
+	return normalizeBodyTypography(documentText(strings.TrimSpace(rc.values[key])))
 }
 
 // promptNodes — узлы `prompt_text` формы вместе с их местом.
@@ -396,7 +400,83 @@ func cleanBlockText(raw string) string {
 	if looksLikePlan(cleaned) {
 		return ""
 	}
-	return cleaned
+	// Типографика ответа (2026-11-10): модель пропускает точки, ставит двойные
+	// пробелы и клеит фразы. Приводим текст к обычному печатному виду — печать
+	// делает то же самое, но кеш принимает ещё и уже сохранённый текст.
+	return normalizeBodyTypography(cleaned)
+}
+
+// normalizeBodyTypography приводит ответ модели к обычному печатному виду.
+//
+// Живая жалоба 2026-11-10: «в тексте много пропусков точек, двойные пробелы или
+// отсутствие пробелов». Модель — не машинистка: её ответ нужно почистить, не
+// меняя смысла и чисел. Что делается (и только это):
+//
+//   - несколько пробелов подряд → один;
+//   - пробел ПЕРЕД знаком препинания снимается («фундамент .» → «фундамент.»);
+//   - пробел ПОСЛЕ знака конца фразы, запятой, точки с запятой и двоеточия
+//     возвращается («фундамент.Она» → «фундамент. Она»);
+//   - пробелы по краям строк убираются.
+//
+// Что НЕ трогается: числа и единицы («1,5», «г/м2»), марки с дефисом («V-SL»),
+// адреса (в них сколько угодно точек), сокращения («т.е.») — там после точки
+// законной фразы нет, и проверка «следующий символ не цифра и не строчная
+// буква после одной точки в адресе» держит их на месте.
+func normalizeBodyTypography(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	var out []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		out = append(out, normalizeBodyLine(line))
+	}
+	return strings.Join(out, "\n")
+}
+
+// normalizeBodyLine — типографика одной строки.
+func normalizeBodyLine(line string) string {
+	line = reMultiSpace.ReplaceAllString(line, " ")
+	line = reSpaceBeforePunct.ReplaceAllString(line, "$1")
+	line = reMissingSpaceAfterPunct.ReplaceAllStringFunc(line, addSpaceAfterPunct)
+	return strings.TrimSpace(line)
+}
+
+var (
+	// reMultiSpace — два и больше пробела/табуляции подряд.
+	reMultiSpace = regexp.MustCompile(`[ \t]{2,}`)
+	// reSpaceBeforePunct — пробел перед знаком препинания.
+	reSpaceBeforePunct = regexp.MustCompile(`\s+([.,;:!?…])`)
+	// reMissingSpaceAfterPunct — знак конца фразы или запятая, и сразу за ним
+	// буква (нет пробела). Цифра после знака — это число («1,5»), адрес или
+	// сокращение; такую позицию выражение не ловит, потому что за буквой не
+	// идёт цифра. Символ `\p{L}` — кириллица и латиница.
+	reMissingSpaceAfterPunct = regexp.MustCompile(`([.,;:!?…])(\p{L})`)
+)
+
+// addSpaceAfterPunct вставляет пробел после знака, если его нет.
+//
+// Правило узкое и честное (2026-11-10):
+//   - после запятой, точки с запятой, двоеточия, вопросительного и
+//     восклицательного знака пробел ставится всегда, если дальше буква;
+//   - после ТОЧКИ — только когда следующая буква заглавная. Иначе «nav.tn.ru» и
+//     «т.е.» превратились бы в «nav. tn. ru»: точка внутри адреса и сокращения
+//     не конец фразы, и следующая за ней буква там строчная. Настоящее начало
+//     фразы в русском тексте пишется с заглавной.
+func addSpaceAfterPunct(match string) string {
+	runes := []rune(match)
+	if len(runes) < 2 {
+		return match
+	}
+	punct, next := runes[0], runes[1]
+	if punct == '.' && !isUpperLetter(next) {
+		return match
+	}
+	return string(punct) + " " + string(runes[1:])
+}
+
+// isUpperLetter — заглавная буква (кириллица или латиница).
+func isUpperLetter(r rune) bool {
+	return (r >= 'А' && r <= 'Я') || r == 'Ё' || (r >= 'A' && r <= 'Z')
 }
 
 // reMarkdownHeading — строка-заголовок в разметке Markdown: `## Заголовок`.
