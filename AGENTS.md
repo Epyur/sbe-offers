@@ -31,8 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.7**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `0956d20` (plugin part +
-`offers-service`), `main` `bd6376f` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `bc553da` (plugin part +
+`offers-service`), `main` `abb3bcf` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.7: competitor card titles come from the
 first real H1 (the first heading is a disclaimer), the indexing journal is
