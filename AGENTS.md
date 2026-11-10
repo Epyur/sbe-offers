@@ -31,8 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.11**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `89f4265` (plugin part +
-`offers-service`), `main` `f42e0c2` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `9725b92` (plugin part +
+`offers-service`), `main` `9937aaa` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.11: «🔍 Найти аналоги и сравнить» sits in the combat sheet's
 main menu (it used to appear only after picking a competitor in the same bot
