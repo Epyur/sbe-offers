@@ -30,11 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.10**, released 2026-11-11: deployed, self-hosted,
+Current version = **0.9.11**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `89f4265` (plugin part +
 `offers-service`), `main` `f42e0c2` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.10: layout upload no longer crashes on an empty marker
+last commit that touched code). 0.9.11: «🔍 Найти аналоги и сравнить» sits in the combat sheet's
+main menu (it used to appear only after picking a competitor in the same bot
+session), and the competitor for the match comes from the sheet itself.
+Previous release — 0.9.10: layout upload no longer crashes on an empty marker
 list (nil slices were sent as `null`), and `{{сравнение}}` shows in the marker
 list. Previous release — 0.9.9: the combat sheet has NO form — content is always the product
 list plus the comparison; the layout is printed with a single `{{сравнение}}`

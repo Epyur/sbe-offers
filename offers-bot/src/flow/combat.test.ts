@@ -8,6 +8,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   COMBAT_KEYBOARD,
+  COMBAT_PICKER_KEYBOARD,
+  combatNeedCompetitorMessage,
   type CombatPickerPage,
   combatAskQuery,
   combatIntro,
@@ -201,6 +203,22 @@ describe('боевой листок: выбор стороны', () => {
   });
 });
 
+describe('боевой листок: подбор аналогов в меню', () => {
+  it('кнопка «Найти аналоги и сравнить» есть в меню листка и страницы выбора', () => {
+    const main = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string; text: string }>;
+    const analog = main.find((b) => b.callback_data === 'cb:analog');
+    assert.ok(analog, 'в главном меню нет кнопки подбора аналогов');
+    assert.match(analog!.text, /аналоги/i);
+
+    const picker = COMBAT_PICKER_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string }>;
+    assert.ok(picker.some((b) => b.callback_data === 'cb:analog'));
+  });
+
+  it('без конкурента нажатие объясняет следующий шаг, а не молчит', () => {
+    assert.match(combatNeedCompetitorMessage(), /Добавить конкурента/);
+  });
+});
+
 describe('боевой листок: уточнение и аналоги', () => {
   it('приглашение просит акцент, а не новые поля', () => {
     const text = combatAskHint();
@@ -257,7 +275,10 @@ describe('боевой листок: прочее', () => {
   it('кнопки боевого листка ведут в свои обработчики', () => {
     const kb = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string }>;
     const ids = kb.map((b) => b.callback_data);
-    // «Уточнение для разбора» — единственная настройка листка (2026-11-11).
-    assert.deepEqual(ids, ['cb:oursys', 'cb:comp', 'cb:hint', 'cb:doc', 'cb:done']);
+    // «Найти аналоги и сравнить» стоит в главном меню листка (2026-11-11):
+    // раньше его видел только тот, кто уже выбрал конкурента в этой сессии.
+    assert.deepEqual(ids, [
+      'cb:oursys', 'cb:comp', 'cb:analog', 'cb:hint', 'cb:doc', 'cb:done',
+    ]);
   });
 });

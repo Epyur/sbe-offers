@@ -41,6 +41,7 @@ import {
   combatAskHint,
   combatHintKeyboard,
   combatAnalogueMessage,
+  combatNeedCompetitorMessage,
 } from './flow/combat.ts';
 import {
   NO_OFFER_FOR_FILE,
@@ -720,23 +721,18 @@ async function showCombatSheet(ctx: CallbackCtx, sheet: api.CombatSheet, hint?: 
 }
 
 /**
- * Клавиатура сводки: обычный боевой листок плюс «Подобрать аналоги», когда
- * сравнивать есть с чем.
+ * Клавиатура сводки.
  *
- * Кнопка появляется только при выбранном конкуренте: без него искать аналог
- * нечего, а кнопка-пустышка только сбивает. Ведёт по последнему выбранному
- * конкуренту — это тот, с кем менеджер сейчас спорит.
+ * «🔍 Найти аналоги и сравнить» стоит в главном меню листка постоянно
+ * (2026-11-11): раньше она появлялась только после выбора конкурента в этой же
+ * сессии, и человек её просто не видел. Если подбирать ещё не под что, нажатие
+ * объясняет следующий шаг — тупика нет.
  */
 function combatSheetKeyboard(
-  ctx: CallbackCtx,
-  sheet: api.CombatSheet,
+  _ctx: CallbackCtx,
+  _sheet: api.CombatSheet,
 ): Record<string, unknown> {
-  const rows = [...COMBAT_KEYBOARD.inline_keyboard];
-  if (ctx.lastCompetitor && sheet.competitorNotes.length > 0) {
-    const at = Math.max(rows.length - 2, 1);
-    rows.splice(at, 0, [{ text: '🔍 Подобрать аналоги', callback_data: 'cb:analog' }]);
-  }
-  return { inline_keyboard: rows };
+  return COMBAT_KEYBOARD;
 }
 
 /** «📂 Мои боевые листки»: последние листки этого чата. */
@@ -1209,13 +1205,25 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
     await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
     return;
   }
-  const competitor = ctx.lastCompetitor;
+  // Конкурент берётся из памяти разговора, а если её нет (листок открыт заново
+  // или после перезапуска бота) — из самого листка: последний выбранный
+  // конкурент и есть тот, к кому подбираем аналог.
+  let competitor = ctx.lastCompetitor;
   if (!competitor) {
-    await ctx.deps.send(
-      ctx.chatId,
-      'Чтобы подобрать аналог, сначала выберите продукт конкурента: «🏷️ Добавить конкурента».',
-      COMBAT_KEYBOARD,
-    );
+    try {
+      // Отдельной ручки «один листок» у бота нет — берём список своих и ищем.
+      const sheets = await api.listCombat(ctx.chatId);
+      const sheet = sheets.find((sh) => sh.id === combat.sheetId);
+      const notes = sheet?.competitorNotes ?? [];
+      const last = notes[notes.length - 1];
+      if (last) competitor = { noteId: last.noteId, title: last.title };
+    } catch (e) {
+      await ctx.deps.send(ctx.chatId, `Не удалось открыть листок: ${(e as Error).message}`);
+      return;
+    }
+  }
+  if (!competitor) {
+    await ctx.deps.send(ctx.chatId, combatNeedCompetitorMessage(), COMBAT_KEYBOARD);
     return;
   }
   try {

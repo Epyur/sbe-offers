@@ -560,6 +560,28 @@ describe('боевой листок в боте', () => {
     );
   });
 
+  it('аналог подбирается и по конкуренту из листка (после перезапуска бота)', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    // Конкурента выбрали и добавили — дальше память разговора забыта: так
+    // выглядит листок, открытый заново.
+    await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
+    await route.routeText(deps, '42', 'конкурент', state);
+    await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
+    state.lastCompetitor.delete('42');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cb:analog', 'c4', state);
+    assert.ok(
+      !/Добавить конкурента/.test(sent[sent.length - 1].text),
+      'бот не нашёл конкурента, хотя он есть в листке',
+    );
+    assert.match(sent[sent.length - 1].text, /аналоги/i);
+    assert.ok(server.current().competitorNotes.length > 0);
+  });
+
   it('текст в боевом листке не уходит в черновик КП', async () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
