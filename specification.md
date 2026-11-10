@@ -83,6 +83,22 @@ Word на нём даёт пустую страницу.
 отношения `TargetMode="External"`). Пустой раздел не печатается. Предел — 60
 ссылок, остальное называется словами, а не обрезается молча.
 
+**Links in the document (2026-11-10, printed by groups, numbered).** Each
+`CardRef` now also carries `group` and `owner`. `group` is one of `page`
+(product page on nav.tn.ru), `sto`, `techlist`, `uzly`, `cert` (certificates,
+declarations, instructions and anything else). `owner` is `system` or `material`
+(the card that produced the link, including a material reached through a
+system's composition). `SortCardRefsGrouped` orders them for printing: `page`
+→ `sto` → `techlist` → `uzly` → `cert`; inside a group systems come before
+materials — except `cert`, where materials come first. `GroupCardRefsByGroup`
+splits the sorted list into `CardRefGroup{group, title, refs}`. Both the `links`
+node and the `{{ссылки}}` layout marker print one numbered list per group, each
+with its own `numId` (numbering restarts at 1). The visible item text is the
+label; the URL lives only in the relationship. Old caches without `group`/`owner`
+are classified on the fly (`effectiveGroup`/`effectiveOwner`) and print
+correctly, but `LinkedRefs` (material links) only appear after re-reading the
+Knowledge Base.
+
 ## Предложения
 
 `GET /offers` — видимость: admin — все, остальные — свои.
