@@ -31,8 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.12**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `9725b92` (plugin part +
-`offers-service`), `main` `9937aaa` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `b07beb5` (plugin part +
+`offers-service`), `main` `64ad9bd` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.12: combat buttons re-open the sheet after a bot restart
 (`ensureCombat`), instead of answering «листок не открыт». Previous release —
