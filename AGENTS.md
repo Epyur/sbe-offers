@@ -31,8 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.9**, released 2026-11-11: deployed, self-hosted,
-registry updated. Code commits: `backend` `829d2c1` (plugin part +
-`offers-service`), `main` `e9650a2` (plugin part byte-identical across branches;
+registry updated. Code commits: `backend` `6134cdb` (plugin part +
+`offers-service`), `main` `1c22c47` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
 last commit that touched code). 0.9.9: the combat sheet has NO form — content is always the product
 list plus the comparison; the layout is printed with a single `{{сравнение}}`
