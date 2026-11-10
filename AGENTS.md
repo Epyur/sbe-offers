@@ -30,13 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.7**, released 2026-11-11: deployed, self-hosted,
+Current version = **0.9.8**, released 2026-11-11: deployed, self-hosted,
 registry updated. Code commits: `backend` `bc553da` (plugin part +
 `offers-service`), `main` `abb3bcf` (plugin part byte-identical across branches;
 `offers-service/` lives only on `backend`; `check_docs_state.mjs` looks at the
-last commit that touched code). 0.9.7: competitor card titles come from the
-first real H1 (the first heading is a disclaimer), the indexing journal is
-excluded from side picking, and the bot's picker keeps marks while paging.
+last commit that touched code). 0.9.8: the «Добавить выбранные» button no longer vanishes in the
+"all found" mode (it used to need `picked`, which that mode clears), and the bot
+confirms what it is adding. Previous release — 0.9.7: competitor titles from the
+first real H1, the indexing journal excluded, marks kept while paging.
 Previous release — 0.9.6 (2026-11-10): competitors from the `competitor` tag
 plus the KB folder, the bot's side picker as a numbered, paged, multi-select
 list with «выбрать все найденные».
@@ -541,6 +542,15 @@ measurements) are in the archive.
   («Журнал материалов конкурентов», tag `journal`) must be filtered out
   (`isCompetitorJournal`): it lives in the folder root and would otherwise be
   the first row of «Все продукты».
+- **A button gated on `picked` disappears exactly when "all found" is chosen**
+  (2026-11-11, live complaint «выбрал все — конкуренты не добавились»). The
+  "all found" mode is a flag (`allPicked`) and it CLEARS `picked`, so any
+  control conditioned on `picked.size > 0` vanishes at that moment: the user
+  could select everything and had no way to add it. Condition such controls on
+  `allPicked || picked.size > 0` and count `allPicked ? total : picked.size`.
+  Regression test: «в режиме „всё найдено“ кнопка „Добавить“ остаётся, даже
+  если номера не отмечены».
+
 - **A Telegram button's keyboard is per message, and returning to a picker page
   must rebuild the marks from state, not from the server response.** 0.9.6
   built an empty picker on «▼ Все продукты», so a mark made a second earlier
