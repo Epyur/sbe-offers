@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -269,7 +270,7 @@ func (s *Server) handleBotCombatAnalogues(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]any{"cards": []any{}, "error": err.Error()})
 		return
 	}
-	found := findAnalogues(source, competitors, combatAnalogLimit)
+	found := s.findAnaloguesSmart(r.Context(), source, competitors, combatAnalogLimit)
 	items := combatItems(found)
 	log.Printf("боевой листок: аналогов-конкурентов для «%s» — %d", source.Title, len(items))
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -299,6 +300,13 @@ func (s *Server) analogSourceCard(r *http.Request, noteID int64) (SystemCard, bo
 	}
 	return SystemCard{}, false
 }
+
+// analogLLMTimeout — сколько ждать модель в подборе аналогов.
+//
+// Подбор вспомогательный: менеджер ждёт список, а не документ. Двадцать секунд
+// — с запасом на холодный старт модели и заметно меньше минуты, после которой
+// человек решит, что «бот завис». Не ответила — работает класс-подбор.
+const analogLLMTimeout = 20 * time.Second
 
 // combatAnalogLimit — сколько аналогов подсказывать. Три: больше — это уже
 // список, и менеджер снова выбирает из него руками.
