@@ -325,7 +325,13 @@ export async function routeText(
 export function parseCallbackData(data: string): { prefix: string; id: number } | null {
   const colon = data.indexOf(':');
   if (colon < 0) return null;
-  const id = Number(data.slice(colon + 1));
+  const rest = data.slice(colon + 1);
+  // `cban:all` — не число, а слово (2026-11-11, живая ошибка: кнопка «Добавить
+  // все найденные» не работала вовсе). `Number('all')` даёт NaN, и разбор
+  // отбрасывал нажатие молча — снаружи это «нажал, ничего не произошло».
+  // Слово-ключ передаём как id = 0: ноль не бывает настоящим номером заметки.
+  if (rest === 'all') return { prefix: data.slice(0, colon), id: 0 };
+  const id = Number(rest);
   if (!Number.isFinite(id)) return null;
   return { prefix: data.slice(0, colon), id };
 }

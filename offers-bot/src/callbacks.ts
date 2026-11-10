@@ -1273,29 +1273,46 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
   }
 }
 
-/** Выбор аналога: `cban:<noteId>`. Аналог — НАШ продукт. */
+/**
+ * Выбор аналога: `cban:<noteId>`, а `cban:all` — добавить все найденные.
+ *
+ * Аналоги — продукты КОНКУРЕНТОВ: наше место занято продуктом, от которого шёл
+ * подбор. «Все» добавлено по просьбе пользователя (2026-11-11): сравнение с
+ * пачкой аналогов не должно требовать нажатия на каждый номер.
+ */
 export async function onCombatAnalogPick(ctx: CallbackCtx, noteId: number): Promise<void> {
-  const combat = ctx.session.combat;
-  if (!combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
-  const card = (ctx.foundAnalogs ?? []).find((c) => c.noteId === noteId);
-  if (!card) {
-    // Список мог смениться — перечитываем по номеру из кеша бота.
-    await ctx.deps.send(ctx.chatId, 'Список устарел — нажмите «🔍 Подобрать аналоги» ещё раз.');
+  const analogues = ctx.foundAnalogs ?? [];
+  // id 0 — кнопка «Добавить все найденные» (callback_data «cban:all»).
+  const chosen = noteId === 0 ? analogues : analogues.filter((c) => c.noteId === noteId);
+  if (chosen.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'Список устарел — нажмите «🔍 Найти аналоги и сравнить» ещё раз.');
     return;
+  }
+  if (chosen.length > 1) {
+    await ctx.deps.send(ctx.chatId, `Добавляю в листок: ${chosen.length}…`).catch(() => {});
   }
   try {
-    // Подобранный аналог — продукт КОНКУРЕНТА: наше место занято продуктом,
-    // от которого шёл подбор.
-    const updated = await api.addCombatSide(combat.sheetId, ctx.chatId, 'competitor', {
-      noteId: card.noteId,
-      title: card.title,
-    });
-    apply(ctx, { ...ctx.session, combat: { ...combat, picking: undefined } });
-    await showCombatSheet(ctx, updated, combatSideAddedMessage('competitor', card.title));
-  } catch (e) {
+    let updated: api.CombatSheet | null = null;
+    for (const card of chosen) {
+      updated = await api.addCombatSide(sheet.id, ctx.chatId, 'competitor', {
+        noteId: card.noteId,
+        title: card.title,
+      });
+    }
+    ctx.rememberAnalogs?.([]);
+    apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number, picking: undefined } });
+    if (updated) {
+      const summary = chosen.length === 1
+        ? chosen[0].title
+        : `${chosen.length} конкурентов из подобранных`;
+      await showCombatSheet(ctx, updated, combatSideAddedMessage('competitor', summary));
+    }
+  } catch (e: unknown) {
     await ctx.deps.send(ctx.chatId, `Не удалось добавить: ${(e as Error).message}`);
   }
 }

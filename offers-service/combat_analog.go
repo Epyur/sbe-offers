@@ -26,6 +26,21 @@ type analogCandidate struct {
 	score int
 }
 
+// analogWeakWords — слова-признаки, которые класс продукта не задают.
+//
+// «Кровельная шайба» и «кровельная мембрана» — не аналоги: общий у них только
+// признак применения. Живая жалоба 2026-11-11: к ПВХ-мембране подбирались шайба
+// и активатор, а настоящие аналоги (PLASTFOIL, ТЕХНОНИКОЛЬ) не попадали вовсе —
+// общие слова описания («кровельная», «материала») давали им вес, а класс
+// продукта никто не сравнивал.
+var analogWeakWords = map[string]bool{
+	"кровель": true, "кровл": true, "кровля": true, "фасадн": true, "фасад": true,
+	"стенов": true, "стена": true, "стены": true, "плоск": true, "плоская": true,
+	"эксплу": true, "наружн": true, "внутрен": true, "примен": true,
+	"высокок": true, "высок": true, "специа": true, "станд": true,
+	"специаль": true, "современ": true, "различ": true, "систем": true,
+}
+
 // analogStopWords — общие слова, которые есть почти в любом описании.
 var analogStopWords = map[string]bool{
 	"для": true, "или": true, "как": true, "что": true, "при": true, "это": true,
@@ -34,18 +49,18 @@ var analogStopWords = map[string]bool{
 	"являе": true, "испол": true, "приме": true, "материал": true,
 	"материалы": true, "продукт": true, "продукты": true,
 	"система": true, "системы": true, "данные": true, "может": true,
-	"могут": true, "только": true, "благодар": true,
-	"обеспеч": true, "позволя": true, "пример": true, "техничес": true,
-	"различн": true, "различных": true, "разного": true, "широко": true,
+	"могут": true, "только": true, "благодар": true, "обеспеч": true,
+	"позволя": true, "пример": true, "техничес": true, "различн": true,
+	"различных": true, "разного": true, "широко": true, "основе": true,
+	"основа": true, "основ": true, "поверхн": true, "возможн": true,
+	"область": true, "применения": true, "имеет": true, "имеют": true,
 }
 
-// analogWords разбивает текст на значимые слова.
+// analogWords разбивает текст на значимые слова-основы.
 //
-// Кириллица к нижнему регистру, «ё» к «е»: менеджер и карточки пишут по-разному.
-// Слова короче четырёх букв не нужны — они совпадут с половиной каталога.
-// Совсем длинные слова режем до основы: в русском окончания меняются, а
-// «мембран» и «мембранА» — одно слово. Режем осторожно (до 8 букв), чтобы не
-// склеить разные корни.
+// Кириллица к нижнему регистру, «ё» к «е». Слова короче четырёх букв не нужны —
+// они совпадут с половиной каталога. Длинные режутся до основы: «плиты»/«плита»
+// и «мембраны»/«мембрана» — одно слово.
 func analogWords(text string) []string {
 	var out []string
 	var sb strings.Builder
@@ -70,28 +85,94 @@ func analogWords(text string) []string {
 	return out
 }
 
-// analogStem — основа слова: первая часть длинного слова.
+// analogStem — основа слова.
 //
-// Простейшая, без словаря: «теплоизоляционные» и «теплоизоляция» дают
-// «теплоизо», «плиты» и «плита» — «плиты». Этого достаточно, чтобы совпал класс
-// продукта, и не настолько много, чтобы склеить разные слова.
+// Короткие слова теряют частое окончание («плиты» → «плит»), длинные режутся до
+// семи букв («теплоизоляция» и «теплоизоляционные» → «теплоиз»). Словаря нет
+// намеренно: он разошёлся бы с живыми названиями карточек, а грубая основа
+// здесь и нужна — сравнить класс продукта.
 func analogStem(w string) string {
 	const stemLen = 7
 	runes := []rune(w)
 	if len(runes) <= 8 {
-		// Короткие слова оставляем целиком, но снимаем частые окончания:
-		// «плиты»/«плита» — это одно и то же.
-		return strings.TrimRight(w, "аыиоеяю")
+		stem := strings.TrimRight(string(runes), "аыиоеяю")
+		if len([]rune(stem)) < 4 {
+			return string(runes)
+		}
+		return stem
 	}
 	return string(runes[:stemLen])
 }
 
+// analogClasses — слова, которые задают КЛАСС продукта: по ним и сравниваются
+// карточки. Это не словарь продуктов, а короткий список «что это за товар».
+//
+// Список нужен потому, что названия карточек свободные: «ПВХ мембрана
+// PLASTFOIL CLASSIC» и «Гидроизоляционная ПВХ-мембрана ECOBASE V-SL» — один
+// класс, хотя общих слов у них почти нет.
+//
+// Порядок важен: первое найденное слово решает класс. Поэтому «активатор» и
+// «очиститель» стоят ПЕРЕД «мембран» — у них в названии тоже встречается
+// «мембран» («Активатор для ПВХ мембран»), а класс у них другой.
+var analogClasses = []string{
+	"активатор", "очистит", "праймер", "грунт", "клей", "гермет", "раствор",
+	"анкер", "дюбел", "саморез", "шайб", "воронк", "аэратор", "флюгар",
+	"мембран", "геомембр", "пленк", "пароиз", "гидроиз", "теплоиз",
+	"утеплит", "изоляц", "плит", "руберо", "битум", "профлист", "профилир",
+	"сайдинг", "сэндвич", "панел", "профиль", "профил", "штукатур", "краск",
+	"сетк", "геотекс", "дренаж", "труб", "уголок",
+}
+
+// analogWeakClasses — «класс», который на деле ничего не говорит о товаре.
+// «Крепёж» есть и у шайбы, и у анкера, и у самореза: по нему аналоги не
+// подбираются, иначе шайба окажется аналогом мембраны.
+var analogWeakClasses = map[string]bool{
+	"креп": true, "крепеж": true, "лист": true, "плита": true,
+}
+
+// analogClassOf — класс продукта по НАЗВАНИЮ (описание — запасной путь).
+//
+// Возвращает первое найденное классовое слово-основу; пусто — класс не
+// распознан. Название важнее описания: в описании слово класса может стоять в
+// общем перечислении («кровельная система с мембраной и крепежом»).
+func analogClassOf(title, description string) string {
+	if class := analogClassIn(title); class != "" {
+		return class
+	}
+	return analogClassIn(description)
+}
+
+// analogClassIn — первое классовое слово в тексте.
+func analogClassIn(text string) string {
+	words := analogWords(text)
+	for _, class := range analogClasses {
+		if analogWeakClasses[class] {
+			continue
+		}
+		prefix := class
+		if len([]rune(prefix)) > 5 {
+			prefix = string([]rune(prefix)[:5])
+		}
+		for _, w := range words {
+			// Слово-основа тоже режется до семи букв — сравниваем по первым
+			// пяти: «мембран» и «мембрана» сходятся, «мембрана» и «крепеж» — нет.
+			wp := w
+			if len([]rune(wp)) > 5 {
+				wp = string([]rune(wp)[:5])
+			}
+			if wp == prefix {
+				return class
+			}
+		}
+	}
+	return ""
+}
+
 // analogScore считает вес совпадения.
 //
-// Класс продукта определяется НАЗВАНИЕМ: если совпало слово из названия — это
-// уже аналог (вес 3). Совпадение только в описании даёт вес 1 и само по себе
-// аналогом не делает: описания длинные, и в них встречается всё подряд.
-func analogScore(words []string, title, description string) (score int, classHit bool) {
+// Класс продукта — обязательное условие (см. findAnalogues). Вес добавляет
+// точность: совпадение значимых слов названия (3) и описания (1).
+func analogScore(words []string, title, description string) int {
 	titleWords := map[string]bool{}
 	for _, w := range analogWords(title) {
 		titleWords[w] = true
@@ -100,32 +181,34 @@ func analogScore(words []string, title, description string) (score int, classHit
 	for _, w := range analogWords(description) {
 		descWords[w] = true
 	}
+	score := 0
 	for _, w := range words {
+		if analogWeakWords[w] {
+			continue
+		}
 		if titleWords[w] {
 			score += 3
-			classHit = true
 			continue
 		}
 		if descWords[w] {
 			score++
 		}
 	}
-	return score, classHit
+	return score
 }
 
 // findAnalogues подбирает карточки БЗ, похожие на заданную.
 //
-// `source` — продукт, к которому ищем аналоги (наш продукт, когда подбираем
-// конкурентов). `catalog` — из какого набора выбирать.
+// Аналог — карточка ТОГО ЖЕ КЛАССА продукта (мембрана к мембране, плита к
+// плите). Раньше сравнивались просто слова, и к ПВХ-мембране подбирались шайба
+// и активатор, а PLASTFOIL не попадал вовсе.
 //
-// Правило отбора жёсткое: аналогом считается только карточка, у которой
-// совпало слово из НАЗВАНИЯ источника (classHit). Иначе к «PIR-плите»
-// попадал «МОСТОФЛЕКС» — у них общее лишь слово «применения» в описании.
-//
-// Порядок — по весу, при равенстве — по алфавиту: ответ не должен «прыгать»
-// между запусками.
+// Порядок — по весу (совпадение названия важнее описания), при равенстве — по
+// алфавиту: ответ не должен «прыгать» между запусками.
 func findAnalogues(source SystemCard, catalog []SystemCard, limit int) []SystemCard {
-	words := analogWords(source.Title + " " + source.Description)
+	sourceText := source.Title + " " + source.Description
+	words := analogWords(sourceText)
+	sourceClass := analogClassOf(source.Title, source.Description)
 	if len(words) == 0 {
 		return nil
 	}
@@ -134,11 +217,15 @@ func findAnalogues(source SystemCard, catalog []SystemCard, limit int) []SystemC
 		if card.NoteID == source.NoteID {
 			continue
 		}
-		score, classHit := analogScore(words, card.Title,
-			card.Description+" "+strings.Join(card.Composition, " "))
-		if !classHit || score <= 0 {
+		cardText := card.Description + " " + strings.Join(card.Composition, " ")
+		class := analogClassOf(card.Title, cardText)
+		// Класс обязателен и должен совпасть. Нераспознанный класс у источника —
+		// повод не подбирать вовсе: подставлять «похожее по словам» хуже, чем
+		// честно сказать, что аналогов нет.
+		if sourceClass == "" || class != sourceClass {
 			continue
 		}
+		score := analogScore(words, card.Title, cardText)
 		candidates = append(candidates, analogCandidate{card: card, score: score})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {

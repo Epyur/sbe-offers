@@ -47,6 +47,28 @@ func TestFindAnaloguesRequiresTitleClassHit(t *testing.T) {
 	}
 }
 
+// TestFindAnaloguesIgnoresApplicationWord — 2026-11-11, живая жалоба: к
+// ПВХ-мембране подбирались «ШАЙБА КРОВЕЛЬНАЯ» и «Активатор для ПВХ мембран»:
+// совпало только слово «кровельная» — это признак применения, а не класс.
+func TestFindAnaloguesIgnoresApplicationWord(t *testing.T) {
+	our := SystemCard{
+		NoteID:      7547,
+		Title:       "Кровельная ПВХ-мембрана LOGICROOF V-RP",
+		Description: "Мембрана для плоской кровли.",
+	}
+	catalog := []SystemCard{
+		{NoteID: 6548, Title: "ШАЙБА КРОВЕЛЬНАЯ", Description: "Крепёж."},
+		{NoteID: 6546, Title: "Активатор для ПВХ мембран, 1 л", Description: "Очиститель."},
+		{NoteID: 6569, Title: "Кровельная ПВХ дорожка PLASTFOIL", Description: "Ходовой настил."},
+	}
+	got := findAnalogues(our, catalog, 3)
+	for _, card := range got {
+		if card.NoteID == 6548 || card.NoteID == 6546 {
+			t.Fatalf("признак применения не делает продукт аналогом: %+v", card)
+		}
+	}
+}
+
 func TestFindAnaloguesTitleMatchWins(t *testing.T) {
 	our := SystemCard{NoteID: 1, Title: "Плита теплоизоляционная"}
 	catalog := []SystemCard{
@@ -106,12 +128,29 @@ func TestAnalogWordsStems(t *testing.T) {
 
 func TestAnalogScoreSplitsTitleAndBody(t *testing.T) {
 	words := analogWords("Мембрана кровельная")
-	score, classHit := analogScore(words, "Мембрана ПВХ", "")
-	if !classHit || score < 3 {
-		t.Fatalf("совпадение названия должно давать класс: %d %v", score, classHit)
+	if score := analogScore(words, "Мембрана ПВХ", ""); score < 3 {
+		t.Fatalf("совпадение названия должно весить больше: %d", score)
 	}
-	score, classHit = analogScore(words, "Профиль", "Для мембрана кровельная")
-	if classHit || score != 2 {
-		t.Fatalf("совпадение только в описании не даёт класс: %d %v", score, classHit)
+	// Совпадение только в описании — меньше веса названия.
+	title := analogScore(words, "Мембрана ПВХ", "")
+	body := analogScore(words, "Профиль", "Мембрана кровельная")
+	if body >= title {
+		t.Fatalf("описание не должно весить не меньше названия: %d vs %d", body, title)
+	}
+}
+
+// TestAnalogClassOf — класс продукта определяется названием.
+func TestAnalogClassOf(t *testing.T) {
+	cases := []struct{ title, want string }{
+		{"Кровельная ПВХ-мембрана LOGICROOF V-RP", "мембран"},
+		{"ПВХ мембрана PLASTFOIL CLASSIC", "мембран"},
+		{"Гидроизоляционная ПВХ-мембрана ECOBASE V-SL", "мембран"},
+		{"ШАЙБА КРОВЕЛЬНАЯ", "шайб"},
+		{"Активатор для ПВХ мембран, 1 л", "активатор"},
+	}
+	for _, c := range cases {
+		if got := analogClassOf(c.title, ""); got != c.want {
+			t.Fatalf("%q: класс %q, ожидался %q", c.title, got, c.want)
+		}
 	}
 }

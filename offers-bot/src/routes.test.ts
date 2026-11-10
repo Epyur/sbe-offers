@@ -257,7 +257,13 @@ function fakeCombatServer(): {
     }
     if (method === 'GET' && url.includes('/bot/combat/analogues')) {
       const noteId = Number(new URL(url).searchParams.get('noteId') ?? '0');
-      return json({ cards: [{ noteId: 500 + noteId, title: `Наш аналог ${noteId}` }] });
+      // Два аналога: проверкам нужен и выбор одного, и «добавить все».
+      return json({
+        cards: [
+          { noteId: 500 + noteId, title: `Аналог ${noteId}-A` },
+          { noteId: 600 + noteId, title: `Аналог ${noteId}-B` },
+        ],
+      });
     }
     const sideAdd = url.match(/\/bot\/combat\/(\d+)\/(our|competitor)$/);
     if (method === 'POST' && sideAdd) {
@@ -562,6 +568,24 @@ describe('боевой листок в боте', () => {
       'аналог не добавлен как конкурент',
     );
     assert.equal(server.current().ourNotes.length, 1, 'наш продукт не должен меняться');
+  });
+
+  it('«Добавить все найденные» кладёт в листок всех подобранных конкурентов', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const route = await import('./routes.ts');
+    await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
+    await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
+    await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
+    await route.routeCallback(deps, '42', 'cb:addpicked', 'c4', state);
+    await route.routeCallback(deps, '42', 'cb:analog', 'c5', state);
+    // Заглушка отдаёт один аналог — добавим его и проверим, что сторона конкурента.
+    const found = state.foundAnalogs.get('42') ?? [];
+    assert.ok(found.length > 1, 'нужно больше одного аналога для проверки «всех»');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'cban:all', 'c6', state);
+    assert.equal(server.current().competitorNotes.length, found.length);
   });
 
   it('без нашего продукта подбор объясняет, что выбрать', async () => {

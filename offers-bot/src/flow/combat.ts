@@ -275,14 +275,23 @@ export function combatAnalogueMessage(
     };
   }
   const lines = analogues.map((a, i) => `${i + 1}. ${a.title}${a.sku ? ` (${a.sku})` : ''}`);
-  const rows = analogues.map((a, i) => [
-    { text: `${i + 1}`, callback_data: `cban:${a.noteId}` },
-  ]);
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  // Номера — по четыре в ряд, как в списке стороны: так они помещаются на экран.
+  const numbers = analogues.map((a, i) => ({
+    text: `${i + 1}`,
+    callback_data: `cban:${a.noteId}`,
+  }));
+  for (let i = 0; i < numbers.length; i += 4) rows.push(numbers.slice(i, i + 4));
+  // Всё найденное — одной кнопкой (2026-11-11, просьба пользователя): сравнение
+  // с пачкой аналогов заводится одним нажатием, а не тремя-четырьмя.
+  if (analogues.length > 1) {
+    rows.push([{ text: `➕ Добавить все найденные (${analogues.length})`, callback_data: 'cban:all' }]);
+  }
   rows.push([{ text: '< Назад', callback_data: 'cb:back' }]);
   return {
     text:
       `Конкуренты, похожие на наш «${ourTitle}»:\n\n${lines.join('\n')}\n\n` +
-      'Нажмите номер, чтобы добавить конкурента в листок.',
+      'Нажмите номер, чтобы добавить одного, или «Добавить все найденные».',
     keyboard: { inline_keyboard: rows },
   };
 }
