@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.13** — **in progress, NOT released** (plugin part and
-`offers-service` code live on `backend` `07d379b`; the deployed build, the
+`offers-service` code live on `backend` `07d379b` (docs tip `58551c3`); the deployed build, the
 self-hosted files and the registry are still **0.9.12**; `main` code HEAD is `64ad9bd`, docs tip `8245dda`).
 `check_docs_state.mjs` is expected to fail until the release is finished — do not
 "fix" it by editing docs.
