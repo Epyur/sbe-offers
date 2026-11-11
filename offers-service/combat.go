@@ -45,6 +45,10 @@ type CombatSheet struct {
 	Status          string            `json:"status"`
 	CreatedAt       string            `json:"createdAt"`
 	UpdatedAt       string            `json:"updatedAt"`
+	// DisplayName — подпись листка в списке: продукт, а не «Боевой листок»
+	// (2026-11-12). Поле вычисляет сервер у списка; в таблице его нет, потому
+	// что оно зависит от сторон и меняется вместе с ними.
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // validateCombatSheet проверяет боевой листок перед сохранением; пустая
@@ -388,7 +392,7 @@ func (s *Server) handleExportCombat(w http.ResponseWriter, r *http.Request) {
 			cards, _, err := s.loadCachedCompetitors(ctx)
 			return cards, err
 		})
-	data, err := renderCombatDocx(layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
+	data, err := s.renderCombatDocxCached(r.Context(), layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

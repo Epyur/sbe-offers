@@ -30,15 +30,53 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.13** — **released 2026-11-11**. `backend` code + docs
-HEAD `82919d8`; `main` HEAD `37f7592`; the service and the bot run 0.9.13, the
-self-hosted files and `registry.json` are 0.9.13 (hashes verified over https).
-`main` code HEAD before this release was `64ad9bd`.
-`check_docs_state.mjs` is expected to fail until the release is finished — do not
-"fix" it by editing docs.
+Current version = **0.9.14** — **not released**. `backend` holds this batch
+(combat-sheet fixes), `main` still carries 0.9.13. `check_docs_state.mjs` is
+expected to fail until the release is finished — do not "fix" it by editing docs.
 
-In 0.9.13 two things ship together (details and the list of what was broken on
-the way: `HANDOFF.md`, «Что изменилось в 0.9.13»):
+**0.9.14 (2026-11-12, IN PROGRESS).** Five live complaints about combat sheets;
+four of them had one root cause — search went by substring over a cache instead
+of by the Knowledge Base's own full-text search.
+
+1. **Search** — side picking and analogue picking now use `GET /api/kb/search`
+   through `KBClient.Search` (`kbsearch.go` contract in `kbclient.go`), the same
+   mechanism the web KB uses: Russian morphology, prefixes, title weighted above
+   body. Live proof: «пвх мембрана» + tag `competitor` returns PLASTFOIL,
+   Sikaplan and ФАХМАНН together; «мембрана кровельная» pulls manufacturers the
+   substring filter could never reach. The cache filter remains as a fallback
+   when the KB is unreachable.
+2. **Analogues** — `findAnaloguesForSheet` (KB search) with the cache chain as
+   fallback. Queries go **from general to specific** (`мембрана кровельная` →
+   `мембрана` → `ПВХ мембрана` → brand), because a brand query returns 0 rows on
+   the live base and a core query returns nine PLASTFOIL. Candidates are filtered
+   by `isAnalogCandidate` (no secondary goods: activators, cleaners, fasteners,
+   funnels, systems, foams; class must not contradict ours) and diversified by
+   brand (`diversifyByBrand`, ≤ 2 per brand), limit `combatAnalogLimit` = 8.
+   Live result for LOGICPIR VENT: `PIRRO®VentiDuct` **first**; for LOGICROOF
+   V-RP: FACHMANN ×2, PVC-RP/SR, PIRRO, PLASTFOIL, Sikaplan ×2, SikaProof.
+3. **Bot access** — the list shows **all** sheets (not only the caller's);
+   reading and exporting are open to every signed-in user, editing stays with
+   the author (`botCanEditCombat`). `botCombatWith` is the single gate.
+4. **Generation cache** — a rendered combat DOCX is stored in
+   `offers_combat_docx` under a hash of everything printed (`combatDocxHash`:
+   number, both sides in order, hint, layout bytes, `combatDocxVersion`). Second
+   «⬇ DOCX» on the same sheet returns the stored file; any change of substance
+   misses the hash and rebuilds.
+5. **Progress in the bot** — `runWithProgress`/`progressNote` write «⌛ …» first
+   and `editMessageText` replaces it with the result (or the error). The poller
+   no longer waits for a handler before the next `getUpdates`: updates queue on
+   one promise chain (`processUpdate`), which removes the 25-35 s long-poll tail
+   that made a button look dead for a minute.
+6. **List label** — `combatListLabel` (server) and `sheetLabel` (bot) show the
+   product, not «Боевой листок»: our product → first competitor → «пустой
+   листок № …». Foreign sheets are marked with the owner and get 👁 instead of ✏️.
+
+Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, `npm run build` OK,
+`check_bundle_strings` 0 missing, `check_marker_registry` OK, bot **146 passing**,
+OpenAPI 90/67, stand **361/0**. Live KB run of the analogue picker is recorded in
+`HANDOFF.md` («Что проверено на боевой базе»).
+
+Previous release — 0.9.13 (2026-11-11, released). Two things shipped together:
 
 1. **The layout-mode defect** — an offer was printed as an empty combat sheet.
    Each document has its own `.docx` master (`offers_form.layout_docx` per

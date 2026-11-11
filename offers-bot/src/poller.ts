@@ -9,7 +9,7 @@
 import { answerCallback, downloadDocument, getUpdates, type TelegramUpdate } from './telegram.ts';
 import { restoreSession, type ChatSession } from './session.ts';
 import { routeCallback, routeDocument, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
-import { sendMessage } from './telegram.ts';
+import { sendMessage, editMessage } from './telegram.ts';
 import * as api from './api.ts';
 
 /**
@@ -48,8 +48,12 @@ async function sessionRestored(
 function makeDeps(state: RouterState): BotDeps {
   return {
     now: () => Date.now(),
-    send: async (chatId: string, text: string, keyboard?: Record<string, unknown>) => {
-      await sendMessage(chatId, text, keyboard);
+    send: async (chatId: string, text: string, keyboard?: Record<string, unknown>) =>
+      sendMessage(chatId, text, keyboard),
+    // Долгие действия пишут «⌛ …» и заменяют ЕГО результатом (2026-11-12):
+    // человек видит, что бот работает, а не гадает минуту.
+    edit: async (chatId: string, messageId: number, text: string, keyboard?: Record<string, unknown>) => {
+      await editMessage(chatId, messageId, text, keyboard);
     },
     identity: (chatId: string) => api.identity(chatId),
     session: (chatId: string) => sessionRestored(state, chatId),
@@ -93,6 +97,8 @@ export async function runPoller(): Promise<void> {
   let lastSentError = '';
   const state = newRouterState();
   const deps = makeDeps(state);
+  /** Очередь обработки: обновления идут одним порядком, но не ждут сети. */
+  let chain = Promise.resolve();
   console.log('offers-bot: поллер запущен');
 
   // Отметка «бот жив» — САМО измерение, а не сообщение: её надо слать каждую
@@ -133,13 +139,36 @@ export async function runPoller(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 15000));
       continue;
     }
+    // Обработка НЕ ждёт следующего getUpdates (2026-11-12).
+    //
+    // Живая жалоба «нажал — непонятно, что происходит» имела вторую причину,
+    // кроме тишины: цикл обрабатывал сообщения по одной и ДО ОТВЕТА Telegram
+    // (`await handleUpdate`), а getUpdates — это long poll на 25-35 секунд.
+    // Пока бот собирал листок, следующее нажатие ждало окончания не только
+    // работы, но и чужого ожидания: до минуты. Telegram при этом повторял
+    // обновление (409 Conflict) — отсюда «Too Many Requests» и «не ответил за
+    // 35000мс» в журнале.
+    //
+    // Теперь обновления уходят в работу без ожидания, а следующий getUpdates
+    // начинается сразу. Очередь одна и последовательная (`processUpdate`), то
+    // есть порядок действий человека сохраняется; растягивается только ожидание
+    // сети, которое раньше съедало время обработки.
     for (const update of updates) {
       offset = update.update_id + 1;
-      try {
-        await handleUpdate(deps, state, update);
-      } catch (e) {
-        console.error('offers-bot: ошибка обработки сообщения:', (e as Error).message);
-      }
+      chain = chain.then(() => processUpdate(deps, state, update));
     }
+  }
+}
+
+/** Обработать одно обновление; ошибка не роняет поллер. */
+async function processUpdate(
+  deps: BotDeps,
+  state: RouterState,
+  update: TelegramUpdate,
+): Promise<void> {
+  try {
+    await handleUpdate(deps, state, update);
+  } catch (e) {
+    console.error('offers-bot: ошибка обработки сообщения:', (e as Error).message);
   }
 }

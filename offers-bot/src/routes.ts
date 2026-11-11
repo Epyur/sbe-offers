@@ -41,7 +41,9 @@ const DUPLICATE_WINDOW_MS = 10_000;
 export interface BotDeps {
   /** Текущее время в мс: подменяется стендом, чтобы проверять окна. */
   now(): number;
-  send(chatId: string, text: string, keyboard?: Record<string, unknown>): Promise<void>;
+  send(chatId: string, text: string, keyboard?: Record<string, unknown>): Promise<number | undefined>;
+  /** Заменить сообщение (2026-11-12): «⌛ …» → результат долгого действия. */
+  edit?(chatId: string, messageId: number, text: string, keyboard?: Record<string, unknown>): Promise<void>;
   /** Кто это: chat_id → email. Пустой email — чат не привязан. */
   identity(chatId: string): Promise<{ email: string }>;
   /** Текущая сессия чата с восстановлением из базы (см. sessionRestored). */
@@ -391,10 +393,12 @@ export async function routeCallback(
     return;
   }
 
-  const ctx: CallbackCtx = {
+const ctx: CallbackCtx = {
     deps,
     chatId,
     session,
+    // Долгие действия заменяют своё «⌛» результатом (2026-11-12).
+    edit: deps.edit,
     save: (next) => saveSession(state, chatId, next),
     pages: state.pages,
     foundSystems: state.foundSystems.get(chatId) ?? [],

@@ -75,6 +75,15 @@ export interface CallbackCtx {
   chatId: string;
   session: ChatSession;
   /**
+   * Заменить отправленное сообщение (2026-11-12).
+   *
+   * Нужно долгим действиям: сначала пишем «⌛ …», потом правим ЭТО сообщение
+   * результатом. Через `deps` этот приём не выразить — у него только `send`.
+   * Не задан (старый тест) — долгое действие просто отправит результат новым
+   * сообщением.
+   */
+  edit?: (chatId: string, messageId: number, text: string, keyboard?: Record<string, unknown>) => Promise<void>;
+  /**
    * Сохранить сессию и сделать её текущей в этом контексте.
    *
    * Раньше контекст держал снимок сессии и после сохранения продолжал читать
@@ -735,11 +744,12 @@ function combatSheetKeyboard(
   return COMBAT_KEYBOARD;
 }
 
-/** «📂 Мои боевые листки»: последние листки этого чата. */
+/** «📂 Боевые листки»: последние листки отдела (2026-11-12 — все, не только свои). */
 export async function handleMyCombat(deps: BotDeps, chatId: string): Promise<void> {
   try {
     const sheets = await api.listCombat(chatId);
-    const list = combatListMessage(sheets);
+    const who = await deps.identity(chatId).catch(() => ({ email: '' }));
+    const list = combatListMessage(sheets, who.email ?? '');
     if (!list) {
       await deps.send(chatId, 'Боевых листков пока нет. Начните кнопкой «⚔️ Боевой листок».', MAIN_KEYBOARD);
       return;
@@ -1082,13 +1092,16 @@ async function sendCombatDocx(ctx: CallbackCtx, sheet: api.CombatSheet): Promise
     await ctx.deps.send(ctx.chatId, combatNotEmptyMessage(), COMBAT_KEYBOARD);
     return;
   }
+  // Сборка листка зовёт модель на сравнение — это десятки секунд. Первый раз
+  // файл собирается долго, повторный берётся из кэша сервера и приходит сразу.
+  const noteId = await progressNote(ctx, '⌛ Собираю файл боевого листка — первый раз это до минуты…');
   try {
     const doc = await api.combatDocx(sheet.id, ctx.chatId);
     const bytes = Buffer.from(doc.docx_base64, 'base64');
     await sendDocument(ctx.chatId, doc.file_name, bytes, 'Боевой листок');
-    await ctx.deps.send(ctx.chatId, 'Файл готов. Можно добавить ещё стороны или нажать «✅ Готово».', COMBAT_KEYBOARD);
+    await updateProgress(ctx, noteId, 'Файл готов. Можно добавить ещё стороны или нажать «✅ Готово».');
   } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось собрать файл: ${(e as Error).message}`, COMBAT_KEYBOARD);
+    await updateProgress(ctx, noteId, `Не удалось собрать файл: ${(e as Error).message}`);
   }
 }
 
@@ -1244,6 +1257,45 @@ async function noCombatMessage(ctx: CallbackCtx): Promise<void> {
   );
 }
 
+// --- Прогресс долгих действий (2026-11-12) --------------------------------
+//
+// Живая жалоба: «после нажатия „Поиск аналогов“ непонятно, что происходит, хотя
+// ответ через минуту». Долгий обработчик пишет «⌛ …» и потом ЗАМЕНЯЕТ это
+// сообщение результатом — ожидание видно с первой секунды, а чат не копится
+// служебными строками.
+
+/** Написать «⌛ …» и вернуть id сообщения (undefined — не удалось отправить). */
+async function progressNote(ctx: CallbackCtx, text: string): Promise<number | undefined> {
+  try {
+    return await ctx.deps.send(ctx.chatId, text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Заменить «⌛» результатом.
+ *
+ * Правки нет (старый контекст в тестах или сообщение удалено) — отправляем
+ * результатом новое сообщение: человек должен увидеть, чем кончилось дело.
+ */
+async function updateProgress(
+  ctx: CallbackCtx,
+  noteId: number | undefined,
+  text: string,
+  keyboard?: Record<string, unknown>,
+): Promise<void> {
+  if (noteId !== undefined && ctx.edit) {
+    try {
+      await ctx.edit(ctx.chatId, noteId, text, keyboard);
+      return;
+    } catch {
+      // Не вышло заменить — скажем новым сообщением.
+    }
+  }
+  await ctx.deps.send(ctx.chatId, text, keyboard).catch(() => {});
+}
+
 export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
   // Листок восстанавливается и после перезапуска бота (2026-11-11).
   const sheet = await ensureCombat(ctx);
@@ -1261,15 +1313,18 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
     await ctx.deps.send(ctx.chatId, combatNeedOurProductMessage(), COMBAT_KEYBOARD);
     return;
   }
+  // «⌛» пишется ДО подбора: модель отвечает десятки секунд, и без него человек
+  // не понимает, нажалась ли кнопка (2026-11-12, живая жалоба).
+  const noteId = await progressNote(ctx, '⌛ Подбираю аналоги в Базе знаний — это может занять до минуты…');
   try {
     const res = await api.combatAnalogues(source.noteId);
     const cards = res.cards ?? [];
     ctx.foundAnalogs = cards;
     ctx.rememberAnalogs?.(cards);
     const message = combatAnalogueMessage(source.title, cards);
-    await ctx.deps.send(ctx.chatId, message.text, message.keyboard);
+    await updateProgress(ctx, noteId, message.text, message.keyboard);
   } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось подобрать аналоги: ${(e as Error).message}`);
+    await updateProgress(ctx, noteId, `Не удалось подобрать аналоги: ${(e as Error).message}`);
   }
 }
 

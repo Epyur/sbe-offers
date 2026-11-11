@@ -2186,6 +2186,28 @@ async function sectionCombat() {
     JSON.stringify((botCompSearch.json?.cards ?? []).map((c) => c.title)),
   );
 
+  // Поиск по Базе знаний (2026-11-12): полнотекстовый, как в веб-версии БЗ.
+  // Раньше поиск стороны шёл подстрокой по названию из кэша, и живая жалоба
+  // была честной: «ПВХ мембрана» не находило «Кровельная ПВХ мембрана
+  // FACHMANN …», а Sikaplan — вовсе.
+  const compSearch = await call('GET', '/competitors/search?q=кровля', { token: ownerToken });
+  ok(
+    'поиск конкурентов по Базе знаний отвечает 200',
+    compSearch.status === 200 && Array.isArray(compSearch.json?.items),
+    `статус ${compSearch.status}`,
+  );
+  ok(
+    'поиск конкурентов находит карточку по слову из названия',
+    (compSearch.json?.items ?? []).some((c) => /кровл/i.test(c.title ?? '')),
+    JSON.stringify((compSearch.json?.items ?? []).map((c) => c.title)),
+  );
+  const emptySearch = await call('GET', '/competitors/search?q=', { token: ownerToken });
+  ok(
+    'пустой поиск конкурентов — пусто и без ошибки',
+    emptySearch.status === 200 && (emptySearch.json?.items ?? []).length === 0,
+    JSON.stringify(emptySearch.json),
+  );
+
   // Наш продукт — первая система из кеша систем (карточка 101 из kb-stub).
   const systems = await call('GET', '/systems', { token: ownerToken });
   const ourSystem = (systems.json?.systems ?? [])[0];
@@ -2241,9 +2263,64 @@ async function sectionCombat() {
       !combatXml.includes('{{') && !combatXml.includes('}}'));
   }
 
+  // Второй раз тот же файл (2026-11-12): листок не пересобирается, файл берётся
+  // из кэша. Проверяем то, что видит человек: файл приходит тем же по размеру и
+  // в журнале появляется «файл из кэша». Живая жалоба: «хочу, чтобы не
+  // перегенерировался каждый раз (это долго)».
+  const exportAgain = await fetch(`${BASE}/api/offers/combat/${combatId}/export`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  const combatDocxAgain = Buffer.from(await exportAgain.arrayBuffer());
+  ok('повторная выгрузка листка отдаёт тот же файл',
+    exportAgain.status === 200 && combatDocxAgain.equals(combatDocx),
+    `размеры ${combatDocx.length} / ${combatDocxAgain.length}`);
+
+  // Смена уточнения — это другое содержание, кэш обязан обновиться.
+  //
+  // Правка идёт от СВЕЖЕГО листка (GET), а не от `saved`: ответ PUT на 0.9.13
+  // несёт состояние до правки смены уточнения, и подмешивание через спред
+  // теряло стороны. Ключ уточнения — `hint` (`combatHintField` на сервере).
+  const fresh = await call('GET', `/combat/${combatId}`, { token: ownerToken });
+  const hinted = await call('PUT', `/combat/${combatId}`, {
+    token: ownerToken,
+    body: { ...fresh.json, formValues: { hint: 'срок службы' } },
+  });
+  ok('уточнение сохранено',
+    hinted.status === 200 && hinted.json?.formValues?.hint === 'срок службы',
+    JSON.stringify(hinted.json?.formValues));
+  // Стороны листка правка уточнения не трогает — иначе кэш «обновится» просто
+  // потому, что изменился сам листок.
+  ok('правка уточнения не теряет стороны листка',
+    (hinted.json?.ourNotes ?? []).length === (fresh.json?.ourNotes ?? []).length &&
+      (hinted.json?.competitorNotes ?? []).length === (fresh.json?.competitorNotes ?? []).length,
+    JSON.stringify({ ours: hinted.json?.ourNotes, comps: hinted.json?.competitorNotes }));
+  const exportHinted = await fetch(`${BASE}/api/offers/combat/${combatId}/export`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  const combatDocxHinted = Buffer.from(await exportHinted.arrayBuffer());
+  ok('после смены уточнения файл собирается заново',
+    exportHinted.status === 200 && !combatDocxHinted.equals(combatDocx),
+    `размеры ${combatDocx.length} / ${combatDocxHinted.length}`);
+
   // Чужой editor не видит чужой листок.
   const foreignGet = await call('GET', `/combat/${combatId}`, { token: makeJwt('other@tn.ru') });
   ok('чужой боевой листок недоступен', foreignGet.status === 403, `статус ${foreignGet.status}`);
+
+  // Список и подпись в боте (2026-11-12): все листки видны всем, а подпись —
+  // продукт, а не «Боевой листок». Чат привязан к owner — берём его ссылку.
+  const botSheets = await call('GET', `/bot/combat?chat_id=${encodeURIComponent(linkedChatId)}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  const listed = (botSheets.json?.sheets ?? []).find((s) => s.id === combatId);
+  ok('листок виден в списке бота', Boolean(listed), `статус ${botSheets.status}`);
+  ok('подпись листка в списке — продукт, а не служебное слово',
+    Boolean(listed) && (listed.displayName ?? '') !== '' && (listed.displayName ?? '') !== 'Боевой листок',
+    JSON.stringify(listed?.displayName));
+  ok('подпись листка называет наш продукт',
+    Boolean(listed) && String(listed.displayName ?? '').length > 3,
+    JSON.stringify(listed?.displayName));
 
   const del = await call('DELETE', `/combat/${combatId}`, { token: ownerToken });
   ok('боевой листок удалён', del.status === 200);

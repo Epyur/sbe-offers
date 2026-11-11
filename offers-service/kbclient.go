@@ -446,6 +446,48 @@ func (c *KBClient) Note(ctx context.Context, id int64) (KBNote, error) {
 	return out, err
 }
 
+// Search — полнотекстовый поиск по Базе знаний, тот же, что у веб-версии.
+//
+// Зачем (2026-11-12, живая жалоба): поиск стороны боевого листка шёл
+// подстрокой по названию, и «ПВХ мембрана» не находило «Кровельная ПВХ мембрана
+// FACHMANN …» (другой порядок слов), а «PIR вент» — «PIRRO®VentiDuct» (в
+// названии нет ни «плита», ни «вентил»). kb-service с 001_init.sql держит
+// `search_vector` (русская морфология, название весит выше текста), и
+// `GET /api/kb/search` — ровно тот механизм, которым ищет веб-версия. Свой
+// поиск слов мы бы писали заново и хуже.
+//
+// `tagID` сужает выдачу: конкурентов находят по тегу `competitor`, иначе в
+// результаты лезут активаторы и воронки «для ПВХ мембран». 0 — без тега.
+//
+// Пустой запрос не уходит в сеть: kb-service на пустой `q` отвечает ошибкой, а
+// «пустой поиск» всё равно вернул бы весь каталог.
+func (c *KBClient) Search(ctx context.Context, q string, tagID int64, limit int) ([]KBNoteSummary, error) {
+	text := strings.TrimSpace(q)
+	if text == "" {
+		return []KBNoteSummary{}, nil
+	}
+	params := url.Values{}
+	params.Set("q", text)
+	params.Set("page", "1")
+	if limit > 0 {
+		params.Set("page_size", fmt.Sprintf("%d", limit))
+	}
+	if tagID > 0 {
+		params.Set("tag_id", fmt.Sprintf("%d", tagID))
+	}
+	var out struct {
+		Items []KBNoteSummary `json:"items"`
+		Notes []KBNoteSummary `json:"notes"`
+	}
+	if err := c.get(ctx, "/api/kb/search", params, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Items) > 0 {
+		return out.Items, nil
+	}
+	return out.Notes, nil
+}
+
 // Attachments — вложения карточки.
 func (c *KBClient) Attachments(ctx context.Context, noteID int64) ([]KBAttachment, error) {
 	var out struct {

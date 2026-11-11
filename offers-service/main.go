@@ -164,6 +164,7 @@ func main() {
 	// «материалы и системы конкурентов». Список — из кеша; перечитывает admin.
 	mux.HandleFunc("GET /api/offers/competitors", s.requirePerm("viewer")(s.handleListCompetitors))
 	mux.HandleFunc("POST /api/offers/competitors/refresh", s.requirePerm("admin")(s.handleRefreshCompetitors))
+	mux.HandleFunc("GET /api/offers/competitors/search", s.requirePerm("viewer")(s.handleSearchCompetitors))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
 	mux.HandleFunc("GET /api/offers/offers/{id}", s.requirePerm("viewer")(s.handleGetOffer))
@@ -522,6 +523,15 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_owner ON offers_combat_sheet (lower(owner_email))`,
+		// Готовый DOCX листка под хэшем сборки (2026-11-12): повторное «⬇ DOCX»
+		// не зовёт модель на сравнение. Хэш считает `combatDocxHash` — он и решает,
+		// свежий ли файл; не совпал — листок собирается заново.
+		`CREATE TABLE IF NOT EXISTS offers_combat_docx (
+			sheet_id   BIGINT PRIMARY KEY REFERENCES offers_combat_sheet(id) ON DELETE CASCADE,
+			hash       TEXT NOT NULL,
+			docx       BYTEA NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {

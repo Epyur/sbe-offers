@@ -533,6 +533,8 @@ export interface CombatSheet {
   status: string;
   createdAt: string;
   updatedAt: string;
+  /** Подпись для списка: продукт листка (2026-11-12, считает сервер). */
+  displayName?: string;
 }
 
 /**
@@ -550,8 +552,13 @@ export async function combatSystems(
   return call('GET', `/bot/combat/systems?${combatPageQuery(q, offset, limit)}`);
 }
 
-/** Продукты конкурентов для выбора стороны (тег `competitor` + всё поддерево
- *  папки), поиск по `q` и страница (`offset`/`limit`). */
+/**
+ * Продукты конкурентов для выбора стороны, поиск по `q` и страница.
+ *
+ * С 2026-11-12 `q` уходит в полнотекстовый поиск Базы знаний (тег
+ * `competitor`), а не в фильтр по кэшу: «ПВХ мембрана» находит и PLASTFOIL, и
+ * Sikaplan, и ФАХМАНН. Без запроса — прежний список из кеша (тег + папка).
+ */
 export async function combatCompetitors(q = '', offset = 0, limit = 8): Promise<{
   cards: CombatSystemItem[];
   folderFound?: boolean;

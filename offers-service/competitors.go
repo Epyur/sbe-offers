@@ -141,6 +141,57 @@ func CompetitorsFromKB(ctx context.Context, kb *KBClient) ([]SystemCard, bool, e
 	return attachImageKeys(ctx, kb, cards), found, nil
 }
 
+// handleSearchCompetitors — поиск конкурентов по Базе знаний (2026-11-12).
+//
+// GET /competitors/search?q=… — тот же полнотекстовый поиск, что у веб-версии
+// БЗ (`GET /api/kb/search`), с тегом `competitor`. Окно выбора стороны в
+// ПЛАГИНЕ раньше фильтровало только кэш по подстроке названия, и живая жалоба
+// была честной: «ПВХ мембрана» не находило «Кровельная ПВХ мембрана FACHMANN …»
+// (другой порядок слов), `Sikaplan®` не находилось вовсе, «PIR вент» —
+// `PIRRO®VentiDuct`.
+//
+// Ошибка Базы знаний возвращается полем `error` со статусом 200: окно выбора
+// покажет предупреждение, а выбранное в листке останется на месте.
+func (s *Server) handleSearchCompetitors(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
+		return
+	}
+	tagID, err := s.kb.TagID(r.Context(), competitorTagName)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "error": errorText(err),
+		})
+		return
+	}
+	notes, err := s.kb.Search(r.Context(), query, tagID, competitorSearchLimit)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "error": errorText(err),
+		})
+		return
+	}
+	items := make([]map[string]any, 0, len(notes))
+	seen := make(map[int64]bool, len(notes))
+	for _, summary := range notes {
+		if summary.ID <= 0 || seen[summary.ID] {
+			continue
+		}
+		seen[summary.ID] = true
+		items = append(items, map[string]any{
+			"id":    summary.ID,
+			"title": competitorSearchTitle(summary),
+			"path":  summary.Path,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+}
+
+// competitorSearchLimit — сколько карточек отдаёт поиск конкурентов плагину.
+// Окно выбора рисует кнопками найденное; сотни строк оно всё равно не покажет.
+const competitorSearchLimit = 100
+
 // competitorTaggedNotes — заметки с тегом `competitor`.
 //
 // Второе значение — «тег существует»: у kb-service отсутствие тега —

@@ -262,16 +262,45 @@ describe('боевой листок: прочее', () => {
   });
 
   it('список листков: пусто → null', () => {
-    assert.equal(combatListMessage([]), null);
+    assert.equal(combatListMessage([], 'm@tn.ru'), null);
   });
 
   it('список листков: кнопки открыть и файл', () => {
-    const res = combatListMessage([sheet({ id: 5, number: '005/2026' })]);
+    const res = combatListMessage([sheet({ id: 5, number: '005/2026' })], 'm@tn.ru');
     assert.ok(res);
     const kb = res!.keyboard as { inline_keyboard: Array<Array<{ callback_data: string }>> };
     assert.equal(kb.inline_keyboard[0][0].callback_data, 'cbe:5');
     assert.equal(kb.inline_keyboard[0][1].callback_data, 'cbx:5');
     assert.match(res!.text, /005\/2026/);
+  });
+
+  // 2026-11-12, просьба пользователя: все листки видны всем, подпись — продукт.
+  it('список листков: подпись — продукт, а не «Боевой листок»', () => {
+    const res = combatListMessage([
+      sheet({
+        id: 7,
+        number: '007/2026',
+        ourNotes: [{ noteId: 7359, title: 'Плиты теплоизоляционные LOGICPIR® VENT' }],
+      }),
+    ], 'm@tn.ru');
+    assert.ok(res);
+    assert.match(res!.text, /LOGICPIR/);
+    assert.ok(!/№ 007\/2026 — Боевой листок/.test(res!.text));
+  });
+
+  it('список листков: чужой помечен автором и без карандаша правки', () => {
+    const res = combatListMessage([
+      sheet({
+        id: 9,
+        number: '009/2026',
+        ownerEmail: 'petrov@tn.ru',
+        ourNotes: [{ noteId: 1, title: 'ПВХ мембрана PLASTFOIL® LAY' }],
+      }),
+    ], 'ivanov@tn.ru');
+    assert.ok(res);
+    assert.match(res!.text, /petrov@tn\.ru/);
+    const kb = res!.keyboard as { inline_keyboard: Array<Array<{ text: string }>> };
+    assert.match(kb.inline_keyboard[0][0].text, /👁/);
   });
 
   it('кнопки боевого листка ведут в свои обработчики', () => {

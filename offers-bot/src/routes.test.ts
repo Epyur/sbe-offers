@@ -56,6 +56,8 @@ function makeDeps(initial?: ChatSession): {
     now: () => 1_000_000,
     send: async (chatId: string, text: string, keyboard?: Record<string, unknown>) => {
       sent.push({ chatId, text, keyboard });
+      // Стенд: id сообщения есть, дальше «⌛» могут заменить результатом.
+      return sent.length;
     },
     identity: async () => ({ email: '' }),
     // Стенд ведёт себя как sessionRestored: в памяти нет — спрашиваем identity.

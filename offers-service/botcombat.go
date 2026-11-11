@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -246,11 +248,34 @@ func (s *Server) systemCardsForCombat(ctx context.Context, materials []Material)
 
 // handleBotCombatCompetitors — продукты конкурентов для выбора стороны.
 //
-// Источник — кеш конкурентов (competitors.go): тег `competitor` и всё поддерево
-// папки «материалы и системы конкурентов» (2026-11-10; раньше — только папка).
-// `q` — поиск по названию: продуктов конкурентов тоже сотни, и перебирать их
-// кнопками неудобно.
+// Источник зависит от того, есть ли запрос (2026-11-12):
+//
+//   - **с запросом** — полнотекстовый поиск Базы знаний (`GET /api/kb/search`)
+//     с тегом `competitor`, тот же механизм, что в веб-версии БЗ. Раньше поиск
+//     шёл подстрокой по названию из кеша, и живая жалоба была честной:
+//     «ПВХ мембрана» не находило «Кровельная ПВХ мембрана FACHMANN …» (другой
+//     порядок слов) и не находило `Sikaplan®` (в названии нет слова «мембрана»),
+//     а «PIR вент» — `PIRRO®VentiDuct`;
+//   - **без запроса** — кеш конкурентов (competitors.go): тег `competitor` и всё
+//     поддерево папки «материалы и системы конкурентов». Так «▼ Все продукты»
+//     показывает тот же список, что и раньше, и не зависит от поиска.
+//
+// Если поиск недоступен (БЗ выключена или ответила ошибкой), отвечаем именем
+// поля `error` и запасным путём по кешу — менеджер не остаётся без выбора.
 func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	offset, limit := parseCombatPage(r)
+	if strings.TrimSpace(query) != "" {
+		if items, err := s.searchCompetitors(r.Context(), query); err == nil {
+			writeCombatPage(w, paginateCombatItems(items, offset, limit), map[string]any{
+				"folderFound": true,
+				"searched":    true,
+			})
+			return
+		} else {
+			log.Printf("боевой листок: поиск конкурентов в Базе знаний не удался (%v) — ищем по кешу", err)
+		}
+	}
 	cards, found, err := s.loadCachedCompetitors(r.Context())
 	if err == nil && len(cards) == 0 && s.kb != nil && s.kb.configured() {
 		cards, found, err = s.refreshCompetitorsCache(r.Context(), "")
@@ -264,23 +289,83 @@ func (s *Server) handleBotCombatCompetitors(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	items := combatItems(cards)
-	query := r.URL.Query().Get("q")
 	filtered := filterCombatItems(items, query)
-	offset, limit := parseCombatPage(r)
 	writeCombatPage(w, paginateCombatItems(filtered, offset, limit), map[string]any{
 		"folderFound": found,
 	})
 }
 
-// handleBotListCombat — «Мои боевые листки»: только листки привязанного email.
+// searchCompetitors — поиск конкурентов по Базе знаний с тегом `competitor`.
+//
+// Ограничение выдачи — потолок страницы сервиса (`combatSearchLimit`): бот
+// листает СВОИМИ страницами по уже собранному списку, поэтому за один запрос
+// берём столько, сколько осмысленно показать поиском. Больше — через сужение
+// запроса, а не через бесконечное листание.
+func (s *Server) searchCompetitors(ctx context.Context, query string) ([]botSystemItem, error) {
+	if s.kb == nil || !s.kb.configured() {
+		return nil, errors.New("база знаний не настроена")
+	}
+	tagID, err := s.kb.TagID(ctx, competitorTagName)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := s.kb.Search(ctx, query, tagID, combatSearchLimit)
+	if err != nil {
+		return nil, err
+	}
+	// Журнал индексации помечен тегом `journal`, а не `competitor`, поэтому в
+	// выдачу не попадает. Заголовок карточки — из заметки: у конкурентов первая
+	// строка H1 — предупреждение, а не название продукта.
+	items := make([]botSystemItem, 0, len(notes))
+	seen := make(map[int64]bool, len(notes))
+	for _, summary := range notes {
+		if summary.ID <= 0 || seen[summary.ID] {
+			continue
+		}
+		seen[summary.ID] = true
+		items = append(items, botSystemItem{NoteID: summary.ID, Title: competitorSearchTitle(summary)})
+	}
+	return items, nil
+}
+
+// competitorSearchTitle — название карточки по строке списка.
+//
+// kb/search отдаёт заголовок заметки. У конкурентов заголовок — название
+// продукта (так их и заводит индексатор), поэтому обычно этого достаточно. Если
+// сервис вернул дисклеймер вместо названия, берём имя из пути заметки: он
+// всегда оканчивается именем файла, а имя файла у конкурентов — название.
+func competitorSearchTitle(summary KBNoteSummary) string {
+	title := strings.TrimSpace(summary.Title)
+	if title != "" && !isCompetitorDisclaimer(title) {
+		return title
+	}
+	if notePath := strings.TrimSpace(summary.Path); notePath != "" {
+		if base := strings.TrimSuffix(path.Base(notePath), ".md"); strings.TrimSpace(base) != "" {
+			return base
+		}
+	}
+	return title
+}
+
+// combatSearchLimit — сколько конкурентов берёт поиск Базы знаний за раз.
+// Полсотни — потолок страницы kb-service; больше одного запроса на показ списка
+// не нужно, а бот листает уже собранное.
+const combatSearchLimit = 50
+
+// handleBotListCombat — «Боевые листки» в боте: видны ВСЕ (2026-11-12).
+//
+// Раньше список был «мой»: только листки привязанного email. Просьба
+// пользователя — сделать листки доступными всем в боте: это внутренняя
+// справка отдела, и менеджеру нужно видеть, что уже сравнивали коллеги. Правка
+// при этом остаётся у автора (`botCanEditCombat`): чужой черновик не должен
+// испортиться от нажатия «добавить конкурента».
 func (s *Server) handleBotListCombat(w http.ResponseWriter, r *http.Request) {
-	email, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id"))
-	if !ok {
+	if _, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id")); !ok {
 		return
 	}
 	rows, err := s.pool.Query(r.Context(),
-		`SELECT id FROM offers_combat_sheet WHERE lower(owner_email) = lower($1)
-		 ORDER BY created_at DESC LIMIT 50`, email)
+		`SELECT id FROM offers_combat_sheet
+		 ORDER BY created_at DESC LIMIT 50`)
 	if err != nil {
 		dbError(w, "bot list combat", err)
 		return
@@ -303,13 +388,83 @@ func (s *Server) handleBotListCombat(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		// Подпись для списка считает сервер: в боте и в плагине она должна быть
+		// одна, а не собираться в двух местах.
+		if strings.TrimSpace(c.DisplayName) == "" {
+			c.DisplayName = combatListLabel(c)
+		}
 		sheets = append(sheets, c)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sheets": sheets})
 }
 
-// botCombatForChat — листок по id, только если он принадлежит chat_id.
+// combatListLabel — как листок называется в списке: по продукту, а не служебным
+// словом «Боевой листок» (2026-11-12, просьба пользователя).
+//
+// Порядок: наш продукт → первый конкурент → «пустой листок №». Наш продукт
+// первым, потому что листок защищает именно его; конкурент — потому что в
+// пустом сравнивать ещё нечего, а имя всё-таки нужно.
+func combatListLabel(sheet CombatSheet) string {
+	if title := firstNoteTitle(sheet.OurNotes); title != "" {
+		return title
+	}
+	if title := firstNoteTitle(sheet.CompetitorNotes); title != "" {
+		return title
+	}
+	if num := strings.TrimSpace(sheet.Number); num != "" {
+		return "пустой листок № " + num
+	}
+	return "пустой боевой листок"
+}
+
+// firstNoteTitle — название первой стороны списка.
+func firstNoteTitle(refs []CombatNoteRef) string {
+	for _, ref := range refs {
+		if title := strings.TrimSpace(ref.Title); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+// botCanReadCombat — читать и печатать листок в боте может любой вошедший:
+// доступ к боту даёт ключ (проверяется один раз в routes.ts).
+func botCanReadCombat(_ CombatSheet, _ string) bool {
+	return true
+}
+
+// botCanEditCombat — править листок может только его автор.
+//
+// Это не про секретность (читают все), а про сохранность: черновик коллеги
+// меняется его кнопками, и чужое нажатие «добавить конкурента» переписало бы
+// работу. Админ в боте роли не имеет — правило одно для всех.
+func botCanEditCombat(sheet CombatSheet, email string) bool {
+	return strings.EqualFold(strings.TrimSpace(sheet.OwnerEmail), strings.TrimSpace(email))
+}
+
+// botCombatForChat — листок по id для чтения в боте.
 func (s *Server) botCombatForChat(w http.ResponseWriter, r *http.Request, chatID string, id int64) (CombatSheet, bool) {
+	return s.botCombatWith(w, r, chatID, id, "нет доступа к боевому листку",
+		func(sheet CombatSheet, email string) bool { return botCanReadCombat(sheet, email) })
+}
+
+// botCombatForEdit — листок по id для ПРАВКИ: только автор.
+//
+// Отдельная проверка, а не флаг у `botCombatForChat`: читать можно всем, править
+// нельзя, и одна функция с двумя режимами рано или поздно перепутала бы их.
+func (s *Server) botCombatForEdit(w http.ResponseWriter, r *http.Request, chatID string, id int64) (CombatSheet, bool) {
+	return s.botCombatWith(w, r, chatID, id, "это боевой листок коллеги — править может только его автор",
+		func(sheet CombatSheet, email string) bool { return botCanEditCombat(sheet, email) })
+}
+
+// botCombatWith — общая часть обеих проверок: кто это, есть ли листок, и пускает
+// ли его данная проверка.
+//
+// Две функции выше отличаются ровно одной строкой — текстом отказа и самой
+// проверкой; остальное (привязка чата, чтение листка, 404) одно и то же, и
+// копия расходилась бы с оригиналом при первой же правке.
+func (s *Server) botCombatWith(w http.ResponseWriter, r *http.Request, chatID string, id int64,
+	denied string, allow func(CombatSheet, string) bool) (CombatSheet, bool) {
 	email, ok := s.emailForChat(w, r, chatID)
 	if !ok {
 		return CombatSheet{}, false
@@ -319,8 +474,8 @@ func (s *Server) botCombatForChat(w http.ResponseWriter, r *http.Request, chatID
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "боевой листок не найден"})
 		return CombatSheet{}, false
 	}
-	if !strings.EqualFold(sheet.OwnerEmail, email) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваш боевой листок"})
+	if !allow(sheet, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": denied})
 		return CombatSheet{}, false
 	}
 	return sheet, true
@@ -404,8 +559,10 @@ func (s *Server) handleBotCombatSide(w http.ResponseWriter, r *http.Request, sid
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "боевой листок не найден"})
 		return
 	}
-	if !strings.EqualFold(sheet.OwnerEmail, email) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваш боевой листок"})
+	if !botCanEditCombat(sheet, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": "это боевой листок коллеги — править может только его автор",
+		})
 		return
 	}
 	ref := CombatNoteRef{NoteID: req.NoteID, Title: strings.TrimSpace(req.Title)}
@@ -471,8 +628,10 @@ func (s *Server) botCombatHintHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "боевой листок не найден"})
 		return
 	}
-	if !strings.EqualFold(sheet.OwnerEmail, email) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваш боевой листок"})
+	if !botCanEditCombat(sheet, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": "это боевой листок коллеги — править может только его автор",
+		})
 		return
 	}
 	if sheet.FormValues == nil {
@@ -554,7 +713,7 @@ func (s *Server) handleBotExportCombat(w http.ResponseWriter, r *http.Request) {
 			cards, _, err := s.loadCachedCompetitors(ctx)
 			return cards, err
 		})
-	data, err := renderCombatDocx(layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
+	data, err := s.renderCombatDocxCached(r.Context(), layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return

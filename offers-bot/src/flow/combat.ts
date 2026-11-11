@@ -118,11 +118,18 @@ export function combatSheetMessage(sheet: CombatSheet, hint?: string): string {
  * Каталог нашего продукта — 1500+ записей, конкурентов — сотни: список
  * кнопками не поможет. Менеджер вводит название (или его часть, или код), бот
  * показывает совпадения. «▼ Все» — показать весь список, если искать неудобно.
+ *
+ * У конкурентов поиск полнотекстовый (2026-11-12): работает русская морфология
+ * и поиск по смыслу, поэтому «пвх мембрана» находит и PLASTFOIL, и Sikaplan, и
+ * ФАХМАНН, даже если эти слова стоят в названии в другом порядке.
  */
 export function combatAskQuery(side: 'our' | 'competitor'): string {
   const who = side === 'our' ? 'нашего продукта' : 'продукта конкурента';
+  const hint = side === 'competitor'
+    ? '\n\nИщу по смыслу: достаточно двух-трёх слов — «пвх мембрана», «pir вент».'
+    : '';
   return (
-    `Введите название ${who} — можно часть слова или код.\n\n` +
+    `Введите название ${who} — можно часть слова или код.${hint}\n\n` +
     'Я покажу совпадения списком: нажмите номер, чтобы отметить одну или несколько позиций, ' +
     'и «✓ Добавить выбранные». Чтобы увидеть весь список, нажмите «▼ Все».'
   );
@@ -307,20 +314,65 @@ export function combatNotEmptyMessage(): string {
   return 'В листке ещё нечего сравнивать. Добавьте хотя бы наш продукт и одного конкурента.';
 }
 
-/** Список моих листков: строки и кнопки `cbe:<id>` открыть и `cbx:<id>` файл. */
-export function combatListMessage(sheets: CombatSheet[]): {
+/**
+ * Список боевых листков: строки и кнопки (2026-11-12).
+ *
+ * Просьба пользователя: «все боевые листки нужно сделать доступными всем в боте
+ * и выводить название продукта, по которому сделан листок, а не просто „Боевой
+ * листок“».
+ *
+ * Подпись строки — продукт листка: сервер присылает `displayName` (наш продукт,
+ * иначе первый конкурент, иначе «пустой листок № …»). Кнопка «✏️» — только у
+ * своего листка: правит его автор, у чужого остаётся «📄 файл», чтобы справку
+ * коллеги можно было открыть и распечатать, не рискуя её испортить.
+ */
+export function combatListMessage(
+  sheets: CombatSheet[],
+  me: string,
+): {
   text: string;
   keyboard: Record<string, unknown>;
 } | null {
   if (sheets.length === 0) return null;
   const shown = sheets.slice(0, 15);
-  const lines = shown.map((s) => `№ ${s.number} — ${s.title}`);
-  const buttons = shown.map((s) => [
-    { text: `✏️ ${s.number}`, callback_data: `cbe:${s.id}` },
-    { text: `📄 файл`, callback_data: `cbx:${s.id}` },
-  ]);
+  const lines = shown.map((s) => {
+    const owner = s.ownerEmail && s.ownerEmail.toLowerCase() !== me.trim().toLowerCase()
+      ? ` — ${s.ownerEmail}`
+      : '';
+    return `№ ${s.number} — ${sheetLabel(s)}${owner}`;
+  });
+  const buttons = shown.map((s) => {
+    const row: Array<{ text: string; callback_data: string }> = [];
+    // Свой листок открывается на правку, чужой — на просмотр (кнопка «файл» и
+    // «открыть» у чужого ведут к одному и тому же экрану).
+    row.push({
+      text: s.ownerEmail && s.ownerEmail.toLowerCase() !== me.trim().toLowerCase()
+        ? `👁 ${s.number}`
+        : `✏️ ${s.number}`,
+      callback_data: `cbe:${s.id}`,
+    });
+    row.push({ text: '📄 файл', callback_data: `cbx:${s.id}` });
+    return row;
+  });
   return {
-    text: `Последние боевые листки:\n\n${lines.join('\n')}`,
+    text: `Боевые листки (последние ${shown.length}):\n\n${lines.join('\n')}`,
     keyboard: { inline_keyboard: buttons },
   };
+}
+
+/**
+ * Подпись листка в списке: продукт, по которому он сделан.
+ *
+ * `displayName` считает сервер (наш продукт → первый конкурент → «пустой листок
+ * № …»). Локальный запас — на случай ответа старого сервиса: туда уже развёрнут
+ * новый выпуск, но старый ответ бот не должен превращать в «Боевой листок».
+ */
+export function sheetLabel(sheet: CombatSheet): string {
+  const display = (sheet.displayName ?? '').trim();
+  if (display) return display;
+  const our = (sheet.ourNotes ?? []).find((n) => n.title.trim() !== '');
+  if (our) return our.title;
+  const comp = (sheet.competitorNotes ?? []).find((n) => n.title.trim() !== '');
+  if (comp) return comp.title;
+  return sheet.number ? `пустой листок № ${sheet.number}` : 'пустой боевой листок';
 }

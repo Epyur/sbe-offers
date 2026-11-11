@@ -241,13 +241,25 @@ async function openEditor(view: OffersView, container: HTMLElement, sheet: Comba
     },
   });
 
-  // Продукты конкурентов: всё поддерево папки Базы знаний (2026-11-09).
+  // Продукты конкурентов: всё поддерево папки Базы знаний (2026-11-09),
+  // а по запросу — полнотекстовый поиск Базы знаний, как в веб-версии
+  // (2026-11-12). Кэш нужен для «▼ Все» и для случая, когда поиск недоступен.
   const compCard = container.createDiv({ cls: 'tn-offers-card' });
   const compCandidates: CombatCandidate[] = [];
   renderSidePicker(view, compCard, {
     side: 'competitor',
     chosen: competitorNotes,
     candidates: () => compCandidates,
+    // Поиск по Базе знаний: сервер отвечает заметками с тегом `competitor`.
+    // Пустой ответ (или ошибка) — не тупик: показываем, что нашлось по кэшу.
+    search: async (query) => {
+      const res = await view.plugin.offersService.searchCompetitors(query);
+      if (res.error) {
+        new Notice(`Поиск по Базе знаний: ${res.error}`);
+        return null;
+      }
+      return res.items.map((item) => ({ noteId: item.id, title: item.title }));
+    },
     load: async () => {
       compCandidates.length = 0;
       const res = await view.plugin.offersService.listCompetitors();
@@ -347,6 +359,13 @@ function renderSidePicker(
     chosen: CombatNoteRef[];
     candidates: () => CombatCandidate[];
     load: () => Promise<void>;
+    /**
+     * Поиск стороны на сервере (2026-11-12). Есть у конкурентов: полнотекстовый
+     * поиск Базы знаний находит «Кровельная ПВХ мембрана FACHMANN …» по запросу
+     * «ПВХ мембрана» и `Sikaplan®` — по смыслу, чего фильтр по подстроке в
+     * кэше не умеет. `null` — поиск недоступен, остаётся фильтр по кэшу.
+     */
+    search?: (query: string) => Promise<CombatCandidate[] | null>;
   },
 ): void {
   const label = opts.side === 'our' ? 'Наш продукт' : 'Продукты конкурентов';
@@ -377,22 +396,24 @@ function renderSidePicker(
       ? 'Поиск продукта по названию или коду…'
       : 'Поиск продукта конкурента по названию…';
   const results = card.createDiv({ cls: 'tn-offers-row-list' });
+  // Найденное сервером для текущего запроса; `null` — сервер не искал.
+  let foundByServer: CombatCandidate[] | null = null;
+  let searchSeq = 0;
 
   const shown = (query: string): CombatCandidate[] => {
-    const found = filterCandidates(opts.candidates(), query);
+    const found = foundByServer ?? filterCandidates(opts.candidates(), query);
     // Без запроса показываем небольшой срез: весь каталог — это тысячи строк,
     // которые человек всё равно не прочитает.
     return query.trim() ? found : found.slice(0, 20);
   };
 
-  const redrawResults = (): void => {
+  const renderItems = (items: CombatCandidate[]): void => {
     results.empty();
-    const items = shown(search.value);
-    if (opts.candidates().length === 0) {
-      results.createDiv({ cls: 'tn-offers-muted', text: 'Список пуст — нечего выбирать.' });
-      return;
-    }
     if (items.length === 0) {
+      if (opts.candidates().length === 0 && foundByServer === null) {
+        results.createDiv({ cls: 'tn-offers-muted', text: 'Список пуст — нечего выбирать.' });
+        return;
+      }
       results.createDiv({ cls: 'tn-offers-muted', text: 'Ничего не нашлось. Уточните название.' });
       return;
     }
@@ -405,12 +426,52 @@ function renderSidePicker(
         addNoteRef(opts.chosen, { noteId: item.noteId, title: item.title });
         redrawChosen();
         search.value = '';
+        foundByServer = null;
         redrawResults();
       });
     }
   };
 
-  search.addEventListener('input', redrawResults);
+  const redrawResults = (): void => {
+    renderItems(shown(search.value));
+  };
+
+  // Поиск на сервере — с задержкой: человек набирает название, и запрос на
+  // каждую букву превратил бы набор в очередь к Базе знаний.
+  let timer: number | null = null;
+  const runServerSearch = (query: string): void => {
+    if (!opts.search || !query.trim()) {
+      foundByServer = null;
+      redrawResults();
+      return;
+    }
+    const seq = ++searchSeq;
+    void opts
+      .search(query)
+      .then((items) => {
+        // Ответ на старый запрос не должен затирать свежий.
+        if (seq !== searchSeq) return;
+        foundByServer = items;
+        redrawResults();
+      })
+      .catch((e: unknown) => {
+        if (seq !== searchSeq) return;
+        foundByServer = null;
+        results.empty();
+        results.createDiv({ cls: 'tn-offers-warn', text: `Поиск: ${errorMessage(e)}` });
+      });
+  };
+
+  search.addEventListener('input', () => {
+    const query = search.value;
+    if (timer !== null) window.clearTimeout(timer);
+    // До ответа сервера показываем локальные совпадения по кэшу — экран не
+    // пустует, пока идёт запрос.
+    foundByServer = null;
+    redrawResults();
+    if (!opts.search) return;
+    timer = window.setTimeout(() => runServerSearch(query), 350);
+  });
   redrawResults();
 
   void opts
