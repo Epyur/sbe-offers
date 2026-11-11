@@ -30,11 +30,17 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.15b** — released 2026-11-12 (backend-only fix plus the
-CUP news; `main` still carries the 0.9.14 code until the release is promoted).
-Code + docs HEAD: `backend` `0f945d0` (`0f945d0` before the docs touch-up),
-`main` `d418e3f` (0.9.14). Self-hosted files and `registry.json` are 0.9.15 once
-rolled out; build hashes of the tree are in `HANDOFF.md`.
+Current version = **0.9.15** — **released 2026-11-12** (backend-only fix plus
+the CUP news; the `b` suffix was removed when `main` caught up).
+`backend` `c2220b1`, `main` `fc680f3`.
+Deployed: `offers` container recreated
+2026-11-12 16:02 MSK with `SMTP_HOST=smtp.yandex.ru`, `SMTP_PORT=587`,
+`SMTP_USER/FROM=lpitn@yandex.ru`; health `ok`; live `POST
+/api/offers/bot/request-code` (service secret) returned `200 code_sent` and no
+new exim lines appeared — the message really went out through Yandex.
+Self-hosted `ecea0b7c…` / `f0711b80…` / `a32ac3df…` verified over https and in
+`/registry.json`; GitHub raw agrees with the self-host (checked with retries).
+Registry git copy `sbe-apstore-registry` `67ee1e3`.
 
 **History of 0.9.14** — released 2026-11-12: `backend` `e93d45e`, `main`
 `d418e3f`, self-hosted `4ff10217…` / `df5b0d7c…` / `a32ac3df…`, registry git
