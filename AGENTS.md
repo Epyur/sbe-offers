@@ -30,17 +30,39 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.15** — **released 2026-11-12** (backend-only fix plus
-the CUP news; the `b` suffix was removed when `main` caught up).
-`backend` `c2220b1`, `main` `fc680f3`.
-Deployed: `offers` container recreated
-2026-11-12 16:02 MSK with `SMTP_HOST=smtp.yandex.ru`, `SMTP_PORT=587`,
-`SMTP_USER/FROM=lpitn@yandex.ru`; health `ok`; live `POST
-/api/offers/bot/request-code` (service secret) returned `200 code_sent` and no
-new exim lines appeared — the message really went out through Yandex.
-Self-hosted `ecea0b7c…` / `f0711b80…` / `a32ac3df…` verified over https and in
-`/registry.json`; GitHub raw agrees with the self-host (checked with retries).
-Registry git copy `sbe-apstore-registry` `67ee1e3`.
+Current version = **0.9.16** — **released 2026-11-12**. `main` `492a161`
+(0.9.16 code, final build without the `b` suffix); `backend` carries the bot fix
+(`e192eaf`).
+Deployed: the **bot** was rebuilt and recreated 2026-11-12 16:38 MSK with the fix
+(`grep` on the server confirms `applyCodeRequested(session, result.email)` at
+`offers-bot/src/routes.ts:173`), poller running. `offers` runs the 0.9.15 SMTP
+transport since 16:02 MSK (`smtp.yandex.ru:587`, `SMTP_USER/FROM=lpitn@yandex.ru`,
+health `ok`; live `POST /api/offers/bot/request-code` returned `200 code_sent`
+with no new exim lines). Self-hosted `f910cae9…` / `f5cafcb1…` / `a32ac3df…`
+verified over https and in `/registry.json`; registry git copy
+`sbe-apstore-registry` `a928f33`.
+
+**0.9.16 (2026-11-12, bot-only + news).** Live complaint: the code arrives by
+mail, but entering it makes the bot **ask for the e-mail again**.
+
+**Root cause** — in `handleSignIn` (`offers-bot/src/routes.ts`) the
+`request_code` branch never saved the session: the line was
+`void applyCodeRequested;` — a **reference to the function instead of a call**.
+The step stayed `idle`, and the six digits typed next were parsed as an e-mail,
+which fails validation and re-prompts for the address. The compiler said nothing
+(a bare expression statement is legal), and the bot suite was green because the
+sign-in path had no test.
+
+1. After requesting a code the session is saved (`await_code` + e-mail).
+2. After verifying the code the session is saved as `authed` too — sign-in used
+   to rely on in-memory state only.
+3. Two tests over the whole sign-in path: the step becomes `await_code`, and the
+   code neither re-prompts for the address nor fails to reach `authed`.
+
+**History of 0.9.15** — released 2026-11-12 (server-only fix plus news);
+`backend` `c2220b1`, `main` `fc680f3`; self-hosted `ecea0b7c…` / `f0711b80…` /
+`a32ac3df…`; registry git copy `sbe-apstore-registry` `67ee1e3`. GitHub raw
+agreed with the self-host after one retry.
 
 **History of 0.9.14** — released 2026-11-12: `backend` `e93d45e`, `main`
 `d418e3f`, self-hosted `4ff10217…` / `df5b0d7c…` / `a32ac3df…`, registry git
@@ -648,6 +670,19 @@ measurements) are in the archive.
 
 ### Bot and rights
 
+- **`void someFunction;` is a REFERENCE, not a call — and the compiler says
+  nothing** (2026-11-12, live defect: after entering the code the bot asked for
+  the e-mail again). In `handleSignIn` the line `void applyCodeRequested;` was
+  meant to save the session but only named the function, so the step stayed
+  `idle` and the six digits were parsed as an e-mail. `tsc --noEmit` is happy
+  with it and the whole bot suite was green — the sign-in path had no test.
+  Fix: `await deps.save(chatId, applyCodeRequested(session, result.email))`,
+  plus two tests over the whole sign-in path (the step becomes `await_code`; the
+  code does not re-prompt and reaches `authed`). **Give every `void something;`
+  in this codebase the same look** — the correct discard form is `void fn()`.
+- **A session step that is not saved does not exist.** `state.sessions` is the
+  only place the sign-in step lives; `handleSignIn` must write it on every
+  transition. An in-memory `deps.session` returning an object is not persistence.
 - **Roles do not exist in the bot**: anyone signed in with a code builds offers.
   The plugin keeps `viewer < editor < admin < superadmin`; compare through
   `isAdminRole`/`canEditOffers`.
