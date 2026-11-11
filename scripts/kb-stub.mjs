@@ -197,8 +197,10 @@ const NOTES = [
       '- 1 Битумная мембрана конкурента',
     ].join('\n'),
     // Тегов нет намеренно: конкурент не должен попадать ни в «Системы», ни в
-    // «Контекст КП» — он живёт только в своей папке.
-    tags: [],
+    // «Контекст КП» — он живёт только в своей папке. Тег `competitor` (2026-11-12)
+    // — источник поиска сторон в боевом листке; в тегах `commercial_propose`
+    // его нет, поэтому в справочники конкурент по-прежнему не попадает.
+    tags: [{ id: 9, name: 'competitor' }],
   },
   {
     // Карточка конкурента В ПОДПАПКЕ (2026-11-09). Сервис обходит всё поддерево
@@ -219,7 +221,7 @@ const NOTES = [
       '## Описание системы',
       'Система теплоизоляции фундамента конкурирующего производителя.',
     ].join('\n'),
-    tags: [],
+    tags: [{ id: 9, name: 'competitor' }],
   },
 ];
 
@@ -261,12 +263,42 @@ http
 
     if (req.method === 'GET' && path === '/api/kb/tags') {
       return send(res, 200, {
-        tags: [{ id: 7, name: 'commercial_propose' }, { id: 8, name: 'material' }],
+        // `competitor` (2026-11-12): поиск сторон боевого листка идёт по тегу,
+        // и без него заглушка отвечала «нет тега» — стенд не проверял поиск.
+        // `journal` — служебная сводка: её отсев тоже часть контракта.
+        tags: [
+          { id: 7, name: 'commercial_propose' },
+          { id: 8, name: 'material' },
+          { id: 9, name: 'competitor' },
+          { id: 10, name: 'journal' },
+        ],
       });
     }
 
     if (req.method === 'GET' && path === '/api/kb/folders') {
       return send(res, 200, { folders: FOLDERS });
+    }
+
+    // Полнотекстовый поиск (2026-11-12): offers-service с этого выпуска ищет
+    // конкурентов им, а не фильтром по кэшу. Заглушка обязана отвечать так же,
+    // иначе «поиск не работает» на стенде значило бы «ручки нет в заглушке».
+    // Морфологию здесь не изображаем: ищем вхождение каждого слова в «текст»
+    // (название + путь), как делает живой поиск по смыслу в грубом приближении.
+    if (req.method === 'GET' && path === '/api/kb/search') {
+      const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+      const tagID = Number(url.searchParams.get('tag_id') ?? 0);
+      if (!q) return send(res, 422, { error: 'пустой поисковый запрос' });
+      const words = q.split(/\s+/).filter(Boolean);
+      const pool = tagID
+        ? NOTES.filter((n) => (n.tags ?? []).some((t) => t.id === tagID))
+        : NOTES;
+      const items = pool
+        .filter((n) => {
+          const hay = `${n.title} ${n.path}`.toLowerCase();
+          return words.every((w) => hay.includes(w.slice(0, Math.min(w.length, 5))));
+        })
+        .map(({ content_md, ...rest }) => rest);
+      return send(res, 200, { items, total: items.length, page: 1, size: 200 });
     }
 
     if (req.method === 'GET' && path === '/api/kb/notes') {

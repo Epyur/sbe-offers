@@ -18,6 +18,7 @@ import type {
   RefreshSystemCardsResponse,
   RichNode,
   Role,
+  SearchNotesResponse,
   SheetApplyRow,
   SheetPreview,
   SystemCardsResponse,
@@ -751,6 +752,19 @@ export class OffersService {
   /** Перечитать папку конкурентов из Базы знаний (admin). */
   async refreshCompetitors(): Promise<CompetitorsResponse> {
     return this.request<CompetitorsResponse>('POST', '/competitors/refresh');
+  }
+
+  /**
+   * Поиск продуктов конкурентов по Базе знаний (2026-11-12).
+   *
+   * Сервер ищет тем же полнотекстовым поиском, что и веб-версия БЗ
+   * (`/api/kb/search`, русская морфология, название весит выше текста), с тегом
+   * `competitor`. Раньше плагин фильтровал кэш по подстроке названия, и
+   * «ПВХ мембрана» не находило «Кровельная ПВХ мембрана FACHMANN …», а
+   * `Sikaplan®` — вовсе (в названии нет слова «мембрана»).
+   */
+  async searchCompetitors(query: string): Promise<SearchNotesResponse> {
+    return this.request<SearchNotesResponse>('GET', `/competitors/search?q=${encodeURIComponent(query)}`);
   }
   /** Настройки Telegram-бота: задан ли токен и чей это бот. */
   async getBotConfig(): Promise<BotConfigInfo> {
