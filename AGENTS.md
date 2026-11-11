@@ -30,17 +30,75 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.15** — **released 2026-11-12** (backend-only fix plus
-the CUP news; the `b` suffix was removed when `main` caught up).
-`backend` `c2220b1`, `main` `fc680f3`.
-Deployed: `offers` container recreated
-2026-11-12 16:02 MSK with `SMTP_HOST=smtp.yandex.ru`, `SMTP_PORT=587`,
-`SMTP_USER/FROM=lpitn@yandex.ru`; health `ok`; live `POST
-/api/offers/bot/request-code` (service secret) returned `200 code_sent` and no
-new exim lines appeared — the message really went out through Yandex.
-Self-hosted `ecea0b7c…` / `f0711b80…` / `a32ac3df…` verified over https and in
-`/registry.json`; GitHub raw agrees with the self-host (checked with retries).
-Registry git copy `sbe-apstore-registry` `67ee1e3`.
+Current version = **0.9.17** — **released 2026-11-12**. See the "0.9.17" entry
+below for commits, hashes and the self-hosted values.
+
+**0.9.17 (2026-11-12, plugin + service + bot + news).** Three live complaints,
+one root cause: picking a system or a material went through a dropdown or a
+substring filter instead of the Knowledge Base's own full-text search — and the
+bot never looked at all.
+
+1. **The plugin has no dropdowns for the catalogue any more.** `src/ui/picker.ts`
+   is the picker taken out of the combat view (one implementation instead of
+   two). In the offer editor a system is found by name and added the same way as
+   before (`addSystem`, texts written once); a material is found in the KB and
+   lands in the table as a position with its own unit, code, ЕКН and the «от»
+   price. The old `listCatalog` dropdown is gone — `offers_catalog` has not been
+   filled since 2026-10-31, so new materials were never reachable there.
+2. **New search endpoints** (`pickersearch.go`), the same `KBClient.Search` the
+   competitor picker uses: `GET /systems/search` (`commercial_propose` without
+   `material`), `GET /materials/search` (tag `material`), `GET /suggest` (both at
+   once, for the bot) and `GET /bot/suggest` (same, by service secret). A KB
+   failure answers 200 with `error`, and an empty list is always `[]`, never
+   `null`.
+3. **The bot understands a human phrase** (`flow/suggest.ts` +
+   `offerSuggestions` in `callbacks.ts`). Any text not claimed by copy, the
+   brief, `система …`, a stage branch or a manual line goes to the search:
+   «Гарант» (КП008) returns both «ТН-Кровля Гарант ПЛЮС» and «… RE30»,
+   «Кровля» (КП013) says «несколько системных решений (N)» and offers help.
+   A help request («какие есть системы кровли») is stripped of service words
+   before searching; finding nothing is not a dead end — the reply says what to
+   do. Numbers in buttons are indices into `RouterState.foundSuggest`, because
+   `callback_data` cannot hold a Cyrillic title.
+
+Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, `npm run build`
+OK, `check_bundle_strings` 0 missing, OpenAPI **94/94** match, bot **160
+passing**, stand **371/0** (new section «Поиск для окна выбора», 8 checks).
+`check_docs_state.mjs` is expected to fail until the release is finished.
+
+Previous version = **0.9.16** — released 2026-11-12. `main` `492a161`
+(0.9.16 code, final build without the `b` suffix); `backend` carries the bot fix
+(`e192eaf`).
+Deployed: the **bot** was rebuilt and recreated 2026-11-12 16:38 MSK with the fix
+(`grep` on the server confirms `applyCodeRequested(session, result.email)` at
+`offers-bot/src/routes.ts:173`), poller running. `offers` runs the 0.9.15 SMTP
+transport since 16:02 MSK (`smtp.yandex.ru:587`, `SMTP_USER/FROM=lpitn@yandex.ru`,
+health `ok`; live `POST /api/offers/bot/request-code` returned `200 code_sent`
+with no new exim lines). Self-hosted `f910cae9…` / `f5cafcb1…` / `a32ac3df…`
+verified over https and in `/registry.json`; registry git copy
+`sbe-apstore-registry` `a928f33`.
+
+**0.9.16 (2026-11-12, bot-only + news).** Live complaint: the code arrives by
+mail, but entering it makes the bot **ask for the e-mail again**.
+
+**Root cause** — in `handleSignIn` (`offers-bot/src/routes.ts`) the
+`request_code` branch never saved the session: the line was
+`void applyCodeRequested;` — a **reference to the function instead of a call**.
+The step stayed `idle`, and the six digits typed next were parsed as an e-mail,
+which fails validation and re-prompts for the address. The compiler said nothing
+(a bare expression statement is legal), and the bot suite was green because the
+sign-in path had no test.
+
+1. After requesting a code the session is saved (`await_code` + e-mail).
+2. After verifying the code the session is saved as `authed` too — sign-in used
+   to rely on in-memory state only.
+3. Two tests over the whole sign-in path: the step becomes `await_code`, and the
+   code neither re-prompts for the address nor fails to reach `authed`.
+
+**History of 0.9.15** — released 2026-11-12 (server-only fix plus news);
+`backend` `c2220b1`, `main` `fc680f3`; self-hosted `ecea0b7c…` / `f0711b80…` /
+`a32ac3df…`; registry git copy `sbe-apstore-registry` `67ee1e3`. GitHub raw
+agreed with the self-host after one retry.
 
 **History of 0.9.14** — released 2026-11-12: `backend` `e93d45e`, `main`
 `d418e3f`, self-hosted `4ff10217…` / `df5b0d7c…` / `a32ac3df…`, registry git
@@ -316,6 +374,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/types/settings.ts` | `OffersSettings { apiUrl, lastAnnouncedVersion }` |
 | `src/services/offers.service.ts` | HTTP to `/api/offers/*`, `OffersError`, 401 retry, `exportDocx`, `refreshSystems`, 300 s timeouts on long calls |
 | `src/ui/offers-view.ts` | facade: top bar + sidebar (grouped: КП / Боевой листок / Справочники / Администрирование) + content |
+| `src/ui/picker.ts` | the single product picker: name search + result buttons, taken from the combat view and reused by the offer editor (2026-11-12 removed the two dropdowns) |
 | `src/ui/offers-list.ts` | «🧾 КП»: list, card, composition editor, "Добавить систему", DOCX, link, header button «⚙️ Форма КП» |
 | `src/ui/combat-view.ts` | «⚔️ Боевой листок»: list of combat sheets, editor card (our systems + competitors from KB), form fields; header button «⚙️ Форма боевого листка» |
 | `src/ui/competitors-editor.ts` | «🏷️ Конкуренты» (admin): cached competitor cards from the KB folder, one «↻ Перечитать» button |
@@ -361,7 +420,8 @@ materials + systems, competitors = tag + whole folder subtree; name search and
 server-side paging `offset`/`limit` (`combatOurItems`, `filterCombatItems`,
 `paginateCombatItems`, `parseCombatPage`), create, add/remove a side, DOCX —
 reuses `combat.go`/`combat_docx.go`, owner is the chat's bound email),
-`kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
+`pickersearch.go` (KB search for the offer-editor pickers and the bot's
+`/suggest`/`/bot/suggest`, 2026-11-12), `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
 `docx.go` (render entry points, service fields, composition printing),
 `docx_numbering.go` (a fresh `numId` per system list), `docx_text.go` (prompt
@@ -381,7 +441,7 @@ Sub-packages: `model/` (domain types + `jsonrepair.go`, shared with `skills`);
 (routing + the single sign-in check), `src/callbacks.ts` (button handlers,
 including the combat sheet — 2026-11-09), `src/telegram.ts`
 (Bot API via SOCKS), `src/session.ts`, `src/attach.ts`, `src/flow/` (`build`,
-`brief`, `copy`, `writer`, `resume`, `combat`), `src/api.ts`, `Dockerfile`.
+`brief`, `copy`, `writer`, `resume`, `combat`, `suggest`), `src/api.ts`, `Dockerfile`.
 
 ## Settings (data.json)
 
@@ -416,12 +476,12 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app
 python scripts/check_layout_mode_defect.py http://127.0.0.1:18080
 ```
 
-Expected on 0.9.13: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
-`check_marker_registry` 24/24, `go test` green, OpenAPI 89/66, stand
-**351/0** (the layout-mode section is 12 of them).
+Expected on 0.9.17: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
+`check_marker_registry` OK, `go test` green, OpenAPI **94/94**, stand
+**371/0** (the picker-search section is 8 of them, the combat-access section 3).
 The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
-`node --test "src/**/*.test.ts"` **112 passing** (combat flow — search, folder
-subtree, multiple sides — covered by route tests against a faked service).
+`node --test "src/**/*.test.ts"` **160 passing** (combat flow, sign-in path and
+the suggestion texts are covered by route tests against a faked service).
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase
@@ -462,6 +522,45 @@ offers_context where mode='systems'"` and restart `offers-local-kb-stub`.
   older Russian entries are not translated retroactively.
 - Files are written as UTF-8 **without BOM**, with absolute paths.
 - **Run the `ub-mode` skill** at the start of a task and before a commit.
+- **Combat sheets are readable by EVERYONE signed in** (rule 2026-11-12, the
+  user's direct requirement: «у нас листки должны быть доступны все всем»).
+  A sheet is an internal reference for arguing with a customer, so a colleague
+  opens the ready comparison and prints it instead of rebuilding the same thing.
+  `canSeeCombat` returns `true` unconditionally and `handleListCombat` has no
+  owner filter. **Editing stays with the author** — `handleSaveCombat` and
+  `handleDeleteCombat` still check the owner (403 otherwise), and in the bot
+  `botCanEditCombat` is the gate. Do not re-close reading: the earlier
+  "admin sees all, others only their own" rule is superseded. Proven by the
+  stand: «боевой листок виден чужому сотруднику», «чужой не может править
+  боевой листок», «список боевых листков показывает чужие листки».
+- **Every release check MUST verify authorisation and bot function separation**
+  (rule 2026-11-12, user's direct requirement: «обязательно проверять:
+  1. авторизацию 2. чтобы не было смешения между функциями бота»). Both are
+  checked **before** the version bump and again on the deployed service, not
+  once at the end of the batch.
+  - **Authorisation** — every route keeps its own gate and nothing new is left
+    open. Checklist: `requirePerm("viewer"/"editor"/"admin")` on all
+    `/api/offers/*`; `requireServiceSecret` on every `/api/offers/bot/*`;
+    the bot signs in by e-mail + code and its owner is the chat's bound address;
+    `botCanEditCombat` still lets only the author edit a sheet; `offerForEditor`
+    still refuses someone else's offer; the plugin's 401 retry still forgets and
+    re-requests the token once. A new route without one of these three gates is
+    a defect, not a style issue.
+  - **Bot function separation** — one handler per intent, no shared "what did
+    the user mean" switch. Checklist: free text goes through `handleCopyText` →
+    `handleBriefText` → `parseSystemCommand` → stage/step branches → the
+    suggestion fallback, in that order and each one returns `true` only when it
+    actually handled the text; a side pick inside a combat sheet never lands in
+    an offer draft and vice versa (`isCombat(session)` gates the branch);
+    `Работа с КП` and `Работа с боевым листком` never share session fields
+    (`draft` vs `combat`); signing in, brief, positions and combat are separate
+    `RouterState` maps. A new text or button belongs to exactly one of them —
+    if it needs to be known by two, that is a missing split, not a shared
+    helper.
+  - **Where it is proven**: the stand (`offers_local_e2e.mjs` — «чужой КП
+    недоступен», «чужой боевой листок недоступен», bot-secret sections) and
+    the bot suite (`routes.test.ts` — sign-in path, combat flow). A release
+    without a green run of both is not a release.
 
 ## Gotchas
 
@@ -648,6 +747,19 @@ measurements) are in the archive.
 
 ### Bot and rights
 
+- **`void someFunction;` is a REFERENCE, not a call — and the compiler says
+  nothing** (2026-11-12, live defect: after entering the code the bot asked for
+  the e-mail again). In `handleSignIn` the line `void applyCodeRequested;` was
+  meant to save the session but only named the function, so the step stayed
+  `idle` and the six digits were parsed as an e-mail. `tsc --noEmit` is happy
+  with it and the whole bot suite was green — the sign-in path had no test.
+  Fix: `await deps.save(chatId, applyCodeRequested(session, result.email))`,
+  plus two tests over the whole sign-in path (the step becomes `await_code`; the
+  code does not re-prompt and reaches `authed`). **Give every `void something;`
+  in this codebase the same look** — the correct discard form is `void fn()`.
+- **A session step that is not saved does not exist.** `state.sessions` is the
+  only place the sign-in step lives; `handleSignIn` must write it on every
+  transition. An in-memory `deps.session` returning an object is not persistence.
 - **Roles do not exist in the bot**: anyone signed in with a code builds offers.
   The plugin keeps `viewer < editor < admin < superadmin`; compare through
   `isAdminRole`/`canEditOffers`.

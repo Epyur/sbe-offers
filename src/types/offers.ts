@@ -568,3 +568,43 @@ export interface SearchNotesResponse {
   /** Ошибка Базы знаний: поиск не выполнился, список пуст. */
   error?: string;
 }
+
+/**
+ * Найденная система в окне выбора КП (2026-11-12).
+ *
+ * То же, что `SearchNoteItem`, но с кодом и замечаниями к составу: окно
+ * показывает «есть замечания», а добавление делает сервер по `noteId`.
+ */
+export interface SystemSearchItem {
+  noteId: number;
+  sku?: string;
+  title: string;
+  problems?: string[];
+}
+
+/**
+ * Найденный материал в окне выбора КП (2026-11-12).
+ *
+ * Полей ровно столько, сколько нужно позиции: имя, единица, код, цена и ЕКН.
+ * `priceMin` — цена «от», когда в справочнике есть диапазон; ноль означает, что
+ * цены нет и её вписывает менеджер.
+ */
+export interface MaterialSearchItem {
+  noteId: number;
+  materialId: number;
+  sku?: string;
+  name: string;
+  unit: string;
+  priceMin: number;
+  priceMax: number;
+  ekn?: string[];
+}
+
+/** Ответ поиска для окна выбора: пустой список приходит массивом. */
+export interface PickerSearchResponse<T> {
+  items: T[];
+  total?: number;
+  kbEnabled?: boolean;
+  /** Ошибка Базы знаний: окно покажет предупреждение, выбор в КП не тронут. */
+  error?: string;
+}

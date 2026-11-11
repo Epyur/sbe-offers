@@ -13,8 +13,10 @@ import type {
   CompetitorsResponse,
   ComposeSystemResponse,
   Material,
+  MaterialSearchItem,
   Offer,
   OfferForm,
+  PickerSearchResponse,
   RefreshSystemCardsResponse,
   RichNode,
   Role,
@@ -22,6 +24,7 @@ import type {
   SheetApplyRow,
   SheetPreview,
   SystemCardsResponse,
+  SystemSearchItem,
   SystemsResponse,
 } from '../types/offers';
 
@@ -685,6 +688,35 @@ export class OffersService {
   /** Перечитать системы из Базы знаний (одно осознанное действие человека). */
   async refreshSystems(): Promise<SystemsResponse> {
     return this.request<SystemsResponse>('POST', '/systems/refresh');
+  }
+
+  /**
+   * Поиск систем по Базе знаний для окна выбора (2026-11-12).
+   *
+   * Полнотекстовый поиск того же сервиса, что у конкурентов: «Гарант» находит
+   * «ТН-Кровля Гарант ПЛЮС» и «… RE30», «Кровля» — все кровельные системы.
+   * Раньше окно было дропдауном на сотни строк, и найти в нём систему было
+   * нельзя.
+   */
+  async searchSystems(query: string): Promise<PickerSearchResponse<SystemSearchItem>> {
+    return this.request<PickerSearchResponse<SystemSearchItem>>(
+      'GET',
+      `/systems/search?q=${encodeURIComponent(query)}`,
+    );
+  }
+
+  /**
+   * Поиск материалов по карточкам Базы знаний (2026-11-12).
+   *
+   * Ответ сразу годен в позицию КП: имя, единица, код и цена «от». Старый
+   * путь «Добавить из каталога» читал `offers_catalog`, который не пополняется
+   * с 2026-10-31, поэтому новые материалы в нём не появлялись вовсе.
+   */
+  async searchMaterials(query: string): Promise<PickerSearchResponse<MaterialSearchItem>> {
+    return this.request<PickerSearchResponse<MaterialSearchItem>>(
+      'GET',
+      `/materials/search?q=${encodeURIComponent(query)}`,
+    );
   }
 
   /** Перечитать карточки из Базы знаний (admin). */

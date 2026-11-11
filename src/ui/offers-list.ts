@@ -1,15 +1,22 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import { canEditOffers, type CatalogItem, type Offer, type OfferItem } from '../types/offers';
+import {
+  canEditOffers,
+  type MaterialSearchItem,
+  type Offer,
+  type OfferItem,
+  type SystemSearchItem,
+} from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { formatMoney, itemsTotal } from '../utils/money';
 import { renderBriefCard } from './brief-editor';
 import { renderSheetUpload } from './sheet-upload';
 import { renderFormEditor } from './form-editor';
+import { renderPicker, type PickerCandidate } from './picker';
 import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
 /**
- * Блоки текста системы (2026-11-06): ровно два, и это решение, а не список
+ * Тексты системы (2026-11-06): ровно два блока, и это решение, а не список
  * «всё, что есть». Состав не генерируется — он уже есть в карточке Базы знаний,
  * и пересказ моделью был бы второй правдой рядом со списком.
  */
@@ -118,7 +125,6 @@ async function downloadDocx(view: OffersView, offer: Offer): Promise<void> {
 
 async function openEditor(view: OffersView, container: HTMLElement, offer: Offer | null): Promise<void> {
   let current: Offer;
-  let catalog: CatalogItem[] = [];
   try {
     if (offer) {
       current = await view.plugin.offersService.getOffer(offer.id);
@@ -137,7 +143,6 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         updatedAt: '',
       };
     }
-    catalog = await view.plugin.offersService.listCatalog('');
   } catch (e: unknown) {
     new Notice(`Не удалось открыть предложение: ${errorMessage(e)}`);
     return;
@@ -211,26 +216,49 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
 
   const sumsEl = itemsCard.createDiv({ cls: 'tn-offers-total' });
 
-  const catalogSelect = itemsCard.createEl('select', { cls: 'tn-offers-input' });
-  catalogSelect.createEl('option', { value: '', text: '— выбрать карточку каталога —' });
-  for (const card of catalog) {
-    catalogSelect.createEl('option', { value: String(card.id), text: `${card.name} (${formatMoney(card.basePrice)} / ${card.unit})` });
-  }
-  const addFromCatalog = itemsCard.createEl('button', { text: '➕ Добавить из каталога', cls: 'tn-btn tn-btn-ghost' });
-  addFromCatalog.addEventListener('click', () => {
-    const id = Number(catalogSelect.value);
-    const found = catalog.find((c) => c.id === id);
-    if (!found) return;
-    items.push({
-      catalogId: found.id,
-      name: found.name,
-      unit: found.unit,
-      qty: 1,
-      price: found.basePrice,
-      sum: found.basePrice,
-    });
-    redrawItems();
-  });
+  // Материалы — поиском по Базе знаний (2026-11-12). Раньше здесь был дропдаун
+  // по `offers_catalog`: в нём не было ни новых материалов (таблица не
+  // пополняется с 2026-10-31), ни поиска по живому каталогу на 1500+ записей.
+  // Правило «выбор системы не добавляет позиции» (2026-11-03) не меняется:
+  // позицией становится именно выбранный материал.
+  const materialCandidates: Array<PickerCandidate & { item: OfferItem }> = [];
+  const materialsBox = itemsCard.createDiv({ cls: 'tn-offers-card tn-offers-inline-card' });
+  renderPicker(
+    materialsBox,
+    {
+      label: 'Материал в позиции',
+      placeholder: 'Название материала — часть слова или код…',
+      chosen: [],
+      emptyText: 'Найдите материал: он добавится позицией, количество поправите потом.',
+      candidates: () => materialCandidates,
+      load: async () => {
+        materialCandidates.length = 0;
+      },
+      search: async (query) => {
+        const res = await view.plugin.offersService.searchMaterials(query);
+        if (res.error) {
+          new Notice(`Поиск по Базе знаний: ${res.error}`);
+          return null;
+        }
+        materialCandidates.length = 0;
+        for (const item of res.items) {
+          materialCandidates.push(materialCandidate(item));
+        }
+        return materialCandidates;
+      },
+      onPick: (candidate) => {
+        const found = materialCandidates.find((c) => c.noteId === candidate.noteId);
+        const item = found?.item;
+        if (!item) return;
+        // Позиции ещё не сохранены: редактор держит их локально и пишет в КП по
+        // кнопке «Сохранить», поэтому здесь только локальный список.
+        items.push(item);
+        redrawItems();
+      },
+    },
+    errorMessage,
+  );
+
   const addManual = itemsCard.createEl('button', { text: '✏️ Своя позиция', cls: 'tn-btn tn-btn-ghost' });
   addManual.addEventListener('click', () => {
     items.push({ name: '', unit: 'шт', qty: 1, price: 0, sum: 0 });
@@ -244,48 +272,57 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   // файлом или руками. До правки состав дописывался к таблице, и одни и те же
   // продукты стояли в ней дважды, с ценой и с нулём (КП 003/2026).
   if (current.id) {
-    const systemsCard = itemsCard.createDiv({ cls: 'tn-offers-row tn-offers-system-add' });
-    systemsCard.createSpan({ cls: 'tn-offers-muted', text: 'Система в КП:' });
-    const systemsSelect = systemsCard.createEl('select', { cls: 'tn-offers-input tn-offers-grow' });
-    systemsSelect.createEl('option', { value: '', text: '— выбрать систему —' });
-    void view.plugin.offersService
-      .listSystems()
-      .then((res) => {
-        if (!res.kbEnabled) {
-          systemsCard.createSpan({ cls: 'tn-offers-warn', text: ' База знаний не настроена' });
-          return;
-        }
-        for (const system of res.systems) {
-          // Слои — нормальный состав, а не ошибка (2026-11-02): у живых
-          // карточек почти в каждой есть работы без материала, и пометка
-          // «есть ошибки» стояла у всех подряд.
-          const broken = (system.problems ?? []).length > 0;
-          // Значение — заметка, когда кода нет: у живых карточек
-          // `system_sku` не заполнен, и вариант с пустым значением выбрать
-          // нельзя (2026-11-02, КП 003: «Выберите систему» на любой выбор).
-          systemsSelect.createEl('option', {
-            value: `sys-${system.noteId}`,
-            text: `${system.title}${broken ? ' (есть замечания к составу)' : ''}`,
-          });
-        }
-        // Отмечаем уже выбранные системы: человек должен видеть текущее
-        // состояние, а не пустой список.
-        const chosen = current.systems ?? [];
-        const chosenHandle = chosen[0]?.noteId ? `sys-${chosen[0].noteId}` : (chosen[0]?.sku ?? '');
-        if (chosenHandle) systemsSelect.value = chosenHandle;
-      })
-      .catch((e: unknown) => {
-        systemsCard.createSpan({ cls: 'tn-offers-warn', text: ` Список систем: ${errorMessage(e)}` });
-      });
-    const addSystemBtn = systemsCard.createEl('button', { text: '✔ Добавить', cls: 'tn-btn tn-btn-ghost' });
-    addSystemBtn.addEventListener('click', () => {
-      void addSystemPicked();
-    });
+    // Система выбирается поиском по Базе знаний (2026-11-12). Раньше это был
+    // дропдаун всех систем: на живых данных их сотни, и найти «ТН-Кровля
+    // Гарант» прокруткой было нельзя. Поиск тот же, что в боевом листке.
+    const systemsBox = itemsCard.createDiv({ cls: 'tn-offers-system-add' });
+    const systemCandidates: PickerCandidate[] = [];
+    const redrawSystems = renderPicker(
+      systemsBox,
+      {
+        label: 'Система в КП',
+        placeholder: 'Название системы — часть слова, например «Гарант» или «Кровля»…',
+        chosen: [],
+        emptyText: 'Систем не выбрано: КП соберётся без описания системы.',
+        candidates: () => systemCandidates,
+        load: async () => {
+          // Кэш из Базы знаний нужен, пока идёт запрос, и когда модель поиска
+          // недоступна: раздел «Системы» уже прочитанное показывает.
+          systemCandidates.length = 0;
+          const res = await view.plugin.offersService.listSystems();
+          if (!res.kbEnabled) {
+            systemsBox.createDiv({ cls: 'tn-offers-warn', text: 'База знаний не настроена.' });
+            return;
+          }
+          for (const system of res.systems) {
+            systemCandidates.push({
+              noteId: system.noteId,
+              title: system.title,
+              code: system.sku,
+            });
+          }
+        },
+        search: async (query) => {
+          const res = await view.plugin.offersService.searchSystems(query);
+          if (res.error) {
+            new Notice(`Поиск по Базе знаний: ${res.error}`);
+            return null;
+          }
+          systemCandidates.length = 0;
+          for (const item of res.items) {
+            systemCandidates.push(systemCandidate(item));
+          }
+          return systemCandidates;
+        },
+        onPick: (candidate) => addSystemPicked(candidate.noteId),
+      },
+      errorMessage,
+    );
 
     // Выбранные системы списком (2026-11-05). Раньше была одна, и человек не
     // видел даже её: подпись говорила только «выбрана». Теперь их может быть
     // несколько — для сравнения в документе, как СТИЛОБАТ V1.0 и V2.0.
-    const chosenList = systemsCard.createDiv({ cls: 'tn-offers-chosen-systems' });
+    const chosenList = systemsBox.createDiv({ cls: 'tn-offers-chosen-systems' });
 
     function renderChosen(offer: Offer): void {
       chosenList.empty();
@@ -335,25 +372,39 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
       }
     }
 
-    // labelFor — подпись системы по хэндлу: имя из списка, иначе сам хэндл.
+    /**
+     * Подпись системы по хэндлу: имя из найденного, иначе сам хэндл.
+     *
+     * Список найденного теперь живёт в окне поиска, поэтому имя ищется и там,
+     * и в кэше систем: выбранное могло прийти и поиском, и из кэша.
+     */
     function handleLabel(handle: string): string {
-      const option = Array.from(systemsSelect.options).find((o) => o.value === handle);
-      return option?.textContent ?? handle;
+      const noteId = Number(/^sys-(\d+)$/.exec(handle)?.[1] ?? 0);
+      if (noteId > 0) {
+        const found = systemCandidates.find((c) => c.noteId === noteId);
+        if (found) return found.title;
+      }
+      return handle;
     }
     renderChosen(current);
+    void redrawSystems;
 
-    async function addSystemPicked(): Promise<void> {
-      const choice = systemsSelect.value;
-      if (!choice) {
+    /**
+     * Выбрать систему: сервер пишет её тексты один раз при выборе (2026-11-06).
+     *
+     * Позиций выбор не добавляет (2026-11-03): в КП попадают описание,
+     * обоснование и ссылки, а состав с ценами менеджер заводит сам.
+     */
+    async function addSystemPicked(noteId: number): Promise<void> {
+      if (!noteId) {
         new Notice('Выберите систему');
         return;
       }
-      addSystemBtn.setAttr('disabled', 'true');
-      // Тексты системы пишет модель — ОДИН раз при выборе (2026-11-06). Это
-      // занимает десятки секунд, и молчание здесь читается как поломка.
+      // Тексты системы пишет модель — ОДИН раз при выборе. Это занимает
+      // десятки секунд, и молчание здесь читается как поломка.
       new Notice('Добавляю систему и пишу тексты (описание и преимущества) — до минуты…', 8000);
       try {
-        const res = await view.plugin.offersService.addSystem(current.id!, choice);
+        const res = await view.plugin.offersService.addSystem(current.id!, `sys-${noteId}`);
         // Позиции не трогаем: сервер их не меняет, а локальный список в
         // редакторе остаётся тем, что человек правил.
         current.systems = res.offer.systems ?? [];
@@ -367,8 +418,6 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         );
       } catch (e: unknown) {
         new Notice(`Система выбрана, но тексты не записались: ${errorMessage(e)}`);
-      } finally {
-        addSystemBtn.removeAttribute('disabled');
       }
     }
 
@@ -546,4 +595,38 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
 
 function totalText(items: OfferItem[]): string {
   return `Итого: ${formatMoney(itemsTotal(items))} ₽`;
+}
+
+/**
+ * Найденная система → вариант окна выбора.
+ *
+ * Замечания к составу показываются прямо в кнопке: человек должен знать, что
+ * у системы есть несвязанные строки, ДО того как она попадёт в документ.
+ */
+function systemCandidate(item: SystemSearchItem): PickerCandidate {
+  const broken = (item.problems ?? []).length > 0;
+  return {
+    noteId: item.noteId,
+    title: broken ? `${item.title} (есть замечания к составу)` : item.title,
+    code: item.sku,
+  };
+}
+
+/** Найденный материал → вариант окна выбора и сразу позиция КП. */
+function materialCandidate(item: MaterialSearchItem): PickerCandidate & { item: OfferItem } {
+  const price = item.priceMin > 0 ? item.priceMin : 0;
+  return {
+    noteId: item.noteId,
+    title: item.name,
+    code: item.sku,
+    item: {
+      catalogId: item.materialId > 0 ? item.materialId : undefined,
+      ekn: (item.ekn ?? [])[0] ?? '',
+      name: item.name,
+      unit: item.unit || 'шт',
+      qty: 1,
+      price,
+      sum: price,
+    },
+  };
 }
