@@ -431,13 +431,9 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
+| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`), `base: './'`, built to `offers-app/dist/`. **S0+S1+B+ done**: scaffold, placeholder screens, sign-in (initData → JWT), and the bot's «📱 Открыть приложение» buttons. Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 72 KiB used), `npm test` (12 passing). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
 
-> **`main` is the release slice**: `offers-service/`, `offers-bot/` and
-> `offers-app/` live only on the `backend` branch. The Mini App records in this
-> file (structure, `scripts/check_app_auth.mjs`, the «Mini App, S1» entry) are
-> kept here for context; the code and the plan are on `backend`.
-
-**Mini App, S1 — identity (2026-11-13, `backend` branch).** `offers-service/appauth.go`:
+**Mini App, S1 — identity (2026-11-13).** `offers-service/appauth.go`:
 `verifyInitData` (HMAC per Telegram docs, constant-time compare, `auth_date`
 freshness `OFFERS_APP_INITDATA_TTL` default 24 h, duplicate-key and 16 KiB
 guards), `signAppJWT` (the same `jwtClaims` the plugin uses, `device_id`
@@ -502,7 +498,17 @@ Sub-packages: `model/` (domain types + `jsonrepair.go`, shared with `skills`);
 (routing + the single sign-in check), `src/callbacks.ts` (button handlers,
 including the combat sheet — 2026-11-09), `src/telegram.ts`
 (Bot API via SOCKS), `src/session.ts`, `src/attach.ts`, `src/flow/` (`build`,
-`brief`, `copy`, `writer`, `resume`, `combat`, `suggest`), `src/api.ts`, `Dockerfile`.
+`brief`, `copy`, `writer`, `resume`, `combat`, `suggest`, `appbutton`),
+`src/api.ts`, `Dockerfile`.
+
+**Opening the Mini App from the bot (2026-11-13, step B+).** `flow/appbutton.ts`
+is the single place that builds the App URL (`OFFERS_APP_URL`, default
+`https://epyur.fvds.ru/app-offers/`) and the buttons; `MAIN_KEYBOARD` has
+«📱 Открыть приложение» and both lists put one `web_app` button under every
+record (`📱 NNN/yyyy — <product>`). A `web_app` button opens the App by itself —
+no `callback_data`, no handler, and `message.web_app_data` is not involved
+(that is S7). Tests: `src/appbutton.test.ts` (9 cases: URL building, env
+override, menu, both lists, the bot's own list rendering).
 
 ## Settings (data.json)
 
@@ -516,7 +522,9 @@ including the combat sheet — 2026-11-09), `src/telegram.ts`
 `S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`, `KB_SERVICE_URL`,
 `LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`.
 Bot: `TELEGRAM_SOCKS_PROXY`, `OFFERS_API_URL`, `OFFERS_BOT_SECRET`,
-`OFFERS_BOT_RATE_LIMIT`, `VERIFY_PORT`.
+`OFFERS_BOT_RATE_LIMIT`, `VERIFY_PORT`, `OFFERS_APP_URL` (optional — the Mini
+App address for the `web_app` buttons; empty means the production
+`https://epyur.fvds.ru/app-offers/`).
 
 **There is no bot-token variable and there must not be one** (2026-10-29): the
 token lives in `offers_bot_config` and is entered from the plugin's «Бот и
@@ -541,8 +549,9 @@ Expected on 0.9.17: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
 `check_marker_registry` OK, `go test` green, OpenAPI **94/94**, stand
 **371/0** (the picker-search section is 8 of them, the combat-access section 3).
 The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
-`node --test "src/**/*.test.ts"` **160 passing** (combat flow, sign-in path and
-the suggestion texts are covered by route tests against a faked service).
+`node --test "src/**/*.test.ts"` **171 passing** (combat flow, sign-in path,
+the suggestion texts and the Mini App buttons are covered by route tests
+against a faked service).
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase
