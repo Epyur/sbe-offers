@@ -1,5 +1,33 @@
 # sbe-offers — вход в новый контекст — версия 0.9.17 (выпущена)
 
+> **В работе: перевод бота в Telegram Web App (решение 2026-11-13).**
+> Бот остаётся тонким входом (авторизация, выбор КП/БЛ, бриф, список, поиск
+> по клиенту, приём файла), всё остальное уезжает в Mini App
+> (`offers-app/`, React + Vite, `/app-offers/`). Начинать с
+> [START-HERE](../../../../docs/superpowers/plans/2026-11-13-sbe-offers-webapp-START-HERE.md),
+> полный план — `2026-11-13-sbe-offers-webapp-migration-plan.md` там же.
+> Ниже — состояние выпуска 0.9.17, оно ещё в силе.
+>
+> **S0 + S1 выполнены и развёрнуты 2026-11-13:**
+> - S0: `offers-app/` (React+Vite+TS), маршруты `#/list/{offers,sheets}`,
+>   `#/offer/:id`, `#/sheet/:id`; бандл `72 КБ gzip` в
+>   `/opt/mailers/www/app-offers/`, Caddy `handle_path /app-offers/*` (бэкап
+>   `Caddyfile.bak-appoffers-20261113`). https отдаёт 200, sha256 совпал.
+> - S1: `offers-service/appauth.go` — `verifyInitData` (подпись токеном бота
+>   из `offers_bot_config`), `signAppJWT`, `POST /api/offers/app/session`,
+>   `GET /api/offers/app/config`. Живая проверка
+>   `scripts/check_app_auth.mjs` — **8/8**; вход привязанного человека
+>   отдаёт JWT, `/offers` и `/permissions/me` — 200.
+> - **Роли закрыты 2026-11-13 (решение пользователя).** Общий доступ приложения
+>   `offers` = **`editor`** записан штатной ручкой
+>   `POST /internal/apps/offers/common-access` (автор `polishchuk@tn.ru`).
+>   Проверено живьём: ladnaya / m.krylov / romov получают `role=editor`,
+>   `/offers` и `/combat` — 200; владелец остаётся `superadmin`.
+> - **Диск 2026-11-13:** сервер стоял на 100 % (0 байт) из-за кэша сборок
+>   Docker — `docker buildx prune -af` освободил ~58 ГБ, сейчас 23 % занято.
+>   Симптом был: `mailers-offers-db-1` уходил в recovery loop
+>   (`could not write ... No space left on device`).
+
 **0.9.17 — 2026-11-12.** Выбор систем и материалов стал поиском по
 Базе знаний, а бот научился понимать человеческие запросы
 («Гарант», «Кровля», «какие есть системы кровли»).
