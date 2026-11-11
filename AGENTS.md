@@ -30,11 +30,19 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.14** — **not released**. `backend` holds this batch
-(combat-sheet fixes), `main` still carries 0.9.13. `check_docs_state.mjs` is
-expected to fail until the release is finished — do not "fix" it by editing docs.
+Current version = **0.9.14** — **released 2026-11-12**. `backend` code + docs
+HEAD `e93d45e`; `main` HEAD `d418e3f`; the service and the bot run 0.9.14, the
+self-hosted files and `registry.json` are 0.9.14 (hashes verified over https:
+`4ff10217…` / `df5b0d7c…` / `a32ac3df…`). Registry git copy
+`sbe-apstore-registry` `a92d98b`. Live KB check after deploy: `/bot/combat/
+competitors?q=ПВХ мембрана` returns PLASTFOIL (9 first) and the tag filter works;
+`q=мембрана кровельная` returns FACHMANN and PVC-RP; `/bot/combat/analogues?
+noteId=7359` returns `PIRRO®VentiDuct` first.
 
-**0.9.14 (2026-11-12, IN PROGRESS).** Five live complaints about combat sheets;
+`check_docs_state.mjs` is expected to fail while a release is unfinished — do not
+"fix" it by editing docs.
+
+**0.9.14 (2026-11-12, released).** Five live complaints about combat sheets;
 four of them had one root cause — search went by substring over a cache instead
 of by the Knowledge Base's own full-text search.
 
