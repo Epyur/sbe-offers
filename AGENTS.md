@@ -30,9 +30,18 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.15b** — prepared 2026-11-12 (backend-only fix, `main`
-still carries 0.9.14). `backend` HEAD carries the fix; self-hosted files and
-`registry.json` are still 0.9.14 until the release is rolled out.
+Current version = **0.9.15b** — released 2026-11-12 (backend-only fix plus the
+CUP news; `main` still carries the 0.9.14 code until the release is promoted).
+Code + docs HEAD: `backend` `0f945d0` (`0f945d0` before the docs touch-up),
+`main` `d418e3f` (0.9.14). Self-hosted files and `registry.json` are 0.9.15 once
+rolled out; build hashes of the tree are in `HANDOFF.md`.
+
+**History of 0.9.14** — released 2026-11-12: `backend` `e93d45e`, `main`
+`d418e3f`, self-hosted `4ff10217…` / `df5b0d7c…` / `a32ac3df…`, registry git
+copy `sbe-apstore-registry` `a92d98b`. Live KB check after that deploy:
+`/bot/combat/competitors?q=ПВХ мембрана` returns PLASTFOIL (9 first) and the tag
+filter works; `q=мембрана кровельная` returns FACHMANN and PVC-RP;
+`/bot/combat/analogues?noteId=7359` returns `PIRRO®VentiDuct` first.
 
 **0.9.15 (2026-11-12, server-only + news).** Live complaint: sign-in codes for
 the **offer bot** stopped arriving by e-mail. Same root cause as the
