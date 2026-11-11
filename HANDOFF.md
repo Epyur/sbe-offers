@@ -29,6 +29,23 @@ OpenAPI **94/94**, бот **162 passing**, стенд **371/0**.
 выдаёт роль по e-mail. Исправлено (`/bot/suggest`), добавлен тест на адрес.
 **Маршрут под служебным секретом обязан быть `/bot/*`.**
 
+Что осталось непроверенным (первый, кто откроет плагин, закрывает оба пункта):
+
+- как выглядит окно поиска систем и материалов в редакторе КП в Obsidian
+  (сборка и разметка проверены, внешний вид человеком — нет);
+- живой прогон бота с телефона: «Гарант» в разговоре — появится список с
+  номерами, нажатие номера добавит систему. На сервере проверен только
+  сам поиск (`/bot/suggest` с секретом отвечает, «Гарант» даёт две системы
+  первыми), но не нажатие кнопок в Telegram.
+
+Если жалоба снова звучит так же («Поиск по Базе знаний сейчас недоступен»):
+
+1. **Проверить, что запущен новый бот**, а не старый: `docker exec mailers-offers-bot-1 grep -c "bot/suggest" /app/dist/bot.mjs`.
+2. Какая ручка вызывается: `docker logs mailers-offers-1 2>&1 | grep -E "auth reject.*suggest"` —
+   если в логе `/api/offers/suggest` с `role`, бот старый.
+3. Секреты: у сервиса `OFFERS_BOT_SECRET` и у бота `OFFERS_BOT_SECRET` обязаны совпадать
+   (не `OFFERS_SERVICE_SECRET`).
+
 **0.9.16** (2026-11-12, выпущена): исправлен вход в бота — после кода из
 письма бот снова просил e-mail (`void applyCodeRequested;` — ссылка на
 функцию вместо вызова). **0.9.15**: письма с кодом переведены на
@@ -551,11 +568,13 @@ python scripts/check_layout_mode_defect.py http://127.0.0.1:18080
 ```
 
 Ожидаемо на 0.9.13: `tsc` EXIT=0, `check_bundle_strings` 0 отсутствующих,
-`check_marker_registry` 24/24, `go test` зелёный, бот **140 passing**,
-OpenAPI 89/66, стенд **351/0**, живой прогон макетов **20/0**.
-`check_docs_state` краснеет до выкладки — это незакрытый выпуск.
-Добор — `crapper`/`dryer` (CRAP < 10, дублирование < 0.8; у бота старый
-долг `handleDraftText` CC 13 — не наш).
+Ожидаем на 0.9.17: `tsc` EXIT=0, `check_bundle_strings` 0 отсутствует,
+`check_marker_registry` OK, `go test` зелёный, бот **162 passing**,
+OpenAPI **94/94**, стенд **371/0**, проверка макетов **20/0**.
+`check_docs_state` несёт на 0.9.13 - не чинить его правкой документов:
+скрипт сверяет версию и хэши веток, а на `main` серверной папки нет -
+его проверки меток (`check_marker_registry`) тоже требуют `backend`.
+Инструменты - `crapper`/`dryer` (CRAP < 10, дублирование < 0.8).
 
 **Перед прогоном стенда:** кэш систем прячет правки `kb-stub` —
 `docker exec offers-local-db psql -U offers -d offers -c "delete from
@@ -568,6 +587,47 @@ offers-local-kb-stub`.
 
 **Образы стенда, если Docker Hub недоступен:** тянуть через
 `mirror.gcr.io/library/...` и переименовывать `docker tag`.
+
+### Стенд с нуля (2026-11-12, стоило времени)
+
+Проверенный порядок после перезагрузки машины или первого запуска.
+Всё это выполняется из `sbe-offers/`:
+
+```
+docker compose -f docker-compose.local.yml up -d
+# бинарь стенда СНАЧАЛА удалить, потом собрать (см. ниже)
+docker cp offers-service/offers-stand offers-local-app:/mailers-offers
+docker restart offers-local-app
+```
+
+**Грабли, на которые ушло время сегодня:**
+
+1. **Сервис в compose зовётся `offers`, а не `app`.**
+   `docker compose ... up -d --force-recreate app` падает с `no such service: app`.
+   Полный список: `docker compose -f docker-compose.local.yml config --services`.
+2. **`docker cp` в удалённый контейнер молча падает.** `docker cp ... offers-local-app:...`
+   на несуществующем имени выводит `Error response from daemon: No such container`,
+   а старый бинарь остаётся. После `docker rm -f` контейнер надо поднять заново.
+3. **Старый `offers-stand` не перезаписывается молча, если уже существует.**
+   `go build -o /src/offers-stand .` в контейнере может не перезаписать
+   замоканный Windows-процессом файл и выйти с кодом 0.
+   Поэтому **сначала `rm -f /src/offers-stand`**, потом сборка:
+   `sh -c "rm -f /src/offers-stand && go build -o /src/offers-stand . && ls -l /src/offers-stand"`.
+   Признак успеха - новое время в `ls -l`, а не только размер.
+4. **Проверять бинарь в контейнере по `md5sum`, а не по размеру:**
+   `docker exec offers-local-app md5sum /mailers-offers` против
+   `(Get-FileHash offers-service/offers-stand -Algorithm MD5).Hash`. Размер совпадает
+   у разных сборок, md5 - нет.
+5. **403 на стенде может быть НЕ тем, о чём думаешь.** Роль выдаёт
+   `auth-stub` по `AUTH_STUB_ROLES` (`owner@tn.ru=superadmin,manager@tn.ru=editor`), а
+   `makeJwt('other@tn.ru')` даёт токен БЕЗ роли - `requirePerm("viewer")` отсекает
+   до любой проверки видимости. Для проверки «чужой видит/не видит» берите
+   **существующую роль** (`manager@tn.ru`), а не произвольный адрес.
+6. **Вывод стенда в PowerShell приходит кракозябрами; иёт он кириллицей.**
+   `Select-String` по такому выводу не находит ничего и выглядит как «тесты не запускались».
+   Считать провалы так: сохранить вывод в файл и искать по последней строке
+   «Итого: N ок, M провалов», или читать файл через `Get-Content -Encoding UTF8`.
+
 
 ## Где что лежит
 
