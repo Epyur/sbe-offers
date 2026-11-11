@@ -166,12 +166,17 @@ async function handleSignIn(deps: BotDeps, chatId: string, session: ChatSession,
         await deps.send(chatId, `Не удалось отправить код: ${(e as Error).message}`);
         return;
       }
+      // Шаг входа сохраняется ОБЯЗАТЕЛЬНО (2026-11-12): без этого сессия
+      // оставалась в idle, и присланный код принимался за e-mail — бот снова
+      // просил почту. Раньше здесь стояло `void applyCodeRequested;` —
+      // ссылка на функцию вместо вызова, и компилятор об этом молчал.
+      await deps.save(chatId, applyCodeRequested(session, result.email));
       await deps.send(chatId, result.text);
-      void applyCodeRequested;
       return;
     case 'verify_code':
       try {
         const who = await api.verifyCode(chatId, result.email, result.code);
+        await deps.save(chatId, applyLogin(session, who.email));
         await deps.send(chatId, AUTH_OK(who.email), MAIN_KEYBOARD);
       } catch (e) {
         await deps.send(chatId, (e as Error).message);

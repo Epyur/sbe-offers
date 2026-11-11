@@ -103,6 +103,41 @@ describe('вход', () => {
     assert.equal(session().step, 'authed');
     assert.ok(sent.some((m) => /Не понял|Выберите действие/.test(m.text)));
   });
+
+  // Живой дефект 2026-11-12: после запроса кода сессия оставалась в idle, и
+  // присланный код принимался за e-mail — бот снова просил почту.
+  it('после запроса кода шаг переходит в await_code', async () => {
+    const { deps, state, session } = makeDeps();
+    const route = await import('./routes.ts');
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response('{"status":"code_sent"}', { status: 200 });
+    }) as typeof fetch;
+
+    await route.routeText(deps, '42', 'ivanov@tn.ru', state);
+
+    assert.equal(session().step, 'await_code');
+    assert.equal(session().email, 'ivanov@tn.ru');
+    assert.ok(calls.some((u) => u.includes('/bot/request-code')));
+  });
+
+  it('код из письма не спрашивает почту повторно и входит', async () => {
+    const { deps, state, session } = makeDeps();
+    const route = await import('./routes.ts');
+    globalThis.fetch = (async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/bot/request-code')) return new Response('{"status":"code_sent"}', { status: 200 });
+      return new Response('{"email":"ivanov@tn.ru"}', { status: 200 });
+    }) as typeof fetch;
+
+    await route.routeText(deps, '42', 'ivanov@tn.ru', state);
+    const asked = sent.filter((m) => /Пришлите ваш рабочий e-mail/.test(m.text)).length;
+    await route.routeText(deps, '42', '123456', state);
+
+    assert.equal(sent.filter((m) => /Пришлите ваш рабочий e-mail/.test(m.text)).length, asked);
+    assert.equal(session().step, 'authed');
+  });
 });
 
 describe('защита от повторов', () => {
