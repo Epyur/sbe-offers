@@ -61,10 +61,30 @@ bot never looked at all.
    do. Numbers in buttons are indices into `RouterState.foundSuggest`, because
    `callback_data` cannot hold a Cyrillic title.
 
+**Released and deployed 2026-11-12.** `backend` `dd60b9a` (plugin + service +
+bot; this docs commit follows), `main` `fa29644` (plugin slice only, `b` suffix
+removed, `main.js` rebuilt on `main`); registry git copy `sbe-apstore-registry`
+`bc9ee07`. Self-hosted and verified over https **and** in `/registry.json`:
+`manifest 26fb960b…`, `main 1a885d73…`, `styles a32ac3df…` (styles unchanged
+from 0.9.16). Service and bot rebuilt and recreated on the server (19:05 and
+19:11 MSK), health `ok`, poller running.
+
+**Live defect found DURING the deploy** — worth remembering: the bot called
+`/suggest` (a `requirePerm("viewer")` route) with the service secret, got 403
+and showed «Поиск по Базе знаний сейчас недоступен» instead of a suggestion.
+The stand could not see it: `auth-stub` grants the role by e-mail, so there the
+secret and a user token are interchangeable. Fixed in `dd60b9a` (`/bot/suggest`)
+plus `offers-bot/src/suggest-api.test.ts`, which asserts the ADDRESS, not the
+result. **A route reached with the service secret must be a `/bot/*` route.**
+
+Live check on the production KB after the deploy: `q=Гарант` returns
+`ТН-КРОВЛЯ Гарант Плюс` and `ТН-КРОВЛЯ Гарант RE30` first (43 systems, 57
+materials), `q=КРОВЛЯ` returns 60 systems — both complaints are closed on real
+data.
+
 Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, `npm run build`
-OK, `check_bundle_strings` 0 missing, OpenAPI **94/94** match, bot **160
+OK, `check_bundle_strings` 0 missing, OpenAPI **94/94** match, bot **162
 passing**, stand **371/0** (new section «Поиск для окна выбора», 8 checks).
-`check_docs_state.mjs` is expected to fail until the release is finished.
 
 Previous version = **0.9.16** — released 2026-11-12. `main` `492a161`
 (0.9.16 code, final build without the `b` suffix); `backend` carries the bot fix
