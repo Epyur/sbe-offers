@@ -529,7 +529,12 @@ export async function suggestions(query: string): Promise<{
   materials: SuggestMaterial[];
   error?: string;
 }> {
-  return call('GET', `/suggest?q=${encodeURIComponent(query)}`);
+  // Бот ходит СЛУЖЕБНЫМ секретом, поэтому и ручка должна быть ботовой
+  // (`/bot/suggest`). На `/suggest` стоит requirePerm("viewer"), и служебный
+  // секрет там не проходит: запрос отвечал 403, бот показывал ошибку поиска.
+  // Ошибку нашла живая проверка на сервере 2026-11-12 — стенд её не видел,
+  // потому что там auth-stub отдаёт роль по e-mail, а не по секрету.
+  return call('GET', `/bot/suggest?q=${encodeURIComponent(query)}`);
 }
 
 /** Карточка стороны в списке выбора: то, что увидит менеджер. */
