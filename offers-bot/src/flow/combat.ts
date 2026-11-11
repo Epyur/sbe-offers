@@ -8,6 +8,7 @@
  * В боте стороны выбираются по названиям из готовых списков, по одной.
  */
 import type { CombatSheet, CombatSystemItem } from '../api.ts';
+import { appUrl } from './appbutton.ts';
 
 /** Клавиатура внутри боевого листка: добавить стороны или забрать файл. */
 export const COMBAT_KEYBOARD = {
@@ -341,7 +342,7 @@ export function combatListMessage(
       : '';
     return `№ ${s.number} — ${sheetLabel(s)}${owner}`;
   });
-  const buttons = shown.map((s) => {
+  const buttons = shown.flatMap((s) => {
     const row: Array<{ text: string; callback_data: string }> = [];
     // Свой листок открывается на правку, чужой — на просмотр (кнопка «файл» и
     // «открыть» у чужого ведут к одному и тому же экрану).
@@ -352,7 +353,12 @@ export function combatListMessage(
       callback_data: `cbe:${s.id}`,
     });
     row.push({ text: '📄 файл', callback_data: `cbx:${s.id}` });
-    return row;
+    // Кнопка приложения (2026-11-13, шаг B+): отдельной строкой, в подписи
+    // номер и продукт — иначе два листка одного продукта не отличить.
+    const appRow = [
+      { text: `📱 ${s.number} — ${sheetLabel(s)}`, web_app: { url: appUrl({ kind: 'sheet', id: s.id }) } },
+    ];
+    return [row, appRow];
   });
   return {
     text: `Боевые листки (последние ${shown.length}):\n\n${lines.join('\n')}`,

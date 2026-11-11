@@ -27,6 +27,7 @@ import {
   type CallbackCtx,
 } from './callbacks.ts';
 import { canResume } from './flow/resume.ts';
+import { offerAppMarkup } from './flow/appbutton.ts';
 import type { SuggestItem } from './flow/suggest.ts';
 import {
   NO_OFFER_FOR_FILE,
@@ -222,11 +223,16 @@ async function handleMyOffers(deps: BotDeps, chatId: string): Promise<void> {
     });
     // Две кнопки на КП (2026-11-01): открыть на правку и забрать файл.
     // Раньше была одна «документ», и продолжить КП в боте было нечем.
-    const buttons = offers.slice(0, 15).flatMap((o) => [
+    const shown = offers.slice(0, 15);
+    // Кнопка приложения (2026-11-13, шаг B+): у каждой записи — своя, иначе
+    // открыть в приложении можно было бы только тот КП, что в сессии.
+    const appRows = offerAppMarkup(shown.map((o) => ({ id: o.id, number: o.number })));
+    const buttons = shown.flatMap((o, index) => [
       [
         { text: `✏️ ${o.number}`, callback_data: `edit:${o.id}` },
         { text: `📄 файл`, callback_data: `doc:${o.id}` },
       ],
+      ...(appRows[index] ? [appRows[index]] : []),
     ]);
     await deps.send(chatId, `Последние предложения:\n\n${lines.join('\n')}`, {
       inline_keyboard: buttons,
