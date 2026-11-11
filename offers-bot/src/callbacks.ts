@@ -53,6 +53,16 @@ import {
 } from './attach.ts';
 import { EDIT_KEYBOARD, resumeMessage, resumeSession } from './flow/resume.ts';
 import {
+  SUGGEST_LIMIT,
+  helpHints,
+  parseHelpRequest,
+  suggestItems,
+  suggestKeyboard,
+  suggestMessage,
+  suggestPickedMessage,
+  type SuggestItem,
+} from './flow/suggest.ts';
+import {
   BRIEF_FILE_KEYBOARD,
   beginBrief,
   briefIntro,
@@ -120,9 +130,13 @@ export interface CallbackCtx {
   /** Запомнить конкурента после выбора стороны. */
   rememberCompetitor?: (item: api.CombatSystemItem) => void;
   /** Наши аналоги, показанные кнопками. */
-  foundAnalogs?: api.CombatSystemItem[];
-  /** Запомнить показанные аналоги, чтобы `cban:<noteId>` их нашёл. */
+foundAnalogs?: api.CombatSystemItem[];
+  /** Запомнить найденные аналоги, чтобы `cban:<noteId>` их знал. */
   rememberAnalogs?: (items: api.CombatSystemItem[]) => void;
+  /** Показанная подсказка по свободной фразе (2026-11-12). */
+  foundSuggest?: { query: string; items: SuggestItem[] };
+  /** Запомнить подсказку: номер в кнопке `sug:<N>` — индекс этого списка. */
+  rememberSuggest?: (value: { query: string; items: SuggestItem[] }) => void;
 }
 
 /**
@@ -372,7 +386,163 @@ export async function handleDraftText(ctx: CallbackCtx, text: string): Promise<b
     return true;
   }
 
-  return false;
+  // Подсказка «что у нас есть» (2026-11-12). Последняя проверка перед отказом:
+  // человек написал «Гарант» или «Какие есть системы кровли?», и раньше бот
+  // молча терял это. Теперь фраза уходит в поиск Базы знаний.
+  await offerSuggestions(ctx, text);
+  return true;
+}
+
+// --- Подсказка по свободной фразе (2026-11-12) -------------------------
+//
+// Живые жалобы: КП008 — «Гарант» в брифе, ни одна система не предложена;
+// КП013 — «Кровля», бот должен был сказать про несколько системных решений и
+// предложить помощь. Одна точка на оба случая: фраза ищется по системам и
+// материалам, найденное показывается списком с кнопками-номерами.
+
+/**
+ * Показать, что нашлось по фразе, и запомнить найденное для кнопок.
+ *
+ * `help` — человек прямо просит помочь («какие есть системы кровли»): тогда
+ * служебные слова убираются, а в конце добавляется объяснение, как искать.
+ * Не нашли ничего — не тупик: говорим, что делать дальше.
+ */
+async function offerSuggestions(ctx: CallbackCtx, text: string): Promise<void> {
+  const help = parseHelpRequest(text);
+  const query = help !== null ? help : text.trim();
+  if (query === '') {
+    // «Помогите» без предмета: искать нечего, но это повод объяснить, что бот
+    // умеет, а не промолчать.
+    await ctx.deps.send(ctx.chatId, helpHints(), MAIN_KEYBOARD);
+    return;
+  }
+  let items: SuggestItem[] = [];
+  try {
+    const res = await api.suggestions(query);
+    if (res.error) {
+      // Поиск недоступен — не выдумываем ответ: человеку важно знать, что
+      // фраза не потерялась, а поиск временно не работает.
+      await ctx.deps.send(
+        ctx.chatId,
+        `Поиск по Базе знаний сейчас недоступен: ${res.error}\n\n` +
+          'Добавьте систему командой «система <название>» или позицию строкой «Название | количество | цена».',
+        MAIN_KEYBOARD,
+      );
+      return;
+    }
+    items = suggestItems(res.systems ?? [], res.materials ?? [], SUGGEST_LIMIT);
+  } catch (e) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось выполнить поиск: ${(e as Error).message}\n\n` +
+        'Добавьте систему командой «система <название>» или позицию строкой «Название | количество | цена».',
+      MAIN_KEYBOARD,
+    );
+    return;
+  }
+  ctx.foundSuggest = { query, items };
+  ctx.rememberSuggest?.({ query, items });
+  const tail = help !== null && items.length === 0 ? `\n\n${helpHints()}` : '';
+  await ctx.deps.send(
+    ctx.chatId,
+    `${suggestMessage(query, items)}${tail}`,
+    suggestKeyboard(items, []),
+  );
+}
+
+/**
+ * Нажатие номера в подсказке: `sug:<индекс>`.
+ *
+ * Система добавляется в КП сразу (сервер пишет её тексты), материал — позицией
+ * в черновик. Номер узнаётся по индексу из `foundSuggest`, потому что
+ * `callback_data` не вмещает кириллическое название.
+ */
+export async function onSuggestPick(ctx: CallbackCtx, index: number): Promise<void> {
+  const shown = ctx.foundSuggest;
+  const items = shown?.items ?? [];
+  const item = items[index];
+  if (!item) {
+    await ctx.deps.send(ctx.chatId, 'Этот список устарел — напишите запрос ещё раз, и я покажу найденное заново.');
+    return;
+  }
+  if (item.kind === 'system') {
+    await addPickedSystem(ctx, { sku: item.code ?? '', noteId: item.noteId, title: item.title });
+    return;
+  }
+  await addSuggestedMaterial(ctx, item);
+}
+
+/** Добавить все найденные системы из подсказки (кнопка «✔ Добавить все системы»). */
+export async function onSuggestAddAllSystems(ctx: CallbackCtx): Promise<void> {
+  const systems = (ctx.foundSuggest?.items ?? []).filter((i) => i.kind === 'system');
+  if (systems.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'В подсказке нет систем — нечего добавлять.');
+    return;
+  }
+  let added = 0;
+  for (const system of systems) {
+    try {
+      const ok = await addSystemQuiet(ctx, {
+        sku: system.code ?? '',
+        noteId: system.noteId,
+        title: system.title,
+      });
+      if (ok) added += 1;
+    } catch {
+      // Одна неудачная система не отменяет остальные: менеджер увидит итог и
+      // добавит недостающие по одной.
+    }
+  }
+  await ctx.deps.send(ctx.chatId, suggestPickedMessage(added, 'system'), DRAFT_KEYBOARD);
+}
+
+/** «Ничего из этого — продолжить»: подсказка не мешает собирать дальше. */
+export async function onSuggestSkip(ctx: CallbackCtx): Promise<void> {
+  ctx.rememberSuggest?.({ query: '', items: [] });
+  const draft = ctx.session.draft;
+  const summary = draft ? draftSummary(draft) : 'Продолжаем.';
+  await ctx.deps.send(ctx.chatId, summary, DRAFT_KEYBOARD);
+}
+
+/** Материал из подсказки становится позицией черновика (2026-11-12). */
+async function addSuggestedMaterial(ctx: CallbackCtx, item: SuggestItem): Promise<void> {
+  let material: api.SuggestMaterial | undefined;
+  try {
+    const res = await api.suggestions(item.title);
+    material = (res.materials ?? []).find((m) => m.noteId === item.noteId);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить материал: ${(e as Error).message}`);
+    return;
+  }
+  if (!material) {
+    await ctx.deps.send(ctx.chatId, `Материал «${item.title}» не нашёлся повторно — напишите запрос ещё раз.`);
+    return;
+  }
+  const draft = ctx.session.draft;
+  if (!draft) {
+    await ctx.deps.send(ctx.chatId, 'Черновик не создан — начните заново.', MAIN_KEYBOARD);
+    return;
+  }
+  const price = material.priceMin > 0 ? material.priceMin : 0;
+  const next: OfferDraft = {
+    ...draft,
+    items: [
+      ...draft.items,
+      {
+        ekn: (material.ekn ?? [])[0] ?? '',
+        name: material.name,
+        unit: material.unit || 'шт',
+        qty: 1,
+        price,
+      },
+    ],
+  };
+  apply(ctx, { ...ctx.session, draft: next });
+  await ctx.deps.send(
+    ctx.chatId,
+    `${suggestPickedMessage(1, 'material')}\n\n${draftSummary(next)}`,
+    DRAFT_KEYBOARD,
+  );
 }
 
 // --- Системы в боте (Task 8, 2026-10-31) -------------------------------
@@ -489,6 +659,24 @@ async function addPickedSystem(ctx: CallbackCtx, system: api.SystemItem): Promis
  * карточек кода нет, и тогда выбор несёт заметку — иначе сервер получает
  * пустую строку и отвечает «система не найдена» (2026-11-02).
  */
+/**
+ * Записать систему в КП и ничего не говорить в чат.
+ *
+ * Нужно кнопке «✔ Добавить все системы» (2026-11-12): десяток сообщений «система
+ * добавлена» на одну нажатую кнопку — это шум. Итог говорит вызывающий.
+ * Возвращает false, если черновика нет или сервер отказал.
+ */
+async function addSystemQuiet(ctx: CallbackCtx, system: api.SystemItem): Promise<boolean> {
+  const draft = ctx.session.draft;
+  if (!draft || !draft.offerId) return false;
+  try {
+    await api.addSystem(draft.offerId, ctx.chatId, systemChoice(system));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function systemChoice(system: api.SystemItem): api.SystemChoice {
   const sku = system.sku.trim();
   if (sku) return { sku };
@@ -1427,6 +1615,9 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'cb:doc': onCombatDoc,
   'cb:done': onCombatDone,
   'cb:back': onCombatBack,
+  // Подсказка по свободной фразе (2026-11-12).
+  'sug:systems': onSuggestAddAllSystems,
+  'sug:skip': onSuggestSkip,
 };
 
 export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promise<void>> = {
@@ -1445,6 +1636,8 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   compsel: onCombatPick,
   // Аналог — НАШ продукт: кнопка несёт заметку, а не индекс.
   cban: onCombatAnalogPick,
+  // Номер в подсказке — индекс в foundSuggest (2026-11-12).
+  sug: onSuggestPick,
 };
 
 export { answerCallback, editMessage };

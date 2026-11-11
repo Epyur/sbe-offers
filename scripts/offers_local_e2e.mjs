@@ -2304,9 +2304,24 @@ async function sectionCombat() {
     exportHinted.status === 200 && !combatDocxHinted.equals(combatDocx),
     `размеры ${combatDocx.length} / ${combatDocxHinted.length}`);
 
-  // Чужой editor не видит чужой листок.
-  const foreignGet = await call('GET', `/combat/${combatId}`, { token: makeJwt('other@tn.ru') });
-  ok('чужой боевой листок недоступен', foreignGet.status === 403, `статус ${foreignGet.status}`);
+  // Боевые листки видны ВСЕМ (2026-11-12, требование пользователя): листок —
+  // внутренняя справка для спора с заказчиком, и коллега берёт готовое
+  // сравнение, а не собирает то же заново. Правка при этом остаётся у автора —
+  // это проверяется следом, чтобы «открыли чтение» не превратилось в
+  // «открыли всё».
+  // Роль авторизации выдаёт auth-stub (AUTH_STUB_ROLES), а не JWT: без роли
+  // запрос отсекает requirePerm(\"viewer\") ДО того, как дойдёт до видимости листка.
+  const foreignGet = await call('GET', `/combat/${combatId}`, { token: makeJwt('manager@tn.ru') });
+  ok('боевой листок виден чужому сотруднику', foreignGet.status === 200, `статус ${foreignGet.status}`);
+  const foreignSave = await call('PUT', `/combat/${combatId}`, {
+    token: makeJwt('manager@tn.ru'),
+    body: { ...got.json, title: 'чужая правка' },
+  });
+  ok('чужой не может править боевой листок', foreignSave.status === 403, `статус ${foreignSave.status}`);
+  const foreignList = await call('GET', '/combat', { token: makeJwt('manager@tn.ru') });
+  ok('список боевых листков показывает чужие листки',
+    (foreignList.json?.sheets ?? []).some((s) => s.id === combatId),
+    JSON.stringify((foreignList.json?.sheets ?? []).map((s) => s.id)));
 
   // Список и подпись в боте (2026-11-12): все листки видны всем, а подпись —
   // продукт, а не «Боевой листок». Чат привязан к owner — берём его ссылку.
@@ -2402,7 +2417,52 @@ await sectionLayout();
 await sectionLayoutMode();
 await sectionSystemTexts();
 await sectionServiceMarkers();
+
+/**
+ * Поиск систем и материалов для окна выбора (2026-11-12).
+ *
+ * Живые жалобы: «Гарант» не находил ни одной системы, «Кровля» —
+ * ни одного системного решения. Стенд проверяет условие, которое было нарушено:
+ * по одному слову находится НЕСКОЛЬКО систем, а материал отдаётся готовой позицией.
+ */
+async function sectionPickerSearch() {
+  console.log('\nПоиск для окна выбора');
+
+  const byWord = await call('GET', '/systems/search?q=' + encodeURIComponent('Гарант'), { token: ownerToken });
+  ok('поиск систем «Гарант» отвечает 200', byWord.status === 200, `статус ${byWord.status}`);
+  const garant = (byWord.json?.items ?? []).filter((i) => (i.title ?? '').includes('Гарант'));
+  ok('по «Гарант» нашлись две системы, а не одна', garant.length >= 2,
+    JSON.stringify((byWord.json?.items ?? []).map((i) => i.title)));
+
+  const roof = await call('GET', '/systems/search?q=' + encodeURIComponent('Кровля'), { token: ownerToken });
+  ok('по«Кровля» системных решений несколько',
+    (roof.json?.items ?? []).length >= 2, JSON.stringify((roof.json?.items ?? []).map((i) => i.title)));
+
+  const mats = await call('GET', '/materials/search?q=' + encodeURIComponent('мембрана'), { token: ownerToken });
+  const material = (mats.json?.items ?? [])[0];
+  ok('поиск материалов отвечает 200', mats.status === 200, `статус ${mats.status}`);
+  ok('материал приходит с единицей и кодом',
+    Boolean(material?.unit) && Boolean(material?.sku), JSON.stringify(material));
+
+  const empty = await call('GET', '/systems/search?q=', { token: ownerToken });
+  ok('пустой запрос возвращает массив, а не null',
+    Array.isArray(empty.json?.items) && empty.json.items.length === 0, JSON.stringify(empty.json));
+
+  // Одна ручка на две группы: бот отправляет один запрос на фразу.
+  const suggest = await call('GET', '/suggest?q=' + encodeURIComponent('Кровля'), { token: ownerToken });
+  ok('подсказка отдаёт и системы, и материалы',
+    (suggest.json?.systems ?? []).length > 0 && Array.isArray(suggest.json?.materials),
+    JSON.stringify({ systems: (suggest.json?.systems ?? []).length, materials: (suggest.json?.materials ?? []).length }));
+
+  const botSuggest = await call('GET', '/bot/suggest?q=' + encodeURIComponent('Гарант'), {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('бот может получить подсказку по своему секрету', botSuggest.status === 200,
+    `статус ${botSuggest.status}`);
+}
+
 await sectionCombat();
+await sectionPickerSearch();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

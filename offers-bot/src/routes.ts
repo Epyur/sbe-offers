@@ -27,6 +27,7 @@ import {
   type CallbackCtx,
 } from './callbacks.ts';
 import { canResume } from './flow/resume.ts';
+import type { SuggestItem } from './flow/suggest.ts';
 import {
   NO_OFFER_FOR_FILE,
   attachMessage,
@@ -86,6 +87,24 @@ export interface RouterState {
   lastCompetitor: Map<string, api.CombatSystemItem>;
   /** Наши аналоги, показанные кнопками: номер кнопки — заметка. */
   foundAnalogs: Map<string, api.CombatSystemItem[]>;
+  /**
+   * Подсказка по свободной фразе (2026-11-12): что нашлось по запросу.
+   *
+   * Номер в кнопке — индекс, поэтому список живёт в памяти поллера, а не в
+   * `callback_data` (64 байта кириллического названия не вместят).
+   */
+  foundSuggest: Map<string, SuggestState>;
+}
+
+/**
+ * Показанная подсказка: что искали и что нашли.
+ *
+ * Запрос нужен при нажатии номера: система добавляется в КП, материал — в
+ * черновик позиции, а человеку в ответе надо назвать то же, что он искал.
+ */
+export interface SuggestState {
+  query: string;
+  items: SuggestItem[];
 }
 
 /** Состояние выбора стороны: что показано и что отмечено. */
@@ -115,6 +134,7 @@ export function newRouterState(): RouterState {
     combatPicker: new Map(),
     lastCompetitor: new Map(),
     foundAnalogs: new Map(),
+    foundSuggest: new Map(),
   };
 }
 
@@ -313,6 +333,8 @@ export async function routeText(
     rememberCompetitor: (item) => state.lastCompetitor.set(chatId, item),
     foundAnalogs: state.foundAnalogs.get(chatId) ?? [],
     rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
+    foundSuggest: state.foundSuggest.get(chatId),
+    rememberSuggest: (value) => state.foundSuggest.set(chatId, value),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
@@ -416,6 +438,8 @@ const ctx: CallbackCtx = {
     rememberCompetitor: (item) => state.lastCompetitor.set(chatId, item),
     foundAnalogs: state.foundAnalogs.get(chatId) ?? [],
     rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
+    foundSuggest: state.foundSuggest.get(chatId),
+    rememberSuggest: (value) => state.foundSuggest.set(chatId, value),
   };
 
   const exact = BUTTONS[data];

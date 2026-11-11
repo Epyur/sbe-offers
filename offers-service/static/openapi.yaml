@@ -682,6 +682,116 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SystemCard'
+  /api/offers/systems/search:
+    get:
+      summary: Поиск систем по Базе знаний (окно выбора в КП)
+      description: |
+        Полнотекстовый поиск Базы знаний (`GET /api/kb/search`) по карточкам с
+        тегом `commercial_propose` без тега `material`. Это тот же поиск, что у
+        продукта конкурентов: русская морфология, название весит выше текста.
+
+        Запрос «Гарант» находит «ТН-Кровля Гарант ПЛЮС» и «ТН-Кровля Гарант
+        RE30»; запрос «кровля» — все кровельные системы. Окно выбора в плагине
+        и бот зовут эту ручку, а не фильтруют кеш по подстроке.
+
+        Ошибка Базы знаний — статус 200 и текст в `error`: окно выбора покажет
+        предупреждение, а уже выбранное в предложении останется на месте.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Найденные системы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerSystem'
+                  total:
+                    type: integer
+                  kbEnabled:
+                    type: boolean
+                  error:
+                    type: string
+  /api/offers/materials/search:
+    get:
+      summary: Поиск материалов по Базе знаний (окно выбора в КП)
+      description: |
+        Полнотекстовый поиск по карточкам с тегом `material`. Ответ сразу
+        годится в позицию КП: имя, единица, код и цена «от» из справочника.
+
+        Без Базы знаний поиск идёт по справочнику сервиса (слова запроса по
+        названию и коду), `kbEnabled: false` в ответе говорит об этом.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Найденные материалы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerMaterial'
+                  total:
+                    type: integer
+                  kbEnabled:
+                    type: boolean
+                  error:
+                    type: string
+  /api/offers/suggest:
+    get:
+      summary: Что есть у нас по человеческой фразе (бот и плагин)
+      description: |
+        Системы и материалы одним ответом. Бот зовёт эту ручку, когда фраза в
+        разговоре не разобрана как поле брифа: «Гарант», «Какие есть системы
+        кровли?». Адресат внутри плагина зовёт те же `/systems/search` и
+        `/materials/search` напрямую — здесь ответ объединён, чтобы бот
+        отправлял один запрос на фразу.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Найденные системы и материалы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  systems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerSystem'
+                  materials:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerMaterial'
+                  error:
+                    type: string
   /api/offers/systems/refresh:
     post:
       summary: Перечитать системы из Базы знаний (admin)
@@ -1464,6 +1574,42 @@ paths:
       responses:
         '200':
           description: Системы, либо пустой список с `error`, если База знаний недоступна
+  /api/offers/bot/suggest:
+    get:
+      summary: Подсказка "что у нас есть" для бота
+      description: |
+        То же, что `GET /api/offers/suggest`, но по служебному секрету: бот ходит
+        им, а не ключом человека.
+
+        Бот зовёт эту ручку на свободную фразу, не разобранную как поле брифа:
+        «Гарант», «Какие есть системы кровли?». Ответ показывает найденные
+        системы и материалы списком с кнопками-номерами.
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Найденные системы и материалы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  systems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerSystem'
+                  materials:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerMaterial'
+                  error:
+                    type: string
   /api/offers/bot/offers/{id}/system:
     post:
       summary: Выбрать систему для КП из бота
@@ -2426,6 +2572,53 @@ components:
           type: string
         lastSeenAt:
           type: string
+    PickerSystem:
+      type: object
+      description: |
+        Найденная система для окна выбора в КП. Тело карточки здесь не отдаётся:
+        окну нужны название и замечания к составу, а выбор делает сервер по
+        `noteId` (той же ручкой, что и раньше).
+      properties:
+        noteId:
+          type: integer
+          format: int64
+        sku:
+          type: string
+        title:
+          type: string
+        problems:
+          type: array
+          description: Замечания к составу; пусто — состав распознан
+          items:
+            type: string
+    PickerMaterial:
+      type: object
+      description: |
+        Найденный материал для окна выбора в КП. Полей ровно столько, сколько
+        нужно позиции: имя, единица, код и цена «от» из справочника.
+      properties:
+        noteId:
+          type: integer
+          format: int64
+        materialId:
+          type: integer
+          format: int64
+          description: Запись справочника; 0 — материал ещё не заведён
+        sku:
+          type: string
+        name:
+          type: string
+        unit:
+          type: string
+        priceMin:
+          type: number
+          description: Цена «от»; 0 — цены нет, её вписывает менеджер
+        priceMax:
+          type: number
+        ekn:
+          type: array
+          items:
+            type: string
     Material:
       type: object
       description: |

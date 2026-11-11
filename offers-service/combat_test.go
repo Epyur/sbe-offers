@@ -61,15 +61,36 @@ func TestNormalizeCombatFillsEmpty(t *testing.T) {
 	}
 }
 
-func TestCanSeeCombatOwnerAndAdmin(t *testing.T) {
+// Боевые листки открыты всем, кто вошёл (правило 2026-11-12, требование
+// пользователя: «у нас листки должны быть доступны все всем»). Раньше закрытие
+// повторяло правило предложений, и коллега не мог открыть готовое сравнение.
+func TestCanSeeCombatOpenToEveryone(t *testing.T) {
 	c := CombatSheet{OwnerEmail: "manager@tn.ru"}
-	if !canSeeCombat("editor", "manager@tn.ru", c) {
-		t.Fatal("владелец должен видеть свой боевой листок")
+	cases := []struct {
+		name  string
+		role  string
+		email string
+	}{
+		{"владелец", "editor", "manager@tn.ru"},
+		{"другой менеджер", "editor", "other@tn.ru"},
+		{"наблюдатель", "viewer", "another@tn.ru"},
+		{"admin", "admin", "someone@tn.ru"},
 	}
-	if canSeeCombat("editor", "other@tn.ru", c) {
-		t.Fatal("чужой editor не должен видеть чужой боевой листок")
+	for _, tc := range cases {
+		if !canSeeCombat(tc.role, tc.email, c) {
+			t.Fatalf("%s: боевой листок должен быть виден", tc.name)
+		}
 	}
-	if !canSeeCombat("admin", "someone@tn.ru", c) {
-		t.Fatal("admin должен видеть любой боевой листок")
+}
+
+// Чтение открыто, правка — нет: сохранение и удаление чужого листка проверяют
+// владельца отдельно (combat.go, handleSaveCombat/handleDeleteCombat).
+func TestCombatEditStillOwnerOnly(t *testing.T) {
+	c := CombatSheet{OwnerEmail: "manager@tn.ru"}
+	if !botCanEditCombat(c, "manager@tn.ru") {
+		t.Fatal("автор должен править свой листок")
+	}
+	if botCanEditCombat(c, "other@tn.ru") {
+		t.Fatal("чужой не должен править листок: открыли чтение, а не правку")
 	}
 }

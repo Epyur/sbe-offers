@@ -506,6 +506,32 @@ export async function getBrief(id: number, chatId: string): Promise<Brief> {
 // продуктами конкурентов. Бот выбирает стороны по названиям, а листок хранит
 // заметку и подпись (`noteId`+`title`).
 
+/**
+ * Что есть у нас по человеческой фразе (2026-11-12).
+ *
+ * Живая жалоба: менеджер в брифе писал «Гарант» или «Кровля», а бот молча
+ * клал это в поле брифа. Здесь системы и материалы ищутся одним запросом тем же
+ * полнотекстовым поиском Базы знаний, что и окна выбора в плагине.
+ */
+export interface SuggestMaterial {
+  noteId: number;
+  materialId: number;
+  sku?: string;
+  name: string;
+  unit: string;
+  priceMin: number;
+  priceMax: number;
+  ekn?: string[];
+}
+
+export async function suggestions(query: string): Promise<{
+  systems: CombatSystemItem[];
+  materials: SuggestMaterial[];
+  error?: string;
+}> {
+  return call('GET', `/suggest?q=${encodeURIComponent(query)}`);
+}
+
 /** Карточка стороны в списке выбора: то, что увидит менеджер. */
 export interface CombatSystemItem {
   noteId: number;

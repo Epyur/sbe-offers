@@ -106,6 +106,8 @@ export interface SpecFromFile {
 
 export interface OfferItem {
   catalogId?: number;
+  /** Код ЕКН позиции (2026-11-02): его печатает таблица документа. */
+  ekn?: string;
   name: string;
   unit: string;
   qty: number;

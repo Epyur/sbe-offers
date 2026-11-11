@@ -48,6 +48,7 @@ function makeDeps(initial?: ChatSession): {
     foundSystems: new Map(),
     foundCombat: new Map(),
     combatPicker: new Map(),
+    foundSuggest: new Map(),
     lastCompetitor: new Map(),
     foundAnalogs: new Map(),
   };

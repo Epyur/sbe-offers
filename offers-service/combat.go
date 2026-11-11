@@ -132,26 +132,27 @@ FROM offers_combat_sheet WHERE id = $1`, id).
 	return c, nil
 }
 
-// canSeeCombat — видимость: admin видит все, остальные — только свои. Правило
-// то же, что у предложений (canSeeOffer): один смысл в одном месте по духу, но
-// объект другой, поэтому отдельная функция.
-func canSeeCombat(role, email string, c CombatSheet) bool {
-	if isAdminRole(role) {
-		return true
-	}
-	return strings.EqualFold(c.OwnerEmail, email)
+// canSeeCombat — видимость боевого листка (правило 2026-11-12).
+//
+// **Листки открыты всем, кто вошёл в приложение.** Раньше было как у
+// предложений — admin видит все, остальные только свои, — но листок это
+// внутренняя справка для спора с заказчиком: менеджер берёт готовое сравнение
+// коллеги и печатает, не пересобирая. Закрывать чтение значило бы заставлять
+// каждого заново собирать то же самое.
+//
+// Правит листок по-прежнему только автор (`botCanEditCombat` и проверка
+// владельца при сохранении): читать чужое можно, менять — нет.
+// Сейчас чтение открыто всем, кто вошёл в приложение (роль уже проверена requirePerm("viewer")
+// на маршруте). Правка и удаление остаются у автора.
+func canSeeCombat(_ string, _ string, _ CombatSheet) bool {
+	return true
 }
 
 func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
-	role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), actorEmailFromCtx(r))
-	query := `SELECT id FROM offers_combat_sheet`
-	args := []any{}
-	if !isAdminRole(role) {
-		query += ` WHERE lower(owner_email) = lower($1)`
-		args = append(args, actorEmailFromCtx(r))
-	}
-	query += ` ORDER BY created_at DESC LIMIT 200`
-	rows, err := s.pool.Query(r.Context(), query, args...)
+	// Список показывает ВСЕ листки (правило 2026-11-12): листок — общая
+	// справка, а не личный документ. Правка остаётся у автора.
+	query := `SELECT id FROM offers_combat_sheet ORDER BY created_at DESC LIMIT 200`
+	rows, err := s.pool.Query(r.Context(), query)
 	if err != nil {
 		dbError(w, "list combat", err)
 		return

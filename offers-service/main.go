@@ -104,6 +104,11 @@ func main() {
 	mux.HandleFunc("POST /api/offers/materials", s.requirePerm("admin")(s.handleSaveMaterial))
 	mux.HandleFunc("PUT /api/offers/materials/{id}", s.requirePerm("admin")(s.handleSaveMaterial))
 	mux.HandleFunc("DELETE /api/offers/materials/{id}", s.requirePerm("admin")(s.handleDeleteMaterial))
+	// Поиск для окна выбора (2026-11-12): дропдауны на сотни строк заменены
+	// поиском Базы знаний — тем же, что у конкурентов.
+	mux.HandleFunc("GET /api/offers/materials/search", s.requirePerm("viewer")(s.handleSearchMaterials))
+	mux.HandleFunc("GET /api/offers/systems/search", s.requirePerm("viewer")(s.handleSearchSystems))
+	mux.HandleFunc("GET /api/offers/suggest", s.requirePerm("viewer")(s.handleSearchSuggestions))
 	mux.HandleFunc("POST /api/offers/materials/{id}/ekn", s.requirePerm("admin")(s.handleAddMaterialEkn))
 	mux.HandleFunc("DELETE /api/offers/materials/{id}/ekn/{eknId}", s.requirePerm("admin")(s.handleDeleteMaterialEkn))
 
@@ -200,6 +205,7 @@ func main() {
 	// Системы для команды «система <название>» (2026-10-31): в каталоге бота их
 	// нет, но выбрать состав нужно.
 	mux.HandleFunc("GET /api/offers/bot/systems", s.requireServiceSecret(s.handleBotSystems))
+	mux.HandleFunc("GET /api/offers/bot/suggest", s.requireServiceSecret(s.handleBotSuggest))
 	mux.HandleFunc("GET /api/offers/bot/offers", s.requireServiceSecret(s.handleBotListOffers))
 	mux.HandleFunc("POST /api/offers/bot/offers", s.requireServiceSecret(s.handleBotCreateOffer))
 	mux.HandleFunc("GET /api/offers/bot/offers/{id}", s.requireServiceSecret(s.handleBotGetOffer))
