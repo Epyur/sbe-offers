@@ -40,6 +40,87 @@ paths:
         '200':
           description: YAML-схема
 
+  /api/offers/app/config:
+    get:
+      summary: Публичные настройки Mini App для бота и приложения
+      description: |
+        Адрес приложения, username бота и срок свежести initData.
+        Данных человека и секретов здесь нет, поэтому ручка открыта.
+      security: []
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appUrl:
+                    type: string
+                    example: https://epyur.fvds.ru/app-offers/
+                  botUsername:
+                    type: string
+                    example: lpi_pm_bot
+                  initDataTtl:
+                    type: integer
+                    description: Срок свежести initData в секундах
+                    example: 86400
+  /api/offers/app/session:
+    post:
+      summary: Обмен подписанного Telegram initData на JWT приложения
+      description: |
+        Единственный вход в Mini App. Подпись проверяется токеном бота из
+        `offers_bot_config`; JWT и роли — те же, что у плагина Obsidian.
+
+        Коды: 400 — строка initData не той формы; 401 — подпись не сходится
+        или устарела; 403 `not_linked` — подпись верна, но человек ещё не
+        входил в бота; 503 — токен бота не настроен.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData]
+              properties:
+                initData:
+                  type: string
+                  description: Строка `window.Telegram.WebApp.initData`
+      responses:
+        '200':
+          description: Токен и роль
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT `app_id=offers`, срок 1 час
+                  user:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                      role:
+                        type: string
+                        enum: ['', viewer, editor, admin, superadmin]
+                  offers:
+                    type: integer
+                    description: Сколько КП принадлежит человеку
+                  sheets:
+                    type: integer
+                    description: Сколько боевых листков принадлежит человеку
+        '400':
+          description: Строка initData не той формы
+        '401':
+          description: Подпись неверна или устарела
+        '403':
+          description: Человек ещё не входил в бота (`not_linked`)
+        '503':
+          description: Токен бота не настроен в сервисе
+
   /api/offers/permissions/me:
     get:
       summary: Роль текущего пользователя

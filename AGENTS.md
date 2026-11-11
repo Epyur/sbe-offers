@@ -33,6 +33,16 @@ hashes, checks, what is unfinished, where to look when something breaks.
 Current version = **0.9.17** — **released 2026-11-12**. See the "0.9.17" entry
 below for commits, hashes and the self-hosted values.
 
+**Mini App migration, steps S0–S1 (2026-11-13, `backend` only — no plugin
+bump, so `main.js`, the release slice and the registry are untouched).** New
+`offers-app/` (React + Vite + TS), deployed to `/app-offers/` behind Caddy;
+sign-in by Telegram `initData` in `offers-service/appauth.go`; roles for
+managers closed through common access `editor`. Details: the entry
+«Mini App, S1 — identity» below, `specification.md` §«Mini App»,
+[HANDOFF.md](HANDOFF.md) and the plan
+`docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md`.
+**Next step is S2** (list + search by client).
+
 **0.9.17 (2026-11-12, plugin + service + bot + news).** Three live complaints,
 one root cause: picking a system or a material went through a dropdown or a
 substring filter instead of the Knowledge Base's own full-text search — and the
@@ -419,7 +429,31 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
 | `scripts/offers_local_e2e.mjs` | the stand: **351 checks**, 26 sections |
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
+| `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
+| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`), `base: './'`, built to `offers-app/dist/`. **S0+S1 done**: scaffold, placeholder screens, sign-in (initData → JWT). Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 72 KiB used), `npm test` (12 passing). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
+
+**Mini App, S1 — identity (2026-11-13).** `offers-service/appauth.go`:
+`verifyInitData` (HMAC per Telegram docs, constant-time compare, `auth_date`
+freshness `OFFERS_APP_INITDATA_TTL` default 24 h, duplicate-key and 16 KiB
+guards), `signAppJWT` (the same `jwtClaims` the plugin uses, `device_id`
+`app:<chat_id>`, 1 h), `POST /api/offers/app/session` (initData → JWT) and
+`GET /api/offers/app/config` (`appUrl`, `botUsername`, `initDataTtl`).
+The bot token comes from `offers_bot_config` only — never from env.
+Codes: 400 malformed, 401 bad/stale signature, 403 `not_linked`, 503 no bot
+token. Proven live (`scripts/check_app_auth.mjs`, 8 checks) and by
+`go test` (initData paths + the JWT going through the real `authorize` gate).
+
+**Roles for managers — closed 2026-11-13 (user decision).** `offers-service`
+reads roles from the central auth-service map, and `offers` had **no entry in
+`app_common_access`**, so a manager who only signed in to the bot
+(`offers_access` = viewer) got `role: ""` and `403` on every JWT route. The user
+chose common access `editor`: written through
+`POST /internal/apps/offers/common-access` (actor `polishchuk@tn.ru`), verified
+live — ladnaya / m.krylov / romov now get `role=editor`, `/offers` and
+`/combat` answer 200, the owner stays `superadmin`. **The App is only as good as
+this map: a new employee needs either the bot sign-in (falls under common
+access) or a personal role.**
 
 ## Server structure
 
@@ -441,7 +475,10 @@ server-side paging `offset`/`limit` (`combatOurItems`, `filterCombatItems`,
 `paginateCombatItems`, `parseCombatPage`), create, add/remove a side, DOCX —
 reuses `combat.go`/`combat_docx.go`, owner is the chat's bound email),
 `pickersearch.go` (KB search for the offer-editor pickers and the bot's
-`/suggest`/`/bot/suggest`, 2026-11-12), `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
+`/suggest`/`/bot/suggest`, 2026-11-12), `appauth.go` (Mini App sign-in,
+2026-11-13: `verifyInitData` over the bot token from `offers_bot_config`,
+`signAppJWT` with the plugin's claims, `POST /app/session`, `GET /app/config`),
+`kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
 `docx.go` (render entry points, service fields, composition printing),
 `docx_numbering.go` (a fresh `numId` per system list), `docx_text.go` (prompt
@@ -602,6 +639,17 @@ measurements) are in the archive.
   mojibake.** Edit with the editor tools or Python with an explicit encoding.
 
 ### Building and the stand
+
+- **A full disk on the VDS is Docker's build cache, not the databases**
+  (2026-11-13, lived incident: PostgreSQL recovery loop
+  `could not write to file "pg_logical/replorigin_checkpoint.tmp": No space
+  left on device`, every app down). `df -h /` showed 0 bytes free while
+  `/var/lib/containerd` held 66 GB, of which 63 GB were
+  `snapshotter.v1.overlayfs/snapshots` and `docker buildx du` reported
+  **64 GB cache, 62 GB reclaimable** — the leftovers of every service rebuild.
+  Fix: `docker buildx prune -af` (images untouched, only build cache) — freed
+  58 GB in one run. **Check `docker buildx du | tail -3` before blaming the
+  databases**, and re-check `df -h /` after any big rebuild.
 
 - **A layout belongs to a MODE, and the mode must be visible in the answer.**
   (2026-11-11, lived defect: the offer was exported as an empty combat sheet.)

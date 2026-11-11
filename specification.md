@@ -9,9 +9,69 @@
   `getService('sbe-apstore').auth.getToken('offers')`).
 - Роли: `viewer`(1) < `editor`(2) < `admin`(3); действует персональная роль
   или общий доступ приложения (источник — auth-service, `authperms.go`).
+  **С 2026-11-13 общий доступ приложения `offers` = `editor`** — так менеджер
+  с ролью только в `offers_access` после входа в бота получает полноценный
+  доступ и в плагине, и в Mini App.
 - Бот: заголовок `X-Service-Secret` = `OFFERS_BOT_SECRET` (ручки `/bot/*`),
   JWT не нужен.
+- **Mini App**: JWT, полученный обменом Telegram `initData` на
+  `POST /api/offers/app/session` (см. раздел «Mini App»). Этого же формата
+  токен знает `requirePerm`.
 - 401 — «Ключ недействителен», 403 — «Нет прав».
+
+## Mini App (2026-11-13, шаги S0–S1)
+
+Telegram Mini App (`offers-app/`, React + Vite) раздаётся Caddy по
+`https://epyur.fvds.ru/app-offers/`, маршруты — в хэше:
+`#/list/offers`, `#/list/sheets?q=…`, `#/offer/{id}`, `#/sheet/{id}`.
+Бот передаёт ссылку целиком; серверному роутингу нечего переписывать.
+
+### Вход: `POST /api/offers/app/session`
+
+```
+body: { "initData": "<window.Telegram.WebApp.initData>" }
+→ 200 { token, user: {email, role}, offers: n, sheets: n }
+  400 — строка не той формы
+  401 — подпись не сходится или устарела
+  403 { error: "not_linked", hint } — верно подписано, но человек не входил в бота
+  503 — в сервисе не настроен токен бота
+```
+
+Проверка (`offers-service/appauth.go`, `verifyInitData`):
+
+1. разбор `k=v`-строки; **повтор ключа — отказ** (две `auth_date` под одной
+   подписью), тела больше 16 КиБ не разбираем;
+2. `secret_key = HMAC_SHA256("WebAppData", bot_token)`;
+   `hash = hex(HMAC_SHA256(secret_key, data_check_string))`, где
+   `data_check_string` — пары `k=v` **по алфавиту через `\n`**, без `hash`;
+3. сравнение подписи постоянным временем;
+4. свежесть `auth_date`: `OFFERS_APP_INITDATA_TTL` (по умолчанию `24h`);
+   подпись из будущего больше минуты тоже отвергается;
+5. `user.id` = `chat_id` → `offers_bot_link` → email; нет привязки → `403
+   not_linked`.
+
+Токен бота берётся **только** из `offers_bot_config` (правило 2026-10-29:
+второй источник однажды отправлял уведомления чужим ботом). Смена токена
+автоматически аннулирует выданные `initData`.
+
+Выдаваемый JWT — тот же формат, что у плагина (`app_id=offers`,
+`iss=auth-service`, `aud=[offers]`, срок 1 час), `device_id = app:<chat_id>`:
+роли проверяет существующий `requirePerm`, новых гейтов нет.
+
+### `GET /api/offers/app/config`
+
+Публичная, без гейта: `{ appUrl, botUsername, initDataTtl }`. Данных
+человека и секретов не содержит. Адрес — `OFFERS_APP_URL` (по умолчанию
+`https://epyur.fvds.ru/app-offers/`).
+
+### Правила, которые нельзя ломать
+
+- `initData` — **ключ доступа**: только тело POST, никогда строка запроса,
+  никогда в журнале (в журнал идёт только причина отказа);
+- ручка, которую зовут с `X-Service-Secret`, обязана быть `/bot/*`; ручка с
+  JWT — без `/bot/` и без секрета; смешение этих двух уже дало живой 403
+  (0.9.17);
+- пустой список в JSON — `[]`, не `null`.
 
 ## Каталог
 

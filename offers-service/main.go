@@ -88,6 +88,13 @@ func main() {
 	mux.Handle("GET /api/offers/docs/", http.StripPrefix("/api/offers/docs/", http.FileServer(http.FS(swaggerFS))))
 	mux.HandleFunc("GET /api/offers/openapi.yaml", serveOpenAPI)
 
+	// Mini App (2026-11-13, S1): обмен подписанного Telegram initData на
+	// обычный JWT приложения и публичная информация о нём. Гейт у /app/session
+	// — сама подпись initData токеном бота; JWT у этих двух ручек нет
+	// намеренно, иначе вход по initData был бы невозможен.
+	mux.HandleFunc("POST /api/offers/app/session", s.handleAppSession)
+	mux.HandleFunc("GET /api/offers/app/config", s.handleAppConfig)
+
 	mux.HandleFunc("GET /api/offers/permissions/me", s.requirePerm("viewer")(s.handleMyPermission))
 	mux.HandleFunc("GET /api/offers/permissions/list", s.requirePerm("admin")(s.handleListPermissions))
 	mux.HandleFunc("POST /api/offers/permissions/set", s.requirePerm("admin")(s.handleSetPermission))

@@ -1,0 +1,26 @@
+{
+  "name": "offers-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "LogicTEAM.КП inside Telegram: the Mini App that owns the document (systems, positions, texts, combat sheets, DOCX). The bot keeps identity, entry and the brief.",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "size": "node scripts/check_size.mjs",
+    "test": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "typescript": "~5.9.2",
+    "vite": "^8.3.8"
+  }
+}

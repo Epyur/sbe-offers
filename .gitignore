@@ -22,3 +22,7 @@ offers-service/target/
 # Анализ кода (crapper/dryer): отчёты .metrics/ - артефакт инструмента, не код.
 .metrics/
 offers-service/.metrics/
+# Mini App (2026-11-13): build output of Vite - not in the repository.
+offers-app/dist/
+offers-app/node_modules/
+offers-app/.vite/
