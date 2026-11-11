@@ -30,14 +30,33 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.14** — **released 2026-11-12**. `backend` code + docs
-HEAD `e93d45e`; `main` HEAD `d418e3f`; the service and the bot run 0.9.14, the
-self-hosted files and `registry.json` are 0.9.14 (hashes verified over https:
-`4ff10217…` / `df5b0d7c…` / `a32ac3df…`). Registry git copy
-`sbe-apstore-registry` `a92d98b`. Live KB check after deploy: `/bot/combat/
-competitors?q=ПВХ мембрана` returns PLASTFOIL (9 first) and the tag filter works;
-`q=мембрана кровельная` returns FACHMANN and PVC-RP; `/bot/combat/analogues?
-noteId=7359` returns `PIRRO®VentiDuct` first.
+Current version = **0.9.15b** — prepared 2026-11-12 (backend-only fix, `main`
+still carries 0.9.14). `backend` HEAD carries the fix; self-hosted files and
+`registry.json` are still 0.9.14 until the release is rolled out.
+
+**0.9.15 (2026-11-12, server-only + news).** Live complaint: sign-in codes for
+the **offer bot** stopped arriving by e-mail. Same root cause as the
+`auth-service` incident of 2026-11-09: `offers-service/email.go` sent via the
+local exim (`host.docker.internal:25`) with the `epyur.fvds.ru` domain, which has
+no SPF/DKIM/DMARC — the `tn.ru` corporate filter drops such mail, while exim
+answers `250 OK`, so from outside it looks like "delivered".
+
+1. **`offers-service/email.go` rewritten** to mirror `auth-service`: defaults
+   `smtp.yandex.ru:587`, STARTTLS when advertised, AUTH PLAIN on
+   `SMTP_USER`/`SMTP_PASS`, sender falls back to `SMTP_USER`, `net.DialTimeout`
+   30 s + 2-minute session deadline, RFC 2047 Q-encoded Subject. Explicit
+   `SMTP_*` still win — rolling back to exim is one compose line, no code.
+2. **`sbe-core/docker/docker-compose.yml`, `offers` block**: `SMTP_HOST/PORT`
+   from `AUTH_SMTP_*`, `SMTP_FROM/USER=${LAB_MAIL_LOGIN}`,
+   `SMTP_PASS=${LAB_MAIL_PASSWORD}`, `SMTP_SKIP_VERIFY` removed (same mailbox as
+   auth/documents). The local compose copy diverges from the server — insert the
+   block pointwise (see `sbe-core/docker/AGENTS.md`).
+3. **`offers-service/email_test.go`** — five guards: defaults, sender fallback,
+   explicit override, RFC 2047 subject, recipient/body.
+
+Checks: `gofmt` clean, `go vet` clean, `go test ./...` green (5 new tests),
+`go build` OK, `tsc` EXIT=0, `npm run build` OK, `check_bundle_strings` 0
+missing, `check_marker_registry` OK, OpenAPI 90/67.
 
 `check_docs_state.mjs` is expected to fail while a release is unfinished — do not
 "fix" it by editing docs.
