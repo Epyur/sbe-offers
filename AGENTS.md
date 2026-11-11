@@ -32,7 +32,7 @@ hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.15** — **released 2026-11-12** (backend-only fix plus
 the CUP news; the `b` suffix was removed when `main` caught up).
-`backend` HEAD is the last docs commit of this release, `main` `fc680f3`.
+`backend` `c2220b1`, `main` `fc680f3`.
 Deployed: `offers` container recreated
 2026-11-12 16:02 MSK with `SMTP_HOST=smtp.yandex.ru`, `SMTP_PORT=587`,
 `SMTP_USER/FROM=lpitn@yandex.ru`; health `ok`; live `POST
