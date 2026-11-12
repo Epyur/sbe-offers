@@ -30,13 +30,22 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.18** — **RELEASED 2026-11-13**. Three points converge:
-`backend` `5884fcd`, `main` `2704d52` (plugin release slice only), self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…`
-(verified over https **and** in `/registry.json`), registry git copy
-`sbe-apstore-registry` `c0d3c14`. The service and the bot were rebuilt and
-recreated on the server at 07:48 MSK; the App bundle
-(`assets/index-Mi8fYGdx.js`, sha256 `4837f8d0…`) is served from `/app-offers/`.
-Per-plugin state, hashes and the release procedure live in
+Current version = **0.9.18** — **RELEASED 2026-11-13.** Plugin three points
+converge: `main` `c272a48` (HEAD по коду; доки позднее), self-hosted `e6406deb…` / `b24032e4…` /
+`a32ac3df…` (verified over https **and** in `/registry.json`), registry git
+copy `sbe-apstore-registry` `c0d3c14` — **the plugin files did not change after
+the release**, so the self-host and the registry stay correct even though the
+service, the bot and the App were fixed several times afterwards.
+Work branch `backend` = `4705619` (последний коммит, менявший код и
+серверные папки; коммиты одной документации идут после него).
+
+**The App is deployed separately from the plugin** and has been updated after
+the release four times: `assets/index-g0XLDXK5.js` (sha256 `01ab599b…`) plus
+`vendor/telegram-web-app.js` (`baa788a6…`, served from our own domain).
+The service and the bot were last rebuilt and recreated on 2026-11-13 after the
+`db error` fix and the removal of the menu button.
+
+Per-plugin state, live hashes and the release procedure live in
 [HANDOFF.md](HANDOFF.md) — it is the entry point for a cold start.
 
 **The Mini App migration is done through S7 (S0–S4, S6, S7); S5 is
