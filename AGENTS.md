@@ -45,6 +45,23 @@ deliberately NOT done** — the user decided on 2026-11-13 that the bot keeps
 all its flows until the App has been verified in real use. Nothing was deleted
 from `offers-bot`. Do not start S5 without an explicit instruction.
 
+**Live defect found on the first real run (2026-11-13): the App showed
+«initData: нет».** Root cause was NOT the sign-in code but the page:
+`<script src="https://telegram.org/js/telegram-web-app.js">` — and the VDS in
+Russia cannot reach `telegram.org` at all, so the script never loaded, so
+`window.Telegram.WebApp` did not exist and `initData` was empty. The App then
+honestly rendered «Открыто вне Telegram». The service side was fine all along
+(`/app/session` → 400 empty body, 401 bad signature, bot token present,
+10 chat links).
+
+**Rule that follows: the App has no external dependencies.** The Telegram script
+is served from our own domain (`offers-app/public/vendor/telegram-web-app.js`
+→ `dist/vendor/`, referenced as `./vendor/telegram-web-app.js`). Any `<script>`/
+font/CDN added to `index.html` will silently fail on this host. Proven by
+`scripts/check_app_browser.mjs <baseUrl>` (15 checks: no external scripts, the
+Telegram script comes from our domain and really is it, the bundle matches the
+built one, `/app/config` answers, a bad signature is 401).
+
 **Not verified by a human yet:** the whole live Telegram path (sign-in, lists,
 offer card, section texts, combat sheet, «Отправить в чат») and the local
 Docker stand (new sections 5b–5e in `scripts/offers_local_e2e.mjs` were written

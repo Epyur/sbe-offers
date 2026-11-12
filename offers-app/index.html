@@ -5,11 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>LogicTEAM.КП</title>
-    <!-- Скрипт Telegram Mini Apps (плана миграции, START-HERE §5.4).
-         Единственная внешняя зависимость: без него нет tg.ready()/expand(),
-         initData и sendData. Приложение работает и без него (открытое в
-         обычном браузере) — см. src/tg.ts. -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Скрипт Telegram Mini Apps (план миграции, START-HERE §5.4).
+         Без него нет tg.ready()/initData/sendData, и приложение показывает
+         «Открыто вне Telegram». Приложение работает и без него (открытое в
+         обычном браузере) — см. src/tg.ts.
+
+         ГРУЗИМ СВОЮ КОПИЮ, не с telegram.org (2026-11-13, живой дефект).
+         Хостинг в РФ не достаёт до telegram.org вовсе, поэтому внешний скрипт
+         у людей не загружался — `window.Telegram.WebApp` не появлялся, и
+         приложение честно сообщало «initData: нет». Копия лежит рядом с
+         приложением (`vendor/telegram-web-app.js`, она же в `public/vendor/`),
+         обновлять её — вместе с выпуском приложения. -->
+    <script src="./vendor/telegram-web-app.js"></script>
   </head>
   <body>
     <div id="root"></div>
