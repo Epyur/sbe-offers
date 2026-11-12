@@ -966,6 +966,30 @@ secrets verified equal in both containers, and a live `agent/list` call from the
 were all exercised live); week-long journal analysis is future work
 (`GET /api/offers/admin/agent-log`).
 
+### P6-bis — agent reads ANY note + competitor tools (model AGREED 2026-11-14, code NOT started)
+
+Live defect (0.9.22): the bot said material cards (noteId 7547/6256/6260/7701/
+7703/7705) "do not open in the KB". **False** — they exist and read fine
+(verified live with the service token). Cause: `read_card` → `liveSystemCard` →
+`SystemsFromKB` (`systemcards.go:315`), which keeps only `commercial_propose`
+notes WITHOUT `material` and drops materials on purpose. **Reading a card must not
+depend on whether it is a system or a material** — that was a P6 model error.
+
+**Agreed model (user, 2026-11-14): one axis — a KB card is ANY `noteId`.**
+`read_card` reads any note (`KBClient.Note` + `ParseSystemCard`), no tag filter.
+The tag decides the ACTION, checked inside the tool (boundary), never in the
+prompt: `commercial_propose` without `material` → system (`set_system`, our side);
+`commercial_propose` + `material` → material (`set_material`, our side); `competitor`
+→ competitor side; any other tag → answer context / linked evidence if tied to a
+`commercial_propose` note.
+
+**New tools:** `read_card` rewritten (any note), `search_competitors` (wraps
+`searchCompetitors`), `create_combat_sheet` (`createCombat`), `set_combat_side`
+(`combatSide`). Existing document tools stay (filter `product_refs` in
+documents-service). **Emails = P5b**, not here: `/internal/mailer/agent/*` routes
+do not exist yet (work in `sbe-mailer`). Full plan and step order — `HANDOFF.md`,
+section «СЛЕДУЮЩИЙ ШАГ — P6-бис». Plugin unchanged (server + bot).
+
 ## Next iterations (backlog)
 
 Ordered by what will bite the commercial department soonest.
