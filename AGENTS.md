@@ -30,16 +30,32 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.17** — **released 2026-11-12**. See the "0.9.17" entry
-below for commits, hashes and the self-hosted values.
+Current version = **0.9.18** — **RELEASED 2026-11-13**. Three points converge:
+`backend` `e64d998` (code + services + App + docs), `main` `39a51e9` (plugin
+release slice only), self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…`
+(verified over https **and** in `/registry.json`), registry git copy
+`sbe-apstore-registry` `c0d3c14`. The service and the bot were rebuilt and
+recreated on the server at 07:48 MSK; the App bundle
+(`assets/index-Mi8fYGdx.js`, sha256 `4837f8d0…`) is served from `/app-offers/`.
+Per-plugin state, hashes and the release procedure live in
+[HANDOFF.md](HANDOFF.md) — it is the entry point for a cold start.
 
-**Mini App migration, steps S0–S1 (2026-11-13, `backend` only — no plugin
-bump, so `main.js`, the release slice and the registry are untouched).** New
-`offers-app/` (React + Vite + TS), deployed to `/app-offers/` behind Caddy;
-sign-in by Telegram `initData` in `offers-service/appauth.go`; roles for
-managers closed through common access `editor`. Details: the entry
-«Mini App, S1 — identity» below, `specification.md` §«Mini App»,
-[HANDOFF.md](HANDOFF.md) and the plan
+**The Mini App migration is done through S7 (S0–S4, S6, S7); S5 is
+deliberately NOT done** — the user decided on 2026-11-13 that the bot keeps
+all its flows until the App has been verified in real use. Nothing was deleted
+from `offers-bot`. Do not start S5 without an explicit instruction.
+
+**Not verified by a human yet:** the whole live Telegram path (sign-in, lists,
+offer card, section texts, combat sheet, «Отправить в чат») and the local
+Docker stand (new sections 5b–5e in `scripts/offers_local_e2e.mjs` were written
+but not run — Docker was not started). Run the stand before the next batch.
+
+**Mini App architecture (2026-11-13).** `offers-app/` (React + Vite + TS) is
+served by Caddy at `/app-offers/` and talks to the same `/api/offers/*` routes
+as the Obsidian plugin, as a JWT client; sign-in is Telegram `initData`
+(`offers-service/appauth.go`) exchanged for the normal JWT, and roles come from
+the central map (common access `editor`). **The bot keeps identity, entry, the
+brief, lists, search and file upload; the App owns the document.** Plan:
 `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md`.
 **S2 — lists and search (2026-11-13, `backend` only, not deployed).**
 `offers-service/lists.go` holds the one query normaliser (`parseListQuery`:
