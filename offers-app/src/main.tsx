@@ -53,7 +53,13 @@ function App(): JSX.Element {
   return (
     <>
       <header className="app-muted">LogicTEAM.КП — {inTelegram ? 'Telegram' : 'браузер'}, тема {colorScheme()}</header>
-      <main>{allowed ? screenFor(route) : <SignInProblem result={auth.result} />}</main>
+      <main>
+        {allowed ? (
+          screenFor(route, viewerOf(auth.result))
+        ) : (
+          <SignInProblem result={auth.result} />
+        )}
+      </main>
       {auth.result.ok ? (
         <footer className="app-nav">
           <a className="app-link" href="#/list/offers">
@@ -76,6 +82,16 @@ function App(): JSX.Element {
  */
 function inBrowserOnly(result: SessionResult): boolean {
   return !result.ok && result.failure.kind === 'no-init-data';
+}
+
+/**
+ * Кто вошёл — для экранов, которым нужны права (боевой листок показывает
+ * кнопки правки только автору). Без входа это пустые строки: запросы всё
+ * равно уйдут без JWT и сервис их отвергнет.
+ */
+function viewerOf(result: SessionResult): { email: string; role: string } {
+  if (!result.ok) return { email: '', role: '' };
+  return { email: result.session.user.email, role: result.session.user.role };
 }
 
 function SignInProblem({ result }: { result: SessionResult }): JSX.Element {

@@ -6,7 +6,14 @@
  * (Task 1 плана 2026-10-29): раньше здесь были две функции-диспетчера по
  * CC 23-24, и правку входа приходилось делать в двух местах.
  */
-import { answerCallback, downloadDocument, getUpdates, type TelegramUpdate } from './telegram.ts';
+import {
+  answerCallback,
+  downloadDocument,
+  getUpdates,
+  sendDocument,
+  type TelegramUpdate,
+} from './telegram.ts';
+import { deliverDocx, parseWebAppData, unknownRequestText } from './webapp.ts';
 import { restoreSession, type ChatSession } from './session.ts';
 import { routeCallback, routeDocument, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
 import { sendMessage, editMessage } from './telegram.ts';
@@ -66,6 +73,12 @@ function makeDeps(state: RouterState): BotDeps {
 
 async function handleUpdate(deps: BotDeps, state: RouterState, update: TelegramUpdate): Promise<void> {
   const message = update.message;
+  if (message?.chat && message.web_app_data) {
+    // «Отправить в чат» из Mini App (шаг S7): приложение не может приложить
+    // файл само, поэтому присылает указатель — а документ собирает бот.
+    await handleWebAppData(deps, String(message.chat.id), message.web_app_data.data);
+    return;
+  }
   if (message?.chat && message.document) {
     // Файл: скачиваем через тот же SOCKS, что и getUpdates, и отдаём в
     // маршруты. Скачивание здесь, потому что путь файла и прокси должны
@@ -89,6 +102,27 @@ async function handleUpdate(deps: BotDeps, state: RouterState, update: TelegramU
   if (cb?.data && cb.message) {
     await routeCallback(deps, String(cb.message.chat.id), cb.data, cb.id, state);
   }
+}
+
+/**
+ * Обработчик `web_app_data`: разобрать указатель и отправить документ.
+ *
+ * `chat_id` здесь берётся из обновления, а не из полезной нагрузки — иначе
+ * приложение могло бы попросить отправить файл в чужой чат. Непонятная
+ * нагрузка — понятный ответ, а не молчание: человек нажал кнопку и ждёт.
+ */
+export async function handleWebAppData(
+  deps: BotDeps,
+  chatId: string,
+  raw: string,
+): Promise<void> {
+  const request = parseWebAppData(raw);
+  if (request === null) {
+    await deps.send(chatId, unknownRequestText());
+    return;
+  }
+  const result = await deliverDocx(chatId, request, sendDocument);
+  await deps.send(chatId, result.text);
 }
 
 export async function runPoller(): Promise<void> {

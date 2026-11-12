@@ -477,6 +477,231 @@ let offerId = 0;
   ok('чужак без роли видит только свои (пусто)', (strangerList.json?.offers ?? []).length === 0, String((strangerList.json?.offers ?? []).length));
 }
 
+console.log('\n5b. Поиск в списках (S2, 2026-11-13)');
+{
+  // Пустой `q` — прежнее поведение: список КП и без поиска обязан отвечать.
+  const plain = await call('GET', '/offers', { token: ownerToken });
+  ok('список КП без q работает как раньше', plain.status === 200 && (plain.json?.offers ?? []).length >= 2, `status ${plain.status}`);
+
+  // Поиск по имени заказчика: подстрока в СЕРЕДИНЕ слова и «ё»/«е».
+  const byWord = await call('GET', '/offers?q=' + encodeURIComponent('Ромаш'), { token: ownerToken });
+  const wordHits = byWord.json?.offers ?? [];
+  ok('поиск находит заказчика по части имени', wordHits.some((o) => (o.client?.name ?? '').includes('Ромашка')), JSON.stringify(wordHits.map((o) => o.client?.name)));
+  ok('поиск не отдаёт несовпавшие строки', wordHits.every((o) => (o.client?.name ?? '').toLowerCase().includes('ромаш')), JSON.stringify(wordHits.map((o) => o.client?.name)));
+
+  const byYoTie = await call('GET', '/offers?q=' + encodeURIComponent('Ромашка'), { token: ownerToken });
+  ok('поиск по полному имени тоже находит', (byYoTie.json?.offers ?? []).length === wordHits.length, String((byYoTie.json?.offers ?? []).length));
+
+  const none = await call('GET', '/offers?q=' + encodeURIComponent('нет-такого-заказчика'), { token: ownerToken });
+  ok('пустой результат — массив, а не null', Array.isArray(none.json?.offers), JSON.stringify(none.json?.offers));
+  ok('пустой результат пуст', (none.json?.offers ?? []).length === 0, String((none.json?.offers ?? []).length));
+
+  // Поиск не обходит права: чужак без роли не видит чужое даже по имени клиента.
+  const stranger = makeJwt('stranger@tn.ru');
+  const strangerSearch = await call('GET', '/offers?q=' + encodeURIComponent('Ромашка'), { token: stranger });
+  ok('поиск не открывает чужое', strangerSearch.status === 200 && (strangerSearch.json?.offers ?? []).length === 0, `${strangerSearch.status} / ${(strangerSearch.json?.offers ?? []).length}`);
+
+  // Листки: поиск по названию и по продукту стороны.
+  const sheetsPlain = await call('GET', '/combat', { token: ownerToken });
+  ok('список листков без q работает как раньше', sheetsPlain.status === 200 && Array.isArray(sheetsPlain.json?.sheets), `status ${sheetsPlain.status}`);
+  const sheetSearch = await call('GET', '/combat?q=' + encodeURIComponent('мембрана'), { token: ownerToken });
+  ok('поиск листков по продукту отвечает массивом', sheetSearch.status === 200 && Array.isArray(sheetSearch.json?.sheets), `status ${sheetSearch.status}`);
+}
+
+console.log('\n5c. Карточка КП из приложения: точечные правки (S3, 2026-11-13)');
+{
+  // Своя заготовка: у неё есть позиции, чтобы проверить, что правка заказчика
+  // их НЕ трогает, а правка позиций не задевает системы.
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'Проверка карточки', contact: 'Иван' },
+      items: [{ name: 'Было', unit: 'шт', qty: 2, price: 100 }],
+    },
+  });
+  const cardId = created.json?.id ?? 0;
+  ok('заготовка карточки создана', created.status === 200 && cardId > 0, `status ${created.status}`);
+
+  const before = created.json?.updatedAt ?? '';
+  const clientRes = await call('PUT', `/offers/${cardId}/client`, {
+    token: ownerToken,
+    body: { name: 'Новый заказчик', contact: 'Пётр' },
+  });
+  ok('правка заказчика → 200', clientRes.status === 200, `status ${clientRes.status}`);
+  ok('заказчик записан', clientRes.json?.client?.name === 'Новый заказчик', clientRes.json?.client?.name);
+  ok('позиции правкой заказчика не тронуты', (clientRes.json?.items ?? []).length === 1, `${(clientRes.json?.items ?? []).length} строк`);
+  ok('updatedAt сдвинулся при правке заказчика', (clientRes.json?.updatedAt ?? '') !== before, `${before} → ${clientRes.json?.updatedAt}`);
+
+  const contactOnly = await call('PUT', `/offers/${cardId}/client`, {
+    token: ownerToken,
+    body: { name: '  ', contact: 'Пётр' },
+  });
+  ok('контакт без названия → 400', contactOnly.status === 400, `status ${contactOnly.status}`);
+
+  const itemsBefore = clientRes.json?.updatedAt ?? '';
+  const itemsRes = await call('PUT', `/offers/${cardId}/items`, {
+    token: ownerToken,
+    body: {
+      items: [
+        { name: 'Плита', unit: 'м²', qty: 3, price: 999.99, sum: 1, total: 5 },
+        { name: 'Работа', unit: 'шт', qty: 1, price: 0.1, sum: 100 },
+      ],
+    },
+  });
+  ok('правка позиций → 200', itemsRes.status === 200, `status ${itemsRes.status}`);
+  ok('позиций стало две', (itemsRes.json?.items ?? []).length === 2, `${(itemsRes.json?.items ?? []).length}`);
+  ok('сумму строки считает сервер, а не клиент', itemsRes.json?.items?.[0]?.sum === 2999.97, String(itemsRes.json?.items?.[0]?.sum));
+  ok('итог считает сервер', itemsRes.json?.total === 3000.07, String(itemsRes.json?.total));
+  ok('заказчик правкой позиций не тронут', itemsRes.json?.client?.name === 'Новый заказчик', itemsRes.json?.client?.name);
+  ok('updatedAt сдвинулся при правке позиций', (itemsRes.json?.updatedAt ?? '') !== itemsBefore, `${itemsBefore} → ${itemsRes.json?.updatedAt}`);
+
+  const emptyItems = await call('PUT', `/offers/${cardId}/items`, { token: ownerToken, body: { items: [] } });
+  ok('пустой список позиций законен (правка по одной)', emptyItems.status === 200, `status ${emptyItems.status}`);
+  ok('пустой список реально записан', (emptyItems.json?.items ?? []).length === 0, `${(emptyItems.json?.items ?? []).length}`);
+  ok('итог пустого списка нулевой', emptyItems.json?.total === 0, String(emptyItems.json?.total));
+
+  const badItem = await call('PUT', `/offers/${cardId}/items`, {
+    token: ownerToken,
+    body: { items: [{ name: ' ', unit: 'шт', qty: 1, price: 1 }] },
+  });
+  ok('пустое наименование позиции → 400', badItem.status === 400, `status ${badItem.status}`);
+
+  // Права: чужим правка закрыта, поиск по чужому не помогает.
+  const managerToken2 = makeJwt('manager@tn.ru');
+  const foreignClient = await call('PUT', `/offers/${cardId}/client`, {
+    token: managerToken2,
+    body: { name: 'Взлом', contact: '' },
+  });
+  ok('чужой не правит заказчика (403)', foreignClient.status === 403, `status ${foreignClient.status}`);
+  const foreignItems = await call('PUT', `/offers/${cardId}/items`, {
+    token: managerToken2,
+    body: { items: [{ name: 'Взлом', unit: 'шт', qty: 1, price: 1 }] },
+  });
+  ok('чужой не правит позиции (403)', foreignItems.status === 403, `status ${foreignItems.status}`);
+  const strangerClient = await call('PUT', `/offers/${cardId}/client`, {
+    token: makeJwt('stranger@tn.ru'),
+    body: { name: 'Взлом', contact: '' },
+  });
+  ok('без роли правка закрыта (403)', strangerClient.status === 403, `status ${strangerClient.status}`);
+
+  const reload = await call('GET', `/offers/${cardId}`, { token: ownerToken });
+  ok('после отказов документ не изменился', reload.json?.client?.name === 'Новый заказчик', reload.json?.client?.name);
+}
+
+console.log('\n5d. Тексты разделов из приложения (S4, 2026-11-13)');
+{
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: { client: { name: 'Разделы' }, items: [{ name: 'Позиция', unit: 'шт', qty: 1, price: 10 }] },
+  });
+  const sectionOfferId = created.json?.id ?? 0;
+  ok('заготовка для разделов создана', created.status === 200 && sectionOfferId > 0, `status ${created.status}`);
+
+  const list = await call('GET', `/offers/${sectionOfferId}/sections`, { token: ownerToken });
+  const slots = list.json?.sections ?? [];
+  ok('список разделов → 200 и массив', list.status === 200 && Array.isArray(slots), `${list.status} / ${Array.isArray(slots)}`);
+  ok('без систем есть вступление, преимущества и условия', slots.length === 3, `${slots.length}`);
+  ok('ключ вступления на месте', slots.some((s) => s.key === 'copy.intro'), JSON.stringify(slots.map((s) => s.key)));
+
+  // Принять текст — та же точка, что у бота: form_values["copy.intro"].
+  const accept = await call('PUT', `/offers/${sectionOfferId}/sections/intro`, {
+    token: ownerToken,
+    body: { text: '  Вводный текст КП.  ' },
+  });
+  ok('принятие вступления → 200', accept.status === 200, `status ${accept.status}`);
+  ok('текст записан в form_values', accept.json?.formValues?.['copy.intro'] === 'Вводный текст КП.', accept.json?.formValues?.['copy.intro']);
+
+  const afterAccept = await call('GET', `/offers/${sectionOfferId}/sections`, { token: ownerToken });
+  const intro = (afterAccept.json?.sections ?? []).find((s) => s.key === 'copy.intro');
+  ok('список отдаёт принятый текст', intro?.text === 'Вводный текст КП.', intro?.text);
+
+  // Пропустить — пустой текст: ключ удаляется.
+  const skip = await call('PUT', `/offers/${sectionOfferId}/sections/intro`, { token: ownerToken, body: { text: '  ' } });
+  ok('пропуск раздела → 200', skip.status === 200, `status ${skip.status}`);
+  ok('ключ раздела удалён при пропуске', !('copy.intro' in (skip.json?.formValues ?? {})), JSON.stringify(skip.json?.formValues));
+
+  // Номер системы: без системы секция system отвергается с понятным текстом.
+  const noIndex = await call('POST', `/offers/${sectionOfferId}/sections/system`, { token: ownerToken, body: {} });
+  ok('описание системы без номера → 400', noIndex.status === 400, `status ${noIndex.status}`);
+
+  // Неизвестная секция.
+  const badKey = await call('POST', `/offers/${sectionOfferId}/sections/испещрение`, { token: ownerToken, body: {} });
+  ok('неизвестная секция → 400', badKey.status === 400, `status ${badKey.status}`);
+
+  // Права: чужой не читает и не меняет тексты.
+  const strangerSections = await call('GET', `/offers/${sectionOfferId}/sections`, { token: makeJwt('stranger@tn.ru') });
+  ok('чужой не читает тексты (403)', strangerSections.status === 403, `status ${strangerSections.status}`);
+  const foreignAccept = await call('PUT', `/offers/${sectionOfferId}/sections/intro`, {
+    token: makeJwt('manager@tn.ru'),
+    body: { text: 'Взлом' },
+  });
+  ok('чужой не принимает текст (403)', foreignAccept.status === 403, `status ${foreignAccept.status}`);
+
+  // Пустой текст в правке — отказ с подсказкой (убрать раздел можно «Пропустить»).
+  const emptyEdit = await call('POST', `/offers/${sectionOfferId}/sections/intro/edit`, { token: ownerToken, body: { text: '  ' } });
+  ok('правка пустого текста → 400', emptyEdit.status === 400, `status ${emptyEdit.status}`);
+}
+
+console.log('\n5e. Боевой листок из приложения (S6, 2026-11-13)');
+{
+  // Листок создаём тем же путём, что бот: ручкой сервиса.
+  // Листок создаёт сам автор (ownerToken — это owner@tn.ru), JWT-ручкой:
+  // приложение не знает сервисного секрета. Автор тот же, кто дальше правит.
+  const created = await call('POST', '/combat', {
+    token: ownerToken,
+    body: { title: 'Листок из приложения', ourNotes: [], competitorNotes: [], formValues: {}, status: 'draft' },
+  });
+  const sheetId = created.json?.id ?? 0;
+  ok('листок создан', created.status === 200 && sheetId > 0, `status ${created.status}`);
+
+  const our = await call('GET', '/combat/our?q=' + encodeURIComponent('мембрана'), { token: ownerToken });
+  ok('список нашего продукта → 200 и массив', our.status === 200 && Array.isArray(our.json?.items), `${our.status}`);
+  ok('страница несёт total и hasMore', typeof our.json?.total === 'number' && typeof our.json?.hasMore === 'boolean', JSON.stringify({ total: our.json?.total, hasMore: our.json?.hasMore }));
+
+  const comp = await call('GET', '/combat/competitors-src', { token: ownerToken });
+  ok('список конкурентов → 200 и массив', comp.status === 200 && Array.isArray(comp.json?.items), `${comp.status}`);
+
+  const first = (our.json?.items ?? [])[0];
+  if (first) {
+    const added = await call('POST', `/combat/${sheetId}/our`, {
+      token: ownerToken,
+      body: { noteId: first.noteId, title: first.title },
+    });
+    ok('добавление нашего продукта → 200', added.status === 200, `status ${added.status}`);
+    ok('сторона записана', (added.json?.ourNotes ?? []).some((n) => n.noteId === first.noteId), JSON.stringify(added.json?.ourNotes));
+
+    const removed = await call('DELETE', `/combat/${sheetId}/our`, {
+      token: ownerToken,
+      body: { noteId: first.noteId, title: '' },
+    });
+    ok('удаление нашего продукта → 200', removed.status === 200, `status ${removed.status}`);
+    ok('сторона убрана', !(removed.json?.ourNotes ?? []).some((n) => n.noteId === first.noteId), JSON.stringify(removed.json?.ourNotes));
+  }
+
+  const hint = await call('PUT', `/combat/${sheetId}/hint`, { token: ownerToken, body: { hint: 'акцент на сроке службы' } });
+  ok('уточнение записано', hint.status === 200 && hint.json?.formValues?.hint === 'акцент на сроке службы', JSON.stringify(hint.json?.formValues));
+
+  const noProduct = await call('POST', `/combat/${sheetId}/our`, { token: ownerToken, body: { noteId: 0 } });
+  ok('без заметки продукт не добавляется → 400', noProduct.status === 400, `status ${noProduct.status}`);
+
+  // Чужой листок: читать можно (правило 2026-11-12), править — нет.
+  const foreignRead = await call('GET', `/combat/${sheetId}`, { token: makeJwt('manager@tn.ru') });
+  ok('чужой листок читается (200)', foreignRead.status === 200, `status ${foreignRead.status}`);
+  const foreignWrite = await call('PUT', `/combat/${sheetId}/hint`, { token: makeJwt('manager@tn.ru'), body: { hint: 'чужое' } });
+  ok('чужой не меняет уточнение (403)', foreignWrite.status === 403, `status ${foreignWrite.status}`);
+  const foreignSide = await call('POST', `/combat/${sheetId}/our`, {
+    token: makeJwt('manager@tn.ru'),
+    body: { noteId: 1, title: 'чужое' },
+  });
+  ok('чужой не меняет сторону (403)', foreignSide.status === 403, `status ${foreignSide.status}`);
+
+  // Аналоги: без кеша конкурентов ручка честно говорит, чего не хватает.
+  const analogues = await call('GET', '/combat/analogues?noteId=' + encodeURIComponent(String((our.json?.items ?? [])[0]?.noteId ?? 0)), { token: ownerToken });
+  ok('аналоги: ответ 200 или 404 с понятным текстом', analogues.status === 200 || analogues.status === 404, `status ${analogues.status}`);
+  const noNote = await call('GET', '/combat/analogues', { token: ownerToken });
+  ok('аналоги без продукта → 400', noNote.status === 400, `status ${noNote.status}`);
+}
+
 console.log('\n6. DOCX');
 {
   const res = await fetch(`${BASE}/api/offers/offers/${offerId}/export?format=docx`, {

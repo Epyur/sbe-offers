@@ -140,32 +140,51 @@ func canSeeOffer(role, email string, offer Offer) bool {
 
 func (s *Server) handleListOffers(w http.ResponseWriter, r *http.Request) {
 	role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), actorEmailFromCtx(r))
-	query := `SELECT id FROM offers_offer`
+	q := parseListQuery(r.URL.Query().Get("q"))
+
+	// Поиск по клиенту и видимость (2026-11-13, шаг S2).
+	//
+	// SQL отдаёт только первый, индексный, срез поиска («начинается с» и «слово
+	// начинается с»): `LIMIT` списка — небольшое число строк, поэтому остальное
+	// досматривается в памяти без копии правила в каждой ветке условия.
+	// Видимость («admin видит все, остальные свои») остаётся одной функцией
+	// `canSeeOffer` — здесь проверяется та же пара «роль + владелец», что и в
+	// `handleGetOffer`; отдельное условие в SQL стало бы второй копией.
+	query := `SELECT id, lower(owner_email), client->>'name' FROM offers_offer`
 	args := []any{}
+	if !q.Empty() {
+		query += ` WHERE (lower(client->>'name') LIKE $1 OR lower(client->>'name') LIKE $2)`
+		args = append(args, q.PrefixPattern(), q.WordPattern())
+	}
 	if !isAdminRole(role) {
-		query += ` WHERE lower(owner_email) = lower($1)`
+		query += ` AND lower(owner_email) = lower($` + itoa(len(args)+1) + `)`
 		args = append(args, actorEmailFromCtx(r))
 	}
-	query += ` ORDER BY created_at DESC LIMIT 200`
-	rows, err := s.pool.Query(r.Context(), query, args...)
+	rows, err := s.pool.Query(r.Context(), query+` ORDER BY created_at DESC LIMIT `+itoa(listLimit), args...)
 	if err != nil {
 		dbError(w, "list offers", err)
 		return
 	}
-	ids := make([]int64, 0)
+	defer rows.Close()
+	offers := make([]Offer, 0)
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+		var owner string
+		var clientName *string
+		if err := rows.Scan(&id, &owner, &clientName); err != nil {
 			dbError(w, "list offers scan", err)
 			return
 		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-
-	offers := make([]Offer, 0, len(ids))
-	for _, id := range ids {
+		// То же правило видимости, что в canSeeOffer, но по строке списка: полную
+		// модель ради проверки владельца не загружаем.
+		if !isAdminRole(role) && !strings.EqualFold(owner, actorEmailFromCtx(r)) {
+			continue
+		}
+		// Добор по подстроке внутри слова («Строй» в «СтройМонтажСервис»):
+		// по индексу такая форма не ходит, а строк не больше listLimit.
+		if !q.Empty() && clientName != nil && !containsTie(*clientName, q.Contains()) {
+			continue
+		}
 		offer, err := s.loadOffer(r.Context(), id)
 		if err != nil {
 			continue

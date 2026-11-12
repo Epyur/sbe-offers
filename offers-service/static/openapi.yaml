@@ -484,7 +484,7 @@ paths:
       summary: Пересчитать тексты системы
       description: |
         Кнопка «Пересчитать тексты системы». Переписывает оба блока
-        (description, dvantages) по ТЕКУЩЕЙ карточке Базы знаний.
+        (description, advantages) по ТЕКУЩЕЙ карточке Базы знаний.
         Вызывается вручную: модель отвечает десятки секунд, и делать это
         автоматически при каждом открытии значило бы вернуть исходную
         жалобу «система ушла думать».
@@ -512,7 +512,7 @@ paths:
                     type: object
                     additionalProperties:
                       type: string
-                    description: Написанные блоки — description и dvantages.
+                    description: Написанные блоки — description и advantages.
                   missing:
                     type: array
                     items:
@@ -902,6 +902,18 @@ paths:
                       $ref: '#/components/schemas/SystemCard'
   /api/offers/combat:
     get:
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Поиск по названию листка и по названиям продуктов обеих сторон
+            (подстрока, без регистра и без различия «ё»/«е»). Новый параметр
+            шага S2 приложения Telegram (2026-11-13); без него поведение
+            прежнее — 200 свежих записей.
+          schema:
+            type: string
+          example: мембрана
       summary: Список боевых листков (свои; admin — все)
       responses:
         '200':
@@ -930,6 +942,227 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CombatSheet'
+  /api/offers/combat/our:
+    get:
+      summary: Наш продукт для боевого листка
+      description: |
+        Шаг S6 приложения Telegram (2026-11-13). Наш продукт — материал каталога
+        или система Базы знаний (`combatOurItems`), снаружи один список.
+        Постранично: `offset`/`limit`, ответ несёт `total` и `hasMore`.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Страница списка
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerSystem'
+                  total:
+                    type: integer
+                  offset:
+                    type: integer
+                  hasMore:
+                    type: boolean
+
+  /api/offers/combat/competitors-src:
+    get:
+      summary: Продукты конкурентов для боевого листка
+      description: |
+        Тег `competitor` и поддерево папки, как у бота. Поиск — в Базе знаний
+        (морфология, префиксы), кеш — запасной путь, когда она недоступна.
+        Адрес отличается от `GET /competitors` (кеш для плагина): это другая
+        выдача.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Страница списка
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PickerSystem'
+                  total:
+                    type: integer
+                  offset:
+                    type: integer
+                  hasMore:
+                    type: boolean
+
+  /api/offers/combat/analogues:
+    get:
+      summary: Подобрать аналоги нашему продукту
+      description: |
+        JWT-двойник ботовой ручки: по карточке нашего продукта находит продукты
+        конкурентов того же класса (`findAnaloguesForSheet`). Кеш конкурентов
+        должен быть заполнен — иначе `404` с понятным текстом.
+      parameters:
+        - name: noteId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Источник и найденные карточки
+        '404':
+          description: Продукта нет в кеше
+  /api/offers/combat/{id}/our:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      summary: Добавить продукт на нашу сторону
+      description: |
+        Позиционная правка (не полное сохранение листка): добавляет ОДНУ карточку.
+        Правит только автор листка или admin — чужие получают `403`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [noteId]
+              properties:
+                noteId:
+                  type: integer
+                  format: int64
+                title:
+                  type: string
+
+      responses:
+        '200':
+          description: Листок после записи
+        '400':
+          description: Нет заметки Базы знаний
+        '403':
+          description: Чужой листок
+    delete:
+      summary: Убрать продукт с нашей стороны
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [noteId]
+              properties:
+                noteId:
+                  type: integer
+                  format: int64
+                title:
+                  type: string
+
+      responses:
+        '200':
+          description: Листок после записи
+        '403':
+          description: Чужой листок
+  /api/offers/combat/{id}/competitor:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      summary: Добавить продукт конкурента
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [noteId]
+              properties:
+                noteId:
+                  type: integer
+                  format: int64
+                title:
+                  type: string
+
+      responses:
+        '200':
+          description: Листок после записи
+        '403':
+          description: Чужой листок
+    delete:
+      summary: Убрать продукт конкурента
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [noteId]
+              properties:
+                noteId:
+                  type: integer
+                  format: int64
+                title:
+                  type: string
+
+      responses:
+        '200':
+          description: Листок после записи
+        '403':
+          description: Чужой листок
+  /api/offers/combat/{id}/hint:
+    put:
+      summary: Уточнение для разбора листка
+      description: |
+        Единственная настройка листка (`form_values["hint"]`): на чём сравнение
+        должно сделать акцент. Запись двигает `updated_at`.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hint:
+                  type: string
+      responses:
+        '200':
+          description: Листок после записи
+        '403':
+          description: Чужой листок
   /api/offers/combat/{id}:
     get:
       summary: Боевой листок по id
@@ -1081,6 +1314,17 @@ paths:
                     type: string
   /api/offers/offers:
     get:
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Поиск по клиенту (подстрока, без регистра и без различия «ё»/«е»).
+            Новый параметр шага S2 приложения Telegram (2026-11-13);
+            без него поведение прежнее — 200 свежих записей.
+          schema:
+            type: string
+          example: Строй
       summary: Список предложений (видны свои; admin — все)
       responses:
         '200':
@@ -1135,6 +1379,182 @@ paths:
       responses:
         '200':
           description: Удалено
+  /api/offers/offers/{id}/sections:
+    get:
+      summary: Тексты разделов КП (все слоты)
+      description: |
+        Шаг S4 приложения Telegram (2026-11-13). Слоты те же, что у бота
+        (`SectionSlots`): вступление → описание каждой системы → преимущества →
+        условия. Тексты живут в `form_values["copy.<ключ>"]` — одно хранилище с
+        ботом, второй копии нет. Пустой список — `[]`. Смотрит и меняет автор
+        предложения или admin.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Слоты с текстами
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OfferSection'
+        '403':
+          description: Чужое предложение
+  /api/offers/offers/{id}/sections/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: Вступление `intro`, система `system`, преимущества `advantages`, условия `conditions`
+        schema:
+          type: string
+          enum: [intro, system, advantages, conditions]
+    post:
+      summary: Модель пишет текст раздела
+      description: |
+        Возвращает текст и замечания чек-листа, НЕ сохраняя его: человек
+        сначала видит результат и только потом нажимает «Принять». Недоступность
+        модели — не ошибка: приходит пустой текст, документ соберётся без
+        раздела.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: systemIndex
+          in: query
+          required: false
+          description: Номер выбранной системы, с 1 — нужен для `key=system`.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Написанный текст
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferSection'
+        '400':
+          description: Неизвестная секция или нет номера системы
+        '403':
+          description: Чужое предложение
+    put:
+      summary: Принять текст раздела (или пропустить)
+      description: |
+        Пустой `text` означает «пропустить»: ключ секции удаляется, чтобы сборка
+        документа отличала «пропущено» от «сохранён пустой». Запись двигает
+        `updated_at`.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: systemIndex
+          in: query
+          required: false
+          description: Номер выбранной системы, с 1 — нужен для `key=system`.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Предложение после записи
+        '403':
+          description: Чужое предложение
+  /api/offers/offers/{id}/sections/{key}/edit:
+    post:
+      summary: Вычитать правку текста раздела
+      description: |
+        Модель вычитывает текст менеджера (орфография, пунктуация, связность),
+        НЕ меняя смысла и не добавляя фактов. Не сохраняет: ответ показывают
+        человеку, сохраняет он сам через `PUT /sections/{key}`. Пустой текст —
+        `400` (убрать раздел можно «Пропустить»).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: systemIndex
+          in: query
+          required: false
+          description: Номер выбранной системы, с 1 — нужен для `key=system`.
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+      responses:
+        '200':
+          description: Выправленный текст
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfferSection'
+        '400':
+          description: Пустой текст или неизвестная секция
+        '403':
+          description: Чужое предложение
+  /api/offers/offers/{id}/client:
+    put:
+      summary: Заказчик карточки КП (editor; своё или admin)
+      description: |
+        Точечная правка (2026-11-13, шаг S3 приложения Telegram): меняет ТОЛЬКО
+        имя и контакт заказчика, позиции и системы не трогает. Пустая правка
+        отвергается, запись двигает `updated_at`. Позиции сохраняются отдельно
+        (`PUT /offers/{id}/items`), системы — `POST/DELETE /offers/{id}/system`;
+        полное сохранение (`PUT /offers/{id}`) остаётся для плагина и бота.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfferClient'
+      responses:
+        '200':
+          description: Предложение после записи
+        '400':
+          description: Не разобран JSON или пустое/слишком длинное поле
+        '403':
+          description: Чужое предложение
+  /api/offers/offers/{id}/items:
+    put:
+      summary: Позиции карточки КП (editor; своё или admin)
+      description: |
+        Список позиций ПЕРЕЗАПИСЫВАЕТ строки предложения. `sum` и итог считает
+        сервер (`recalcOfferTotal`); присланные значения не читаются. Пустой
+        список законен — позиции вводятся по одной, в отличие от полного
+        сохранения (`PUT /offers/{id}`, там пустое предложение отвергается).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OfferItem'
+      responses:
+        '200':
+          description: Предложение после записи
+        '400':
+          description: Не разобран JSON или позиция не заполнена
+        '403':
+          description: Чужое предложение
   /api/offers/offers/{id}/export:
     post:
       summary: Экспорт в DOCX
@@ -2400,8 +2820,8 @@ paths:
           description: Это не боевой листок этого чата
   /api/offers/bot/combat/{id}/export:
     post:
-      summary: DOCX боевого листка (base64) для отправки в чат
-      description: Та же печать, что у ручки плагина: по форме `combat`, сторонами-карточками.
+      description: "Та же печать, что у ручки плагина: по форме combat, сторонами-карточками."
+      description: "Та же печать, что и у ручки плагина: форма combat, карточки сторон."
       security:
         - serviceSecret: []
       parameters:
@@ -2446,7 +2866,7 @@ components:
       type: object
       description: |
         Текст одного блока системы, написанный моделью при её выборе
-        (2026-11-06). Блоков ровно два — description и dvantages:
+        (2026-11-06). Блоков ровно два — description и advantages:
         состав не генерируется, он уже есть в карточке.
       properties:
         noteId:
@@ -2917,6 +3337,23 @@ components:
             type: string
         bytes:
           type: integer
+    OfferSection:
+      type: object
+      description: |
+        Текст одного раздела КП (2026-11-13, шаг S4). `warnings` — замечания
+        чек-листа: они только сообщают, текст не переписывается молча.
+      properties:
+        key:
+          type: string
+          description: Ключ в `form_values`, например `copy.intro` или `copy.system.1`
+        label:
+          type: string
+        text:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
     OfferClient:
       type: object
       properties:

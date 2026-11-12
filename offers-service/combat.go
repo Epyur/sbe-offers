@@ -151,8 +151,23 @@ func canSeeCombat(_ string, _ string, _ CombatSheet) bool {
 func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	// Список показывает ВСЕ листки (правило 2026-11-12): листок — общая
 	// справка, а не личный документ. Правка остаётся у автора.
-	query := `SELECT id FROM offers_combat_sheet ORDER BY created_at DESC LIMIT 200`
-	rows, err := s.pool.Query(r.Context(), query)
+	//
+	// Поиск (2026-11-13, шаг S2): по названию и по названиям сторон. Названия
+	// сторон лежат в jsonb, и `ILIKE '%q%'` по ним индексу не поддаётся, а
+	// jsonb-путь в expression-индексе потребовал бы знать каждую форму
+	// (our_notes и competitor_notes — два разных пути). Поэтому тот же приём,
+	// что у КП: индексная форма даёт быстрый старт, а полный набор строк
+	// (listLimit=200) досматривается в памяти — там и подстрока внутри слова,
+	// и названия сторон.
+	q := parseListQuery(r.URL.Query().Get("q"))
+	query := `SELECT id, title FROM offers_combat_sheet`
+	args := []any{}
+	if !q.Empty() {
+		query += ` WHERE (lower(title) LIKE $1 OR lower(title) LIKE $2)`
+		args = append(args, q.PrefixPattern(), q.WordPattern())
+	}
+	query += ` ORDER BY created_at DESC LIMIT ` + itoa(listLimit)
+	rows, err := s.pool.Query(r.Context(), query, args...)
 	if err != nil {
 		dbError(w, "list combat", err)
 		return
@@ -160,7 +175,8 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	ids := make([]int64, 0)
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var title string
+		if err := rows.Scan(&id, &title); err != nil {
 			rows.Close()
 			dbError(w, "list combat scan", err)
 			return
@@ -173,6 +189,9 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	for _, id := range ids {
 		c, err := s.loadCombatSheet(r.Context(), id)
 		if err != nil {
+			continue
+		}
+		if !q.Empty() && !containsTie(combatSearchText(c), q.Contains()) {
 			continue
 		}
 		sheets = append(sheets, c)

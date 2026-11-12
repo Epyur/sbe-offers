@@ -177,11 +177,44 @@ func main() {
 	mux.HandleFunc("GET /api/offers/competitors", s.requirePerm("viewer")(s.handleListCompetitors))
 	mux.HandleFunc("POST /api/offers/competitors/refresh", s.requirePerm("admin")(s.handleRefreshCompetitors))
 	mux.HandleFunc("GET /api/offers/competitors/search", s.requirePerm("viewer")(s.handleSearchCompetitors))
+	// Боевой листок в приложении (2026-11-13, шаг S6): стороны правятся
+	// ПОЗИЦИОННО, а не полным сохранением листка, — приложение добавляет и
+	// убирает по одному продукту. Читают и печатают все вошедшие (правило
+	// 2026-11-12), правят автор и admin (`combatSheetForEditor`).
+	mux.HandleFunc("GET /api/offers/combat/our", s.requirePerm("viewer")(s.handleCombatOurList))
+	mux.HandleFunc("GET /api/offers/combat/competitors-src", s.requirePerm("viewer")(s.handleCombatCompetitorsSrc))
+	mux.HandleFunc("GET /api/offers/combat/analogues", s.requirePerm("viewer")(s.handleCombatAnaloguesJWT))
+	mux.HandleFunc("POST /api/offers/combat/{id}/our", s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {
+		s.handleCombatOurSide(w, r, true)
+	}))
+	mux.HandleFunc("DELETE /api/offers/combat/{id}/our", s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {
+		s.handleCombatOurSide(w, r, false)
+	}))
+	mux.HandleFunc("POST /api/offers/combat/{id}/competitor", s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {
+		s.handleCombatCompetitorSide(w, r, true)
+	}))
+	mux.HandleFunc("DELETE /api/offers/combat/{id}/competitor", s.requirePerm("viewer")(func(w http.ResponseWriter, r *http.Request) {
+		s.handleCombatCompetitorSide(w, r, false)
+	}))
+	mux.HandleFunc("PUT /api/offers/combat/{id}/hint", s.requirePerm("viewer")(s.handleCombatHintUpdate))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
 	mux.HandleFunc("GET /api/offers/offers/{id}", s.requirePerm("viewer")(s.handleGetOffer))
 	mux.HandleFunc("POST /api/offers/offers", s.requirePerm("editor")(s.handleSaveOffer))
 	mux.HandleFunc("PUT /api/offers/offers/{id}", s.requirePerm("editor")(s.handleSaveOffer))
+	// Точечные правки карточки в приложении (2026-11-13, шаг S3): заказчик и
+	// позиции сохраняются отдельно, каждое поле само двигает `updated_at`.
+	// Полное сохранение (`PUT /offers/{id}`) остаётся для плагина и бота —
+	// приложению оно не подходит: затирало бы параллельную правку.
+	// Тексты разделов (2026-11-13, шаг S4): те же слоты и то же хранилище, что в
+	// боте (`form_values["copy.<ключ>"]`), но доступ по JWT — приложение не
+	// знает сервисного секрета и знать не должно.
+	mux.HandleFunc("GET /api/offers/offers/{id}/sections", s.requirePerm("viewer")(s.handleListSections))
+	mux.HandleFunc("POST /api/offers/offers/{id}/sections/{key}", s.requirePerm("editor")(s.handleWriteSection))
+	mux.HandleFunc("POST /api/offers/offers/{id}/sections/{key}/edit", s.requirePerm("editor")(s.handleEditSection))
+	mux.HandleFunc("PUT /api/offers/offers/{id}/sections/{key}", s.requirePerm("editor")(s.handleAcceptSection))
+	mux.HandleFunc("PUT /api/offers/offers/{id}/client", s.requirePerm("editor")(s.handlePatchOfferClient))
+	mux.HandleFunc("PUT /api/offers/offers/{id}/items", s.requirePerm("editor")(s.handlePatchOfferItems))
 	mux.HandleFunc("DELETE /api/offers/offers/{id}", s.requirePerm("editor")(s.handleDeleteOffer))
 	mux.HandleFunc("POST /api/offers/offers/{id}/export", s.requirePerm("viewer")(s.handleExportDocx))
 	mux.HandleFunc("POST /api/offers/offers/{id}/link", s.requirePerm("viewer")(s.handleOfferLink))
@@ -536,6 +569,16 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_owner ON offers_combat_sheet (lower(owner_email))`,
+		// Поиск в списках (2026-11-13, шаг S2). `text_pattern_ops` нужен
+		// потому, что база живёт с локалью, отличной от C: только с ним
+		// `LIKE 'q%'` по `lower(...)` идёт по индексу. Внутрисловная подстрока
+		// («Строй» в «СтройМонтажСервис») индексом не покрыта намеренно — при
+		// LIMIT 200 это досмотр в памяти; если строк станет заметно больше,
+		// следующий шаг — `pg_trgm`, а не переделка этих индексов.
+		`CREATE INDEX IF NOT EXISTS offers_offer_client_name
+			ON offers_offer (lower(client->>'name') text_pattern_ops)`,
+		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_title
+			ON offers_combat_sheet (lower(title) text_pattern_ops)`,
 		// Готовый DOCX листка под хэшем сборки (2026-11-12): повторное «⬇ DOCX»
 		// не зовёт модель на сравнение. Хэш считает `combatDocxHash` — он и решает,
 		// свежий ли файл; не совпал — листок собирается заново.

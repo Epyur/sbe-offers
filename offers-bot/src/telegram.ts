@@ -77,6 +77,12 @@ export interface TelegramMessage {
   text?: string;
   caption?: string;
   document?: TelegramDocument;
+  /**
+   * Результат `tg.sendData` из Mini App (шаг S7, 2026-11-13): Telegram кладёт
+   * сюда строку, которую приложение отправило кнопкой «Отправить в чат».
+   * Приходит как обычное сообщение, поэтому обработчик — в `handleUpdate`.
+   */
+  web_app_data?: { data: string };
 }
 
 /** Присланный файл. file_id — по нему файл скачивается. */
