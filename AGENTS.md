@@ -31,7 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.23** — **RELEASED 2026-11-14.** Three points converge:
-`main` `533ac36`, `backend` `05686b7`, self-hosted `8561ca81…` / `ee4a1749…` /
+`main` `533ac36`, `backend` `9277a68`, self-hosted `8561ca81…` / `ee4a1749…` /
 `a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
 `sbe-apstore-registry` `4997d05`. The service and the bot were rebuilt and
 recreated; `md5sum` of 284/284 files matched after CRLF normalisation; health
