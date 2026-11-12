@@ -9,7 +9,7 @@
 | | значение |
 |---|---|
 | версия | **0.9.23** |
-| `backend` | `9277a68` (код + бот + доки) |
+| `backend` | `05686b7` (код + бот + доки) |
 | `main` | `533ac36` (релизный срез; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
 | самораздача | `manifest 8561ca81…` / `main ee4a1749…` / `styles a32ac3df…`, сверено по https **и** в `/registry.json` |
 | реестр (git-копия) | `sbe-apstore-registry` `4997d05` |
@@ -342,7 +342,7 @@ docker run --rm --network sbe-offers_offersnet \
 
 ## СДЕЛАНО И ВЫПУЩЕНО — 0.9.23: P6-бис + меню бота (2026-11-14)
 
-**Выложено полностью:** `backend` `9277a68` → `main` `533ac36` → деплой `offers`
+**Выложено полностью:** `backend` `05686b7` → `main` `533ac36` → деплой `offers`
 и `offers-bot` → самораздача `8561ca81…` / `ee4a1749…` / `a32ac3df…` → реестр
 `sbe-apstore-registry` `4997d05`. Хэши сверены по https и в `/registry.json`.
 
