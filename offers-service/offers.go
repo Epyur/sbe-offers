@@ -166,8 +166,15 @@ func (s *Server) handleListOffers(w http.ResponseWriter, r *http.Request) {
 			` OR lower(replace(client->>'name', 'ё', 'е')) LIKE $3)`
 		args = append(args, q.PrefixPattern(), q.WordPattern(), q.ContainsPattern())
 	}
+	// `WHERE` добавляется только поиском: без него условие видимости пришлось бы
+	// начинать с `AND`, а это синтаксическая ошибка SQL (живой дефект 2026-11-13 —
+	// «db error» у всех, у кого нет роли admin: список КП без поиска).
 	if !isAdminRole(role) {
-		query += ` AND lower(owner_email) = lower($` + itoa(len(args)+1) + `)`
+		if q.Empty() {
+			query += ` WHERE lower(owner_email) = lower($` + itoa(len(args)+1) + `)`
+		} else {
+			query += ` AND lower(owner_email) = lower($` + itoa(len(args)+1) + `)`
+		}
 		args = append(args, actorEmailFromCtx(r))
 	}
 	scan := listLimit
