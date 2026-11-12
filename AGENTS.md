@@ -41,7 +41,110 @@ managers closed through common access `editor`. Details: the entry
 «Mini App, S1 — identity» below, `specification.md` §«Mini App»,
 [HANDOFF.md](HANDOFF.md) and the plan
 `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md`.
-**Next step is S2** (list + search by client).
+**S2 — lists and search (2026-11-13, `backend` only, not deployed).**
+`offers-service/lists.go` holds the one query normaliser (`parseListQuery`:
+collapsed spaces, `ё`→`е`, `%`/`_` escaped), the two indexable patterns
+(`LIKE 'q%'`, `LIKE '% q%'`) and the in-memory substring pass (`containsTie`).
+`GET /offers?q=` filters by **client name**, `GET /combat?q=` by the sheet
+title **and both sides' product titles**; an empty `q` keeps the old behaviour
+(`LIMIT 200`, newest first) and a regression test pins it. Indexes
+`offers_offer_client_name` / `offers_combat_sheet_title` (`text_pattern_ops`)
+are in `migrate`. The App side is `offers-app/src/lists.ts` (types, paths,
+labels — the pure half) plus the list screen in `screens.tsx` (row cards,
+300 ms debounced search, loading/error/empty/found states).
+
+**The search model is "indexable prefix first, substring in memory second"**
+— and that is deliberate, not an oversight. `ILIKE '%q%'` cannot use an index
+in any locale, and a client name almost never *starts* with the query
+(«Строй» in «СтройМонтажСервис»): the SQL condition only narrows the row set,
+the real match is `containsTie` over at most `listLimit` (200) fetches.
+When the tables grow, the next step is `pg_trgm` chosen on purpose — do not
+"fix" this by turning the pattern into `ILIKE '%q%'` without an index, which
+is a plain sequential scan on every keystroke.
+
+**S3 — the offer card in the App (2026-11-13, `backend` only, not deployed).**
+The user chose **"variant V": every field is saved by its own route**, so there
+is no "save the whole document" path in the App at all.
+
+- `PUT /offers/{id}/client` (name + contact) and `PUT /offers/{id}/items`
+  (the list is REPLACED; `sum`/`total` are computed by the server and the
+  client-sent values are never read) live in `offers-service/offerfields.go`.
+  Systems keep using the existing `POST/DELETE /offers/{id}/system`.
+- Both routes: `requirePerm("editor")` + `offerForEditor` (own or admin),
+  an empty edit is rejected, every write moves `updated_at`, the answer is the
+  same `Offer` as `GET /offers/{id}`.
+- **An empty item list is legal here and illegal in the full `PUT /offers/{id}`**
+  — that difference is deliberate: positions are entered one at a time, while
+  the plugin/bot path still refuses an offer without positions. Do not
+  "unify" the two validators.
+- App side: `offers-app/src/offer.ts` (model plus the arithmetic: comma
+  decimals, per-row and total rounding, pre-send checks, dirty comparison) and
+  `offers-app/src/offer-screen.tsx` (three independently saved zones, system
+  search with a 300 ms debounce, item list). Checks: `go test` green,
+  OpenAPI 98/98, App `tsc` 0, App tests 30, bundle 76.7 KiB gzip.
+
+**S4 — section texts in the App (2026-11-13, `backend` only, not deployed).**
+`offers-service/copysections.go` is the JWT twin of the bot's
+`POST /bot/offers/{id}/copy/{key}`: same slots (`SectionSlots`), same storage
+(`form_values["copy.<key>"]`) and the same three actions
+(`WriteSectionChecked` / `EditSection` / `AcceptSection`) — only the transport
+and the gate are new (`GET /offers/{id}/sections`,
+`POST /offers/{id}/sections/{kind}`, `POST …/edit`, `PUT …/{kind}`).
+**The model being unavailable is not an error**: the text comes back empty and
+the document is built without that section, exactly like in the bot.
+An unknown section key is 400; for `kind=system` the `systemIndex` query
+parameter is required and out of range is 400; for fixed slots a stray
+`systemIndex` is ignored (otherwise it would land in the key and the text would
+silently stop being found). App side: `offers-app/src/sections.ts` (key parsing
+plus the pure helpers) and `sections-screen.tsx` (one card per slot, edits stay
+a draft until «Принять»). Checks: `go test` green, OpenAPI 102/102, App `tsc` 0,
+App tests 35, bundle 77.8 KiB gzip.
+
+**S6 — the combat sheet in the App (2026-11-13, `backend` only, not deployed).**
+`offers-service/combatsections.go` adds JWT twins of the bot routes:
+`GET /combat/our`, `GET /combat/competitors-src`, `GET /combat/analogues`,
+`POST/DELETE /combat/{id}/our|competitor`, `PUT /combat/{id}/hint`. The logic is
+not copied (`combatOurItems`, `searchCompetitors`, `findAnaloguesForSheet`);
+only transport and gate are new. Reading and printing stay open to every
+signed-in user, editing stays with the author or admin (`combatSheetForEditor`)
+— rule 2026-11-12.
+- **`competitors-src`, not `combat/competitors`**: `GET /competitors` already
+  serves the plugin's cached list, and two different payloads under one path is
+  a trap for the next debugging session.
+- Sides are edited **positionally** (`POST/DELETE …/our|competitor`), never by
+  `PUT /combat/{id}`, so a parallel edit in the bot is not overwritten.
+- App: `offers-app/src/combat.ts` (model, `canEdit`, `sheetLabelOf`,
+  `nextOffset`) and `combat-screen.tsx`; a foreign sheet opens read-only —
+  the edit controls are not rendered at all rather than returning 403.
+  Checks: `go test` green, OpenAPI 110/110, YAML parses, App `tsc` 0,
+  App tests 40, bundle 79.1 KiB gzip.
+- **`openapi.yaml` had a literal BEL byte inside the word «advantages»** (three
+  places) and a description line whose `:` broke the YAML. The route-vs-schema
+  checker never looks inside descriptions, so it stayed green; only
+  `yaml.safe_load` caught it. When editing that file, validate it as YAML.
+
+**User decision 2026-11-13: S5 (deleting the bot flows) happens only AFTER the
+App has been verified in real use. Nothing is deleted from the bot right now.**
+
+**S7 — «Отправить в чат» (2026-11-13, `backend` only, not deployed).**
+The App cannot attach a file itself (no Bot API), so it sends a POINTER with
+`tg.sendData` and the bot builds the document with the existing
+`/bot/offers/{id}/docx` and `/bot/combat/{id}/export` — the same routes the
+«⬇ DOCX» button uses, so the chat's rights are checked exactly as before.
+
+- `offers-bot/src/webapp.ts`: `parseWebAppData` accepts only
+  `{action:'docx', kind:'offer'|'combat', id>0}`; anything else is `null` and
+  the person gets an explanation, not silence.
+- **`chat_id` comes from the update, never from the payload** — the pointer
+  cannot post a document into someone else's chat. A `chat_id` inside the
+  payload is ignored (covered by a test).
+- `poller.ts` handles `message.web_app_data` before documents and text.
+- App: `offers-app/src/sendchat.ts` (payload builder) and
+  `sendchat-button.tsx` (button exists only inside Telegram).
+- Checks: bot 176 tests, bot `tsc` 0, App 44 tests, App `tsc` 0, bundle
+  79.4 KiB gzip. **Not verified by a human in Telegram yet.**
+
+**Next step is S8 (release)** — only on an explicit command.
 
 **0.9.17 (2026-11-12, plugin + service + bot + news).** Three live complaints,
 one root cause: picking a system or a material went through a dropdown or a
