@@ -1074,7 +1074,8 @@ console.log('\n13. Бриф, тексты секций и деградация �
       headers: { 'X-Service-Secret': BOT_SECRET },
     });
     ok('DOCX с принятым текстом собирается', docAfterCopy.status === 200, `получили ${docAfterCopy.status}`);
-    ok('DOCX не пустой', (docAfterCopy.json?.docx_base64 ?? '').length > 1000);
+    ok('DOCX не пустой', (docAfterCopy.json?.docx_base64 ?? '').length > 1000,
+      `base64 ${(docAfterCopy.json?.docx_base64 ?? '').length}, файл ${docAfterCopy.json?.file_name ?? ''}`);
 
     // Деградация: модель отказывает. КП обязано собраться, секция — пустая.
     // Метка кладётся в название позиции: оно попадает в промпт, а заглушка
@@ -1187,7 +1188,8 @@ console.log('\n14. Бриф в плагине: чтение и правка (Tas
 
   const docWithBrief = await call('POST', `/offers/${id}/export?format=docx`, { token: ownerToken });
   ok('DOCX со сводкой брифа собирается', docWithBrief.status === 200, `получили ${docWithBrief.status}`);
-  ok('сводка брифа попала в файл', (docWithBrief.text ?? '').length > 1000);
+  ok('сводка брифа попала в файл', (docWithBrief.text ?? '').length > 1000,
+    `status ${docWithBrief.status}, тело ${(docWithBrief.text ?? '').length}, начало ${(docWithBrief.text ?? '').slice(0, 100)}`);
 }
 
 console.log('\n15. База знаний: карточки систем доходят до плагина (2026-10-30)');
@@ -1713,7 +1715,8 @@ console.log('\n18. Таблица менеджера и системы в КП (
     headers: { 'X-Service-Secret': BOT_SECRET },
   });
   ok('пустое КП собирается документом → 200', docxBlock.status === 200, `получили ${docxBlock.status} ${docxBlock.text?.slice(0, 200)}`);
-  ok('в документе без позиций есть файл', (docxBlock.json?.docx_base64 ?? '').length > 1000);
+  ok('в документе без позиций есть файл', (docxBlock.json?.docx_base64 ?? '').length > 1000,
+    `status ${docxBlock.status}, base64 ${(docxBlock.json?.docx_base64 ?? '').length}, тело ${docxBlock.text?.slice(0, 120)}`);
 
   // Вернуть форму по умолчанию: стенд используется следующими проверками.
   await call('PUT', '/form', {
@@ -1849,7 +1852,7 @@ console.log('\n18. Таблица менеджера и системы в КП (
   })).arrayBuffer();
   const xml = unzipEntrySafe(Buffer.from(docBytes), 'word/document.xml');
   ok('таблица сравнения попала в документ', xml.includes('Сравнение систем'),
-    xml ? xml.slice(0, 200) : 'нет word/document.xml');
+    `docx ${docBytes.byteLength} Б, xml ${xml.length}, есть заголовок: ${xml.includes('Сравнение')}`);
   // Названия берём из ответа сервера, а не пишем руками: рукописная строка с
   // кириллицей уже один раз разошлась с карточкой (латинская «o» вместо
   // русской) и проверка краснела не из-за дефекта.
@@ -2700,6 +2703,165 @@ async function sectionPickerSearch() {
 }
 
 /**
+ * Загрузить макет из одного абзаца документа.
+ *
+ * Нужен разделам, проверяющим ПЕЧАТЬ блока: сам макет — минимальный документ с
+ * одной меткой `{{block:N}}`, и его вёрстка здесь не предмет проверки.
+ */
+async function uploadLayoutOrFail(paragraphsXML, name) {
+  const docXML =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+    paragraphsXML +
+    `</w:body></w:document>`;
+  const layout = packZip([
+    zipEntry('[Content_Types].xml', Buffer.from(
+      '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+      'utf8')),
+    zipEntry('word/document.xml', Buffer.from(docXML, 'utf8')),
+  ]);
+  const res = await fetch(`${BASE}/api/offers/form/layout?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    },
+    body: layout,
+  });
+  ok(`макет «${name}» загружен`, res.status === 200, `статус ${res.status}`);
+}
+
+/**
+ * Материал — объект предложения (R3, 2026-11-13).
+ *
+ * Проверяется то, что пообещали пользователю: материал выбирается ОПИСАНИЕМ,
+ * позиций это не добавляет, контракт ответа называет материал, а блок формы с
+ * повтором «по материалам» печатает ВЫБРАННЫЕ материалы, а не позиции.
+ *
+ * Метка у блока ОДНА (`{{материал}}`): второй плейсхолдер сломал бы вёрстку,
+ * поэтому печать обязана понимать, что источник повтора — материал-объект.
+ */
+async function sectionOfferMaterials() {
+  console.log('\nМатериал — объект предложения (описанием)');
+
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Материалы', contact: '' },
+      items: [{ name: 'Мембрана позицией', unit: 'м2', qty: 100, price: 50, sum: 5000 }],
+      total: 5000,
+      status: 'draft',
+    },
+  });
+  const offerId = created.json?.id;
+  ok('КП для материалов создано', offerId > 0, `${created.status} ${created.text?.slice(0, 120)}`);
+  if (!(offerId > 0)) return;
+
+  // Материал 103 — заметка «Мембрана ПВХ Эксперт» в заглушке Базы знаний.
+  const added = await call('POST', `/offers/${offerId}/material`, {
+    token: ownerToken, body: { noteId: 103 },
+  });
+  ok('материал выбран → 200', added.status === 200, `${added.status} ${added.text?.slice(0, 200)}`);
+  ok('ответ называет материал', (added.json?.title ?? '').includes('Мембрана'), added.text?.slice(0, 160));
+  ok('описание материала написано',
+    (added.json?.texts?.['material.description'] ?? '').trim().length > 20,
+    JSON.stringify(Object.keys(added.json?.texts ?? {})));
+  ok('выбор материала НЕ добавил позицию',
+    (added.json?.offer?.items ?? []).length === 1, JSON.stringify(added.json?.offer?.items));
+  ok('материал попал в материалы предложения',
+    (added.json?.offer?.materials ?? []).length === 1, JSON.stringify(added.json?.offer?.materials));
+  ok('материал не попал в системы',
+    (added.json?.offer?.systems ?? []).length === 0, JSON.stringify(added.json?.offer?.systems));
+
+  // Повторный выбор не дублирует материал.
+  const again = await call('POST', `/offers/${offerId}/material`, {
+    token: ownerToken, body: { noteId: 103 },
+  });
+  ok('повторный выбор материала не дублирует',
+    (again.json?.offer?.materials ?? []).length === 1, JSON.stringify(again.json?.offer?.materials));
+
+  // Блок формы с повтором по материалам: печатает МАТЕРИАЛ, а не позицию.
+  const form = await call('GET', '/form', { token: ownerToken });
+  const materialForm = {
+    ...form.json,
+    blocks: [{
+      id: '97', title: 'Материалы', showInClient: true, showInInternal: false,
+      repeat: 'materials',
+      content: [{ type: 'paragraph', text: '{{материал}}' }],
+    }],
+  };
+  const savedForm = await call('PUT', '/form', { token: ownerToken, body: materialForm });
+  ok('форма с повтором по материалам сохранена → 200', savedForm.status === 200,
+    `${savedForm.status} ${savedForm.text?.slice(0, 160)}`);
+
+  await uploadLayoutOrFail('<w:p><w:r><w:t>{{block:97}}</w:t></w:r></w:p>', 'Материалы.docx');
+  const doc = await (await fetch(`${BASE}/api/offers/offers/${offerId}/export`, {
+    method: 'POST', headers: { Authorization: `Bearer ${ownerToken}` },
+  })).arrayBuffer();
+  const xml = unzipEntrySafe(Buffer.from(doc), 'word/document.xml');
+  ok('в документе напечатан ВЫБРАННЫЙ материал', xml.includes('Мембрана ПВХ Эксперт'),
+    xml.slice(0, 300));
+  ok('повтор по материалам не печатает позиции',
+    !xml.includes('Мембрана позицией'), xml.slice(0, 400));
+
+  // Снятие материала возвращает КП к прежнему виду. Снимаем по ЗАМЕТКЕ: выбор
+  // пришёл по ней, и правило сравнения обязано признать его тем же.
+  const removed = await call('DELETE', `/offers/${offerId}/material`, {
+    token: ownerToken, body: { noteId: 103 },
+  });
+  ok('материал убран из предложения',
+    (removed.json?.offer?.materials ?? []).length === 0, JSON.stringify(removed.json?.offer?.materials));
+
+  // Бот ходит тем же путём по своему секрету. Владелец — почта чата.
+  const botChat = linkedChatId !== 0 ? String(linkedChatId) : '999001';
+  const botSite = await call('POST', '/bot/offers', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: botChat, client: { name: 'ООО Материалы бот', contact: '' }, items: [] },
+  });
+  const botOfferId = botSite.json?.id ?? botSite.json?.offer?.id;
+  if (botOfferId > 0) {
+    const botAdd = await call('POST', `/bot/offers/${botOfferId}/material`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+      body: { chat_id: botChat, noteId: 103 },
+    });
+    ok('бот выбирает материал по своему секрету', botAdd.status === 200,
+      `${botAdd.status} ${botAdd.text?.slice(0, 160)}`);
+    ok('у бота материал попал в материалы предложения',
+      (botAdd.json?.offer?.materials ?? []).length === 1, JSON.stringify(botAdd.json?.offer?.materials));
+  } else {
+    ok('бот-КП создано для проверки материала', false, `${botSite.status} ${botSite.text?.slice(0, 160)}`);
+  }
+
+  // Макет этого раздела — временный: его ставят только ради проверки печати
+  // блока. Оставленный, он уводит ВСЕ следующие проверки документа на пустой
+  // бланк (2026-11-13: 8 падений печати на втором прогоне стенда). Форму тоже
+  // возвращаем: следующий раздел работает с боевой формой.
+  await call('DELETE', '/form/layout', { token: ownerToken });
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      mode: 'client',
+      title: 'Коммерческое предложение',
+      placeholders: [{ id: 'client_name', label: 'Клиент' }],
+      requiredFields: ['client_name'],
+      blocks: [
+        {
+          id: 'intro',
+          title: 'Вступление',
+          showInClient: true,
+          showInInternal: false,
+          content: [{ type: 'paragraph', text: 'Клиент: {{client_name}}' }],
+        },
+      ],
+    },
+  });
+  ok('макет раздела убран, форма возвращена', true);
+
+  await call('DELETE', `/offers/${offerId}`, { token: ownerToken });
+  ok('КП убрано', true);
+}
+
+/**
  * Списки бота открываются в приложении (R1, 2026-11-13).
  *
  * Живое нажатие кнопки (reply → инлайновая `web_app` → маршрут списка) покрыто
@@ -2825,6 +2987,7 @@ async function sectionNewDoc() {
 
 await sectionCombat();
 await sectionPickerSearch();
+await sectionOfferMaterials();
 await sectionBotAppLinks();
 await sectionNewDoc();
 

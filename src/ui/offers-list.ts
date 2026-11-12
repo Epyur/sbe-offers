@@ -482,6 +482,14 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
     }
   }
 
+  // Материалы-объекты предложения (2026-11-13) — отдельный блок, а не часть
+  // предыдущего: «Материал в позиции» добавляет СТРОКУ с ценой, а здесь
+  // материал попадает в документ описанием. Две подписи рядом, потому что один
+  // неаккуратный выбор здесь стоит дорого: цена и описание — разные вещи.
+  if (current.id) {
+    renderChosenMaterials(view, itemsCard, current);
+  }
+
   // Таблица менеджера — тоже только у сохранённого КП: она дописывает позиции
   // в конкретное предложение и двигает его updated_at.
   if (current.id) {
@@ -589,6 +597,111 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
       new Notice('Ссылка скопирована (действует 48 часов)');
     } catch (e: unknown) {
       new Notice(`Не удалось получить ссылку: ${errorMessage(e)}`);
+    }
+  }
+}
+
+/**
+ * «Материалы в предложении (описанием)» (2026-11-13, R3).
+ *
+ * Материал здесь — ОБЪЕКТ предложения, как система: в документ попадают его
+ * описание и ссылки, а не цена. Подпись говорит это дословно: рядом стоит
+ * «Материал в позиции», и человек должен понимать разницу до нажатия — иначе
+ * материал либо станет строкой с ценой 0, либо пропадёт из документа вовсе.
+ */
+function renderChosenMaterials(view: OffersView, card: HTMLElement, offer: Offer): void {
+  const box = card.createDiv({ cls: 'tn-offers-card tn-offers-inline-card' });
+  box.createDiv({ cls: 'tn-offers-muted', text: 'Материалы в предложении (описанием)' });
+  const chosenList = box.createDiv({ cls: 'tn-offers-chosen-systems' });
+  const candidates: PickerCandidate[] = [];
+
+  const renderChosen = (current: Offer): void => {
+    chosenList.empty();
+    const materials = current.materials ?? [];
+    if (materials.length === 0) {
+      chosenList.createDiv({
+        cls: 'tn-offers-muted',
+        text: 'Материалов описанием нет. В документ они попадут через блок формы с повтором «по материалам».',
+      });
+      return;
+    }
+    for (const chosen of materials) {
+      const row = chosenList.createDiv({ cls: 'tn-offers-row tn-offers-chosen-system' });
+      const handle = chosen.noteId ? `sys-${chosen.noteId}` : (chosen.sku ?? '');
+      const found = candidates.find((c) => c.noteId === chosen.noteId);
+      row.createSpan({ cls: 'tn-offers-grow', text: `Материал: ${found?.title ?? handle}` });
+      const removeBtn = row.createEl('button', { text: 'Убрать', cls: 'tn-btn tn-btn-ghost' });
+      removeBtn.addEventListener('click', () => {
+        void removeMaterial(handle, removeBtn);
+      });
+    }
+  };
+
+  renderPicker(
+    box,
+    {
+      label: 'Найти материал для предложения',
+      placeholder: 'Название материала — часть слова или код…',
+      chosen: [],
+      emptyText: 'Найдите материал: он попадёт в документ описанием, без цены.',
+      candidates: () => candidates,
+      load: async () => {
+        candidates.length = 0;
+      },
+      search: async (query) => {
+        const res = await view.plugin.offersService.searchMaterials(query);
+        if (res.error) {
+          new Notice(`Поиск по Базе знаний: ${res.error}`);
+          return null;
+        }
+        candidates.length = 0;
+        for (const item of res.items) {
+          candidates.push({ noteId: item.noteId, title: item.name, code: item.sku });
+        }
+        return candidates;
+      },
+      onPick: (candidate) => {
+        void addMaterial(candidate.noteId);
+      },
+    },
+    errorMessage,
+  );
+  renderChosen(offer);
+
+  /** Выбор материала: сервер пишет описание один раз, при выборе. */
+  async function addMaterial(noteId: number): Promise<void> {
+    if (!noteId) {
+      new Notice('Выберите материал');
+      return;
+    }
+    new Notice('Добавляю материал и пишу описание — до минуты…', 8000);
+    try {
+      const res = await view.plugin.offersService.addMaterial(offer.id, `sys-${noteId}`);
+      offer.materials = res.offer.materials ?? [];
+      renderChosen(offer);
+      const written = Object.values(res.texts ?? {}).filter((t) => t.trim() !== '').length;
+      new Notice(
+        written > 0
+          ? `Материал «${res.title}» добавлен в предложение. Описание готово. Позиции не добавлялись.`
+          : `Материал «${res.title}» добавлен. Описание не записалось — попробуйте позже.`,
+      );
+    } catch (e: unknown) {
+      new Notice(`Материал не добавлен: ${errorMessage(e)}`);
+    }
+  }
+
+  /** Снять материал с предложения. */
+  async function removeMaterial(handle: string, button: HTMLButtonElement): Promise<void> {
+    button.setAttr('disabled', 'true');
+    try {
+      const res = await view.plugin.offersService.removeMaterial(offer.id, handle);
+      offer.materials = res.offer.materials ?? [];
+      renderChosen(offer);
+      new Notice('Материал убран из предложения.');
+    } catch (e: unknown) {
+      new Notice(`Не удалось убрать материал: ${errorMessage(e)}`);
+    } finally {
+      button.removeAttribute('disabled');
     }
   }
 }

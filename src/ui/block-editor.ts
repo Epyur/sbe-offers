@@ -641,7 +641,9 @@ function renderBlockRepeat(card: HTMLElement, block: Block, deps: BlockEditorDep
   const options: Array<[string, string]> = [
     ['', 'не повторять'],
     ['systems', 'по каждой системе'],
-    ['materials', 'по каждой позиции'],
+    // С 2026-11-13 повтор печатает МАТЕРИАЛЫ ОПИСАНИЕМ, если они выбраны в
+    // карточке КП; позиции — только у старых КП, где таких материалов нет.
+    ['materials', 'по каждому материалу (описанием) / позиции'],
   ];
   for (const [value, label] of options) {
     const option = select.createEl('option', { text: label });

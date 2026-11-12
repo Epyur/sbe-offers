@@ -176,6 +176,7 @@ body: { "initData": "<window.Telegram.WebApp.initData>" }
 | `PUT` | `/api/offers/offers/{id}/client` | имя и контакт заказчика | `editor`, своё или admin |
 | `PUT` | `/api/offers/offers/{id}/items` | позиции целиком (список заменяется) | `editor`, своё или admin |
 | `POST`/`DELETE` | `/api/offers/offers/{id}/system` | выбранные системы (существующие) | `editor`, своё или admin |
+| `POST`/`DELETE` | `/api/offers/offers/{id}/material` | выбранные материалы ОПИСАНИЕМ (2026-11-13) | `editor`, своё или admin |
 
 Тела:
 
@@ -185,7 +186,17 @@ body: { "initData": "<window.Telegram.WebApp.initData>" }
 // PUT /items
 { "items": [{ "name": "Плита", "unit": "м²", "qty": 3, "price": 999.99,
               "ekn": "…", "catalogId": 12 }] }
+// POST /material, DELETE /material  (то же для /system)
+{ "noteId": 103 }          // или { "sku": "MAT-КРОВ-ПВХ-0001" }
 ```
+
+**Материал как объект предложения** (2026-11-13). `POST /material` выбирает
+материал ОПИСАНИЕМ: в `Offer.materials` появляется `{sku, noteId}` (оба
+значения пишет сервер, даже если прислали одно), ответ несёт карточку и текст
+`material.description`. Позиций это не добавляет — строку с ценой заводят в
+составе («Материал в позиции», таблица менеджера). `DELETE /material`
+принимает любой из двух ключей: `resolveMaterialChoice` дополняет выбор и
+снимает по обоим.
 
 Правила, общие для обеих ручек:
 
@@ -373,6 +384,7 @@ Offer = { id, number: "007/2026", ownerEmail,
           items: [{catalogId?, name, unit, qty, price, sum}],
           formValues: {поле: значение},
           systems: [{sku?, noteId?}],
+          materials: [{sku?, noteId?}],
           total, status: "draft"|"final", docxKey, createdAt, updatedAt }
 ```
 
@@ -384,6 +396,11 @@ Offer = { id, number: "007/2026", ownerEmail,
   старый вид (`system_choice` хранил объект `{}` или `{"sku":…}`) — он
   превращается в пустой массив или массив из одного элемента. На запись всегда
   идёт массив; `null` не отдаётся.
+- `materials` — материалы, предложенные **описанием** (2026-11-13). Форма та же,
+  что у `systems`; пустой массив — ни один не выбран. Полное сохранение
+  предложения (`PUT /offers/{id}`) пустым значением их НЕ стирает — как и
+  системы. Позиций они не добавляют: печатаются текст `material.description`
+  и ссылки карточки.
 - `sum` и `total` пересчитывает сервер: каждая строка округляется до копеек,
   затем итог (3 × 999.99 → 2999.97, без двоичных хвостов).
 - Номер — `{NNN}/{yyyy}`, сквозной по году (advisory-lock по году).
@@ -970,6 +987,17 @@ SystemCard = { noteId, path, sku, title, description, composition: string[],
 | `GET /api/offers/bot/systems` | то же для бота (X-Service-Secret) |
 | `POST /api/offers/bot/offers/{id}/system` | бот: добавить систему в КП чата |
 | `DELETE /api/offers/bot/offers/{id}/system` | бот: убрать систему из КП чата |
+| `POST /api/offers/offers/{id}/material` | добавить материал ОПИСАНИЕМ (editor); позиций НЕ добавляет |
+| `DELETE /api/offers/offers/{id}/material` | убрать материал из КП (editor), по `sku` или `noteId` |
+| `POST /api/offers/bot/offers/{id}/material` | бот: добавить материал описанием |
+| `DELETE /api/offers/bot/offers/{id}/material` | бот: убрать материал |
+
+**Материалы как объекты предложения** (2026-11-13). Та же пара ручек, что у
+систем, но с другой сущностью: материал попадает в `Offer.materials` и в
+документ **описанием** (`material.description` хранится в той же таблице
+`offers_system_text`). Позиций не добавляет; цена строки — только через состав.
+Блок формы с `repeat: "materials"` печатает выбранные материалы, а у старых КП
+без них — позиции. Метка у блока одна.
 
 **Несколько систем в одном КП** (2026-11-05). Системы хранятся списком
 (`Offer.systems`, порядок выбора сохраняется); повторное добавление той же
