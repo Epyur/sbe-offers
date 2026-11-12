@@ -83,6 +83,27 @@ capitalised query, lowercase, and a substring from the middle of a word. The
 temporary offer `999/2026` used for the check was deleted afterwards.
 Local Docker stand: **430/0**.
 
+**Two more live defects, fixed 2026-11-13.**
+
+1. **`db error` on the offer list for everyone except the owner.** For a
+   non-admin the visibility filter was appended as ` AND lower(owner_email) = …`
+   even when no `WHERE` had been added (no search), producing
+   `SELECT … FROM offers_offer AND …` — `syntax error at or near "AND"`. The
+   owner never saw it (role `superadmin` skips the branch), which is why the
+   report came from `fireservice@tn.ru`. Fix: add `WHERE` when there is no
+   search, `AND` otherwise. Guard: `lists_sql_test.go` builds the same SQL in
+   three modes and asserts the shape (`AND` must never follow the table name).
+   Live check: viewer → 200 with 4 own offers, owner → 200 with 20.
+   **Lesson: any query builder that concatenates optional conditions must be
+   covered by a test on the STRING, not only on behaviour — the standalone
+   branch (no search, no admin) is exactly the one the tests never hit.**
+2. **The App button is gone from the bot's main menu** (user decision).
+   A reply keyboard with `web_app` opened the App WITHOUT a Telegram signature,
+   so the person saw «Нет доступа: войдите в бота». The App opens from the
+   offer/sheet lists, where buttons are inline and the signature arrives.
+   `OPEN_APP_BUTTON` was removed; a test now asserts `MAIN_KEYBOARD` contains
+   no Mini App buttons.
+
 **Not verified by a human yet:** the whole live Telegram path (sign-in, lists,
 offer card, section texts, combat sheet, «Отправить в чат») and the local
 Docker stand (new sections 5b–5e in `scripts/offers_local_e2e.mjs` were written
