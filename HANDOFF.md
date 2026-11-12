@@ -9,11 +9,11 @@
 | | значение |
 |---|---|
 | версия | **0.9.21** |
-| `backend` | `{{BACKEND_SHA}}` (код + бот + доки) |
-| `main` | `{{MAIN_SHA}}` (релизный срез; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
+| `backend` | `28caed5` (код + бот + доки) |
+| `main` | `c0ae671` (релизный срез; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
 | самораздача | `manifest 41655ac8…` / `main a4e08f71…` / `styles a32ac3df…`, сверено по https **и** в `/registry.json` |
-| реестр (git-копия) | `sbe-apstore-registry` `{{REGISTRY_SHA}}` |
-| бот на сервере | пересобран и пересоздан, поллер запущен; `nd:pick`/`nd:kind` в собранном бандле |
+| реестр (git-копия) | `sbe-apstore-registry` `b4432e7` |
+| бот на сервере | пересобран и пересоздан 2026-11-13, поллер запущен |
 
 | файл | sha256 | байт |
 |---|---|---|
