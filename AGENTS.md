@@ -134,6 +134,8 @@ recognised a system/material from free text (0 of 27 offers, 0 of 14 sheets).
   parser never worked (regex missed the tag; the tool name sits BEFORE `>`),
   so a model answering in that shape had its markup shown to the user instead
   of being executed.
+- **Code heads:** `backend` `8729842` (only the bot's `src/agent/` copy and
+  the docs changed — the plugin version stays 0.9.21), `main` `c0ae671`.
 - **Next: P6** — tool executor in `offers-service` (whitelist over existing
   functions: `suggestionsFor`, `searchSystems`, `renderOfferDocx`, combat
   renderer), the manager-analysis journal `offers_agent_log` +
