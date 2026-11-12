@@ -31,8 +31,7 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.18** — **RELEASED 2026-11-13**. Three points converge:
-`backend` `e64d998` (code + services + App + docs), `main` `39a51e9` (plugin
-release slice only), self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…`
+`backend` `5884fcd`, `main` `2704d52` (plugin release slice only), self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…`
 (verified over https **and** in `/registry.json`), registry git copy
 `sbe-apstore-registry` `c0d3c14`. The service and the bot were rebuilt and
 recreated on the server at 07:48 MSK; the App bundle
