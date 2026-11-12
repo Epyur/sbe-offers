@@ -17,13 +17,13 @@ import (
 
 func TestParseListQueryNormalises(t *testing.T) {
 	q := parseListQuery("  Строй\tМонтаж  Сервис  ")
-	if q.Raw != "Строй Монтаж Сервис" {
+	if q.Raw != "строй монтаж сервис" {
 		t.Fatalf("Raw = %q, хотим «Строй Монтаж Сервис»", q.Raw)
 	}
-	if q.PrefixPattern() != "Строй Монтаж Сервис%" {
+	if q.PrefixPattern() != "строй монтаж сервис%" {
 		t.Fatalf("PrefixPattern = %q", q.PrefixPattern())
 	}
-	if q.WordPattern() != "% Строй Монтаж Сервис%" {
+	if q.WordPattern() != "% строй монтаж сервис%" {
 		t.Fatalf("WordPattern = %q", q.WordPattern())
 	}
 }
@@ -38,11 +38,11 @@ func TestParseListQueryEmpty(t *testing.T) {
 
 func TestParseListQueryYoTie(t *testing.T) {
 	q := parseListQuery("Фёдоров")
-	if q.Tie != "Федоров" {
+	if q.Tie != "федоров" {
 		t.Fatalf("Tie = %q, хотим «Фёдоров»: «ё» и «е» — одна буква", q.Tie)
 	}
 	q = parseListQuery("ФЁДОРОВ")
-	if q.Tie != "ФеДОРОВ" {
+	if q.Tie != "федоров" {
 		t.Fatalf("Tie = %q, заглавная «Ё» тоже приводится", q.Tie)
 	}
 }

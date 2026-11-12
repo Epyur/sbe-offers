@@ -498,8 +498,20 @@ console.log('\n5b. Поиск в списках (S2, 2026-11-13)');
 
   // Поиск не обходит права: чужак без роли не видит чужое даже по имени клиента.
   const stranger = makeJwt('stranger@tn.ru');
+  // Без роли закрыт сам маршрут (requirePerm → 403), с ролью — ни одной чужой строки.
   const strangerSearch = await call('GET', '/offers?q=' + encodeURIComponent('Ромашка'), { token: stranger });
-  ok('поиск не открывает чужое', strangerSearch.status === 200 && (strangerSearch.json?.offers ?? []).length === 0, `${strangerSearch.status} / ${(strangerSearch.json?.offers ?? []).length}`);
+  ok(
+    'без роли поиск закрыт (403)',
+    strangerSearch.status === 403,
+    `${strangerSearch.status} / ${(strangerSearch.json?.offers ?? []).length}`,
+  );
+  // А с ролью editor — только свои: у manager@tn.ru своих с таким именем нет.
+  const managerSearch = await call('GET', '/offers?q=' + encodeURIComponent('Ромашка'), { token: makeJwt('manager@tn.ru') });
+  ok(
+    'поиск не видит чужие строки',
+    managerSearch.status === 200 && (managerSearch.json?.offers ?? []).length === 0,
+    `${managerSearch.status} / ${(managerSearch.json?.offers ?? []).length}`,
+  );
 
   // Листки: поиск по названию и по продукту стороны.
   const sheetsPlain = await call('GET', '/combat', { token: ownerToken });

@@ -152,27 +152,33 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	// Список показывает ВСЕ листки (правило 2026-11-12): листок — общая
 	// справка, а не личный документ. Правка остаётся у автора.
 	//
-	// Поиск (2026-11-13, шаг S2): по названию и по названиям сторон. Названия
-	// сторон лежат в jsonb, и `ILIKE '%q%'` по ним индексу не поддаётся, а
-	// jsonb-путь в expression-индексе потребовал бы знать каждую форму
-	// (our_notes и competitor_notes — два разных пути). Поэтому тот же приём,
-	// что у КП: индексная форма даёт быстрый старт, а полный набор строк
-	// (listLimit=200) досматривается в памяти — там и подстрока внутри слова,
-	// и названия сторон.
+	// Поиск (2026-11-13, шаг S2; порядок исправлен после стенда): по названию
+	// и по названиям сторон. Названия сторон лежат в jsonb, поэтому SQL ищет
+	// только по названию листка (индексный срез + встроенная подстрока), а
+	// окончательное решение принимает `combatSearchText` — он видит и стороны.
+	// Строк просматривается `listScanLimit`, отдаётся не больше `listLimit`:
+	// иначе совпадения глубже свежих двухсот не находились бы (тот же дефект,
+	// что был у КП).
 	q := parseListQuery(r.URL.Query().Get("q"))
 	query := `SELECT id, title FROM offers_combat_sheet`
 	args := []any{}
 	if !q.Empty() {
-		query += ` WHERE (lower(title) LIKE $1 OR lower(title) LIKE $2)`
-		args = append(args, q.PrefixPattern(), q.WordPattern())
+		query += ` WHERE (lower(title) LIKE $1` +
+			` OR lower(title) LIKE $2` +
+			` OR lower(replace(title, 'ё', 'е')) LIKE $3)`
+		args = append(args, q.PrefixPattern(), q.WordPattern(), q.ContainsPattern())
 	}
-	query += ` ORDER BY created_at DESC LIMIT ` + itoa(listLimit)
-	rows, err := s.pool.Query(r.Context(), query, args...)
+	scan := listLimit
+	if !q.Empty() {
+		scan = listScanLimit
+	}
+	rows, err := s.pool.Query(r.Context(),
+		query+` ORDER BY created_at DESC LIMIT `+itoa(scan), args...)
 	if err != nil {
 		dbError(w, "list combat", err)
 		return
 	}
-	ids := make([]int64, 0)
+	ids := make([]int64, 0, 32)
 	for rows.Next() {
 		var id int64
 		var title string
@@ -195,6 +201,9 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sheets = append(sheets, c)
+		if len(sheets) >= listLimit {
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sheets": sheets})
 }

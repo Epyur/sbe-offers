@@ -142,31 +142,46 @@ func (s *Server) handleListOffers(w http.ResponseWriter, r *http.Request) {
 	role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), actorEmailFromCtx(r))
 	q := parseListQuery(r.URL.Query().Get("q"))
 
-	// Поиск по клиенту и видимость (2026-11-13, шаг S2).
+	// Поиск и видимость (2026-11-13, шаг S2; исправлено после стенда).
 	//
-	// SQL отдаёт только первый, индексный, срез поиска («начинается с» и «слово
-	// начинается с»): `LIMIT` списка — небольшое число строк, поэтому остальное
-	// досматривается в памяти без копии правила в каждой ветке условия.
-	// Видимость («admin видит все, остальные свои») остаётся одной функцией
-	// `canSeeOffer` — здесь проверяется та же пара «роль + владелец», что и в
-	// `handleGetOffer`; отдельное условие в SQL стало бы второй копией.
+	// Без поиска — прежний запрос: свежие сверху, видимость в SQL.
+	//
+	// С поиском — другой порядок, и это важно: СНАЧАЛА просматривается больше
+	// строк (listScanLimit), ПОТОМ отсеивается совпадение и права, и только
+	// затем берутся первые listLimit. Прежний вариант резал 200 строк ДО
+	// поиска, и на живой базе «Ромаш» находилось 19 раз, а в ответе было ноль —
+	// все совпадения оказались глубже свежих двухсот. Список без поиска этого
+	// не видит, поэтому на стенде дефект выглядел как ошибка теста.
+	//
+	// Формы поиска: быстрый индексный срез («начинается с», «слово начинается
+	// с») плюс встроенная `ILIKE '%q%'` — без неё имя заказчика в середине
+	// слова не находится вовсе. На объёме до listScanLimit строк стоимость
+	// предсказуема; когда база вырастет, следующий шаг — pg_trgm, а не
+	// возврат к прежнему порядку.
 	query := `SELECT id, lower(owner_email), client->>'name' FROM offers_offer`
 	args := []any{}
 	if !q.Empty() {
-		query += ` WHERE (lower(client->>'name') LIKE $1 OR lower(client->>'name') LIKE $2)`
-		args = append(args, q.PrefixPattern(), q.WordPattern())
+		query += ` WHERE (lower(client->>'name') LIKE $1` +
+			` OR lower(client->>'name') LIKE $2` +
+			` OR lower(replace(client->>'name', 'ё', 'е')) LIKE $3)`
+		args = append(args, q.PrefixPattern(), q.WordPattern(), q.ContainsPattern())
 	}
 	if !isAdminRole(role) {
 		query += ` AND lower(owner_email) = lower($` + itoa(len(args)+1) + `)`
 		args = append(args, actorEmailFromCtx(r))
 	}
-	rows, err := s.pool.Query(r.Context(), query+` ORDER BY created_at DESC LIMIT `+itoa(listLimit), args...)
+	scan := listLimit
+	if !q.Empty() {
+		scan = listScanLimit
+	}
+	rows, err := s.pool.Query(r.Context(),
+		query+` ORDER BY created_at DESC LIMIT `+itoa(scan), args...)
 	if err != nil {
 		dbError(w, "list offers", err)
 		return
 	}
 	defer rows.Close()
-	offers := make([]Offer, 0)
+	offers := make([]Offer, 0, 32)
 	for rows.Next() {
 		var id int64
 		var owner string
@@ -175,21 +190,28 @@ func (s *Server) handleListOffers(w http.ResponseWriter, r *http.Request) {
 			dbError(w, "list offers scan", err)
 			return
 		}
-		// То же правило видимости, что в canSeeOffer, но по строке списка: полную
-		// модель ради проверки владельца не загружаем.
+		// То же правило видимости, что в canSeeOffer, но по строке списка:
+		// полную модель ради проверки владельца не загружаем.
 		if !isAdminRole(role) && !strings.EqualFold(owner, actorEmailFromCtx(r)) {
 			continue
 		}
-		// Добор по подстроке внутри слова («Строй» в «СтройМонтажСервис»):
-		// по индексу такая форма не ходит, а строк не больше listLimit.
-		if !q.Empty() && clientName != nil && !containsTie(*clientName, q.Contains()) {
-			continue
+		if !q.Empty() {
+			name := ""
+			if clientName != nil {
+				name = *clientName
+			}
+			if !containsTie(name, q.Contains()) {
+				continue
+			}
 		}
 		offer, err := s.loadOffer(r.Context(), id)
 		if err != nil {
 			continue
 		}
 		offers = append(offers, offer)
+		if len(offers) >= listLimit {
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"offers": offers})
 }
