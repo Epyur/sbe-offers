@@ -306,6 +306,15 @@ func main() {
 	// Уточнение для разбора (2026-11-11): единственная настройка боевого листка.
 	mux.HandleFunc("PUT /api/offers/bot/combat/{id}/hint", s.requireServiceSecret(s.handleBotCombatHint))
 
+	// Агент КП (2026-11-14, шаг P6): собирает документы за менеджера теми же
+	// функциями, что кнопки. Бот отдаёт текст и chat_id, получает ответ и файлы.
+	// Роли проверяются внутри инструментов правами владельца chat_id, поэтому
+	// здесь тот же гейт, что у всех ручек бота, — секрет сервиса.
+	mux.HandleFunc("POST /api/offers/bot/agent/message", s.requireServiceSecret(s.handleBotAgentMessage))
+	mux.HandleFunc("GET /api/offers/bot/agent/history", s.requireServiceSecret(s.handleBotAgentHistory))
+	// Журнал ходов агента для разбора переписки менеджеров (роль admin).
+	mux.HandleFunc("GET /api/offers/admin/agent-log", s.requirePerm("admin")(s.handleAgentLog))
+
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           mux,
@@ -606,6 +615,27 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 			docx       BYTEA NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		// Журнал ходов агента КП (2026-11-14, шаг P6). Одна строка на ход:
+		// запрос менеджера, вызванные инструменты, ответ и ручные правки строки
+		// (состав до/после). Служит разбором переписки менеджеров раз в неделю и
+		// регрессионным корпусом стенда. Хранение 180 дней, обрезка при записи.
+		`CREATE TABLE IF NOT EXISTS offers_agent_log (
+			id          BIGSERIAL PRIMARY KEY,
+			chat_id     TEXT NOT NULL DEFAULT '',
+			email       TEXT NOT NULL DEFAULT '',
+			offer_id    BIGINT NULL,
+			sheet_id    BIGINT NULL,
+			user_text   TEXT NOT NULL DEFAULT '',
+			tools       JSONB NOT NULL DEFAULT '[]',
+			answer_text TEXT NOT NULL DEFAULT '',
+			manual_fix  JSONB NULL,
+			model       TEXT NOT NULL DEFAULT '',
+			latency_ms  INT NOT NULL DEFAULT 0,
+			reason      TEXT NOT NULL DEFAULT 'final',
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE INDEX IF NOT EXISTS offers_agent_log_created ON offers_agent_log (created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS offers_agent_log_email ON offers_agent_log (lower(email))`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.pool.Exec(ctx, stmt); err != nil {

@@ -30,6 +30,7 @@ import { canResume } from './flow/resume.ts';
 import { appListButton } from './flow/appbutton.ts';
 import type { NewDocState } from './flow/newdoc.ts';
 import type { SuggestItem } from './flow/suggest.ts';
+import { AGENT_INTRO, AGENT_KEYBOARD, enterAgent, exitAgent, handleAgentText } from './flow/agent.ts';
 import {
   NO_OFFER_FOR_FILE,
   attachMessage,
@@ -230,6 +231,13 @@ async function routeMenu(
     await deps.send(ctx.chatId, HELP_TEXT, MAIN_KEYBOARD);
     return true;
   }
+  // Помощник (2026-11-14, шаг P6): включить свободный диалог с агентом. Пока он
+  // включён, текст идёт агенту (см. routeText). Прежние потоки не тронуты.
+  if (trimmed === '🤖 Помощник' || trimmed === '/agent') {
+    ctx.save(enterAgent(ctx.session));
+    await deps.send(ctx.chatId, AGENT_INTRO, AGENT_KEYBOARD);
+    return true;
+  }
   if (trimmed === '✨ Создать новый документ' || trimmed === '/new') {
     await startNewDoc(ctx);
     return true;
@@ -350,6 +358,11 @@ export async function routeText(
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
+  // Помощник (2026-11-14, шаг P6): пока он включён, свободный текст — это запрос
+  // к нему, а НЕ название продукта для нового диалога и НЕ позиция. Поэтому
+  // проверяется первым из содержательных веток: иначе «Мембрана» стала бы
+  // позицией с ценой 0, а вопрос «сравни с конкурентами» — названием документа.
+  if (await handleAgentText({ deps, chatId, session }, trimmed)) return;
   // «Создать новый документ» (2026-11-13, R2): пока этот диалог идёт, текст —
   // это НАЗВАНИЕ ПРОДУКТА, а не позиция и не ответ брифа. Проверяется РАНЬШЕ
   // листка и черновика: иначе «Мембрана» стала бы позицией с ценой 0.
@@ -479,6 +492,14 @@ const ctx: CallbackCtx = {
   // callbacks.ts, чтобы не было кольца импортов routes → callbacks → routes.
   if (data === 'att:yes' || data === 'att:no') {
     await applyAttachConfirm(ctx, data === 'att:yes');
+    return;
+  }
+
+  // Выход из помощника (2026-11-14, шаг P6): сессия возвращается к обычному меню,
+  // черновик и боевой листок остаются — человек вернётся к ним.
+  if (data === 'agent:off') {
+    ctx.save(exitAgent(ctx.session));
+    await deps.send(chatId, 'Помощник выключен. Снова — кнопкой «🤖 Помощник».', MAIN_KEYBOARD);
     return;
   }
 

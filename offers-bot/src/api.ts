@@ -719,3 +719,38 @@ export async function combatDocx(
     LONG_TIMEOUT_MS,
   );
 }
+
+/**
+ * Готовый файл от агента (2026-11-14, шаг P6): имя и содержимое base64.
+ * Приходит массивом — за один ход агент может собрать, например, только DOCX,
+ * но форма ответа массивом, чтобы второй файл когда-нибудь не менял контракт.
+ */
+export interface AgentFile {
+  name: string;
+  base64: string;
+}
+
+/** Ответ агента: текст для человека и (возможно) готовые файлы. */
+export interface AgentReply {
+  answer: string;
+  files: AgentFile[];
+}
+
+/**
+ * Ход агента КП (2026-11-14, шаг P6). Решение принимает сервер (модель и
+ * инструменты живут там), бот только отдаёт текст и пересылает файлы в чат.
+ * Таймаут длинный: ход может вызвать модель несколько раз.
+ */
+export async function agentMessage(
+  chatId: string,
+  text: string,
+  doc: { offerId?: number; sheetId?: number } = {},
+): Promise<AgentReply> {
+  const res = await call<AgentReply>('POST', '/bot/agent/message', {
+    chat_id: chatId,
+    text,
+    offer_id: doc.offerId ?? 0,
+    sheet_id: doc.sheetId ?? 0,
+  }, LONG_TIMEOUT_MS);
+  return { answer: res.answer ?? '', files: res.files ?? [] };
+}

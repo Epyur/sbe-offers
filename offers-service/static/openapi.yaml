@@ -2997,6 +2997,167 @@ paths:
                     type: string
                   file_name:
                     type: string
+  /api/offers/bot/agent/message:
+    post:
+      description: |
+        Ход помощника (агента) в боте (2026-11-14, шаг P6). Бот отдаёт текст
+        менеджера и chat_id; сервер сам решает, какие инструменты вызвать
+        (поиск продуктов, чтение карточек, документы общего доступа, добавление
+        системы/материала описанием, сборка DOCX). Ответ — текст для человека и
+        готовые файлы в base64.
+      security:
+        - serviceSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, text]
+              properties:
+                chat_id:
+                  type: string
+                text:
+                  type: string
+                offer_id:
+                  type: integer
+                  format: int64
+                  description: КП, о котором идёт речь (0 или нет — без документа).
+                sheet_id:
+                  type: integer
+                  format: int64
+                  description: Боевой листок, о котором идёт речь.
+      responses:
+        '200':
+          description: Ответ агента и готовые файлы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer:
+                    type: string
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        base64:
+                          type: string
+        '400':
+          description: Пустой запрос или некорректный JSON
+        '401':
+          description: Нет секрета сервиса
+        '403':
+          description: Неверный секрет сервиса
+        '404':
+          description: chat_id не привязан
+  /api/offers/bot/agent/history:
+    get:
+      description: |
+        История разговора с помощником (2026-11-14). Шаг P6 её в сервисе не
+        хранит — бот ведёт её сам, поэтому ручка отдаёт пустой список. Объявлена,
+        чтобы контракт не менялся при переносе истории сюда.
+      security:
+        - serviceSecret: []
+      parameters:
+        - name: chat_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Список сообщений (пока пуст)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+        '404':
+          description: chat_id не привязан
+  /api/offers/admin/agent-log:
+    get:
+      description: |
+        Журнал ходов помощника (2026-11-14, шаг P6) для разбора переписки
+        менеджеров: запрос, вызванные инструменты, ответ и ручные правки строки.
+        Хранение 180 дней. Доступ — только роль admin.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: Начало периода, YYYY-MM-DD
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: Конец периода, YYYY-MM-DD (включительно)
+        - name: email
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 2000
+      responses:
+        '200':
+          description: Строки журнала (новые сверху)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          format: int64
+                        email:
+                          type: string
+                        offerId:
+                          type: integer
+                          format: int64
+                        sheetId:
+                          type: integer
+                          format: int64
+                        userText:
+                          type: string
+                        tools:
+                          type: array
+                          items:
+                            type: object
+                        answerText:
+                          type: string
+                        manualFix:
+                          type: array
+                          items:
+                            type: object
+                        latencyMs:
+                          type: integer
+                        reason:
+                          type: string
+                        createdAt:
+                          type: string
+                  total:
+                    type: integer
+        '401':
+          description: Нет ключа
+        '403':
+          description: Недостаточно прав (нужна роль admin)
 components:
   securitySchemes:
     bearerAuth:

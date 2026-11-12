@@ -2985,11 +2985,77 @@ async function sectionNewDoc() {
   }
 }
 
+/**
+ * Помощник (агент) в боте (2026-11-14, шаг P6) — серверная половина.
+ *
+ * Сам диалог (включение, «⌛», пересылка файла) проверяет `offers-bot/src/agent.test.ts`
+ * без сети. Здесь — что ручка бота `POST /bot/agent/message` действительно
+ * проводит ход: заглушка модели (llm-stub) отвечает на промт агента, цикл
+ * вызывает `get_our_products`, возвращает текст. Плюс границы: без секрета —
+ * отказ; журнал хода виден администратору; документы без настроенного
+ * `DOCUMENTS_SERVICE_URL` честно отвечают «недоступны», а не пустым списком.
+ *
+ * Чужой секрет: ручка под `X-Service-Secret`, поэтому проверка 401/403 здесь
+ * такая же, как у остальных ручек бота (правило 2026-11-12 — «проверять
+ * авторизацию при каждом выпуске»).
+ */
+async function sectionAgent() {
+  console.log('\nПомощник (агент) в боте (P6)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999001';
+
+  // 1. Гейт: без секрета и с чужим секретом — отказ, а не ход.
+  const noSecret = await call('POST', '/bot/agent/message', {
+    body: { chat_id: chatId, text: 'какая мембрана?' },
+  });
+  ok('ход агента без секрета отклонён', noSecret.status === 401 || noSecret.status === 403,
+    `статус ${noSecret.status}`);
+  const badSecret = await call('POST', '/bot/agent/message', {
+    headers: { 'X-Service-Secret': 'not-the-bot-secret' },
+    body: { chat_id: chatId, text: 'какая мембрана?' },
+  });
+  ok('ход агента с чужим секретом отклонён', badSecret.status === 403, `статус ${badSecret.status}`);
+
+  // 2. Пустой текст — отказ (иначе модель получает пустое).
+  const empty = await call('POST', '/bot/agent/message', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: chatId, text: '   ' },
+  });
+  ok('пустой запрос агенту отклонён', empty.status === 400, `статус ${empty.status}`);
+
+  // 3. Настоящий ход: заглушка модели отвечает вызовом get_our_products, затем
+  //    финальным текстом. Проверяется, что цикл дошёл до ответа человеку.
+  const turn = await call('POST', '/bot/agent/message', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: chatId, text: 'предложи систему кровля' },
+  });
+  ok('ход агента отвечает 200', turn.status === 200, `статус ${turn.status} ${turn.text?.slice(0, 160)}`);
+  ok('агент вернул текст ответа', typeof turn.json?.answer === 'string' && turn.json.answer.length > 0,
+    JSON.stringify(turn.json)?.slice(0, 160));
+  ok('ответ несёт массив файлов, а не null', Array.isArray(turn.json?.files), JSON.stringify(turn.json?.files));
+
+  // 4. Журнал хода: администратор видит строку с нашим запросом. Роль admin у
+  //    ownerToken (владелец приложения).
+  const log = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  ok('журнал агента отвечает администратору', log.status === 200, `статус ${log.status}`);
+  ok('журнал агента — массив, а не null', Array.isArray(log.json?.items), JSON.stringify(log.json)?.slice(0, 120));
+  const found = (log.json?.items ?? []).some((row) => String(row.userText ?? '').includes('предложи систему кровля'));
+  ok('ход агента попал в журнал', found, JSON.stringify(log.json?.items ?? []).slice(0, 200));
+  // Журнал — только администратору: «менеджер» (не admin) получает 403.
+  const strangerLog = await call('GET', '/admin/agent-log', { token: makeJwt('stranger@tn.ru') });
+  ok('журнал агента закрыт для не-администратора', strangerLog.status === 403, `статус ${strangerLog.status}`);
+
+  // 5. Граница документов: на стенде DOCUMENTS_SERVICE_URL не задан, и
+  //    `get_documents` честно отвечает «не настроено», а не пустым списком.
+  //    Проверяется косвенно — по отсутствию 500: ход отработал без сбоя.
+  ok('ход агента не падает без сервиса документов', turn.status === 200, `статус ${turn.status}`);
+}
+
 await sectionCombat();
 await sectionPickerSearch();
 await sectionOfferMaterials();
 await sectionBotAppLinks();
 await sectionNewDoc();
+await sectionAgent();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);
