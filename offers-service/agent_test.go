@@ -7,6 +7,8 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -122,6 +124,115 @@ func TestAgentToolsWhitelist(t *testing.T) {
 				t.Fatalf("инструмент %q не должен быть в v1", forbidden)
 			}
 		}
+	}
+}
+
+// Инструменты P6-бис на месте и с теми аргументами, на которые опирается промт
+// (2026-11-14).
+func TestAgentToolsAfterP6bis(t *testing.T) {
+	tools := (&Server{}).agentTools()
+	for _, name := range []string{"read_card", "search_competitors", "create_combat_sheet", "set_combat_side", "create_offer"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("инструмента %q нет в карте", name)
+		}
+	}
+	required := func(tool string) []string {
+		schema := tools[tool].InputSchema
+		list, _ := schema["required"].([]string)
+		return list
+	}
+	for _, key := range []string{"sheetId", "noteId", "side"} {
+		found := false
+		for _, item := range required("set_combat_side") {
+			if item == key {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("set_combat_side: аргумент %q не обязателен: %v", key, required("set_combat_side"))
+		}
+	}
+}
+
+// Роль карточки решают теги, и только теги (согласованная модель 2026-11-14).
+func TestCardRoleByTags(t *testing.T) {
+	tag := func(names ...string) []KBTag {
+		out := make([]KBTag, 0, len(names))
+		for _, name := range names {
+			out = append(out, KBTag{Name: name})
+		}
+		return out
+	}
+	cases := []struct {
+		tags []KBTag
+		want string
+	}{
+		{tag("commercial_propose"), "system"},
+		{tag("commercial_propose", "material"), "material"},
+		{tag("material"), "material"},
+		{tag("competitor"), "competitor"},
+		{tag("competitor", "commercial_propose"), "competitor"},
+		{tag("journal"), "other"},
+		{tag(), "other"},
+	}
+	for _, c := range cases {
+		if got := cardRole(c.tags); got != c.want {
+			t.Fatalf("роль %v: получили %q, ждали %q", c.tags, got, c.want)
+		}
+	}
+}
+
+// Граница стороны листка — в инструменте: материал/система не попадают на
+// сторону конкурента, конкурент — на нашу (2026-11-14, «инструмент — граница»).
+func TestCombatSideRoleBoundary(t *testing.T) {
+	if msg := combatSideRoleError(combatSideOur, "system"); msg != "" {
+		t.Fatalf("система должна пускаться на нашу сторону: %s", msg)
+	}
+	if msg := combatSideRoleError(combatSideOur, "material"); msg != "" {
+		t.Fatalf("материал должен пускаться на нашу сторону: %s", msg)
+	}
+	if msg := combatSideRoleError(combatSideOur, "competitor"); msg == "" {
+		t.Fatal("конкурент не должен попадать на нашу сторону")
+	}
+	if msg := combatSideRoleError(combatSideCompetitor, "competitor"); msg != "" {
+		t.Fatalf("конкурент должен пускаться на сторону конкурента: %s", msg)
+	}
+	for _, role := range []string{"system", "material", "other"} {
+		if msg := combatSideRoleError(combatSideCompetitor, role); msg == "" {
+			t.Fatalf("роль %q не должна попадать на сторону конкурента", role)
+		}
+	}
+}
+
+// `httptest.NewRequest` не разбирает параметры пути, а ручки читают `{id}`
+// через `r.PathValue`: без проставления `SetPathValue` сборка документа руками
+// агента отвечала «invalid id» на живом предложении (стенд поймал 2026-11-14,
+// unit-тест его не видел).
+func TestAgentRequestCarriesPathValue(t *testing.T) {
+	env := &agentEnv{Email: "owner@tn.ru"}
+	req := env.requestWith(context.Background(), http.MethodPost, "/api/offers/offers/42/export",
+		map[string]string{"id": "42"})
+	if got := req.PathValue("id"); got != "42" {
+		t.Fatalf("параметр пути потерян: %q", got)
+	}
+	if req.Context().Value(permEmailCtx{}) != "owner@tn.ru" {
+		t.Fatal("идентичность не доехала до ручки")
+	}
+}
+
+func TestArgFloatAndBool(t *testing.T) {
+	args := map[string]any{"qty": 3.5, "qtyStr": "10,5", "flag": true, "flagStr": "true", "off": false}
+	if got := argFloat(args, "qty"); got != 3.5 {
+		t.Fatalf("argFloat number: %v", got)
+	}
+	if got := argFloat(args, "qtyStr"); got != 10.5 {
+		t.Fatalf("argFloat comma string: %v", got)
+	}
+	if !argBool(args, "flag") || !argBool(args, "flagStr") {
+		t.Fatal("argBool не прочитал true")
+	}
+	if argBool(args, "off") || argBool(args, "missing") {
+		t.Fatal("argBool прочитал true там, где false")
 	}
 }
 

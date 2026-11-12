@@ -2894,6 +2894,12 @@ async function sectionBotAppLinks() {
   const menu = readFileSync(`${botDir}/src/flow/build.ts`, 'utf8');
   ok('в меню бота два списка стоят в одном ряду',
     /\[\{ text: '📂 Мои КП' \}, \{ text: '📂 Мои боевые листки' \}\]/.test(menu), 'строка меню не найдена');
+  // Три равноправных входа — создание, помощник и справка — тоже одним рядом
+  // (2026-11-14, просьба пользователя). Проверяется тот же исходник, что едет
+  // на сервер: иначе меню на стенде и в бою разошлись бы молча.
+  ok('«Создать», «Помощник» и «Справка» стоят в одном ряду',
+    /\{ text: '✨ Создать новый документ' \}, \{ text: '🤖 Помощник' \}, \{ text: '❓ Справка' \}/.test(menu),
+    'совместный ряд в меню не найден');
   // Проверка смотрит на КНОПКИ в `MAIN_KEYBOARD`, а не на весь файл: слово
   // `web_app` живёт в комментарии рядом («почему reply-кнопка его не несёт»),
   // и проверка по всему файлу краснела бы на собственном объяснении.
@@ -2902,7 +2908,12 @@ async function sectionBotAppLinks() {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.startsWith('[') && !line.startsWith('//') && !line.startsWith('/*'));
-  ok('строки кнопок меню найдены', buttonLines.length >= 3, JSON.stringify(buttonLines));
+  ok('строки кнопок меню найдены', buttonLines.length >= 2, JSON.stringify(buttonLines));
+  // Считаем КНОПКИ, а не ряды: в ряду их бывает несколько (2026-11-14 три
+  // равноправных входа стоят одной строкой), и проверка по числу рядов
+  // краснела бы на законном уплотнении меню.
+  const menuButtons = (keyboardBody.match(/\{ text: '/g) ?? []).length;
+  ok('в меню все пять кнопок', menuButtons === 5, `кнопок ${menuButtons}`);
   ok('в reply-меню нет `web_app` (она открывает приложение без подписи)',
     buttonLines.every((line) => !line.includes('web_app')), JSON.stringify(buttonLines));
 
@@ -3050,12 +3061,93 @@ async function sectionAgent() {
   ok('ход агента не падает без сервиса документов', turn.status === 200, `статус ${turn.status}`);
 }
 
+/**
+ * Помощник (агент), P6-бис (2026-11-14) — карточка материала читается,
+ * конкуренты ищутся, боевой листок заводится, граница сторон держится.
+ *
+ * Живой дефект 0.9.22: `read_card` по материалу (noteId 103 на стенде — та же
+ * форма, что 7547 на бою) отвечал «карточки нет», хотя заметка читается. Здесь
+ * ход идёт через настоящий `read_card` (заглушка модели зовёт его по 103), и
+ * проверяется, что карточка вернулась, а роль — material.
+ */
+async function sectionAgentP6bis() {
+  console.log('\nПомощник (агент): карточки любого вида, конкуренты, листок, КП (P6-бис)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999002';
+  const botHeaders = { 'X-Service-Secret': BOT_SECRET };
+
+  // 1. Карточка МАТЕРИАЛА читается, конкуренты ищутся. Живой дефект 0.9.22:
+  //    `read_card` по материалу отвечал «карточки нет».
+  const analogTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'подбери аналог мембраны ПВХ' },
+  });
+  ok('ход «подбери аналог» проходит', analogTurn.status === 200, `статус ${analogTurn.status} ${analogTurn.text?.slice(0, 160)}`);
+  ok('ответ агента не пустой', typeof analogTurn.json?.answer === 'string' && analogTurn.json.answer.length > 0,
+    JSON.stringify(analogTurn.json)?.slice(0, 160));
+
+  const log = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const analogRow = (log.json?.items ?? []).find((row) => String(row.userText ?? '').includes('подбери аналог'));
+  ok('ход «подбери аналог» попал в журнал', Boolean(analogRow), JSON.stringify(log.json?.items ?? []).slice(0, 200));
+  const readTool = (analogRow?.tools ?? []).find((t) => t.name === 'read_card');
+  ok('агент читал карточку материала через read_card', Boolean(readTool), JSON.stringify(analogRow?.tools ?? []).slice(0, 240));
+  ok('карточка материала прочитана, а не «нет такой»', readTool?.ok === true, JSON.stringify(readTool)?.slice(0, 240));
+  const searchTool = (analogRow?.tools ?? []).find((t) => t.name === 'search_competitors');
+  ok('поиск конкурентов вызван и сработал', searchTool?.ok === true, JSON.stringify(searchTool)?.slice(0, 200));
+
+  // 2. Боевой листок: агент заводит его сам и кладёт наш продукт.
+  const combatTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'сделай сравнение с конкурентами по Гаранту' },
+  });
+  ok('ход «сравнение с конкурентами» проходит', combatTurn.status === 200, `статус ${combatTurn.status} ${combatTurn.text?.slice(0, 160)}`);
+  const combatLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const combatRow = (combatLog.json?.items ?? []).find((row) => String(row.userText ?? '').includes('сравнение с конкурентами'));
+  const created = (combatRow?.tools ?? []).find((t) => t.name === 'create_combat_sheet');
+  ok('агент завёл боевой листок', created?.ok === true, JSON.stringify(created)?.slice(0, 240));
+  const side = (combatRow?.tools ?? []).find((t) => t.name === 'set_combat_side');
+  ok('агент добавил наш продукт на сторону листка', side?.ok === true, JSON.stringify(side)?.slice(0, 240));
+
+  const sheets = await call('GET', '/combat', { token: ownerToken });
+  const sheet = (sheets.json?.sheets ?? []).find((s) => s.title === 'Сравнение с конкурентами');
+  ok('заведённый агентом листок виден в списке', Boolean(sheet),
+    JSON.stringify((sheets.json?.sheets ?? []).map((s) => s.title)).slice(0, 200));
+  ok('сторона листка несёт наш продукт', (sheet?.ourNotes ?? []).some((n) => n.noteId === 105),
+    JSON.stringify(sheet?.ourNotes));
+
+  // 4. Граница прав: чужой человек не правит стороны нашего листка (граница
+  //    «что куда можно положить» покрыта unit-тестом TestCombatSideRoleBoundary).
+  if (sheet?.id) {
+    const foreign = await call('POST', `/combat/${sheet.id}/our`, {
+      token: makeJwt('stranger@tn.ru'),
+      body: { noteId: 201, title: 'Конкурент: ТехноНИКОЛЬ Кровля' },
+    });
+    ok('чужой не может править стороны листка', foreign.status === 403, `статус ${foreign.status}`);
+  }
+
+  // 5. Сценарий B: без открытого КП агент сам его заводит и добавляет систему.
+  const offerTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'собери кп по Гаранту' },
+  });
+  ok('ход «собери кп» проходит без готового предложения', offerTurn.status === 200,
+    `статус ${offerTurn.status} ${offerTurn.text?.slice(0, 160)}`);
+  const offerLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const offerRow = (offerLog.json?.items ?? []).find((row) => String(row.userText ?? '').includes('собери кп'));
+  for (const name of ['create_offer', 'set_system', 'build_docx']) {
+    const step = (offerRow?.tools ?? []).find((t) => t.name === name);
+    ok(`агент выполнил «${name}»`, step?.ok === true, JSON.stringify(step)?.slice(0, 240));
+  }
+  ok('агент вернул готовый файл КП', (offerTurn.json?.files ?? []).length > 0,
+    JSON.stringify(offerTurn.json?.files)?.slice(0, 160));
+}
+
 await sectionCombat();
 await sectionPickerSearch();
 await sectionOfferMaterials();
 await sectionBotAppLinks();
 await sectionNewDoc();
 await sectionAgent();
+await sectionAgentP6bis();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

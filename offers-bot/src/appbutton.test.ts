@@ -107,6 +107,21 @@ describe('главное меню (R1, 2026-11-13)', () => {
     assert.equal(rowWithOffers, rowWithSheets, 'обе кнопки списков должны стоять в одном ряду');
   });
 
+  it('«Создать новый документ», «Помощник» и «Справка» стоят в ОДНОМ ряду', () => {
+    // 2026-11-14, просьба пользователя: три равноправных входа в одном ряду,
+    // а не три строки по одной кнопке (на телефоне это полэкрана).
+    const rows = MAIN_KEYBOARD.keyboard as unknown as Array<Array<{ text: string }>>;
+    const index = (label: string) => rows.findIndex((row) => row.some((b) => b.text === label));
+    const createRow = index('✨ Создать новый документ');
+    const agentRow = index('🤖 Помощник');
+    const helpRow = index('❓ Справка');
+    for (const [label, row] of [['✨ Создать новый документ', createRow], ['🤖 Помощник', agentRow], ['❓ Справка', helpRow]] as const) {
+      assert.ok(row >= 0, `кнопки «${label}» нет в меню`);
+    }
+    assert.equal(createRow, agentRow, '«Создать новый документ» и «Помощник» должны стоять в одном ряду');
+    assert.equal(createRow, helpRow, '«Справка» должна стоять в том же ряду');
+  });
+
   it('в главном меню НЕТ кнопки `web_app`', () => {
     // 2026-11-13, решение пользователя: reply-клавиатура с `web_app`
     // открывала приложение без подписи Telegram, и человек видел «Нет доступа:

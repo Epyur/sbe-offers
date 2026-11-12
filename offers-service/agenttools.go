@@ -98,25 +98,32 @@ func (env *agentEnv) noteFix(column string, rowID int64, before, after any) {
 	env.Fixes = append(env.Fixes, agentManualFix{Column: column, RowID: rowID, Before: before, After: after})
 }
 
-// agentTools — карта инструментов v1. Порядок не важен: движок ищет по имени,
-// а промт строит список из этой же карты.
+// agentTools — карта инструментов. Порядок не важен: движок ищет по имени, а
+// промт строит список из этой же карты.
 //
-// Список — ровно scope v1 из плана (§4.5): чтение продуктов и карточек,
-// документы (только общего доступа — фильтр в чужой ручке, P5a), сборка
-// документов. Чего здесь НЕТ и почему:
+// Чего здесь НЕТ и почему:
 //   - письма (`get_emails`) — P5b, ручек mailer ещё нет;
-//   - YouGile, правила, навыки, презентации — не входят в v1;
+//   - YouGile, правила, навыки, презентации — не входят в scope;
 //   - `list_offers`/`get_offer` — менеджер и так видит их в приложении;
 //     агенту нужен результат, а не второй список.
+//
+// P6-бис (2026-11-14): `read_card` читает ЛЮБУЮ заметку (дефект 0.9.22 —
+// карточки материалов «не открывались»), добавлены `search_competitors`,
+// `create_combat_sheet`, `set_combat_side` и `create_offer` (агент больше не
+// упирается в «предложение не найдено» без id).
 func (s *Server) agentTools() map[string]agentToolSpec {
 	tools := []agentToolSpec{
 		s.toolGetOurProducts(),
 		s.toolReadCard(),
+		s.toolSearchCompetitors(),
 		s.toolGetDocuments(),
 		s.toolGetDocumentLink(),
 		s.toolReadDocumentFile(),
+		s.toolCreateOffer(),
 		s.toolSetSystem(),
 		s.toolSetMaterial(),
+		s.toolCreateCombatSheet(),
+		s.toolSetCombatSide(),
 		s.toolBuildDocx(),
 		s.toolBuildCombatDocx(),
 	}
@@ -131,9 +138,10 @@ func (s *Server) agentTools() map[string]agentToolSpec {
 // ответ был стабилен между прогонами). Движок просит именно этот вид.
 func (s *Server) agentToolDescriptors() []map[string]any {
 	order := []string{
-		"get_our_products", "read_card",
+		"get_our_products", "read_card", "search_competitors",
 		"get_documents", "get_document_link", "read_document_file",
-		"set_system", "set_material",
+		"create_offer", "set_system", "set_material",
+		"create_combat_sheet", "set_combat_side",
 		"build_docx", "build_combat_docx",
 	}
 	tools := s.agentTools()
@@ -187,6 +195,48 @@ func argInt(args map[string]any, key string) int64 {
 		return n
 	}
 	return 0
+}
+
+// argFloat вынимает дробное; принимает число и строку с числом, иначе 0.
+func argFloat(args map[string]any, key string) float64 {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case float64:
+		return t
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(strings.ReplaceAll(t, ",", ".")), 64)
+		if err != nil {
+			return 0
+		}
+		return f
+	}
+	return 0
+}
+
+// argBool вынимает флаг; отсутствующее — false. Строка «true»/"1" читается как
+// true: модель иногда присылает флаг строкой.
+func argBool(args map[string]any, key string) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "1", "да":
+			return true
+		}
+	}
+	return false
 }
 
 // objectSchema — JSON Schema объекта с перечисленными полями. Одна функция на

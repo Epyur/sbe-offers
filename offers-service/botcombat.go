@@ -668,6 +668,10 @@ const (
 	combatSideCompetitor = "competitor"
 )
 
+// defaultCombatTitle — название нового листка без своего заголовка. То же слово
+// шлёт бот (`createCombat` в `callbacks.ts`): одна подпись на оба входа.
+const defaultCombatTitle = "Боевой листок"
+
 // appendNoteRef добавляет заметку, если её ещё нет: повторное нажатие кнопки не
 // должно ставить одну и ту же систему в листок дважды.
 func appendNoteRef(refs []CombatNoteRef, ref CombatNoteRef) []CombatNoteRef {
