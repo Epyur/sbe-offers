@@ -30,11 +30,18 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.21** — **RELEASED 2026-11-13.** Three points converge:
-`main` `c0ae671`, `backend` `28caed5`, self-hosted `41655ac8…` / `a4e08f71…` /
+Current version = **0.9.22** — **RELEASED 2026-11-14.** Three points converge:
+`main` `32e7761`, `backend` `aafaa93`, self-hosted `fb27019b…` / `965dad3f…` /
 `a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
-`sbe-apstore-registry` `b4432e7`. The service, the bot and the App were rebuilt
-and redeployed on the server; `material_choice` exists in the live database.
+`sbe-apstore-registry` `ca6b212`. The service and the bot were rebuilt and
+redeployed; the `offers` compose block gained `DOCUMENTS_SERVICE_URL` /
+`DOCUMENTS_INTERNAL_SECRET` (+ `depends_on: documents`); `offers_agent_log`
+exists in the live database. The App did not change this batch.
+
+**0.9.22 (2026-11-14, P6): the agent in the bot — RELEASED.** See «Agent in
+the bot — P6» below for the full map; the plugin version was bumped and the CUP
+news rewritten (the «🤖 Помощник» button is user-visible; `main.js` changed
+only through the news string).
 
 **0.9.21 (2026-11-13, R3): materials as offer objects — RELEASED.**
 A material can now be offered by DESCRIPTION, like a system (user decision
@@ -890,7 +897,7 @@ measurements) are in the archive.
 - **Model extraction never overrides the literal one** (`MergeFileContexts`).
 - **`jsonrepair.go` lives in `model`**, shared with `skills`; do not copy it.
 
-## Agent in the bot — P6 (2026-11-14, built, **not released/deployed**)
+## Agent in the bot — P6 (2026-11-14, **released in 0.9.22**)
 
 The agent is the **document assembler** (design
 `docs/superpowers/specs/2026-11-13-sbe-offers-single-agent-design.md`, §4): it edits
@@ -946,14 +953,18 @@ change); `check_offers_openapi.mjs` **117/117**; `check_bundle_strings` 0;
 `check_marker_registry` OK; stand **472/0** (new section «Помощник (агент) в боте
 (P6)», 11 checks — the stub model drives a real turn: tool → answer → journal).
 
-**Config to add on the server when deploying:** in the `offers` compose block —
+**Server config — deployed 2026-11-14.** In the `offers` compose block:
 `DOCUMENTS_SERVICE_URL: http://documents:3000` and
-`DOCUMENTS_INTERNAL_SECRET: ${DOCUMENTS_INTERNAL_SECRET}` (same secret as documents’
-P5a routes; `depends_on: documents`). Added to the local `sbe-core/docker` copy;
-deploy is user-gated and the local compose copy diverges — insert pointwise.
+`DOCUMENTS_INTERNAL_SECRET: ${DOCUMENTS_INTERNAL_SECRET}` (same secret as
+documents’ P5a routes; `depends_on: documents`). Inserted pointwise on the server
+(`docker-compose.yml.bak-20261114-agent`), `docker compose config -q` clean,
+secrets verified equal in both containers, and a live `agent/list` call from the
+`offers` container returned 200 with real documents (403 without the header).
 
-**Not verified:** a live turn under a real model/bot token (the stand uses
-`llm-stub`); week-long journal analysis is future work (`GET /api/offers/admin/agent-log`).
+**Not verified:** a live turn under a real model and bot token (the stand uses
+`llm-stub`, but the deployed route, auth gate, documents path and journal table
+were all exercised live); week-long journal analysis is future work
+(`GET /api/offers/admin/agent-log`).
 
 ## Next iterations (backlog)
 
