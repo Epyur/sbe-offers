@@ -32,7 +32,6 @@ import {
   type CombatPickerPage,
   combatAskQuery,
   combatIntro,
-  combatListMessage,
   combatNotEmptyMessage,
   combatPickerKeyboard,
   combatPickerMessage,
@@ -52,6 +51,7 @@ import {
   type AttachSession,
 } from './attach.ts';
 import { EDIT_KEYBOARD, resumeMessage, resumeSession } from './flow/resume.ts';
+import { appUrl } from './flow/appbutton.ts';
 import {
   SUGGEST_LIMIT,
   helpHints,
@@ -77,6 +77,22 @@ import {
   onCopySkip,
   startCopy,
 } from './flow/writer.ts';
+import {
+  KIND_KEYBOARD,
+  NEW_DOC_KIND_QUESTION,
+  NEW_DOC_LIMIT,
+  decideKeyboard,
+  foundKeyboard,
+  foundListMessage,
+  newDocState,
+  notFoundMessage,
+  pickIndex,
+  pickedMessage,
+  productQuestion,
+  retryOrAppKeyboard,
+  type NewDocKind,
+  type NewDocState,
+} from './flow/newdoc.ts';
 
 const PAGE_SIZE = 8;
 
@@ -137,6 +153,13 @@ foundAnalogs?: api.CombatSystemItem[];
   foundSuggest?: { query: string; items: SuggestItem[] };
   /** Запомнить подсказку: номер в кнопке `sug:<N>` — индекс этого списка. */
   rememberSuggest?: (value: { query: string; items: SuggestItem[] }) => void;
+  /**
+   * Разговор «Создать новый документ» (2026-11-13, R2): найденное по названию
+   * продукта и шаг. Своя карта, не `foundSuggest` — см. `RouterState.newDoc`.
+   */
+  newDoc?: NewDocState;
+  /** Сохранить состояние нового диалога после поиска или выбора. */
+  rememberNewDoc?: (value: NewDocState) => void;
 }
 
 /**
@@ -684,6 +707,61 @@ export function systemChoice(system: api.SystemItem): api.SystemChoice {
   return { sku };
 }
 
+// --- Созданный документ в приложении (2026-11-13, R2) -------------------------
+//
+// После «Создать новый документ» → «Продолжить в приложении» строка документа
+// уже создана, и продукт из чата записывается в неё. Кнопка — та же инлайновая
+// `web_app`, что и в списках: маршрут строит `appbutton.ts`, здесь только
+// подпись.
+
+/** Кнопка «открыть это КП в приложении». */
+function appOfferButton(offerId: number, number: string): { text: string; web_app: { url: string } } {
+  return { text: `📱 Открыть КП № ${number}`, web_app: { url: appUrl({ kind: 'offer', id: offerId }) } };
+}
+
+/** Кнопка «открыть этот листок в приложении». */
+function appSheetButton(sheetId: number, number: string): { text: string; web_app: { url: string } } {
+  return { text: `📱 Открыть листок № ${number}`, web_app: { url: appUrl({ kind: 'sheet', id: sheetId }) } };
+}
+
+/**
+ * Записать выбранный в чате продукт в созданное КП.
+ *
+ * Система — выбором системы (описание и ссылки, без позиций — правило
+ * 2026-11-03). Материал — командой «система» он не станет (у материала своя
+ * карточка), и позицией его здесь НЕ добавляем: в R2 выбор материала ещё не
+ * значит «позиция», а черновик позиций заводит приложение. Сообщаем честно.
+ * Возвращает false, когда записать не удалось: вызывающий обязан сказать это
+ * человеку, а не молчать — иначе выбор продукта пропадёт без следа.
+ */
+async function addPickedOfferProduct(ctx: CallbackCtx, item: SuggestItem): Promise<boolean> {
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  if (!offerId) return false;
+  try {
+    if (item.kind === 'system') {
+      await api.addSystem(offerId, ctx.chatId, { noteId: item.noteId, sku: item.code ?? '' });
+      return true;
+    }
+    // Материал в КП как ОБЪЕКТ появится в R3 (`material_choice`). Пока его
+    // записывать некуда — честно говорим, что выбор сохранён только в чате.
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Записать выбранный в чате продукт на нашу сторону боевого листка. */
+async function addPickedCombatProduct(ctx: CallbackCtx, item: SuggestItem): Promise<boolean> {
+  const sheetId = ctx.session.combat?.sheetId ?? 0;
+  if (!sheetId) return false;
+  try {
+    await api.addCombatSide(sheetId, ctx.chatId, 'our', { noteId: item.noteId, title: item.title });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Кнопки ------------------------------------------------------------
 
 export async function onNew(ctx: CallbackCtx): Promise<void> {
@@ -917,6 +995,215 @@ async function showCombatSheet(ctx: CallbackCtx, sheet: api.CombatSheet, hint?: 
   await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), keyboard);
 }
 
+// --- «Создать новый документ» (2026-11-13, R2) -------------------------------
+//
+// Одна кнопка вместо «Собрать КП» и «Боевой листок». Разговор:
+//   вид документа → название продукта → поиск по Базе знаний → выбор
+//   → «собрать контекст» (бриф) или «продолжить в приложении».
+// Чистые тексты и клавиатуры — в `flow/newdoc.ts`; здесь сеть и состояние.
+
+/** «✨ Создать новый документ»: спросить, что собираем. */
+export async function startNewDoc(ctx: CallbackCtx): Promise<void> {
+  apply(ctx, { ...ctx.session, newDoc: undefined });
+  const state = { ...newDocState(), step: 'kind' as const };
+  ctx.newDoc = state;
+  ctx.rememberNewDoc?.(state);
+  await ctx.deps.send(ctx.chatId, NEW_DOC_KIND_QUESTION, KIND_KEYBOARD);
+}
+
+/** Выбран вид документа: `nd:kind:offer` / `nd:kind:combat`. */
+export async function onNewDocKind(ctx: CallbackCtx, kind: NewDocKind): Promise<void> {
+  apply(ctx, { ...ctx.session, newDoc: kind });
+  const state: NewDocState = { ...newDocState(), kind, step: 'query' };
+  ctx.newDoc = state;
+  ctx.rememberNewDoc?.(state);
+  await ctx.deps.send(ctx.chatId, productQuestion(kind));
+}
+
+/**
+ * Текст в диалоге нового документа: это название продукта.
+ *
+ * Возвращает true, только когда действительно обработал текст: иначе маршруты
+ * попадут в черновик КП, и «Мембрана» станет позицией с ценой — так уже было
+ * бы при общей ветке (правило «одно намерение — один обработчик»).
+ */
+export async function handleNewDocText(ctx: CallbackCtx, text: string): Promise<boolean> {
+  const state = ctx.newDoc;
+  if (!state || ctx.session.newDoc === undefined) return false;
+  if (state.step === 'kind') {
+    // Вид ещё не выбран: текст здесь ничего не значит, напоминаем кнопки.
+    await ctx.deps.send(ctx.chatId, NEW_DOC_KIND_QUESTION, KIND_KEYBOARD);
+    return true;
+  }
+  const query = text.trim();
+  if (query === '') return true;
+  await searchNewDocProduct(ctx, state, query);
+  return true;
+}
+
+/** Поиск продукта по названию и показ найденного списком. */
+async function searchNewDocProduct(ctx: CallbackCtx, state: NewDocState, query: string): Promise<void> {
+  let items: SuggestItem[] = [];
+  try {
+    const res = await api.suggestions(query);
+    if (res.error) {
+      await ctx.deps.send(
+        ctx.chatId,
+        `Поиск по Базе знаний сейчас недоступен: ${res.error}\n\n` +
+          'Можно продолжить в приложении — продукт выберете там.',
+        retryOrAppKeyboard(state.kind),
+      );
+      return;
+    }
+    items = suggestItems(res.systems ?? [], res.materials ?? [], NEW_DOC_LIMIT);
+  } catch (e) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось выполнить поиск: ${(e as Error).message}\n\n` +
+        'Можно продолжить в приложении — продукт выберете там.',
+      retryOrAppKeyboard(state.kind),
+    );
+    return;
+  }
+
+  const next: NewDocState = { ...state, step: 'pick', query, items, picked: [] };
+  ctx.newDoc = next;
+  ctx.rememberNewDoc?.(next);
+
+  if (items.length === 0) {
+    await ctx.deps.send(ctx.chatId, notFoundMessage(query), retryOrAppKeyboard(state.kind));
+    return;
+  }
+  await ctx.deps.send(ctx.chatId, foundListMessage(query, items), foundKeyboard(items, state.kind));
+}
+
+/** «Ничего из этого — уточню название»: вернуться к вводу, старый список забыть. */
+export async function onNewDocAgain(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc ?? newDocState();
+  const next: NewDocState = { ...state, step: 'query', query: '', items: [], picked: [] };
+  ctx.newDoc = next;
+  ctx.rememberNewDoc?.(next);
+  await ctx.deps.send(ctx.chatId, productQuestion(next.kind));
+}
+
+/**
+ * Нажатие номера: `nd:pick:<индекс>`.
+ *
+ * Номер относится к ПОКАЗАННОМУ списку. Если список перезаписали (новый
+ * запрос), индекс укажет на чужую строку — тогда честно просим назвать заново,
+ * а не добавляем «что-то похожее».
+ */
+export async function onNewDocPick(ctx: CallbackCtx, index: number): Promise<void> {
+  const state = ctx.newDoc;
+  const item = state ? pickIndex(state, index) : null;
+  if (!state || !item) {
+    await ctx.deps.send(
+      ctx.chatId,
+      'Этот список устарел — напишите название ещё раз, и я покажу найденное заново.',
+    );
+    return;
+  }
+  const next: NewDocState = { ...state, picked: [index] };
+  ctx.newDoc = next;
+  ctx.rememberNewDoc?.(next);
+  await ctx.deps.send(ctx.chatId, pickedMessage(state.kind, item), decideKeyboard(state.kind));
+}
+
+/**
+ * «📚 Собрать контекст в чате»: создать документ и начать разговор.
+ *
+ * КП — существующий бриф (объект, адресат, задачи…). Листок — его обычное
+ * приветствие: в листке контекста нет, есть стороны.
+ */
+export async function onNewDocContext(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc;
+  const kind = state?.kind ?? ctx.session.newDoc ?? 'offer';
+  const picked = state ? state.items[state.picked[0] ?? -1] : undefined;
+  apply(ctx, { ...ctx.session, newDoc: undefined });
+  ctx.rememberNewDoc?.({ ...newDocState() });
+
+  if (kind === 'combat') {
+    await startCombat(ctx);
+    if (picked) await addPickedCombatProduct(ctx, picked);
+    return;
+  }
+  await startDraft(ctx);
+  if (picked) await addPickedOfferProduct(ctx, picked);
+}
+
+/**
+ * «📱 Продолжить в приложении»: создать документ и дать ссылку на него.
+ *
+ * Создаём строку сразу: без неё приложение откроется на пустом списке, и выбор
+ * продукта в чате пропал бы. Продукт тоже запоминаем — иначе человек выбирал
+ * его зря.
+ */
+export async function onNewDocApp(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc;
+  const kind = state?.kind ?? ctx.session.newDoc ?? 'offer';
+  const picked = state ? state.items[state.picked[0] ?? -1] : undefined;
+  apply(ctx, { ...ctx.session, newDoc: undefined });
+  ctx.rememberNewDoc?.({ ...newDocState() });
+
+  if (kind === 'combat') {
+    await openCombatInApp(ctx, picked);
+    return;
+  }
+  await openOfferInApp(ctx, picked);
+}
+
+/** Новое КП и кнопка «открыть в приложении». */
+async function openOfferInApp(ctx: CallbackCtx, picked?: SuggestItem): Promise<void> {
+  let offer: api.OfferPayload;
+  try {
+    offer = await api.createOffer({
+      chatId: ctx.chatId,
+      client: { name: '', contact: '' },
+      items: [],
+      formValues: {},
+    });
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось создать предложение: ${(e as Error).message}`, MAIN_KEYBOARD);
+    return;
+  }
+  if (picked) {
+    // Продукт пишем в сохранённое КП, а не в черновик: приложение читает
+    // именно строку предложения. Если не записался — говорим об этом, чтобы
+    // человек выбрал его заново в приложении, а не искал по всему каталогу.
+    const written = await addPickedOfferProduct(ctx, picked);
+    if (!written) {
+      await ctx.deps.send(
+        ctx.chatId,
+        `Предложение № ${offer.number} создано, но продукт «${picked.title}» записать не удалось — ` +
+          'выберите его в приложении ещё раз.',
+        {
+          inline_keyboard: [[appOfferButton(offer.id, offer.number)]],
+        },
+      );
+      return;
+    }
+  }
+  await ctx.deps.send(ctx.chatId, `Предложение № ${offer.number} создано. Продолжите в приложении.`, {
+    inline_keyboard: [[appOfferButton(offer.id, offer.number)]],
+  });
+}
+
+/** Новый листок и кнопка «открыть в приложении». */
+async function openCombatInApp(ctx: CallbackCtx, picked?: SuggestItem): Promise<void> {
+  let sheet: api.CombatSheet;
+  try {
+    sheet = await api.createCombat(ctx.chatId, 'Боевой листок');
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось создать боевой листок: ${(e as Error).message}`, MAIN_KEYBOARD);
+    return;
+  }
+  apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
+  if (picked) await addPickedCombatProduct(ctx, picked);
+  await ctx.deps.send(ctx.chatId, `Боевой листок № ${sheet.number} создан. Продолжите в приложении.`, {
+    inline_keyboard: [[appSheetButton(sheet.id, sheet.number)]],
+  });
+}
+
 /**
  * Клавиатура сводки.
  *
@@ -930,22 +1217,6 @@ function combatSheetKeyboard(
   _sheet: api.CombatSheet,
 ): Record<string, unknown> {
   return COMBAT_KEYBOARD;
-}
-
-/** «📂 Боевые листки»: последние листки отдела (2026-11-12 — все, не только свои). */
-export async function handleMyCombat(deps: BotDeps, chatId: string): Promise<void> {
-  try {
-    const sheets = await api.listCombat(chatId);
-    const who = await deps.identity(chatId).catch(() => ({ email: '' }));
-    const list = combatListMessage(sheets, who.email ?? '');
-    if (!list) {
-      await deps.send(chatId, 'Боевых листков пока нет. Начните кнопкой «⚔️ Боевой листок».', MAIN_KEYBOARD);
-      return;
-    }
-    await deps.send(chatId, list.text, list.keyboard);
-  } catch (e) {
-    await deps.send(chatId, `Не удалось загрузить список: ${(e as Error).message}`, MAIN_KEYBOARD);
-  }
 }
 
 /** Открыть сохранённый боевой листок: `cbe:<id>`. */
@@ -1584,6 +1855,16 @@ export async function handleCombatText(ctx: CallbackCtx, text: string): Promise<
 /** Таблица кнопок по префиксу: точное совпадение или `prefix:число`. */
 export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   new: onNew,
+  // «Создать новый документ» (2026-11-13, R2): спросить вид, поиск продукта,
+  // развилка «контекст / приложение». `nd:` — префикс всей ветки.
+  'nd:new': startNewDoc,
+  // Вид документа: `nd:kind:offer` / `nd:kind:combat`. Не ID-кнопки — второе
+  // поле это слово, а не номер, поэтому разбирается здесь строкой.
+  'nd:kind:offer': (ctx) => onNewDocKind(ctx, 'offer'),
+  'nd:kind:combat': (ctx) => onNewDocKind(ctx, 'combat'),
+  'nd:again': onNewDocAgain,
+  'nd:context': onNewDocContext,
+  'nd:app': onNewDocApp,
   cat: onCatalog,
   more: onMore,
   back: onBack,
@@ -1638,6 +1919,9 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   cban: onCombatAnalogPick,
   // Номер в подсказке — индекс в foundSuggest (2026-11-12).
   sug: onSuggestPick,
+  // Номер продукта в новом диалоге — индекс в `RouterState.newDoc` (R2).
+  // Отдельный префикс `nd:pick`, чтобы номер не попал в подсказку и наоборот.
+  'nd:pick': onNewDocPick,
 };
 
 export { answerCallback, editMessage };

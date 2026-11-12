@@ -49,6 +49,7 @@ function makeDeps(initial?: ChatSession): {
     foundCombat: new Map(),
     combatPicker: new Map(),
     foundSuggest: new Map(),
+    newDoc: new Map(),
     lastCompetitor: new Map(),
     foundAnalogs: new Map(),
   };
@@ -167,7 +168,11 @@ describe('черновик', () => {
   it('done без клиента спрашивает название клиента', async () => {
     const { deps, state, session } = makeDeps(AUTHED);
     const route = await import('./routes.ts');
+    // R2 (2026-11-13): «Собрать КП» теперь только ВЫБИРАЕТ вид документа;
+    // разговор начинается после названия продукта. Название пропускаем
+    // кнопкой «в приложении» → черновик создаётся, но без брифа.
     await route.routeText(deps, '42', '🧾 Собрать КП', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
     // С 2026-11-01 «Собрать КП» открывает разговор о контексте, а не каталог:
     // «Готово» до этапа позиций — это «пропустить остаток брифа».
     await route.routeCallback(deps, '42', 'done', 'cb1', state);
@@ -180,9 +185,17 @@ describe('черновик', () => {
   it('«Собрать КП» начинается с контекста, а не с каталога', async () => {
     const { deps, state, session } = makeDeps(AUTHED);
     const route = await import('./routes.ts');
+    // R2: старую подпись сохраняем как псевдоним, но она спрашивает продукт —
+    // и только после выбора продукта начинается бриф.
     await route.routeText(deps, '42', '🧾 Собрать КП', state);
+    assert.match(sent[0].text, /Какой продукт или систему/i, 'первый вопрос — про продукт');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'nd:context', 'cb1', state);
     assert.equal(session().draft?.stage, 'context', 'старт разговора — этап контекста');
-    assert.match(sent[0].text, /объект/i, 'первый вопрос — про объект');
+    assert.ok(
+      sent.some((m) => /объект/i.test(m.text)),
+      'первый вопрос брифа — про объект',
+    );
     assert.ok(
       sent.every((m) => !/Добавьте позици/i.test(m.text)),
       'на старте бот не просит позиции',
@@ -335,7 +348,11 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2 (2026-11-13): сначала — какой продукт будет в листке.
     await route.routeText(deps, '42', '⚔️ Боевой листок', state);
+    assert.match(sent[0].text, /Какой наш продукт/i, 'первый вопрос — про продукт');
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
     assert.match(sent[0].text, /Боевой листок № 001\/2026/);
     // В сессии запомнен листок: дальше кнопки пишут в него.
     assert.equal(session(state)?.combat?.sheetId, 1);
@@ -345,7 +362,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
     assert.match(sent[0].text, /Введите название/);
@@ -368,7 +388,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'cb1', state);
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:all', 'cb2', state);
@@ -379,7 +402,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:comp', 'cb1', state);
     sent.length = 0;
     await route.routeText(deps, '42', 'конкурент', state);
@@ -393,7 +419,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     // Два наших продукта: ищем, отмечаем, добавляем (2026-11-10).
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeText(deps, '42', 'кровля', state);
@@ -410,7 +439,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     // «▼ Все» — обе стороны в одном списке, отметить надо обе.
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
@@ -428,7 +460,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     // Запрос сужает до списка длиннее одной страницы: «Кровля» плюс много позиций.
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
@@ -444,7 +479,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
     // Живой сценарий жалобы: набрали «pir», взяли все найденные, добавили.
     await route.routeText(deps, '42', 'pir', state);
@@ -460,7 +498,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
     await route.routeText(deps, '42', 'pir', state);
     // «pir» находит и «Конкурент А»? Нет: только PIRRO-хвост. Первая строка —
@@ -477,7 +518,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
     await route.routeCallback(deps, '42', 'cb:pickall', 'c3', state);
@@ -491,7 +535,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
     await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
@@ -507,7 +554,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
     // Отметить первую строку.
@@ -531,7 +581,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
@@ -548,7 +601,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
@@ -563,7 +619,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:hint', 'c1', state);
     sent.length = 0;
     await route.routeText(deps, '42', 'огнестойкость', state);
@@ -576,7 +635,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:hint', 'c1', state);
     await route.routeText(deps, '42', 'срок службы', state);
     await route.routeCallback(deps, '42', 'cb:hint', 'c2', state);
@@ -588,7 +650,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     // Наш продукт выбран, конкурентов нет — ровно листок 005 из жалобы.
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
@@ -612,7 +677,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:oursys', 'c1', state);
     await route.routeCallback(deps, '42', 'cb:all', 'c2', state);
     await route.routeCallback(deps, '42', 'oursel:0', 'c3', state);
@@ -630,7 +698,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:analog', 'c1', state);
     assert.match(sent[sent.length - 1].text, /Наш продукт/);
@@ -640,7 +711,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     // Конкурента выбрали и добавили — дальше память разговора забыта: так
     // выглядит листок, открытый заново.
     await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
@@ -662,7 +736,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     const server = fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:comp', 'c1', state);
     await route.routeText(deps, '42', 'конкурент', state);
     await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
@@ -684,7 +761,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     sent.length = 0;
     // Без выбора стороны текст объясняет, что делать, и в КП не попадает.
     await route.routeText(deps, '42', 'Монтаж | 12 | 850', state);
@@ -697,7 +777,10 @@ describe('боевой листок в боте', () => {
     const { deps, state } = makeDeps(AUTHED);
     fakeCombatServer();
     const route = await import('./routes.ts');
+    // R2: листок начинается с вопроса о нашем продукте; создаём его сразу.
     await route.routeText(deps, '42', '/combat', state);
+    await route.routeCallback(deps, '42', 'nd:context', 'cb0', state);
+    sent.length = 0;
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:done', 'cb1', state);
     assert.match(sent[0].text, /закрыт/);
@@ -705,14 +788,23 @@ describe('боевой листок в боте', () => {
     assert.equal(sess?.combat, undefined);
   });
 
-  it('«Мои боевые листки» пусто — честное сообщение', async () => {
+  it('«Мои боевые листки» открывает список в приложении (R1, 2026-11-13)', async () => {
     const { deps, state } = makeDeps(AUTHED);
-    // Пустой ответ списка: ни одного листка.
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ sheets: [] }), { status: 200 })) as typeof fetch;
+    // Список больше не собирается в чате: кнопка отвечает инлайновой
+    // `web_app`-кнопкой на маршрут приложения. Сервис за списком не зовут —
+    // проверяем и это, иначе «список в чате» вернулся бы незамеченным.
+    let asked = false;
+    globalThis.fetch = (async () => {
+      asked = true;
+      return new Response(JSON.stringify({ sheets: [] }), { status: 200 });
+    }) as typeof fetch;
     const route = await import('./routes.ts');
     await route.routeText(deps, '42', '📂 Мои боевые листки', state);
-    assert.match(sent[0].text, /Боевых листков пока нет/);
+    assert.equal(asked, false, 'кнопка списка не должна ходить в сервис за списком');
+    assert.match(sent[0].text, /открываются в приложении/);
+    const rows = (sent[0].keyboard?.inline_keyboard ?? []) as Array<Array<Record<string, unknown>>>;
+    const webApp = rows[0]?.[0]?.web_app as { url?: string } | undefined;
+    assert.match(String(webApp?.url ?? ''), /#\/list\/sheets$/);
   });
 });
 

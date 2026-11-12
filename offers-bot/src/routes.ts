@@ -20,14 +20,15 @@ import {
   applyAttachConfirm,
   handleCombatText,
   handleDraftText,
-  handleMyCombat,
+  handleNewDocText,
   onEditOffer,
-  startCombat,
-  startDraft,
+  onNewDocKind,
+  startNewDoc,
   type CallbackCtx,
 } from './callbacks.ts';
 import { canResume } from './flow/resume.ts';
-import { offerAppMarkup } from './flow/appbutton.ts';
+import { appListButton } from './flow/appbutton.ts';
+import type { NewDocState } from './flow/newdoc.ts';
 import type { SuggestItem } from './flow/suggest.ts';
 import {
   NO_OFFER_FOR_FILE,
@@ -95,6 +96,16 @@ export interface RouterState {
    * `callback_data` (64 байта кириллического названия не вместят).
    */
   foundSuggest: Map<string, SuggestState>;
+  /**
+   * Разговор «Создать новый документ» (2026-11-13, R2): что нашли по названию
+   * продукта и что отмечено.
+   *
+   * Отдельная карта, а НЕ общая с `foundSuggest`: две ветки читают её
+   * по-разному (здесь выбор ЗАПОМИНАЕТСЯ до развилки, там — сразу
+   * добавляется), и общая карта дала бы «нажал — добавилось не туда». Так уже
+   * случилось с выбором стороны листка (2026-11-11).
+   */
+  newDoc: Map<string, NewDocState>;
 }
 
 /**
@@ -136,6 +147,7 @@ export function newRouterState(): RouterState {
     lastCompetitor: new Map(),
     foundAnalogs: new Map(),
     foundSuggest: new Map(),
+    newDoc: new Map(),
   };
 }
 
@@ -208,49 +220,6 @@ async function handleSignIn(deps: BotDeps, chatId: string, session: ChatSession,
   }
 }
 
-async function handleMyOffers(deps: BotDeps, chatId: string): Promise<void> {
-  try {
-    const offers = await api.listOffers(chatId);
-    if (offers.length === 0) {
-      await deps.send(chatId, 'Предложений пока нет.', MAIN_KEYBOARD);
-      return;
-    }
-    const lines = offers.slice(0, 15).map((o) => {
-      const client = o.client?.name ? ` — ${o.client.name}` : '';
-      const items = (o.items ?? []).length;
-      const count = items > 0 ? `${items} поз.` : 'без позиций';
-      return `№ ${o.number}${client} · ${formatTotal(o.total)} руб. · ${count}`;
-    });
-    // Две кнопки на КП (2026-11-01): открыть на правку и забрать файл.
-    // Раньше была одна «документ», и продолжить КП в боте было нечем.
-    const shown = offers.slice(0, 15);
-    // Кнопка приложения (2026-11-13, шаг B+): у каждой записи — своя, иначе
-    // открыть в приложении можно было бы только тот КП, что в сессии.
-    const appRows = offerAppMarkup(shown.map((o) => ({ id: o.id, number: o.number })));
-    const buttons = shown.flatMap((o, index) => [
-      [
-        { text: `✏️ ${o.number}`, callback_data: `edit:${o.id}` },
-        { text: `📄 файл`, callback_data: `doc:${o.id}` },
-      ],
-      ...(appRows[index] ? [appRows[index]] : []),
-    ]);
-    await deps.send(chatId, `Последние предложения:\n\n${lines.join('\n')}`, {
-      inline_keyboard: buttons,
-    });
-  } catch (e) {
-    await deps.send(chatId, `Не удалось загрузить список: ${(e as Error).message}`, MAIN_KEYBOARD);
-  }
-}
-
-function formatTotal(v: number): string {
-  const cents = Math.round(Math.abs(v) * 100);
-  const whole = Math.floor(cents / 100)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  const frac = (cents % 100).toString().padStart(2, '0');
-  return `${v < 0 ? '-' : ''}${whole},${frac}`;
-}
-
 /** Команды основного меню после входа. Возвращает true, если текст разобран. */
 async function routeMenu(
   deps: BotDeps,
@@ -261,21 +230,28 @@ async function routeMenu(
     await deps.send(ctx.chatId, HELP_TEXT, MAIN_KEYBOARD);
     return true;
   }
-  if (trimmed === '🧾 Собрать КП' || trimmed === '/new') {
-    await startDraft(ctx);
+  if (trimmed === '✨ Создать новый документ' || trimmed === '/new') {
+    await startNewDoc(ctx);
     return true;
   }
   if (trimmed === '📂 Мои КП' || trimmed === '/my') {
-    await handleMyOffers(deps, ctx.chatId);
+    await openAppList(deps, ctx.chatId, 'offers');
     return true;
   }
-  // Боевой листок (2026-11-09): собрать новый или открыть свои.
+  // Старые кнопки (2026-11-13, R2): их подписи остаются в истории чата и в
+  // привычке у людей. Обе ведут в новый диалог, но СРАЗУ с выбранным видом:
+  // человек, нажавший «Боевой листок», не должен ещё раз отвечать на вопрос,
+  // что он собирает.
+  if (trimmed === '🧾 Собрать КП') {
+    await onNewDocKind(ctx, 'offer');
+    return true;
+  }
   if (trimmed === '⚔️ Боевой листок' || trimmed === '/combat') {
-    await startCombat(ctx);
+    await onNewDocKind(ctx, 'combat');
     return true;
   }
   if (trimmed === '📂 Мои боевые листки' || trimmed === '/combats') {
-    await handleMyCombat(deps, ctx.chatId);
+    await openAppList(deps, ctx.chatId, 'sheets');
     return true;
   }
   // «003/2026» — открыть сохранённое КП на правку (2026-11-01). Номер узнаётся
@@ -289,6 +265,34 @@ async function routeMenu(
     }
   }
   return false;
+}
+
+/**
+ * Подписи двух кнопок приложения (2026-11-13, R1).
+ *
+ * Почему не `web_app` прямо в reply-клавиатуре: такая кнопка открывает Mini App
+ * БЕЗ подписи Telegram, человек видит «Нет доступа: войдите в бота» — это и
+ * было живым дефектом 2026-11-13, ради которого кнопку убрали из меню. Подпись
+ * приходит только у инлайновой `web_app`-кнопки, поэтому reply-кнопка всего
+ * лишь отвечает такой кнопкой.
+ */
+const APP_LIST_BUTTONS: Record<'offers' | 'sheets', string> = {
+  offers: '📱 Открыть «Мои КП» в приложении',
+  sheets: '📱 Открыть «Мои боевые листки» в приложении',
+};
+
+/**
+ * «📂 Мои КП» / «📂 Мои боевые листки» и их старые алиасы (2026-11-13, R1):
+ * открывают список в приложении. Список в чате больше не дублируется — он
+ * живёт в приложении, и две реализации списка неизбежно разошлись бы.
+ */
+async function openAppList(deps: BotDeps, chatId: string, which: 'offers' | 'sheets'): Promise<void> {
+  const label = which === 'offers' ? 'Мои КП' : 'Мои боевые листки';
+  await deps.send(
+    chatId,
+    `${label} открываются в приложении: нажмите кнопку ниже.`,
+    { inline_keyboard: [[appListButton(APP_LIST_BUTTONS[which], which)]] },
+  );
 }
 
 export async function routeText(
@@ -341,9 +345,15 @@ export async function routeText(
     rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
     foundSuggest: state.foundSuggest.get(chatId),
     rememberSuggest: (value) => state.foundSuggest.set(chatId, value),
+    newDoc: state.newDoc.get(chatId),
+    rememberNewDoc: (value) => state.newDoc.set(chatId, value),
   };
 
   if (await routeMenu(deps, ctx, trimmed)) return;
+  // «Создать новый документ» (2026-11-13, R2): пока этот диалог идёт, текст —
+  // это НАЗВАНИЕ ПРОДУКТА, а не позиция и не ответ брифа. Проверяется РАНЬШЕ
+  // листка и черновика: иначе «Мембрана» стала бы позицией с ценой 0.
+  if (await handleNewDocText(ctx, trimmed)) return;
   // В боевом листке текст — это запрос на поиск стороны (2026-11-09): каталог
   // 1500+ записей кнопками не выбрать. Свободная строка «Монтаж | 12 | 850»
   // при этом в черновик КП не попадёт — листок живёт отдельно от КП.
@@ -366,6 +376,15 @@ export function parseCallbackData(data: string): { prefix: string; id: number } 
   // отбрасывал нажатие молча — снаружи это «нажал, ничего не произошло».
   // Слово-ключ передаём как id = 0: ноль не бывает настоящим номером заметки.
   if (rest === 'all') return { prefix: data.slice(0, colon), id: 0 };
+  // Составной префикс (R2): `nd:pick:3` = ветка `nd`, действие `pick`, номер 3.
+  // Разбор по ПЕРВОМУ `:` дал бы prefix `nd` и `Number('pick:3')` = NaN — то
+  // же молчаливое «нажал, ничего не произошло», что и с `cban:all`.
+  if (rest.includes(':')) {
+    const cut = rest.lastIndexOf(':');
+    const id = Number(rest.slice(cut + 1));
+    if (!Number.isFinite(id)) return null;
+    return { prefix: data.slice(0, colon + cut + 1), id };
+  }
   const id = Number(rest);
   if (!Number.isFinite(id)) return null;
   return { prefix: data.slice(0, colon), id };
@@ -446,6 +465,8 @@ const ctx: CallbackCtx = {
     rememberAnalogs: (items) => state.foundAnalogs.set(chatId, items),
     foundSuggest: state.foundSuggest.get(chatId),
     rememberSuggest: (value) => state.foundSuggest.set(chatId, value),
+    newDoc: state.newDoc.get(chatId),
+    rememberNewDoc: (value) => state.newDoc.set(chatId, value),
   };
 
   const exact = BUTTONS[data];

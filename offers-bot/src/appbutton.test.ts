@@ -14,8 +14,7 @@ import assert from 'node:assert/strict';
 import { applyLogin, newSession, type ChatSession } from './session.ts';
 import type { BotDeps, RouterState } from './routes.ts';
 import { MAIN_KEYBOARD } from './flow/build.ts';
-import { combatListMessage } from './flow/combat.ts';
-import { appUrlFromEnv, appButton, offerAppMarkup, sheetsAppMarkup } from './flow/appbutton.ts';
+import { appUrlFromEnv, appButton, appListButton, offerAppMarkup, sheetsAppMarkup } from './flow/appbutton.ts';
 
 const REAL_ENV = { ...process.env };
 const sent: Array<{ chatId: string; text: string; keyboard?: Record<string, unknown> }> = [];
@@ -42,6 +41,7 @@ function makeDeps(initial?: ChatSession): { deps: BotDeps; state: RouterState } 
     foundCombat: new Map(),
     combatPicker: new Map(),
     foundSuggest: new Map(),
+    newDoc: new Map(),
     lastCompetitor: new Map(),
     foundAnalogs: new Map(),
   };
@@ -90,16 +90,59 @@ describe('адрес приложения', () => {
     assert.equal(appButton('КП', 'offer', 12).web_app.url, 'https://epyur.fvds.ru/app-offers/#/offer/12');
     assert.equal(appButton('Листки', 'list').web_app.url, 'https://epyur.fvds.ru/app-offers/#/list/offers');
   });
+
+  it('у списков есть два маршрута, и они не путаются', () => {
+    delete process.env.OFFERS_APP_URL;
+    assert.equal(appListButton('КП', 'offers').web_app.url, 'https://epyur.fvds.ru/app-offers/#/list/offers');
+    assert.equal(appListButton('Листки', 'sheets').web_app.url, 'https://epyur.fvds.ru/app-offers/#/list/sheets');
+  });
 });
 
-describe('кнопка в главном меню', () => {
-  it('в главном меню НЕТ кнопки приложения', () => {
+describe('главное меню (R1, 2026-11-13)', () => {
+  it('два списка стоят в ОДНОМ ряду', () => {
+    const rows = MAIN_KEYBOARD.keyboard as unknown as Array<Array<{ text: string }>>;
+    const rowWithOffers = rows.findIndex((row) => row.some((b) => b.text === '📂 Мои КП'));
+    const rowWithSheets = rows.findIndex((row) => row.some((b) => b.text === '📂 Мои боевые листки'));
+    assert.ok(rowWithOffers >= 0, 'кнопки «Мои КП» нет в меню');
+    assert.equal(rowWithOffers, rowWithSheets, 'обе кнопки списков должны стоять в одном ряду');
+  });
+
+  it('в главном меню НЕТ кнопки `web_app`', () => {
     // 2026-11-13, решение пользователя: reply-клавиатура с `web_app`
     // открывала приложение без подписи Telegram, и человек видел «Нет доступа:
-    // войдите в бота». Приложение открывается из списков, где кнопки
-    // инлайновые и подпись приходит.
+    // войдите в бота». Подпись приходит только у инлайновой кнопки — список
+    // открывается его ответом, а не самой reply-кнопкой.
     const buttons = webAppButtons(MAIN_KEYBOARD as unknown as Record<string, unknown>);
     assert.equal(buttons.length, 0, 'в главном меню кнопок Mini App быть не должно');
+  });
+
+  it('обе кнопки списков отвечают инлайновой кнопкой приложения, каждая на свой маршрут', async () => {
+    const route = await import('./routes.ts');
+    for (const [label, url] of [
+      ['📂 Мои КП', '#/list/offers'],
+      ['📂 Мои боевые листки', '#/list/sheets'],
+    ] as const) {
+      sent.length = 0;
+      const { deps, state } = makeDeps(AUTHED);
+      await route.routeText(deps, '42', label, state);
+
+      assert.equal(sent.length, 1, `${label} должна ответить ровно одним сообщением`);
+      const apps = webAppButtons(sent[0].keyboard);
+      assert.equal(apps.length, 1, `${label}: нужна одна инлайновая кнопка приложения`);
+      assert.match(apps[0].url, new RegExp(`${url.replace('/', '\\/')}$`));
+    }
+  });
+
+  it('список в чате больше не дублируется: сервер за ним не зовут', async () => {
+    const route = await import('./routes.ts');
+    let asked = false;
+    globalThis.fetch = (async () => {
+      asked = true;
+      return new Response('{"ok":true}', { status: 200 });
+    }) as typeof fetch;
+    const { deps, state } = makeDeps(AUTHED);
+    await route.routeText(deps, '42', '📂 Мои КП', state);
+    assert.equal(asked, false, 'кнопка списка не должна ходить в сервис за списком');
   });
 });
 
@@ -124,85 +167,7 @@ describe('кнопка у записей', () => {
   });
 });
 
-describe('бот отдаёт кнопку в живом списке', () => {
-  it('«📂 Мои КП» показывает кнопку приложения рядом с каждой записью', async () => {
-    const { deps, state } = makeDeps(AUTHED);
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes('/bot/offers')) {
-        return new Response(
-          JSON.stringify({
-            offers: [
-              { id: 11, number: '003/2026', client: { name: 'СтройСервис' }, total: 1000, items: [] },
-            ],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      return new Response('{"ok":true}', { status: 200 });
-    }) as typeof fetch;
-
-    const route = await import('./routes.ts');
-    await route.routeText(deps, '42', '📂 Мои КП', state);
-
-    const listMessage = sent.find((m) => m.keyboard !== undefined && m.text.includes('003/2026'));
-    assert.ok(listMessage, 'список КП должен уйти с клавиатурой');
-    const apps = webAppButtons(listMessage.keyboard);
-    assert.equal(apps.length, 1);
-    assert.match(apps[0].url, /#\/offer\/11$/);
-  });
-
-  it('«📂 Мои боевые листки» показывает кнопку приложения с номером листка', async () => {
-    const { deps, state } = makeDeps(AUTHED);
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes('/bot/combat')) {
-        return new Response(
-          JSON.stringify({
-            sheets: [
-              {
-                id: 21,
-                number: '004/2026',
-                ourNotes: [{ noteId: 1, title: 'Мембрана LOGICROOF' }],
-                competitorNotes: [],
-                ownerEmail: 'ivanov@tn.ru',
-              },
-            ],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      return new Response('{"ok":true}', { status: 200 });
-    }) as typeof fetch;
-
-    const route = await import('./routes.ts');
-    await route.routeText(deps, '42', '📂 Мои боевые листки', state);
-
-    const listMessage = sent.find((m) => m.keyboard !== undefined && m.text.includes('004/2026'));
-    assert.ok(listMessage, 'список листков должен уйти с клавиатурой');
-    const apps = webAppButtons(listMessage.keyboard);
-    assert.equal(apps.length, 1);
-    assert.match(apps[0].url, /#\/sheet\/21$/);
-  });
-});
-
-describe('разметка списка листков', () => {
-  it('строчная функция combatListMessage ставит кнопку приложения на каждой строке', () => {
-    const list = combatListMessage(
-      [
-        {
-          id: 8,
-          number: '008/2026',
-          ourNotes: [{ noteId: 1, title: 'ПВХ мембрана' }],
-          competitorNotes: [],
-          ownerEmail: 'ivanov@tn.ru',
-        },
-      ] as never,
-      'ivanov@tn.ru',
-    );
-    assert.ok(list);
-    const apps = webAppButtons(list.keyboard);
-    assert.equal(apps.length, 1);
-    assert.match(apps[0].url, /#\/sheet\/8$/);
-  });
-});
+// Разметка списка листков (`combatListMessage`) больше не вызывается из меню
+// бота — список открывается в приложении (R1, 2026-11-13). Функция и её
+// проверки остаются: `combatListMessage` ещё используют ответы «список листков»
+// внутри листка и старый путь «Мои боевые листки» из истории чата.

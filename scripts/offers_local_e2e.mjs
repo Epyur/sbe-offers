@@ -6,6 +6,7 @@
  * Запуск: node scripts/offers_local_e2e.mjs [baseUrl]
  */
 import { createHmac } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:18080';
@@ -2698,8 +2699,134 @@ async function sectionPickerSearch() {
     `статус ${botSuggest.status}`);
 }
 
+/**
+ * Списки бота открываются в приложении (R1, 2026-11-13).
+ *
+ * Живое нажатие кнопки (reply → инлайновая `web_app` → маршрут списка) покрыто
+ * `offers-bot/src/appbutton.test.ts`: собранный бот — один файл `dist/bot.mjs`,
+ * и отдельную функцию из него не импортировать. Здесь вторая половина:
+ * меню бота действительно содержит нужную строку (по исходнику, смонтированному
+ * каталогом), и сервис РЕАЛЬНО отдаёт боту оба списка по его секрету — без этого
+ * инлайновая кнопка открывает приложение на экран, который нечем заполнить.
+ *
+ * Запуск: смонтировать каталог `offers-bot` в стенд (`BOT_DIR=/bot`) и указать
+ * `OFFERS_BOT_URL=http://offers-bot:3000`. Нет переменных — раздел честно
+ * пропускается (одна «ок»-строка), а не краснеет: стенд гоняют и без бота.
+ */
+async function sectionBotAppLinks() {
+  console.log('\nСписки бота открываются в приложении (R1)');
+  const botUrl = (process.env.OFFERS_BOT_URL ?? '').trim();
+  const botDir = (process.env.BOT_DIR ?? '').trim();
+  const botEntry = botDir ? `${botDir}/dist/bot.mjs` : '';
+  if (!botUrl || !botEntry || !existsSync(botEntry)) {
+    ok('раздел пропущен: бот не смонтирован в стенд', true, 'OFFERS_BOT_URL/BOT_DIR не заданы');
+    return;
+  }
+
+  // 2. Меню: два списка — в одном ряду.
+  //
+  // Живое поведение (нажатие кнопки → ответ с инлайновой `web_app`) проверяет
+  // `offers-bot/src/appbutton.test.ts`: собранный бот — это один файл
+  // `dist/bot.mjs`, и импортировать из него отдельные функции нельзя. Здесь
+  // проверяется, что исходник, который едет на сервер, содержит нужную строку.
+  const menu = readFileSync(`${botDir}/src/flow/build.ts`, 'utf8');
+  ok('в меню бота два списка стоят в одном ряду',
+    /\[\{ text: '📂 Мои КП' \}, \{ text: '📂 Мои боевые листки' \}\]/.test(menu), 'строка меню не найдена');
+  // Проверка смотрит на КНОПКИ в `MAIN_KEYBOARD`, а не на весь файл: слово
+  // `web_app` живёт в комментарии рядом («почему reply-кнопка его не несёт»),
+  // и проверка по всему файлу краснела бы на собственном объяснении.
+  const keyboardBody = (menu.match(/export const MAIN_KEYBOARD = \{[\s\S]*?\n\};/) ?? [''])[0];
+  const buttonLines = keyboardBody
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('[') && !line.startsWith('//') && !line.startsWith('/*'));
+  ok('строки кнопок меню найдены', buttonLines.length >= 3, JSON.stringify(buttonLines));
+  ok('в reply-меню нет `web_app` (она открывает приложение без подписи)',
+    buttonLines.every((line) => !line.includes('web_app')), JSON.stringify(buttonLines));
+
+  // 3. Списки приходят и адресуемы: сервис отдаёт их боту по его секрету.
+  //
+  // Чат `linkedChatId` уже привязан к владельцу выше (раздел 11), поэтому
+  // список КП этого чата непустой — как у настоящего вошедшего менеджера.
+  // Это проверка того, что за инлайновой кнопкой приложения есть данные,
+  // а не проверка вида списка — вид покрыт `routes.test.ts`.
+  const ownerChat = linkedChatId !== 0 ? `chat_id=${encodeURIComponent(linkedChatId)}` : 'chat_id=999001';
+  const offers = await call('GET', `/bot/offers?${ownerChat}`, { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('список КП для бота отвечает 200', offers.status === 200, `статус ${offers.status}`);
+  ok('список КП — массив, а не null', Array.isArray(offers.json?.offers), JSON.stringify(offers.json)?.slice(0, 120));
+  const sheets = await call('GET', `/bot/combat?${ownerChat}&offset=0&limit=8`, { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('список боевых листков для бота отвечает 200', sheets.status === 200, `статус ${sheets.status}`);
+  ok('список листков — массив, а не null', Array.isArray(sheets.json?.sheets), JSON.stringify(sheets.json)?.slice(0, 120));
+}
+
+/**
+ * «Создать новый документ» (2026-11-13, R2) — серверная половина.
+ *
+ * Сам диалог (какие кнопки, какие тексты) проверяют `offers-bot/src/newdoc.test.ts`
+ * и `routes.test.ts` — он живёт в боте и сети не требует. Здесь проверяется,
+ * что РУЧКИ, которыми этот диалог пользуется, делают то, на что он рассчитывает:
+ * поиск продукта по названию (тот же, что у подсказки), создание строки КП и
+ * листка, запись продукта на сторону листка. Без этого диалог «зелёный» в
+ * тестах и мёртвый на сервере — ровно класс дефекта `/bot/suggest` (0.9.17).
+ */
+async function sectionNewDoc() {
+  console.log('\nСоздать новый документ: ручки, на которые он опирается (R2)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999001';
+
+  // 1. Поиск продукта — тот же `/bot/suggest`, что и в ответе на свободную фразу.
+  const found = await call('GET', `/bot/suggest?q=${encodeURIComponent('Гарант')}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('поиск продукта для нового диалога отвечает 200', found.status === 200, `статус ${found.status}`);
+  const system = (found.json?.systems ?? [])[0];
+  ok('поиск отдаёт систему с номером заметки', Boolean(system?.noteId),
+    JSON.stringify(found.json?.systems ?? []).slice(0, 160));
+
+  // 2. Создание КП пустым — так диалог начинает и КП, и листок.
+  const created = await call('POST', '/bot/offers', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: chatId, client: { name: '', contact: '' }, items: [], formValues: {} },
+  });
+  ok('новое КП создаётся без позиций', created.status === 200 && created.json?.id > 0,
+    `статус ${created.status} ${created.text?.slice(0, 120)}`);
+  const newDocOfferId = created.json?.id ?? 0;
+
+  // 3. Выбранный продукт записывается в это КП (система — выбором, не позицией).
+  if (newDocOfferId > 0 && system?.noteId) {
+    const added = await call('POST', `/bot/offers/${newDocOfferId}/system`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+      body: { chat_id: chatId, noteId: system.noteId, title: system.title },
+    });
+    ok('система из нового диалога записывается в КП', added.status === 200,
+      `статус ${added.status} ${added.text?.slice(0, 120)}`);
+    const after = await call('GET', `/bot/offers/${newDocOfferId}?chat_id=${encodeURIComponent(chatId)}`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+    });
+    const systems = (after.json?.systems ?? []).map((s) => s.noteId);
+    ok('выбранная система видна в сохранённом КП', systems.includes(system.noteId), JSON.stringify(systems));
+  }
+
+  // 4. Листок: создание и запись продукта на нашу сторону.
+  const sheet = await call('POST', '/bot/combat', {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { chat_id: chatId, title: 'Боевой листок' },
+  });
+  ok('новый боевой листок создаётся', sheet.status === 200 && sheet.json?.id > 0,
+    `статус ${sheet.status} ${sheet.text?.slice(0, 120)}`);
+  if (sheet.json?.id && system?.noteId) {
+    const side = await call('POST', `/bot/combat/${sheet.json.id}/our`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+      body: { chat_id: chatId, noteId: system.noteId, title: system.title },
+    });
+    ok('наш продукт из нового диалога ложится в листок', side.status === 200,
+      `статус ${side.status} ${side.text?.slice(0, 120)}`);
+  }
+}
+
 await sectionCombat();
 await sectionPickerSearch();
+await sectionBotAppLinks();
+await sectionNewDoc();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

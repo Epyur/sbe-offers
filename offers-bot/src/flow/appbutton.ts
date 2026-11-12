@@ -18,14 +18,17 @@ export function appUrlFromEnv(): string {
 }
 
 /** Список записей или конкретная запись. */
-export type AppTarget = { kind: 'list' } | { kind: 'offer'; id: number } | { kind: 'sheet'; id: number };
+export type AppTarget =
+  | { kind: 'list'; which: 'offers' | 'sheets' }
+  | { kind: 'offer'; id: number }
+  | { kind: 'sheet'; id: number };
 
 /** Полный адрес приложения для маршрута. */
 export function appUrl(target: AppTarget): string {
   const base = appUrlFromEnv();
   switch (target.kind) {
     case 'list':
-      return `${base}#/list/offers`;
+      return `${base}#/list/${target.which}`;
     case 'offer':
       return `${base}#/offer/${target.id}`;
     case 'sheet':
@@ -40,8 +43,18 @@ export interface WebAppButton {
 }
 
 export function appButton(text: string, kind: AppTarget['kind'], id?: number): WebAppButton {
-  const target: AppTarget = kind === 'offer' ? { kind, id: id ?? 0 } : kind === 'sheet' ? { kind, id: id ?? 0 } : { kind: 'list' };
+  const target: AppTarget = kind === 'offer' ? { kind, id: id ?? 0 } : kind === 'sheet' ? { kind, id: id ?? 0 } : { kind: 'list', which: 'offers' };
   return { text, web_app: { url: appUrl(target) } };
+}
+
+/**
+ * Кнопка на список записей в приложении (2026-11-13, R1).
+ *
+ * Одна функция на оба списка: «Мои КП» и «Мои боевые листки» обязаны вести себя
+ * одинаково, и две сборки URL разошлись бы при первой же правке.
+ */
+export function appListButton(text: string, which: 'offers' | 'sheets'): WebAppButton {
+  return { text, web_app: { url: appUrl({ kind: 'list', which }) } };
 }
 
 /** Строка списка КП: одна кнопка приложения на запись, с её номером. */
@@ -53,5 +66,3 @@ export function offerAppMarkup(offers: Array<{ id: number; number: string }>): W
 export function sheetsAppMarkup(sheets: Array<{ id: number; number: string; label: string }>): WebAppButton[][] {
   return sheets.map((s) => [appButton(`📱 ${s.number} — ${s.label}`, 'sheet', s.id)]);
 }
-
-/** Главное меню: кнопка на список КП. */
