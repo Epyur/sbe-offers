@@ -31,10 +31,10 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.21** — **RELEASED 2026-11-13.** Three points converge:
-`main` `9144c17`, `backend` `584d733`, self-hosted `1f8a0276…` / `ea877e47…` /
+`main` `c0ae671`, `backend` `28caed5`, self-hosted `41655ac8…` / `a4e08f71…` /
 `a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
-`sbe-apstore-registry` `db6465b`. The bot was rebuilt and recreated on the
-server. `offers-service` did not change in that batch.
+`sbe-apstore-registry` `b4432e7`. The service, the bot and the App were rebuilt
+and redeployed on the server; `material_choice` exists in the live database.
 
 **0.9.21 (2026-11-13, R3): materials as offer objects — RELEASED.**
 A material can now be offered by DESCRIPTION, like a system (user decision
