@@ -30,14 +30,59 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.18** — **RELEASED 2026-11-13.** Plugin three points
-converge: `main` `c272a48` (HEAD по коду; доки позднее), self-hosted `e6406deb…` / `b24032e4…` /
-`a32ac3df…` (verified over https **and** in `/registry.json`), registry git
-copy `sbe-apstore-registry` `c0d3c14` — **the plugin files did not change after
-the release**, so the self-host and the registry stay correct even though the
-service, the bot and the App were fixed several times afterwards.
-Work branch `backend` = `4705619` (последний коммит, менявший код и
-серверные папки; коммиты одной документации идут после него).
+Current version = **0.9.20** — **NOT released yet** (prepared 2026-11-13).
+Previous release 0.9.18 converges on three points: `main` `c272a48`,
+self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…` (verified over https
+**and** in `/registry.json`), registry git copy `sbe-apstore-registry`
+`c0d3c14`. Work branch `backend` = `4705619` (last commit that changed code
+and the server folders; documentation-only commits follow it).
+
+**0.9.20 (2026-11-13, R2): one «Создать новый документ» button.** `🧾 Собрать
+КП` and `⚔️ Боевой листок` leave the menu (their captions stay in `routeMenu`
+as aliases — chat history lives for years). The bot asks the kind, then the
+user's own first question: **«Какой продукт или систему вы хотите предложить
+покупателю?»** The name goes to the existing `/bot/suggest`
+(`api.suggestions`), hits are shown as a numbered list whose numbers are
+buttons, «not found» offers «уточнить название» next to «выбрать в приложении»,
+and after a pick the person chooses **«Собрать контекст в чате»** (the existing
+brief) or **«Продолжить в приложении»** (creates the row, writes the product,
+answers with an inline `web_app` button).
+- `flow/newdoc.ts` — pure texts/keyboards/state. `RouterState.newDoc` is a
+  **separate map** from `foundSuggest`: the two branches consume the list
+  differently (here the pick is REMEMBERED and the decision follows; there it
+  is added immediately), and one map for two flows is how "нажал — добавилось
+  не туда" happened before. `session.newDoc` holds only the kind.
+- **`parseCallbackData` now handles a composite prefix** (`nd:pick:3` →
+  `{prefix:'nd:pick', id:3}`). Without it `Number('pick:3')` is `NaN` and the
+  press is dropped silently — the same class as `cban:all` (2026-11-11).
+  Guard: `callbacks-data.test.ts` (4 cases).
+- `handleNewDocText` runs **before** the combat branch and before
+  `handleDraftText`: while the dialog is open the text is a PRODUCT NAME, not a
+  position — otherwise «Мембрана» would become a row with price 0.
+Checks: bot `tsc` 0, bot **193 passing**, App 50, plugin `tsc` 0, `build` OK,
+`check_bundle_strings` 0 (new needle), `check_marker_registry` OK,
+OpenAPI **110/110**, stand **444/0** (new section «Создать новый документ:
+ручки, на которые он опирается»).
+
+**0.9.19 (2026-11-13, R1 of the bot-UX batch): the two lists open in the App.**
+`📂 Мои КП` and `📂 Мои боевые листки` now sit in **one row** of the main
+keyboard, and each **opens its list in the App**, not in chat. A Telegram
+reply-keyboard button cannot carry `web_app` — that exact defect (App opening
+without a signature, «Нет доступа: войдите в бота») is why the menu button was
+removed on 2026-11-13. So the reply button answers with an **inline**
+`web_app` button: `appListButton(text, which)` in `flow/appbutton.ts` is the one
+place building `#/list/offers` / `#/list/sheets`; `openAppList` in `routes.ts`
+is the one handler. The chat list (`handleMyOffers`, `handleMyCombat` call from
+the menu) is gone — two list implementations would drift. `/my` / `/combats`
+stay aliases; `handleMyCombat` itself is kept (combat-flow tests use it) but is
+no longer reachable from the menu.
+Checks: bot `tsc` 0, App 50, plugin `tsc` 0, `build` OK, `check_bundle_strings`
+0, `check_marker_registry` OK, OpenAPI **110/110**. Stand section «Списки бота
+открываются в приложении (R1)» — menu row, no `web_app` in the reply menu,
+both lists asked from the service by the bot secret; skips honestly when
+`BOT_DIR`/`OFFERS_BOT_URL` are not mounted.
+**Plan for the whole batch:** `docs/superpowers/plans/2026-11-13-sbe-offers-bot-ux-and-materials-plan.md`
+(R1, R2 done; R3 = materials as offer objects, R4 = the bot agent).
 
 **The App is deployed separately from the plugin** and has been updated after
 the release four times: `assets/index-g0XLDXK5.js` (sha256 `01ab599b…`) plus
