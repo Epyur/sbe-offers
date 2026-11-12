@@ -4,7 +4,6 @@
  * делает api.ts.
  */
 import type { OfferDraft, OfferItem } from '../session.ts';
-import { OPEN_APP_BUTTON } from './appbutton.ts';
 
 export interface CatalogCard {
   id: number;
@@ -238,10 +237,11 @@ export const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: '🧾 Собрать КП' }, { text: '📂 Мои КП' }],
     [{ text: '⚔️ Боевой листок' }, { text: '📂 Мои боевые листки' }],
-    // Mini App (2026-11-13, шаг B+): кнопка `web_app` открывает приложение
-    // сама — боту не нужен ни обработчик нажатия, ни callback_data.
-    // Отдельной строкой внизу: это вход в другой интерфейс, а не команда КП.
-    [{ text: OPEN_APP_BUTTON.text, web_app: OPEN_APP_BUTTON.web_app }],
+    // Кнопки Mini App в главном меню нет (2026-11-13, решение пользователя):
+    // reply-клавиатура с `web_app` открывала приложение без подписи Telegram —
+    // человек видел «Нет доступа: войдите в бота». Приложение открывается
+    // кнопкой «📱 NNN/yyyy» в списках КП и листков, там `inline_keyboard` и
+    // подпись приходит.
     [{ text: '❓ Справка' }],
   ],
   resize_keyboard: true,

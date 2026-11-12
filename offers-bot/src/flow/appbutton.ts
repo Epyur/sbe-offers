@@ -55,4 +55,3 @@ export function sheetsAppMarkup(sheets: Array<{ id: number; number: string; labe
 }
 
 /** Главное меню: кнопка на список КП. */
-export const OPEN_APP_BUTTON = appButton('📱 Открыть приложение', 'list');
