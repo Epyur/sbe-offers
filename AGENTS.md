@@ -62,6 +62,28 @@ font/CDN added to `index.html` will silently fail on this host. Proven by
 Telegram script comes from our domain and really is it, the bundle matches the
 built one, `/app/config` answers, a bad signature is 401).
 
+**List search, two live defects fixed 2026-11-13** (both showed up as «поиск
+ничего не нашёл» while matches existed):
+
+1. **Order first: search, then narrow.** The SQL used to take the newest
+   `listLimit` (200) rows and filter those, so matches living deeper never
+   appeared — on the stand «Ромаш» occurs in 19 rows, all beyond the newest two
+   hundred. Search now scans `listScanLimit` (2000) and returns the first
+   `listLimit`; a plain list (no `q`) still uses 200. Guard:
+   `TestSearchScansMoreThanItReturns`.
+2. **Case: normalise once, in the parser.** `parseListQuery` used to lowercase
+   only the SQL pattern, while the in-memory check compared the raw query —
+   and `lower()` in Postgres depends on the locale while `lowerASCIIFree` does
+   not: «ромаш» returned 143 rows, «Ромаш» returned none. The query is now
+   lowercased in `parseListQuery` (`lowerASCIIFree`), so SQL and memory agree.
+   Guards: `TestParseListQueryNormalises`, `TestContainsPatternIsSubstringTie`.
+
+Live proof on the production base: `scripts/check_list_search_live.mjs`
+(run through `node:22-alpine`, there is no node on the host) — 7/0, including a
+capitalised query, lowercase, and a substring from the middle of a word. The
+temporary offer `999/2026` used for the check was deleted afterwards.
+Local Docker stand: **430/0**.
+
 **Not verified by a human yet:** the whole live Telegram path (sign-in, lists,
 offer card, section texts, combat sheet, «Отправить в чат») and the local
 Docker stand (new sections 5b–5e in `scripts/offers_local_e2e.mjs` were written

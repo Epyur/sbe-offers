@@ -78,6 +78,32 @@ OpenAPI **110/110**, YAML схемы разбирается, `tsc` плагин�
 3. Новый `index.html` выложен, sha256 сверен по https
    (`c02f18cb…`, скрипт Telegram `baa788a6…`).
 
+## Второй живой дефект 2026-11-13: поиск в списках не находил ничего
+
+Сначала стенд, потом боевая база — но оба раза одно и то же: «поиск не нашёл»,
+хотя совпадения есть. Две разные причины:
+
+1. **Порядок.** SQL брал свежие 200 строк, и только потом по ним шёл фильтр.
+   Совпадения оказывались глубже — на стенде «Ромаш» есть в 19 строках, все
+   глубже двухсот свежих. Теперь поиск просматривает `listScanLimit` (2000) и
+   отдаёт первые `listLimit` (200); сторож —
+   `TestSearchScansMoreThanItReturns`.
+2. **Регистр.** `parseListQuery` приводил к нижнему регистру только SQL-шаблон,
+   а проверка совпадения в памяти шла по запросу как его набрали. `lower()` базы
+   зависит от локали, `lowerASCIIFree` — нет: «ромаш» находил 143 строки,
+   «Ромаш» — ноль. Теперь запрос приводится один раз в разборе
+   (`parseListQuery` → `lowerASCIIFree`), и SQL и память видят одно и то же.
+   Сторож — `TestParseListQueryNormalises`, `TestContainsPatternIsSubstringTie`.
+
+**Проверено на боевой базе** (`scripts/check_list_search_live.mjs`, через
+контейнер node — на хосте node нет): «СтройМонтажСервис» — находит; строчными —
+столько же; подстрока из середины («тройМонтажСерви») — находит; мусор — пустой
+массив. **7 ок, 0 провалов.** Пробная строка `999/2026` заведена для проверки и
+удалена — в базе снова 20 предложений.
+
+**Стенд локальным Docker — 430 ок, 0 провалов** (все секции, включая новые
+5b–5e). Подробности ниже.
+
 **Что осталось:** пройти живой путь в Telegram заново (вход → списки →
 карточка КП → тексты → листок → «Отправить в чат»).
 
@@ -135,6 +161,8 @@ cd ../offers-app && npm run typecheck && npm test && npm run build && npm run si
 cd .. && node ../scripts/check_offers_openapi.mjs
 docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
+# приложение снаружи — как его видит человек (нет внешних скриптов, вход жив):
+node scripts/check_app_browser.mjs https://epyur.fvds.ru
 ```
 
 Ожидаемо на 0.9.18: `tsc` 0 (плагин и приложение), `check_bundle_strings` 0,
@@ -144,6 +172,12 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app
 устарела, пересчитать на ближайшем стенде).
 
 Инструменты навыка — `crapper`/`dryer` (CRAP < 10, дублирование < 0.8).
+
+**Живой поиск на боевой базе** (Node на хосте нет — гонять в образе):
+`docker run --rm --network host -e CHECK_SECRET=... -v <скрипт>:/app/check.mjs:ro
+-w /app --entrypoint sh node:22-alpine -c 'node check.mjs https://epyur.fvds.ru
+<email> "$CHECK_SECRET"'`, где секрет — `OFFERS_SERVICE_SECRET` сервиса offers
+(из окружения контейнера, не из `.env`).
 
 **Стенд обновить после правок сервиса** (сборка `CGO_ENABLED=0`, `docker cp`,
 `docker restart`); `up -d` без `--force-recreate` контейнер не пересоздаёт —
