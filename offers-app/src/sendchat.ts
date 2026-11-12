@@ -31,7 +31,7 @@ export function payloadOf(kind: DocumentKind, id: number): SendChatRequest | nul
  * отправить не удалось (вне Telegram) — экран покажет его человеку.
  */
 export function sendDocumentToChat(kind: DocumentKind, id: number): string {
-  if (!inTelegram) {
+  if (!inTelegram()) {
     return 'Отправить в чат можно только из Telegram: откройте приложение из бота.';
   }
   const payload = payloadOf(kind, id);

@@ -11,13 +11,12 @@
  */
 import { StrictMode, useEffect, useState, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
-import { colorScheme, inTelegram, initData, initTelegram } from './tg.ts';
+import { colorScheme, initData, inTelegram, platformInfo, waitForTelegram } from './tg.ts';
 import { parseRoute } from './router.ts';
 import { screenFor } from './screens.tsx';
 import { registerStyles } from './styles.ts';
 import { failureText, openSession, type SessionResult } from './session.ts';
 
-initTelegram();
 registerStyles();
 
 type AuthState = { kind: 'loading' } | { kind: 'ready'; result: SessionResult };
@@ -34,10 +33,16 @@ function App(): JSX.Element {
 
   useEffect(() => {
     let alive = true;
-    void openSession().then((result) => {
-      // Размонтировали раньше ответа (StrictMode монтирует дважды) — не пишем.
-      if (alive) setAuth({ kind: 'ready', result });
-    });
+    // Сначала дождаться скрипта платформы: он мог ещё не загрузиться. Без
+    // ожидания `initData` читался пустым, и человек видел «Открыто вне
+    // Telegram» (дефект 2026-11-13). Ждём до 2 секунд — этого хватает даже
+    // на медленном мобильном соединении.
+    void waitForTelegram()
+      .then(() => openSession())
+      .then((result) => {
+        // Размонтировали раньше ответа (StrictMode монтирует дважды) — не пишем.
+        if (alive) setAuth({ kind: 'ready', result });
+      });
     return () => {
       alive = false;
     };
@@ -52,7 +57,10 @@ function App(): JSX.Element {
 
   return (
     <>
-      <header className="app-muted">LogicTEAM.КП — {inTelegram ? 'Telegram' : 'браузер'}, тема {colorScheme()}</header>
+      <header className="app-muted">
+        LogicTEAM.КП — {inTelegram() ? 'Telegram' : 'браузер'}, тема {colorScheme()}
+        {platformInfo().version === '' ? '' : `, ${platformInfo().platform} ${platformInfo().version}`}
+      </header>
       <main>
         {allowed ? (
           screenFor(route, viewerOf(auth.result))
@@ -109,12 +117,13 @@ function SignInProblem({ result }: { result: SessionResult }): JSX.Element {
 
 /** Строка для S1: показываем, что вход произошёл и кто вошёл. */
 function DebugLine(): JSX.Element | null {
-  if (!inTelegram) return null;
+  if (!inTelegram()) return null;
   const init = initData();
+  const info = platformInfo();
   return (
     <p className="app-muted">
-      initData: {init === '' ? 'нет' : `${init.length} байт`}; адрес:{' '}
-      <code>{typeof window !== 'undefined' ? window.location.href : ''}</code>
+      initData: {init === '' ? 'нет' : `${init.length} байт`}; платформа: {info.platform || '?'}{' '}
+      {info.version || ''}
     </p>
   );
 }

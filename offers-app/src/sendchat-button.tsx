@@ -12,7 +12,7 @@ import { sendButtonText, sendDocumentToChat, type DocumentKind } from './sendcha
 
 export function SendToChatButton({ kind, id }: { kind: DocumentKind; id: number }): JSX.Element | null {
   const [problem, setProblem] = useState('');
-  if (!inTelegram) return null;
+  if (!inTelegram()) return null;
 
   return (
     <div className="app-card">

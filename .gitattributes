@@ -12,3 +12,8 @@
 main.js -text
 styles.css -text
 manifest.json -text
+
+# Скрипт Telegram Mini App (2026-11-13): копия внешнего файла, она должна
+# совпадать с оригиналом байт в байт — перевод строк запрещён, иначе sha256
+# копии расходится с исходной, и сверка раздачи ложно краснеет.
+offers-app/public/vendor/*.js -text

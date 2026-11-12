@@ -7,6 +7,13 @@
  *
  * Что наружу: `tg` — методы, которые нужны приложению (ready, expand,
  * цветовая схема, initData, sendData, закрыть), и `inTelegram` — флаг.
+ *
+ * **Важно (дефект 2026-11-13).** Раньше мост захватывался ПРИ ЗАГРУЗКЕ модуля:
+ * `const webApp = readTelegram()`. Если в этот момент `window.Telegram` ещё не
+ * появился (скрипт платформы догружается после модуля, кэш, медленная сеть
+ * телефона), мост оставался `null` навсегда — приложение показывало «Открыто
+ * вне Telegram» до перезагрузки. Теперь мост ищется при каждом обращении, а
+ * при медленной загрузке приложение ждёт появления скрипта.
  */
 
 // Описываем только то, чем пользуемся: полный тип для API Telegram здесь
@@ -40,45 +47,95 @@ function readTelegram(): TelegramWebApp | null {
   // при первом импорте, а не при вызове.
   if (typeof window === 'undefined') return null;
   const g = (window as unknown as { Telegram?: TelegramGlobal }).Telegram;
-  const app = g?.WebApp;
-  // Скрипт Telegram грузится синхронно до модуля приложения, но в браузере
-  // его нет вовсе — отсюда и null, а не ошибка.
-  return app ?? null;
+  return g?.WebApp ?? null;
 }
 
-const webApp = readTelegram();
+/** Мост «здесь и сейчас», а не снимок момента загрузки модуля. */
+export function tg(): TelegramWebApp | null {
+  return readTelegram();
+}
 
-export const inTelegram = webApp !== null;
+/**
+ * Открыто ли приложение внутри Telegram. Вызывать в начале экрана, не в
+ * модуле: к этому моменту скрипт платформы уже загружен (см. `waitForTelegram`).
+ */
+export function inTelegram(): boolean {
+  return readTelegram() !== null;
+}
+
+/**
+ * Дождаться появления скрипта платформы. До 2 секунд, шаг 50 мс.
+ *
+ * Зачем: `<script src=...>` подключается перед модулем, но в webview телефона
+ * порядок не гарантирован при загрузке из кэша. Ждём, а не читаем флаг один
+ * раз — иначе получаем ровно тот дефект, ради которого это написано.
+ * Возвращает true, если Telegram найден.
+ */
+export function waitForTelegram(timeoutMs = 2000): Promise<boolean> {
+  const found = readTelegram();
+  if (found !== null) {
+    found.ready();
+    found.expand();
+    return Promise.resolve(true);
+  }
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      const app = readTelegram();
+      if (app !== null) {
+        window.clearInterval(timer);
+        app.ready();
+        app.expand();
+        resolve(true);
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        window.clearInterval(timer);
+        resolve(false);
+      }
+    }, 50);
+  });
+}
 
 /** Инициализация окружения: без этого Telegram показывает приложение свёрнутым. */
 export function initTelegram(): void {
-  if (!webApp) return;
-  webApp.ready();
-  webApp.expand();
+  const app = readTelegram();
+  if (app === null) return;
+  app.ready();
+  app.expand();
 }
 
 /**
  * `initData` — ключ входа в приложение (POST /api/offers/app/session, шаг S1).
- * В S0 он только читается и показывается в отладочной строке.
+ * Читается в момент вызова: значение появляется после загрузки скрипта.
  */
 export function initData(): string {
-  return webApp?.initData ?? '';
+  return readTelegram()?.initData ?? '';
+}
+
+/** Версия и платформа платформы — для строки диагностики на экране. */
+export function platformInfo(): { version: string; platform: string } {
+  const app = readTelegram();
+  return { version: app?.version ?? '', platform: app?.platform ?? '' };
 }
 
 /** Вернуть результат в чат (шаг S7): `tg.sendData` → `message.web_app_data`. */
 export function sendToChat(payload: Record<string, unknown>): void {
-  if (!webApp) return;
-  webApp.sendData(JSON.stringify(payload));
-  webApp.close();
+  const app = readTelegram();
+  if (app === null) return;
+  app.sendData(JSON.stringify(payload));
+  app.close();
 }
 
 export function close(): void {
-  webApp?.close();
+  readTelegram()?.close();
 }
 
 /** Название темы для строки состояния. */
 export function colorScheme(): 'light' | 'dark' {
-  if (webApp) return webApp.colorScheme;
+  const app = readTelegram();
+  if (app !== null) return app.colorScheme;
   if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
   return 'light';
 }
