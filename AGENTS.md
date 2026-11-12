@@ -83,11 +83,11 @@ both lists asked from the service by the bot secret; skips honestly when
 **Plan for the whole batch:** `docs/superpowers/plans/2026-11-13-sbe-offers-bot-ux-and-materials-plan.md`
 (R1, R2 done; R3 = materials as offer objects, R4 = the bot agent).
 
-**The App is deployed separately from the plugin** and has been updated after
-the release four times: `assets/index-g0XLDXK5.js` (sha256 `01ab599b…`) plus
-`vendor/telegram-web-app.js` (`baa788a6…`, served from our own domain).
-The service and the bot were last rebuilt and recreated on 2026-11-13 after the
-`db error` fix and the removal of the menu button.
+**The App is deployed separately from the plugin.** Current bundle:
+`assets/index-…js` + `vendor/telegram-web-app.js`, served from our own domain
+(`<script src="./vendor/telegram-web-app.js">` — the VDS cannot reach
+`telegram.org`, see the gotcha below). The service and the bot were last
+rebuilt and recreated on 2026-11-13 (R1/R2 batch).
 
 Per-plugin state, live hashes and the release procedure live in
 [HANDOFF.md](HANDOFF.md) — it is the entry point for a cold start.
@@ -95,439 +95,9 @@ Per-plugin state, live hashes and the release procedure live in
 **The Mini App migration is done through S7 (S0–S4, S6, S7); S5 is
 deliberately NOT done** — the user decided on 2026-11-13 that the bot keeps
 all its flows until the App has been verified in real use. Nothing was deleted
-from `offers-bot`. Do not start S5 without an explicit instruction.
-
-**Live defect found on the first real run (2026-11-13): the App showed
-«initData: нет».** Root cause was NOT the sign-in code but the page:
-`<script src="https://telegram.org/js/telegram-web-app.js">` — and the VDS in
-Russia cannot reach `telegram.org` at all, so the script never loaded, so
-`window.Telegram.WebApp` did not exist and `initData` was empty. The App then
-honestly rendered «Открыто вне Telegram». The service side was fine all along
-(`/app/session` → 400 empty body, 401 bad signature, bot token present,
-10 chat links).
-
-**Rule that follows: the App has no external dependencies.** The Telegram script
-is served from our own domain (`offers-app/public/vendor/telegram-web-app.js`
-→ `dist/vendor/`, referenced as `./vendor/telegram-web-app.js`). Any `<script>`/
-font/CDN added to `index.html` will silently fail on this host. Proven by
-`scripts/check_app_browser.mjs <baseUrl>` (15 checks: no external scripts, the
-Telegram script comes from our domain and really is it, the bundle matches the
-built one, `/app/config` answers, a bad signature is 401).
-
-**List search, two live defects fixed 2026-11-13** (both showed up as «поиск
-ничего не нашёл» while matches existed):
-
-1. **Order first: search, then narrow.** The SQL used to take the newest
-   `listLimit` (200) rows and filter those, so matches living deeper never
-   appeared — on the stand «Ромаш» occurs in 19 rows, all beyond the newest two
-   hundred. Search now scans `listScanLimit` (2000) and returns the first
-   `listLimit`; a plain list (no `q`) still uses 200. Guard:
-   `TestSearchScansMoreThanItReturns`.
-2. **Case: normalise once, in the parser.** `parseListQuery` used to lowercase
-   only the SQL pattern, while the in-memory check compared the raw query —
-   and `lower()` in Postgres depends on the locale while `lowerASCIIFree` does
-   not: «ромаш» returned 143 rows, «Ромаш» returned none. The query is now
-   lowercased in `parseListQuery` (`lowerASCIIFree`), so SQL and memory agree.
-   Guards: `TestParseListQueryNormalises`, `TestContainsPatternIsSubstringTie`.
-
-Live proof on the production base: `scripts/check_list_search_live.mjs`
-(run through `node:22-alpine`, there is no node on the host) — 7/0, including a
-capitalised query, lowercase, and a substring from the middle of a word. The
-temporary offer `999/2026` used for the check was deleted afterwards.
-Local Docker stand: **430/0**.
-
-**Two more live defects, fixed 2026-11-13.**
-
-1. **`db error` on the offer list for everyone except the owner.** For a
-   non-admin the visibility filter was appended as ` AND lower(owner_email) = …`
-   even when no `WHERE` had been added (no search), producing
-   `SELECT … FROM offers_offer AND …` — `syntax error at or near "AND"`. The
-   owner never saw it (role `superadmin` skips the branch), which is why the
-   report came from `fireservice@tn.ru`. Fix: add `WHERE` when there is no
-   search, `AND` otherwise. Guard: `lists_sql_test.go` builds the same SQL in
-   three modes and asserts the shape (`AND` must never follow the table name).
-   Live check: viewer → 200 with 4 own offers, owner → 200 with 20.
-   **Lesson: any query builder that concatenates optional conditions must be
-   covered by a test on the STRING, not only on behaviour — the standalone
-   branch (no search, no admin) is exactly the one the tests never hit.**
-2. **The App button is gone from the bot's main menu** (user decision).
-   A reply keyboard with `web_app` opened the App WITHOUT a Telegram signature,
-   so the person saw «Нет доступа: войдите в бота». The App opens from the
-   offer/sheet lists, where buttons are inline and the signature arrives.
-   `OPEN_APP_BUTTON` was removed; a test now asserts `MAIN_KEYBOARD` contains
-   no Mini App buttons.
-
-**Not verified by a human yet:** the whole live Telegram path (sign-in, lists,
-offer card, section texts, combat sheet, «Отправить в чат») and the local
-Docker stand (new sections 5b–5e in `scripts/offers_local_e2e.mjs` were written
-but not run — Docker was not started). Run the stand before the next batch.
-
-**Mini App architecture (2026-11-13).** `offers-app/` (React + Vite + TS) is
-served by Caddy at `/app-offers/` and talks to the same `/api/offers/*` routes
-as the Obsidian plugin, as a JWT client; sign-in is Telegram `initData`
-(`offers-service/appauth.go`) exchanged for the normal JWT, and roles come from
-the central map (common access `editor`). **The bot keeps identity, entry, the
-brief, lists, search and file upload; the App owns the document.** Plan:
-`docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md`.
-**S2 — lists and search (2026-11-13, `backend` only, not deployed).**
-`offers-service/lists.go` holds the one query normaliser (`parseListQuery`:
-collapsed spaces, `ё`→`е`, `%`/`_` escaped), the two indexable patterns
-(`LIKE 'q%'`, `LIKE '% q%'`) and the in-memory substring pass (`containsTie`).
-`GET /offers?q=` filters by **client name**, `GET /combat?q=` by the sheet
-title **and both sides' product titles**; an empty `q` keeps the old behaviour
-(`LIMIT 200`, newest first) and a regression test pins it. Indexes
-`offers_offer_client_name` / `offers_combat_sheet_title` (`text_pattern_ops`)
-are in `migrate`. The App side is `offers-app/src/lists.ts` (types, paths,
-labels — the pure half) plus the list screen in `screens.tsx` (row cards,
-300 ms debounced search, loading/error/empty/found states).
-
-**The search model is "indexable prefix first, substring in memory second"**
-— and that is deliberate, not an oversight. `ILIKE '%q%'` cannot use an index
-in any locale, and a client name almost never *starts* with the query
-(«Строй» in «СтройМонтажСервис»): the SQL condition only narrows the row set,
-the real match is `containsTie` over at most `listLimit` (200) fetches.
-When the tables grow, the next step is `pg_trgm` chosen on purpose — do not
-"fix" this by turning the pattern into `ILIKE '%q%'` without an index, which
-is a plain sequential scan on every keystroke.
-
-**S3 — the offer card in the App (2026-11-13, `backend` only, not deployed).**
-The user chose **"variant V": every field is saved by its own route**, so there
-is no "save the whole document" path in the App at all.
-
-- `PUT /offers/{id}/client` (name + contact) and `PUT /offers/{id}/items`
-  (the list is REPLACED; `sum`/`total` are computed by the server and the
-  client-sent values are never read) live in `offers-service/offerfields.go`.
-  Systems keep using the existing `POST/DELETE /offers/{id}/system`.
-- Both routes: `requirePerm("editor")` + `offerForEditor` (own or admin),
-  an empty edit is rejected, every write moves `updated_at`, the answer is the
-  same `Offer` as `GET /offers/{id}`.
-- **An empty item list is legal here and illegal in the full `PUT /offers/{id}`**
-  — that difference is deliberate: positions are entered one at a time, while
-  the plugin/bot path still refuses an offer without positions. Do not
-  "unify" the two validators.
-- App side: `offers-app/src/offer.ts` (model plus the arithmetic: comma
-  decimals, per-row and total rounding, pre-send checks, dirty comparison) and
-  `offers-app/src/offer-screen.tsx` (three independently saved zones, system
-  search with a 300 ms debounce, item list). Checks: `go test` green,
-  OpenAPI 98/98, App `tsc` 0, App tests 30, bundle 76.7 KiB gzip.
-
-**S4 — section texts in the App (2026-11-13, `backend` only, not deployed).**
-`offers-service/copysections.go` is the JWT twin of the bot's
-`POST /bot/offers/{id}/copy/{key}`: same slots (`SectionSlots`), same storage
-(`form_values["copy.<key>"]`) and the same three actions
-(`WriteSectionChecked` / `EditSection` / `AcceptSection`) — only the transport
-and the gate are new (`GET /offers/{id}/sections`,
-`POST /offers/{id}/sections/{kind}`, `POST …/edit`, `PUT …/{kind}`).
-**The model being unavailable is not an error**: the text comes back empty and
-the document is built without that section, exactly like in the bot.
-An unknown section key is 400; for `kind=system` the `systemIndex` query
-parameter is required and out of range is 400; for fixed slots a stray
-`systemIndex` is ignored (otherwise it would land in the key and the text would
-silently stop being found). App side: `offers-app/src/sections.ts` (key parsing
-plus the pure helpers) and `sections-screen.tsx` (one card per slot, edits stay
-a draft until «Принять»). Checks: `go test` green, OpenAPI 102/102, App `tsc` 0,
-App tests 35, bundle 77.8 KiB gzip.
-
-**S6 — the combat sheet in the App (2026-11-13, `backend` only, not deployed).**
-`offers-service/combatsections.go` adds JWT twins of the bot routes:
-`GET /combat/our`, `GET /combat/competitors-src`, `GET /combat/analogues`,
-`POST/DELETE /combat/{id}/our|competitor`, `PUT /combat/{id}/hint`. The logic is
-not copied (`combatOurItems`, `searchCompetitors`, `findAnaloguesForSheet`);
-only transport and gate are new. Reading and printing stay open to every
-signed-in user, editing stays with the author or admin (`combatSheetForEditor`)
-— rule 2026-11-12.
-- **`competitors-src`, not `combat/competitors`**: `GET /competitors` already
-  serves the plugin's cached list, and two different payloads under one path is
-  a trap for the next debugging session.
-- Sides are edited **positionally** (`POST/DELETE …/our|competitor`), never by
-  `PUT /combat/{id}`, so a parallel edit in the bot is not overwritten.
-- App: `offers-app/src/combat.ts` (model, `canEdit`, `sheetLabelOf`,
-  `nextOffset`) and `combat-screen.tsx`; a foreign sheet opens read-only —
-  the edit controls are not rendered at all rather than returning 403.
-  Checks: `go test` green, OpenAPI 110/110, YAML parses, App `tsc` 0,
-  App tests 40, bundle 79.1 KiB gzip.
-- **`openapi.yaml` had a literal BEL byte inside the word «advantages»** (three
-  places) and a description line whose `:` broke the YAML. The route-vs-schema
-  checker never looks inside descriptions, so it stayed green; only
-  `yaml.safe_load` caught it. When editing that file, validate it as YAML.
-
-**User decision 2026-11-13: S5 (deleting the bot flows) happens only AFTER the
-App has been verified in real use. Nothing is deleted from the bot right now.**
-
-**S7 — «Отправить в чат» (2026-11-13, `backend` only, not deployed).**
-The App cannot attach a file itself (no Bot API), so it sends a POINTER with
-`tg.sendData` and the bot builds the document with the existing
-`/bot/offers/{id}/docx` and `/bot/combat/{id}/export` — the same routes the
-«⬇ DOCX» button uses, so the chat's rights are checked exactly as before.
-
-- `offers-bot/src/webapp.ts`: `parseWebAppData` accepts only
-  `{action:'docx', kind:'offer'|'combat', id>0}`; anything else is `null` and
-  the person gets an explanation, not silence.
-- **`chat_id` comes from the update, never from the payload** — the pointer
-  cannot post a document into someone else's chat. A `chat_id` inside the
-  payload is ignored (covered by a test).
-- `poller.ts` handles `message.web_app_data` before documents and text.
-- App: `offers-app/src/sendchat.ts` (payload builder) and
-  `sendchat-button.tsx` (button exists only inside Telegram).
-- Checks: bot 176 tests, bot `tsc` 0, App 44 tests, App `tsc` 0, bundle
-  79.4 KiB gzip. **Not verified by a human in Telegram yet.**
-
-**Next step is S8 (release)** — only on an explicit command.
-
-**0.9.17 (2026-11-12, plugin + service + bot + news).** Three live complaints,
-one root cause: picking a system or a material went through a dropdown or a
-substring filter instead of the Knowledge Base's own full-text search — and the
-bot never looked at all.
-
-1. **The plugin has no dropdowns for the catalogue any more.** `src/ui/picker.ts`
-   is the picker taken out of the combat view (one implementation instead of
-   two). In the offer editor a system is found by name and added the same way as
-   before (`addSystem`, texts written once); a material is found in the KB and
-   lands in the table as a position with its own unit, code, ЕКН and the «от»
-   price. The old `listCatalog` dropdown is gone — `offers_catalog` has not been
-   filled since 2026-10-31, so new materials were never reachable there.
-2. **New search endpoints** (`pickersearch.go`), the same `KBClient.Search` the
-   competitor picker uses: `GET /systems/search` (`commercial_propose` without
-   `material`), `GET /materials/search` (tag `material`), `GET /suggest` (both at
-   once, for the bot) and `GET /bot/suggest` (same, by service secret). A KB
-   failure answers 200 with `error`, and an empty list is always `[]`, never
-   `null`.
-3. **The bot understands a human phrase** (`flow/suggest.ts` +
-   `offerSuggestions` in `callbacks.ts`). Any text not claimed by copy, the
-   brief, `система …`, a stage branch or a manual line goes to the search:
-   «Гарант» (КП008) returns both «ТН-Кровля Гарант ПЛЮС» and «… RE30»,
-   «Кровля» (КП013) says «несколько системных решений (N)» and offers help.
-   A help request («какие есть системы кровли») is stripped of service words
-   before searching; finding nothing is not a dead end — the reply says what to
-   do. Numbers in buttons are indices into `RouterState.foundSuggest`, because
-   `callback_data` cannot hold a Cyrillic title.
-
-**Released and deployed 2026-11-12.** `backend` `dd60b9a` (plugin + service +
-bot; this docs commit follows), `main` `fa29644` (plugin slice only, `b` suffix
-removed, `main.js` rebuilt on `main`); registry git copy `sbe-apstore-registry`
-`bc9ee07`. Self-hosted and verified over https **and** in `/registry.json`:
-`manifest 26fb960b…`, `main 1a885d73…`, `styles a32ac3df…` (styles unchanged
-from 0.9.16). Service and bot rebuilt and recreated on the server (19:05 and
-19:11 MSK), health `ok`, poller running.
-
-**Live defect found DURING the deploy** — worth remembering: the bot called
-`/suggest` (a `requirePerm("viewer")` route) with the service secret, got 403
-and showed «Поиск по Базе знаний сейчас недоступен» instead of a suggestion.
-The stand could not see it: `auth-stub` grants the role by e-mail, so there the
-secret and a user token are interchangeable. Fixed in `dd60b9a` (`/bot/suggest`)
-plus `offers-bot/src/suggest-api.test.ts`, which asserts the ADDRESS, not the
-result. **A route reached with the service secret must be a `/bot/*` route.**
-
-Live check on the production KB after the deploy: `q=Гарант` returns
-`ТН-КРОВЛЯ Гарант Плюс` and `ТН-КРОВЛЯ Гарант RE30` first (43 systems, 57
-materials), `q=КРОВЛЯ` returns 60 systems — both complaints are closed on real
-data.
-
-Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, `npm run build`
-OK, `check_bundle_strings` 0 missing, OpenAPI **94/94** match, bot **162
-passing**, stand **371/0** (new section «Поиск для окна выбора», 8 checks).
-
-Previous version = **0.9.16** — released 2026-11-12. `main` `492a161`
-(0.9.16 code, final build without the `b` suffix); `backend` carries the bot fix
-(`e192eaf`).
-Deployed: the **bot** was rebuilt and recreated 2026-11-12 16:38 MSK with the fix
-(`grep` on the server confirms `applyCodeRequested(session, result.email)` at
-`offers-bot/src/routes.ts:173`), poller running. `offers` runs the 0.9.15 SMTP
-transport since 16:02 MSK (`smtp.yandex.ru:587`, `SMTP_USER/FROM=lpitn@yandex.ru`,
-health `ok`; live `POST /api/offers/bot/request-code` returned `200 code_sent`
-with no new exim lines). Self-hosted `f910cae9…` / `f5cafcb1…` / `a32ac3df…`
-verified over https and in `/registry.json`; registry git copy
-`sbe-apstore-registry` `a928f33`.
-
-**0.9.16 (2026-11-12, bot-only + news).** Live complaint: the code arrives by
-mail, but entering it makes the bot **ask for the e-mail again**.
-
-**Root cause** — in `handleSignIn` (`offers-bot/src/routes.ts`) the
-`request_code` branch never saved the session: the line was
-`void applyCodeRequested;` — a **reference to the function instead of a call**.
-The step stayed `idle`, and the six digits typed next were parsed as an e-mail,
-which fails validation and re-prompts for the address. The compiler said nothing
-(a bare expression statement is legal), and the bot suite was green because the
-sign-in path had no test.
-
-1. After requesting a code the session is saved (`await_code` + e-mail).
-2. After verifying the code the session is saved as `authed` too — sign-in used
-   to rely on in-memory state only.
-3. Two tests over the whole sign-in path: the step becomes `await_code`, and the
-   code neither re-prompts for the address nor fails to reach `authed`.
-
-**History of 0.9.15** — released 2026-11-12 (server-only fix plus news);
-`backend` `c2220b1`, `main` `fc680f3`; self-hosted `ecea0b7c…` / `f0711b80…` /
-`a32ac3df…`; registry git copy `sbe-apstore-registry` `67ee1e3`. GitHub raw
-agreed with the self-host after one retry.
-
-**History of 0.9.14** — released 2026-11-12: `backend` `e93d45e`, `main`
-`d418e3f`, self-hosted `4ff10217…` / `df5b0d7c…` / `a32ac3df…`, registry git
-copy `sbe-apstore-registry` `a92d98b`. Live KB check after that deploy:
-`/bot/combat/competitors?q=ПВХ мембрана` returns PLASTFOIL (9 first) and the tag
-filter works; `q=мембрана кровельная` returns FACHMANN and PVC-RP;
-`/bot/combat/analogues?noteId=7359` returns `PIRRO®VentiDuct` first.
-
-**0.9.15 (2026-11-12, server-only + news).** Live complaint: sign-in codes for
-the **offer bot** stopped arriving by e-mail. Same root cause as the
-`auth-service` incident of 2026-11-09: `offers-service/email.go` sent via the
-local exim (`host.docker.internal:25`) with the `epyur.fvds.ru` domain, which has
-no SPF/DKIM/DMARC — the `tn.ru` corporate filter drops such mail, while exim
-answers `250 OK`, so from outside it looks like "delivered".
-
-1. **`offers-service/email.go` rewritten** to mirror `auth-service`: defaults
-   `smtp.yandex.ru:587`, STARTTLS when advertised, AUTH PLAIN on
-   `SMTP_USER`/`SMTP_PASS`, sender falls back to `SMTP_USER`, `net.DialTimeout`
-   30 s + 2-minute session deadline, RFC 2047 Q-encoded Subject. Explicit
-   `SMTP_*` still win — rolling back to exim is one compose line, no code.
-2. **`sbe-core/docker/docker-compose.yml`, `offers` block**: `SMTP_HOST/PORT`
-   from `AUTH_SMTP_*`, `SMTP_FROM/USER=${LAB_MAIL_LOGIN}`,
-   `SMTP_PASS=${LAB_MAIL_PASSWORD}`, `SMTP_SKIP_VERIFY` removed (same mailbox as
-   auth/documents). The local compose copy diverges from the server — insert the
-   block pointwise (see `sbe-core/docker/AGENTS.md`).
-3. **`offers-service/email_test.go`** — five guards: defaults, sender fallback,
-   explicit override, RFC 2047 subject, recipient/body.
-
-Checks: `gofmt` clean, `go vet` clean, `go test ./...` green (5 new tests),
-`go build` OK, `tsc` EXIT=0, `npm run build` OK, `check_bundle_strings` 0
-missing, `check_marker_registry` OK, OpenAPI 90/67.
-
-`check_docs_state.mjs` is expected to fail while a release is unfinished — do not
-"fix" it by editing docs.
-
-**0.9.14 (2026-11-12, released).** Five live complaints about combat sheets;
-four of them had one root cause — search went by substring over a cache instead
-of by the Knowledge Base's own full-text search.
-
-1. **Search** — side picking and analogue picking now use `GET /api/kb/search`
-   through `KBClient.Search` (`kbsearch.go` contract in `kbclient.go`), the same
-   mechanism the web KB uses: Russian morphology, prefixes, title weighted above
-   body. Live proof: «пвх мембрана» + tag `competitor` returns PLASTFOIL,
-   Sikaplan and ФАХМАНН together; «мембрана кровельная» pulls manufacturers the
-   substring filter could never reach. The cache filter remains as a fallback
-   when the KB is unreachable.
-2. **Analogues** — `findAnaloguesForSheet` (KB search) with the cache chain as
-   fallback. Queries go **from general to specific** (`мембрана кровельная` →
-   `мембрана` → `ПВХ мембрана` → brand), because a brand query returns 0 rows on
-   the live base and a core query returns nine PLASTFOIL. Candidates are filtered
-   by `isAnalogCandidate` (no secondary goods: activators, cleaners, fasteners,
-   funnels, systems, foams; class must not contradict ours) and diversified by
-   brand (`diversifyByBrand`, ≤ 2 per brand), limit `combatAnalogLimit` = 8.
-   Live result for LOGICPIR VENT: `PIRRO®VentiDuct` **first**; for LOGICROOF
-   V-RP: FACHMANN ×2, PVC-RP/SR, PIRRO, PLASTFOIL, Sikaplan ×2, SikaProof.
-3. **Bot access** — the list shows **all** sheets (not only the caller's);
-   reading and exporting are open to every signed-in user, editing stays with
-   the author (`botCanEditCombat`). `botCombatWith` is the single gate.
-4. **Generation cache** — a rendered combat DOCX is stored in
-   `offers_combat_docx` under a hash of everything printed (`combatDocxHash`:
-   number, both sides in order, hint, layout bytes, `combatDocxVersion`). Second
-   «⬇ DOCX» on the same sheet returns the stored file; any change of substance
-   misses the hash and rebuilds.
-5. **Progress in the bot** — `runWithProgress`/`progressNote` write «⌛ …» first
-   and `editMessageText` replaces it with the result (or the error). The poller
-   no longer waits for a handler before the next `getUpdates`: updates queue on
-   one promise chain (`processUpdate`), which removes the 25-35 s long-poll tail
-   that made a button look dead for a minute.
-6. **List label** — `combatListLabel` (server) and `sheetLabel` (bot) show the
-   product, not «Боевой листок»: our product → first competitor → «пустой
-   листок № …». Foreign sheets are marked with the owner and get 👁 instead of ✏️.
-
-Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, `npm run build` OK,
-`check_bundle_strings` 0 missing, `check_marker_registry` OK, bot **146 passing**,
-OpenAPI 90/67, stand **361/0**. Live KB run of the analogue picker is recorded in
-`HANDOFF.md` («Что проверено на боевой базе»).
-
-Previous release — 0.9.13 (2026-11-11, released). Two things shipped together:
-
-1. **The layout-mode defect** — an offer was printed as an empty combat sheet.
-   Each document has its own `.docx` master (`offers_form.layout_docx` per
-   `mode`), and the upload response never said which mode it wrote to, so a
-   master uploaded "into the wrong document" looked like success. The response
-   now carries `mode`, the plugin's Notice names the target document and warns
-   on a mismatch, and the stand has a check for it.
-2. **The rebuilt analogue picker** — it now searches **from our product** for
-   **competitor products of the same class**, first via the **competitor
-   journal** (grouping + target note links) with the model, then via the model
-   over cards, then with a word-class fallback.
-
-Previous release — 0.9.12 (2026-11-11, released): combat buttons re-open the
-sheet after a bot restart (`ensureCombat`). Before that: 0.9.11 (analogue button
-in the main menu), 0.9.10 (layout upload no longer crashes on `null`),
-0.9.9 (no form — `{{сравнение}}`, hint, analogues), 0.9.8 («Добавить выбранные»
-in the "all found" mode), 0.9.7 (two H1s, journal excluded), 0.9.6 (`competitor`
-tag, numbered paged picker).
-
-**Release 0.9.7 (2026-11-11, server + bot change; plugin-side `main.js` logic
-unchanged, version bumped for the CUP news).** Live complaints after 0.9.6:
-1. competitor notes carry TWO H1s (a disclaimer, then the product) — the title
-   now comes from the first real one (`competitorTitles`), and the indexing
-   journal (tag `journal`) is dropped from side picking;
-2. the bot's picker lost marks on «Все продукты» and had no main menu
-   (`withCombatMenu`) — see the "side picker" gotcha below.
-   Checks: `gofmt`/`go vet`/`go test ./...` green, bot **123 passing**.
-
-**Release 0.9.6 (2026-11-10, server + bot change; plugin-side `main.js` logic
-unchanged, version bumped for the CUP news).** Two user requests:
-1. competitor products are read from the **`competitor` tag** as well as the KB
-   folder (merged by note id), and the card title is the **note heading**
-   (`competitors.go`);
-2. the bot's side picker is a **numbered, paged, multi-select list** with
-   «☑ Выбрать все найденные» — see the "side picker" gotcha below.
-   Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, bot **121
-   passing**, OpenAPI 87/64, `crapper` ≤ CC 9, `dryer` no new duplicates.
-
-**Release 0.9.5 (2026-11-10, server-only change — `main.js` logic unchanged,
-version bumped only for the CUP news).** Two user requests:
-1. the link section is printed **by groups and numbered** — `page` (systems
-   before materials) → `sto` → `techlist` (systems before materials) → `uzly` →
-   `cert` (materials before systems); see the "Links in the document" gotcha
-   below;
-2. the model's text is printed **as paragraphs** and its typography is normalised
-   (double spaces, stray spaces before punctuation, missing space after a
-   sentence end) — `normalizeBodyTypography` + `paragraphsXML` in
-   `docx_text.go`/`docx.go`, applied on write (`cleanBlockText`), on read
-   (`generatedTextFor`) and in the `prompt_text` node. The block system prompt
-   also asks for paragraphs and correct punctuation (`skills/prompt.go`).
-   Checks: `gofmt`/`go vet`/`go test ./...` green, `tsc` EXIT=0, stand **339/0**.
-
-**Release 0.9.9 (2026-11-11, server + bot + plugin).** The combat sheet is no
-longer form-driven:
-1. `combatDefaultForm` has **no blocks and no fields** except the hint; the old
-   «наша компания / объект / заказчик / менеджер» fields were invalid for an
-   internal note.
-2. Printing is a layout plus ONE marker `{{сравнение}}` (`packCombatDocx`,
-   `combatLayoutData`): the marker prints the whole sheet; without a layout the
-   built-in view is used. Form blocks are never read by the combat renderer.
-3. The comparison is written by the model (`combat_compare.go`) — overall, then
-   per competitor product, steered by the hint; facts only from the cards.
-4. «Подобрать аналоги» (`combat_analog.go`) matches our product to a competitor
-   card by significant words; a title hit weighs more than a description hit.
-   Checks: `go test ./...` green, bot **134 passing**, OpenAPI 89/66.
-
-**Release 0.9.13 (2026-11-11, IN PROGRESS — deployed to the service, not
-released).** The user's "find analogues" flow, rebuilt three times in one day:
-
-1. **Direction**: analogues are searched FROM OUR product (`ourNotes`) for
-   competitor products of the same class; picked ones are added on the
-   **competitor** side. Without our product the bot says which button to press.
-2. **Chain** (`findAnaloguesSmart`, `combat_analog_llm.go`):
-   journal → model over cards → word-class fallback.
-3. **Journal** (`combat_journal.go`): `parseCompetitorJournal` reads the
-   «Журнал материалов конкурентов» note (tag `journal`). Competitor and catalog
-   section are BOTH `##` and are told apart by the item counter in the heading
-   («— 28 шт.»); table rows give `title | url | [[note]]`, and the wikilink
-   resolves to the real catalogue card. Sections are pre-filtered by
-   `relevantJournalSections` — the journal is huge (FACHMANN 1738 rows, SIKA
-   385) and its first 120 rows belong to one competitor.
-4. **Limits**: `analogLLMTimeout` 60 s, `analogJournalRowLimit` 120,
-   `analogCandidateLimit` 60, `analogLLMLimit` 5, `combatAnalogLimit` 5.
-5. **`cban:all`** — "add every found" — is parsed as a word, id 0
-   (`parseCallbackData`).
-
-**What to fix first if it stops working**: read the service log for
-`журнал дал N аналогов` and `context deadline exceeded` — the chain falls back
-silently, and the fallback result looks like a wrong selection rather than an
-error.
+from `offers-bot`. Do not start S5 without an explicit instruction. The step
+notes (S2–S7) and the five live defects of the first launch are in the
+archive, «Ревизия 2026-11-13».
 
 ## Purpose (current)
 
@@ -658,7 +228,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
-| `scripts/offers_local_e2e.mjs` | the stand: **351 checks**, 26 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **444 checks**, 28 sections |
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
@@ -726,11 +296,14 @@ Sub-packages: `model/` (domain types + `jsonrepair.go`, shared with `skills`);
 `filecontext*.go`, `blockstructure.go`).
 
 `offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), `src/routes.ts`
-(routing + the single sign-in check), `src/callbacks.ts` (button handlers,
-including the combat sheet — 2026-11-09), `src/telegram.ts`
-(Bot API via SOCKS), `src/session.ts`, `src/attach.ts`, `src/flow/` (`build`,
-`brief`, `copy`, `writer`, `resume`, `combat`, `suggest`, `appbutton`),
+(routing + the single sign-in check + `openAppList`), `src/callbacks.ts` (button
+handlers, including the combat sheet — 2026-11-09 — and the `nd:*` family of
+«Создать новый документ»), `src/telegram.ts` (Bot API via SOCKS),
+`src/session.ts`, `src/attach.ts`, `src/flow/` (`build`, `brief`, `copy`,
+`writer`, `resume`, `combat`, `suggest`, `appbutton`, **`newdoc`**),
 `src/api.ts`, `Dockerfile`.
+Tests: `routes.test.ts`, `newdoc.test.ts` (12 cases of the dialog),
+`callbacks-data.test.ts` (4 on `parseCallbackData`), plus per-module suites.
 
 **Opening the Mini App from the bot (2026-11-13, step B+).** `flow/appbutton.ts`
 is the single place that builds the App URL (`OFFERS_APP_URL`, default
@@ -770,19 +343,27 @@ node scripts/check_marker_registry.mjs
 node scripts/check_docs_state.mjs
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd ../offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
+cd ../offers-app && npm run typecheck && npm test && npm run build && npm run size
 cd .. && node ../scripts/check_offers_openapi.mjs
-docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" -w /app \
-  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 python scripts/check_layout_mode_defect.py http://127.0.0.1:18080
 ```
 
-Expected on 0.9.17: `tsc` EXIT=0, `check_bundle_strings` 0 missing,
-`check_marker_registry` OK, `go test` green, OpenAPI **94/94**, stand
-**371/0** (the picker-search section is 8 of them, the combat-access section 3).
-The bot's own suite (`offers-bot`): `npm run typecheck` EXIT=0,
-`node --test "src/**/*.test.ts"` **171 passing** (combat flow, sign-in path,
-the suggestion texts and the Mini App buttons are covered by route tests
-against a faked service).
+**The stand runs from Docker — it is always available on the dev machine.**
+Mount the bot's folder too: two sections verify it (`BOT_DIR`); without the
+variables they print «пропущен» instead of failing.
+
+```
+docker run --rm --network sbe-offers_offersnet \
+  -e OFFERS_BOT_URL=http://offers-local-bot-stub:3000 -e BOT_DIR=/bot \
+  -v "$PWD/scripts:/app:ro" -v "$PWD/offers-bot:/bot:ro" -w /app \
+  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
+```
+
+Expected on 0.9.20 (verified 2026-11-13): plugin `tsc` EXIT=0, `build` OK,
+`check_bundle_strings` 0 missing, `check_marker_registry` OK,
+`check_docs_state` all OK, `go test` green, OpenAPI **110/110**, stand
+**444/0**. The bot's own suite: `typecheck` EXIT=0, **193 passing**; the App:
+`tsc` 0, **50 passing**.
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase
@@ -801,6 +382,15 @@ docker restart offers-local-app
 Before a stand run, drop the systems cache — it hides `kb-stub` edits:
 `docker exec offers-local-db psql -U offers -d offers -c "delete from
 offers_context where mode='systems'"` and restart `offers-local-kb-stub`.
+
+**Moving files to the server: compare md5 AFTER normalising line endings.**
+Git checks out `.ts` as CRLF on Windows and LF on the server; the content is
+identical and only the bytes differ. Normalise (`\r\n`→`\n`) before declaring
+a mismatch. Guard tested 2026-11-13.
+
+**Listing remote files: `find -print0 | xargs -0 md5sum`, NOT `while read`.**
+An `ssh '... while read ...'` swallows stdin — the same class as the
+`docker exec -i` gotcha.
 
 ## Rules
 
@@ -1059,6 +649,29 @@ measurements) are in the archive.
 
 ### Bot and rights
 
+- **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
+  (2026-11-13, R2). `nd:pick:3` must become `{prefix:'nd:pick', id:3}`. Parsing
+  by the first colon gives `Number('pick:3')` = `NaN`, the press is dropped
+  silently, and from outside it is «нажал — ничего не произошло» — exactly the
+  `cban:all` class (2026-11-11). Guard: `callbacks-data.test.ts`.
+- **While the «Создать новый документ» dialog is open, the text is a PRODUCT
+  NAME.** `handleNewDocText` runs **before** the combat branch and before
+  `handleDraftText`; otherwise «Мембрана» becomes a position with price 0. It
+  must return `true` only when the dialog is really open (checked through
+  `session.newDoc`), so the rest of routing keeps working.
+- **The new dialog keeps its own state map (`RouterState.newDoc`).** Do not
+  reuse `foundSuggest`: there the pick is added IMMEDIATELY, here it is
+  REMEMBERED and a decision follows. One map for two flows is how
+  «нажал — добавилось не туда» happened with the sheet side picker (2026-11-11).
+- **Old menu captions must stay as aliases.** `🧾 Собрать КП` and `⚔️ Боевой
+  листок` are gone from `MAIN_KEYBOARD` but handled in `routeMenu` (they open the
+  product question for the matching kind). Chat history lives for years; a
+  removed handler answers with silence, which is the worst outcome.
+- **A reply-keyboard button cannot carry `web_app`.** A reply button with
+  `web_app` opens the Mini App WITHOUT the Telegram signature and the person sees
+  «Нет доступа: войдите в бота» (live defect 2026-11-13). Any menu button that
+  must open the App is a plain text button answering with an **inline**
+  `web_app` button — `appListButton`/`appUrl` in `flow/appbutton.ts`.
 - **`void someFunction;` is a REFERENCE, not a call — and the compiler says
   nothing** (2026-11-12, live defect: after entering the code the bot asked for
   the e-mail again). In `handleSignIn` the line `void applyCodeRequested;` was
