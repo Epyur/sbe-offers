@@ -30,13 +30,17 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.22** — **RELEASED 2026-11-14.** Three points converge:
-`main` `32e7761`, `backend` `aafaa93`, self-hosted `fb27019b…` / `965dad3f…` /
+Current version = **0.9.23** — **RELEASED 2026-11-14.** Three points converge:
+`main` `533ac36`, `backend` `05686b7`, self-hosted `8561ca81…` / `ee4a1749…` /
 `a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
-`sbe-apstore-registry` `ca6b212`. The service and the bot were rebuilt and
-redeployed; the `offers` compose block gained `DOCUMENTS_SERVICE_URL` /
-`DOCUMENTS_INTERNAL_SECRET` (+ `depends_on: documents`); `offers_agent_log`
-exists in the live database. The App did not change this batch.
+`sbe-apstore-registry` `4997d05`. The service and the bot were rebuilt and
+recreated; `md5sum` of 284/284 files matched after CRLF normalisation; health
+`ok`, poller running. The App did not change this batch.
+
+**0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
+RELEASED.** Also the bot menu compaction in the same batch. See «P6-bis» below.
+The CUP news was rewritten (the second needle in `check_bundle_strings.mjs`
+replaced the 0.9.22 one); `main.js` changed through the news string only.
 
 **0.9.22 (2026-11-14, P6): the agent in the bot — RELEASED.** See «Agent in
 the bot — P6» below for the full map; the plugin version was bumped and the CUP
@@ -433,11 +437,11 @@ docker run --rm --network sbe-offers_offersnet \
   node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
 ```
 
-Expected on 0.9.20 (verified 2026-11-13): plugin `tsc` EXIT=0, `build` OK,
+Expected on 0.9.23 (verified 2026-11-14): plugin `tsc` EXIT=0, `build` OK,
 `check_bundle_strings` 0 missing, `check_marker_registry` OK,
-`check_docs_state` all OK, `go test` green, OpenAPI **110/110**, stand
-**444/0**. The bot's own suite: `typecheck` EXIT=0, **193 passing**; the App:
-`tsc` 0, **50 passing**.
+`check_docs_state` all OK, `go test` green, `check_agent_engine` green, OpenAPI
+**117/117**, stand **491/0**. The bot's own suite: `typecheck` EXIT=0, **202
+passing**; the App: `tsc` 0, **51 passing**.
 
 **After `npm run build` check the bundle with the script, never by eye.**
 esbuild escapes Cyrillic as `\uXXXX` in **uppercase** hex; searching lowercase
@@ -968,7 +972,7 @@ secrets verified equal in both containers, and a live `agent/list` call from the
 were all exercised live); week-long journal analysis is future work
 (`GET /api/offers/admin/agent-log`).
 
-### P6-bis — agent reads ANY note + competitor tools (DONE 2026-11-14, not released)
+### P6-bis — agent reads ANY note + competitor tools (RELEASED in 0.9.23, 2026-11-14)
 
 **Bot menu (same batch, user request 2026-11-14):** «✨ Создать новый документ»,
 «🤖 Помощник» and «❓ Справка» now stand in **one row** (`MAIN_KEYBOARD` in
@@ -1014,12 +1018,14 @@ of a battle sheet. A bare `material` tag is a material.
   `TestAgentRequestCarriesPathValue`. Stand section «Помощник (агент): карточки
   любого вида, конкуренты, листок, КП (P6-бис)» — real turns through the stub
   model. **491/0**, repeat runs green.
-- Checks: `gofmt`/`go vet`/`go test ./...` green; bot `tsc` 0 / 201; App `tsc`
+- Checks: `gofmt`/`go vet`/`go test ./...` green; bot `tsc` 0 / **202**; App `tsc`
   0 / 51; plugin `tsc` 0, `build` OK, `check_bundle_strings` 0,
   `check_marker_registry` OK, `check_docs_state` OK, OpenAPI 117/117,
   `check_agent_engine` green.
-- **Version not bumped, nothing deployed.** A release of this is server + bot
-  only (0.9.23 if the plugin news is worth it).
+- **Released as 0.9.23** (`backend` → `main`), deployed, self-hosted and in the
+  registry. The deploy run's gotchas (PowerShell heredoc, UTF-16LE redirect,
+  `kb-selfhost.sh` writing hashes to the DB) — `HANDOFF.md`, «Как выкладывать
+  выпуск».
 
 **Still P5b:** emails (`get_emails` / `read_email_pdf`) — `/internal/mailer/agent/*`
 routes do not exist yet (work in `sbe-mailer`).
