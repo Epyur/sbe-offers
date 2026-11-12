@@ -30,12 +30,11 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.20** — **NOT released yet** (prepared 2026-11-13).
-Previous release 0.9.18 converges on three points: `main` `c272a48`,
-self-hosted `e6406deb…` / `b24032e4…` / `a32ac3df…` (verified over https
-**and** in `/registry.json`), registry git copy `sbe-apstore-registry`
-`c0d3c14`. Work branch `backend` = `4705619` (last commit that changed code
-and the server folders; documentation-only commits follow it).
+Current version = **0.9.20** — **RELEASED 2026-11-13.** Three points converge:
+`main` `9144c17`, `backend` `584d733`, self-hosted `1f8a0276…` / `ea877e47…` /
+`a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
+`sbe-apstore-registry` `db6465b`. The bot was rebuilt and recreated on the
+server. `offers-service` did not change in this batch.
 
 **0.9.20 (2026-11-13, R2): one «Создать новый документ» button.** `🧾 Собрать
 КП` and `⚔️ Боевой листок` leave the menu (their captions stay in `routeMenu`
