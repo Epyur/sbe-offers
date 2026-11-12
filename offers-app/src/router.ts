@@ -14,7 +14,23 @@ export type Route =
 
 const EMPTY_HASH = '';
 
-/** `#/offer/12` → `{name:'offer', id:12}`; мусор → notFound, а не исключение. */
+/**
+ * Параметры, которые дописывает в хэш сам Telegram при открытии Mini App.
+ * Открывая приложение, платформа приклеивает к адресу `tgWebAppData`,
+ * `tgWebAppVersion`, `tgWebAppPlatform`, `tgWebAppThemeParams` — и без их
+ * отбрасывания маршрут не распознаётся: человек видит «Экран не найден»
+ * (живой дефект 2026-11-13, самый первый запуск).
+ */
+
+/**
+ * `#/offer/12` → `{name:'offer', id:12}`; мусор → notFound, а не исключение.
+ *
+ * Хэш приходит в двух видах:
+ *   - от бота: `#/offer/12`, `#/list/offers?q=…`;
+ *   - от Telegram: `#tgWebAppData=…&tgWebAppVersion=9.6` (маршрута нет —
+ *     открылся тот адрес, что задан кнопкой меню, то есть список).
+ * Поэтому сначала отбрасываем параметры платформы и берём путь.
+ */
 export function parseRoute(hash: string): Route {
   const raw = hash.trim();
   if (raw === EMPTY_HASH || raw === '#/' || raw === '#') {
@@ -22,7 +38,41 @@ export function parseRoute(hash: string): Route {
   }
 
   const withoutHash = raw.startsWith('#') ? raw.slice(1) : raw;
-  const [pathPart = '', searchPart = ''] = withoutHash.split('?');
+
+  // Хэш приходит в двух видах:
+  //   - от бота:      `/offer/12`, `/list/offers?q=мембрана`;
+  //   - от Telegram:  `tgWebAppData=…&tgWebAppVersion=9.6&tgWebAppPlatform=…`.
+  // Второй вид маршрута не содержит (кнопка меню ведёт на корень приложения),
+  // поэтому его параметры надо отбросить, а не разбирать как путь.
+  //
+  // Простой признак: маршрут всегда начинается с `/`, а параметры платформы
+  // идут парами `k=v`. Режем по `&` только когда первая часть — не маршрут.
+  const firstAmp = withoutHash.indexOf('&');
+  const firstSegment = firstAmp >= 0 ? withoutHash.slice(0, firstAmp) : withoutHash;
+  const looksLikeParams = !firstSegment.startsWith('/');
+
+  let pathPart = '';
+  let searchPart = '';
+
+  if (looksLikeParams) {
+    // Параметры Telegram: своего маршрута здесь нет. Возможен `startapp` —
+    // это единственное, что платформа несёт осмысленного (будущие ссылки).
+    const params = new URLSearchParams(withoutHash);
+    const startParam = params.get('tgWebAppStartParam') ?? '';
+    if (startParam.startsWith('/')) {
+      pathPart = startParam;
+    }
+  } else {
+    const queryAt = firstSegment.indexOf('?');
+    pathPart = queryAt >= 0 ? firstSegment.slice(0, queryAt) : firstSegment;
+    searchPart = queryAt >= 0 ? firstSegment.slice(queryAt + 1) : '';
+    // Остаток после `&` в обычном хэше — дополнительные параметры маршрута.
+    if (firstAmp >= 0) {
+      const rest = withoutHash.slice(firstAmp + 1);
+      searchPart = searchPart === '' ? rest : `${searchPart}&${rest}`;
+    }
+  }
+
   const parts = pathPart.split('/').filter((p) => p !== '');
 
   if (parts.length === 2 && parts[0] === 'list') {
@@ -38,6 +88,13 @@ export function parseRoute(hash: string): Route {
       if (parts[0] === 'offer') return { name: 'offer', id };
       if (parts[0] === 'sheet') return { name: 'sheet', id };
     }
+  }
+
+  // Хэш есть, но маршрута в нём нет: Telegram дописал только свои параметры
+  // (значит, открыли адрес кнопки меню без маршрута) — показываем список КП,
+  // а не «Экран не найден». Ошибкой остаётся только настоящий мусор в пути.
+  if (pathPart === '' && withoutHash !== '') {
+    return { name: 'list', kind: 'offers', query: '' };
   }
 
   return { name: 'notFound', hash: raw };

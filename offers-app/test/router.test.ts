@@ -53,3 +53,25 @@ test('база в адресе бота — путь /app-offers/ перед х�
   assert.equal(routeHash({ name: 'offer', id: 1 }, 'https://epyur.fvds.ru/app-offers/'), 'https://epyur.fvds.ru/app-offers/#/offer/1');
   assert.equal(routeHash({ name: 'offer', id: 1 }, 'https://epyur.fvds.ru/app-offers'), 'https://epyur.fvds.ru/app-offers/#/offer/1');
 });
+
+test('хэш от Telegram (tgWebAppData) не превращается в «экран не найден»', () => {
+  // Живой случай 2026-11-13: платформа дописывает в хэш свои параметры, и без
+  // их отбрасывания человек видел «Адрес не распознан» на самом первом экране.
+  const tg =
+    '#tgWebAppData=query_id%3DAAFe&tgWebAppVersion=9.6&tgWebAppPlatform=tdesktop';
+  assert.deepEqual(parseRoute(tg), { name: 'list', kind: 'offers', query: '' });
+  assert.notEqual(parseRoute(tg).name, 'notFound');
+});
+
+test('маршрут из startapp платформы уважается', () => {
+  const tg = '#tgWebAppData=abc&tgWebAppStartParam=%2Foffer%2F12&tgWebAppVersion=9.6';
+  assert.deepEqual(parseRoute(tg), { name: 'offer', id: 12 });
+});
+
+test('свой поиск в адресе от бота сохраняется', () => {
+  assert.deepEqual(parseRoute('#/list/offers?q=Строй'), {
+    name: 'list',
+    kind: 'offers',
+    query: 'Строй',
+  });
+});
