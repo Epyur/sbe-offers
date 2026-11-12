@@ -909,8 +909,8 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 
 | file | what |
 |---|---|
-| `agenttools.go` | tool schema, `objectSchema`/`argString`/`argInt`, `agentEnv` (email, chat, files, `Fixes`) |
-| `agenttools_impl.go` | the 9 tools; each wraps a real function (`suggestionsFor`, `liveSystemCard`, `assembleSystem`, `assembleMaterial`, `handleExportDocx`, `handleExportCombat`) |
+| `agenttools.go` | tool schema, `objectSchema`/`argString`/`argInt`/`argFloat`/`argBool`, `agentEnv` (email, chat, files, `Fixes`) |
+| `agenttools_impl.go` | the 13 tools; each wraps a real function (`suggestionsFor`, `readNoteCard`, `searchCompetitors`, `assembleSystem`, `assembleMaterial`, `createCombat`, `combatSide`, `handleExportDocx`, `handleExportCombat`) |
 | `agentloop.go` | the turn: model → `parseAgentTurn` → tool → observe → final; anti-loop, protocol retry, synthesis, journal write |
 | `agentprotocol.go` | JSON-turn parser (`final`/`tool_call`), fence/prose/truncation tolerant |
 | `agentprompt.go` | system prompt (sets the JSON shape + “the tool is the boundary”) and transcript |
@@ -919,10 +919,12 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 | `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
 | `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
 
-**Tools in v1** (whitelist, `agentTools`): `get_our_products`, `read_card`,
-`get_documents`, `get_document_link`, `read_document_file`, `set_system`,
-`set_material`, `build_docx`, `build_combat_docx`. **Not** in v1: emails (P5b),
-YouGile, rules/skills/presentation, any write to YouGile.
+**Tools** (whitelist, `agentTools`; after P6-bis 2026-11-14 — 13):
+`get_our_products`, `read_card` (**any** note), `search_competitors`,
+`get_documents`, `get_document_link`, `read_document_file`, `create_offer`,
+`set_system`, `set_material`, `create_combat_sheet`, `set_combat_side`,
+`build_docx`, `build_combat_docx`. **Not** in the list: emails (P5b — the routes
+do not exist), YouGile, rules/skills/presentation, any write to YouGile.
 
 **Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
 (`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
@@ -966,7 +968,13 @@ secrets verified equal in both containers, and a live `agent/list` call from the
 were all exercised live); week-long journal analysis is future work
 (`GET /api/offers/admin/agent-log`).
 
-### P6-bis — agent reads ANY note + competitor tools (model AGREED 2026-11-14, code NOT started)
+### P6-bis — agent reads ANY note + competitor tools (DONE 2026-11-14, not released)
+
+**Bot menu (same batch, user request 2026-11-14):** «✨ Создать новый документ»,
+«🤖 Помощник» and «❓ Справка» now stand in **one row** (`MAIN_KEYBOARD` in
+`flow/build.ts`) — three equally-weighted entries, not three one-button rows.
+Guards: `appbutton.test.ts` «… стоят в ОДНОМ ряду» and the stand section that
+counts **buttons, not rows** (a row-level count broke on the compaction).
 
 Live defect (0.9.22): the bot said material cards (noteId 7547/6256/6260/7701/
 7703/7705) "do not open in the KB". **False** — they exist and read fine
@@ -978,17 +986,43 @@ depend on whether it is a system or a material** — that was a P6 model error.
 **Agreed model (user, 2026-11-14): one axis — a KB card is ANY `noteId`.**
 `read_card` reads any note (`KBClient.Note` + `ParseSystemCard`), no tag filter.
 The tag decides the ACTION, checked inside the tool (boundary), never in the
-prompt: `commercial_propose` without `material` → system (`set_system`, our side);
-`commercial_propose` + `material` → material (`set_material`, our side); `competitor`
-→ competitor side; any other tag → answer context / linked evidence if tied to a
-`commercial_propose` note.
+prompt. `cardRole` (`agenttools_impl.go`) maps tags to `system` / `material` /
+`competitor` / `other`, and the answer carries the role so the model picks the
+right tool. **`competitor` wins over every other tag** — a competitor note
+sometimes also carries `commercial_propose`, and it must never land on our side
+of a battle sheet. A bare `material` tag is a material.
 
-**New tools:** `read_card` rewritten (any note), `search_competitors` (wraps
-`searchCompetitors`), `create_combat_sheet` (`createCombat`), `set_combat_side`
-(`combatSide`). Existing document tools stay (filter `product_refs` in
-documents-service). **Emails = P5b**, not here: `/internal/mailer/agent/*` routes
-do not exist yet (work in `sbe-mailer`). Full plan and step order — `HANDOFF.md`,
-section «СЛЕДУЮЩИЙ ШАГ — P6-бис». Plugin unchanged (server + bot).
+**What was done (all `offers-service/` plus the stand; plugin untouched):**
+- `read_card` rewritten on `readNoteCard` (any note, image key attached, role in
+  the answer). Closes the LOGICROOF/ГЕОПРУФ complaint.
+- `search_competitors` (wraps `searchCompetitors`), `create_offer` (the same
+  INSERT as `handleBotCreateOffer` — the agent no longer dead-ends on
+  "предложение не найдено" without an id), `create_combat_sheet` (wraps
+  `createCombat`), `set_combat_side` (wraps `combatSide`). `combatSideRoleError`
+  refuses a material/system on the competitor side and a competitor on ours;
+  ownership is checked like `combatSheetForEditor`. Side writes go to
+  `offers_agent_log.manual_fix`.
+- **Defect the stand found and we fixed:** `build_docx`/`build_combat_docx`
+  never worked for a real document — `requestWith` did not set path values, so
+  `handleExportDocx` read an empty `{id}` and answered `invalid id`. Now
+  `requestWith` takes `pathValues` and calls `SetPathValue`; guard
+  `TestAgentRequestCarriesPathValue`.
+- The prompt teaches the tag roles and the two document paths (КП / battle
+  sheet, and that they can be combined).
+- Tests: `agent_test.go` — `TestAgentToolsAfterP6bis`, `TestCardRoleByTags`,
+  `TestCombatSideRoleBoundary`, `TestArgFloatAndBool`,
+  `TestAgentRequestCarriesPathValue`. Stand section «Помощник (агент): карточки
+  любого вида, конкуренты, листок, КП (P6-бис)» — real turns through the stub
+  model. **491/0**, repeat runs green.
+- Checks: `gofmt`/`go vet`/`go test ./...` green; bot `tsc` 0 / 201; App `tsc`
+  0 / 51; plugin `tsc` 0, `build` OK, `check_bundle_strings` 0,
+  `check_marker_registry` OK, `check_docs_state` OK, OpenAPI 117/117,
+  `check_agent_engine` green.
+- **Version not bumped, nothing deployed.** A release of this is server + bot
+  only (0.9.23 if the plugin news is worth it).
+
+**Still P5b:** emails (`get_emails` / `read_email_pdf`) — `/internal/mailer/agent/*`
+routes do not exist yet (work in `sbe-mailer`).
 
 ## Next iterations (backlog)
 

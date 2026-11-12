@@ -91,6 +91,51 @@ function reply(system, user) {
   // Первый ход — вызов поиска; второй (в транскрипте уже есть «Результат тула»)
   // — финальный ответ. Так стенд проходит настоящий цикл: инструмент вызван,
   // его результат вернулся модели, ход закончился текстом.
+  // Помощник КП: варианты разбираются РАНЬШЕ общего (2026-11-14, P6-бис).
+  // Общий адресат ниже отвечает всегда вызовом `get_our_products`, и пока он
+  // стоял первым, узкие сценарии до него не доходили — стенд звал поиск на
+  // «подбери аналог» и читал результат как «карточки нет».
+  //
+  // «Подбери аналог» — карточка материала (read_card по материалу — живой
+  // дефект 0.9.22) и поиск конкурентов.
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /подбери аналог/i.test(user)) {
+    if (/\[Результат тула read_card/.test(user)) {
+      return JSON.stringify({ type: 'tool_call', tool: 'search_competitors', arguments: { query: 'мембрана' } });
+    }
+    if (/\[Результат тула search_competitors/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'Карточка материала прочитана, конкуренты найдены.' });
+    }
+    return JSON.stringify({ type: 'tool_call', tool: 'read_card', arguments: { noteId: 103 } });
+  }
+  // Боевой листок — завести и положить наш продукт. Сторона берётся из ответа
+  // инструмента: первый ход `create_combat_sheet`, второй `set_combat_side`,
+  // третий `final`.
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /сравнение с конкурент/i.test(user)) {
+    if (/\[Результат тула set_combat_side/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'Листок заведён, наш продукт добавлен.' });
+    }
+    if (/\[Результат тула create_combat_sheet/.test(user)) {
+      const id = (user.match(/\(id (\d+)\)/) ?? [])[1] ?? '0';
+      return JSON.stringify({ type: 'tool_call', tool: 'set_combat_side', arguments: { sheetId: Number(id), noteId: 105, side: 'our' } });
+    }
+    return JSON.stringify({ type: 'tool_call', tool: 'create_combat_sheet', arguments: { title: 'Сравнение с конкурентами' } });
+  }
+  // Сценарий B: без открытого документа агент заводит КП сам и кладёт систему —
+  // раньше он упирался в «предложение не найдено».
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /собери кп/i.test(user)) {
+    if (/\[Результат тула set_system/.test(user)) {
+      const offerID = (user.match(/\(id (\d+)\)/) ?? [])[1] ?? '0';
+      return JSON.stringify({ type: 'tool_call', tool: 'build_docx', arguments: { offerId: Number(offerID) } });
+    }
+    if (/\[Результат тула create_offer/.test(user)) {
+      const id = (user.match(/\(id (\d+)\)/) ?? [])[1] ?? '0';
+      return JSON.stringify({ type: 'tool_call', tool: 'set_system', arguments: { offerId: Number(id), noteId: 105 } });
+    }
+    if (/\[Результат тула build_docx/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'КП собрано: система добавлена, документ готов.' });
+    }
+    return JSON.stringify({ type: 'tool_call', tool: 'create_offer', arguments: { clientName: 'ООО «Тест»' } });
+  }
   if (/Ты — помощник менеджера отдела продаж/.test(system)) {
     if (/\[Результат тула /.test(user)) {
       return JSON.stringify({ type: 'final', text: 'Нашёл в Базе знаний, что можно предложить.' });
