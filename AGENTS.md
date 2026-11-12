@@ -30,11 +30,45 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.20** — **RELEASED 2026-11-13.** Three points converge:
+Current version = **0.9.21** — **RELEASED 2026-11-13.** Three points converge:
 `main` `9144c17`, `backend` `584d733`, self-hosted `1f8a0276…` / `ea877e47…` /
 `a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
 `sbe-apstore-registry` `db6465b`. The bot was rebuilt and recreated on the
-server. `offers-service` did not change in this batch.
+server. `offers-service` did not change in that batch.
+
+**0.9.21 (2026-11-13, R3): materials as offer objects — RELEASED.**
+A material can now be offered by DESCRIPTION, like a system (user decision
+§3 of the plan): the offer gets its text and links, never a price. Model:
+`model.Ref` is the single `{sku, noteId}` pair; `OfferSystems` and
+`OfferMaterials` are two named `RefList`s over it, so the merge rule exists
+once (`Add`/`Remove`/`Same`/JSON tolerance to the old object shape).
+- DB: `offers_offer.material_choice JSONB NOT NULL DEFAULT '[]'`; every write
+  moves `updated_at`, reads are `RFC3339Nano`. A full save (`PUT /offers/{id}`)
+  does NOT clear it — the same "empty means untouched" rule as `system_choice`.
+- Routes: `POST/DELETE /offers/{id}/material` (JWT `editor`) and the bot twins
+  `POST/DELETE /bot/offers/{id}/material` (service secret + `chat_id`).
+  `assembleMaterial`/`removeMaterial` live in `material_notes.go`.
+- **Removal accepts either key.** The stored choice carries BOTH `sku` and
+  `noteId` (the server writes both on add), while `Same` compares by SKU when
+  the SKU is non-empty — so a delete by note id did not match its own row.
+  `resolveMaterialChoice` fills the missing half before `Remove`. Found by the
+  stand, not by the unit test.
+- Text: ONE block, `material.description`, stored in the SAME
+  `offers_system_text` table (the table is "texts by note and block"). Second
+  table for one block would be one rule in two places.
+- Document: block `repeat: "materials"` now prints the CHOSEN materials
+  (title/description/links) when the offer has any, and falls back to positions
+  for older offers. **One placeholder** — which list a marker iterates over
+  comes from the block's `repeat`, not from the marker name (user decision:
+  a second marker would split the single master layout).
+- Print contexts: `layoutContext.materialCards` (list) and
+  `renderCtx.chosenMaterial` (the current pass's card) — the block-form path
+  must carry the row's material or `{{материал}}` inside the block prints the
+  offer's first position.
+- Plugin: `Offer.materials`, `addMaterial`/`removeMaterial` (the shared
+  `writeRef` replaces `writeSystem`), card «Материалы в предложении
+  (описанием)» next to «Материал в позиции» (the labels differ on purpose).
+- App: «Материалы (описанием)» zone with its own search (`/materials/search`).
 
 **0.9.20 (2026-11-13, R2): one «Создать новый документ» button.** `🧾 Собрать
 КП` and `⚔️ Боевой листок` leave the menu (their captions stay in `routeMenu`
@@ -134,6 +168,11 @@ renamed accordingly.
   conversation with `items: []` (the REST path still refuses an empty offer).
   Chosen systems live in `system_choice` JSONB as a **list** (`Offer.systems`,
   order of choice); the old single-object shape is still read.
+  **Chosen materials** live in `material_choice` JSONB under the same shape
+  (`Offer.materials`, 2026-11-13): a material offered by DESCRIPTION, not a
+  priced row. Adding one never creates a position; priced rows keep coming from
+  the composition table (the editor's «Материал в позиции» and the manager's
+  Excel). «Материалы в предложении (описанием)» is the object list.
 - **Telegram bot** — sign-in by e-mail and code. "Собрать КП" starts with
   context (object → addressee → deal → systems → terms), then positions. A file
   may be sent at any step. `система <название>` adds a system, never positions.
@@ -830,7 +869,8 @@ Ordered by what will bite the commercial department soonest.
 11. **Data work, not code:** `SKU` for materials synced from KB is meaningless
     (`MAT-ПРОЧ-ОБЩ-NNNN`); ~1273 composition lines still have no `[[link]]`.
 12. **`{{система}}` inside a `repeat: "materials"` block** is not supported; the
-    material repeat prints one position per pass.
+    material repeat prints the chosen material's title (2026-11-13), and positions
+    only for offers that have no chosen materials.
 13. **A prompt table still costs one model call** in some layout paths —
     `layoutTableFor` builds tables from data, verify no call happens first.
 14. **`sbe-kb/src/services/hash.ts`** is a second copy of

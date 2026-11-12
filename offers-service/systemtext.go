@@ -34,6 +34,23 @@ const (
 // systemTextBlocks — порядок блоков: тот же, что у печати документа.
 var systemTextBlocks = []string{systemTextDescription, systemTextAdvantages}
 
+// materialTextBlock — единственный блок текста МАТЕРИАЛА (2026-11-13).
+//
+// У материала просим только описание: «обоснование применения системы» про
+// отдельную плёнку звучит как реклама, а преимущества пересказывают
+// характеристики, которые и так есть в карточке. Блок хранится в ТОЙ ЖЕ
+// таблице `offers_system_text` под ключом `material.description`: таблица —
+// «тексты по заметке и блоку», и заводить вторую ради одного блока значило бы
+// держать одно правило в двух местах.
+const materialTextBlock = "material.description"
+
+// materialTextInstruction — что просим у модели для описания материала.
+var materialTextInstruction = map[string]string{
+	materialTextBlock: "Описание материала для коммерческого предложения: что это, где применяется, " +
+		"какие задачи объекта решает и чем важно для выбранного решения. Не менее 900 знаков, " +
+		"только по фактам карточки и брифа, ничего не выдумывая.",
+}
+
 // systemTextInstruction — что просим у модели для блока.
 //
 // Текст инструкции — часть КОНТРАКТА хранения: от него считается хеш, которым
@@ -83,6 +100,11 @@ func systemCardHash(card SystemCard) string {
 // сама инструкция. Инструкция тоже меняет текст — значит, входит в свежесть.
 func systemTextHash(card SystemCard, block string) string {
 	return hashShort(systemCardHash(card) + "\x1fv2\x1f" + systemTextInstruction[block])
+}
+
+// materialTextHash — то же для описания материала: своя инструкция, свой блок.
+func materialTextHash(card SystemCard) string {
+	return hashShort(systemCardHash(card) + "\x1fv2\x1f" + materialTextInstruction[materialTextBlock])
 }
 
 // storedSystemTexts — тексты, которые уже есть у систем предложения.
@@ -229,6 +251,51 @@ func (s *Server) reconcileSystemTexts(ctx context.Context, offer Offer, card Sys
 // recalculateSystem кнопка «Пересчитать тексты системы»: переписать оба блока.
 func (s *Server) recalculateSystem(ctx context.Context, offer Offer, card SystemCard) (map[string]string, []string) {
 	return s.generateSystemTexts(ctx, offer, card, true)
+}
+
+// reconcileMaterialTexts — описание выбранного материала; пустое дописывается.
+//
+// Ошибка модели не роняет выбор: материал уже сохранён, а описание просто
+// останется пустым (то же правило, что у системы).
+func (s *Server) reconcileMaterialTexts(ctx context.Context, offer Offer, card SystemCard) (string, []string) {
+	if _, ok := s.storedSystemTexts(ctx, []int64{card.NoteID})[card.NoteID][materialTextBlock]; ok {
+		if existing := s.storedTextsOfBlock(ctx, card, materialTextBlock); existing != "" {
+			return existing, nil
+		}
+	}
+	text, wrote := s.writeAndStoreMaterialText(ctx, offer, card)
+	if !wrote {
+		return "", []string{materialTextBlock}
+	}
+	return text, nil
+}
+
+// writeAndStoreMaterialText — описание материала: модель, затем запись.
+func (s *Server) writeAndStoreMaterialText(ctx context.Context, offer Offer, card SystemCard) (string, bool) {
+	instruction := materialTextInstruction[materialTextBlock]
+	started := time.Now()
+	raw, err := writeSystemText(ctx, instruction, offer, card, card.Refs)
+	logModelCall("material:"+materialTextBlock, fmt.Sprintf("note=%d", card.NoteID), len(instruction), started, err)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return "", false
+	}
+	if err := s.saveSystemText(ctx, SystemText{
+		NoteID: card.NoteID, Block: materialTextBlock, Text: raw, Hash: materialTextHash(card),
+	}); err != nil {
+		log.Printf("материал: описание заметки %d не записано: %v", card.NoteID, err)
+		return "", false
+	}
+	return raw, true
+}
+
+// storedTextsOfBlock — уже сохранённый текст одного блока материала.
+func (s *Server) storedTextsOfBlock(ctx context.Context, card SystemCard, block string) string {
+	stored := s.storedSystemTexts(ctx, []int64{card.NoteID})[card.NoteID]
+	item, ok := stored[block]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(item.Text)
 }
 
 // storedTextsOf — уже сохранённые тексты одной системы.

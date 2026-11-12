@@ -139,6 +139,11 @@ export interface Offer {
    * Сервер отдаёт массив; старые КП с одной системой читаются так же.
    */
   systems?: OfferSystem[];
+  /**
+   * Материалы, предложенные описанием (2026-11-13). Позиций они не добавляют:
+   * в документ идут описание и ссылки. Пусто — ни один не выбран.
+   */
+  materials?: OfferMaterial[];
   total: number;
   status: 'draft' | 'final';
   docxKey: string;
@@ -332,6 +337,25 @@ export interface ComposeSystemResponse {
   /** Тексты, написанные при выборе системы (2026-11-06). */
   texts?: Record<string, string>;
   /** Какие блоки модель не написала: выбор при этом сохранён. */
+  missing?: string[];
+}
+
+/**
+ * Выбранный материал-объект предложения (2026-11-13).
+ *
+ * Форма та же, что у системы: материал предлагается ОПИСАНИЕМ, а не позицией.
+ * Цена и количество заводятся отдельно, в таблице состава.
+ */
+export type OfferMaterial = OfferSystem;
+
+/** Ответ выбора материала: какая карточка выбрана и её описание. */
+export interface ComposeMaterialResponse {
+  offer: Offer;
+  /** Карточка выбранного материала: название, описание, ссылки. */
+  material: SystemCard;
+  title: string;
+  /** Описание материала, написанное при выборе (`material.description`). */
+  texts?: Record<string, string>;
   missing?: string[];
 }
 

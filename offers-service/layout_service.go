@@ -38,6 +38,11 @@ type layoutServiceRow struct {
 	system *SystemCard
 	// material — номер позиции повтора (1-based); 0 — не повтор по материалам.
 	material int
+	// chosenMaterial — материал, предложенный ОПИСАНИЕМ (2026-11-13). Это не
+	// позиция: у него нет цены, и в документ идёт его текст и ссылки. Печать
+	// выбирает источник повтора, а не имя метки (у блока `repeat:"materials"`
+	// ОДИН плейсхолдер).
+	chosenMaterial *SystemCard
 	// viaBlock — печать идёт внутри блока формы: метка отдаёт ТЕКСТ, а не
 	// разметку пункта (узел абзаца сам её не примет).
 	viaBlock bool
@@ -76,6 +81,19 @@ func renderLayoutService(token layoutToken, lc layoutContext, row layoutServiceR
 // даёт строку для каждой позиции. Без повтора печатается первая позиция —
 // как и у системы.
 func renderLayoutMaterial(lc layoutContext, row layoutServiceRow) string {
+	if row.chosenMaterial != nil {
+		// Повтор по ВЫБРАННЫМ материалам (2026-11-13): метка печатает название
+		// материала прохода. Что печатает метка, решает источник повтора, а не
+		// её имя: у блока с repeat один плейсхолдер.
+		name := strings.TrimSpace(row.chosenMaterial.Title)
+		if name == "" {
+			return ""
+		}
+		if row.viaBlock {
+			return name
+		}
+		return listItemXMLOpts(name, paraOpts{})
+	}
 	idx := row.material
 	if idx <= 0 {
 		idx = 1
@@ -149,6 +167,12 @@ func renderLayoutBlockWith(block Block, lc layoutContext, row layoutServiceRow) 
 		rc.offer.Items = []OfferItem{lc.offer.Items[row.material-1]}
 		rc.materialIndex = row.material
 	}
+	if row.chosenMaterial != nil {
+		// Повтор по ВЫБРАННЫМ материалам (2026-11-13): метка `{{материал}}` и
+		// метки карточки внутри блока берут материал прохода.
+		card := *row.chosenMaterial
+		rc.chosenMaterial = &card
+	}
 	content, err := renderBlockContentCtx(block, rc)
 	if err != nil {
 		log.Printf("макет: блок %q не напечатан: %v", block.ID, err)
@@ -202,16 +226,26 @@ func findFormBlock(blocks []Block, id string) (Block, bool) {
 // причины.
 func (lc layoutContext) renderCtx() renderCtx {
 	return renderCtx{
-		values:      lc.values,
-		service:     lc.service,
-		offer:       lc.offer,
-		refs:        lc.refs,
+		values:  lc.values,
+		service: lc.service,
+		offer:   lc.offer,
+		refs:    lc.refs,
+		// Карточки систем обязаны ехать в блок (2026-11-13, найден стендом):
+		// макет с блоком формы, внутри которого стоит {{система}} или
+		// {{текст: система: …}}, печатал пустой абзац — контекст блока их не
+		// знал, хотя в самом макете те же метки печатались.
 		cards:       lc.cardList(),
 		images:      lc.images,
 		media:       lc.media(),
 		numbering:   lc.numberingPlan(),
 		systemTexts: lc.systemTexts,
 		selection:   lc.selectionHandle(),
+		// Карточки материалов-объектов: метки карточки, напечатанные внутри
+		// блока формы (`{{система}}`, `{{ссылки}}`, `{{текст}}`), обязаны знать
+		// выбранные материалы (2026-11-13). Без этой строки макет с блоком
+		// печатал ссылки только систем, а материал, выбранный описанием, в
+		// блоке пропадал — и документ терял ссылки на его документы.
+		materialCards: lc.materialList(),
 		// Ссылки, напечатанные меткой внутри блока, должны попасть в тот же
 		// сборщик, что и отношения всего документа (2026-11-09).
 		layoutRuntime: lc.layout,
@@ -224,6 +258,14 @@ func (lc layoutContext) cardList() []SystemCard {
 		return nil
 	}
 	return lc.cards()
+}
+
+// materialList — карточки материалов-объектов, если они переданы.
+func (lc layoutContext) materialList() []SystemCard {
+	if lc.materialCards == nil {
+		return nil
+	}
+	return lc.materialCards()
 }
 
 // media — сборщик картинок текущей сборки.
@@ -244,14 +286,22 @@ func (lc layoutContext) numberingPlan() *numberingPlan {
 
 // layoutRowCard — карточка, которую печатает метка.
 //
-// Повтор передаёт свою систему явно (шаг D); без повтора берётся первая
-// выбранная — та же, что печаталась до появления повторов.
+// Повтор передаёт свою систему явно (шаг D); материал, предложенный описанием,
+// приходит своей карточкой (2026-11-13). Без повтора берётся первая выбранная
+// система — та же, что печаталась до появления повторов; если систем нет, а
+// материалы есть, берётся первый материал.
 func layoutRowCard(lc layoutContext, row layoutServiceRow) (SystemCard, bool) {
+	if row.chosenMaterial != nil {
+		return *row.chosenMaterial, true
+	}
 	if row.system != nil {
 		return *row.system, true
 	}
 	cards := cardsForOffer(lc.cardList(), lc.offer)
 	if len(cards) == 0 {
+		if materials := lc.materialList(); len(materials) > 0 {
+			return materials[0], true
+		}
 		return SystemCard{}, false
 	}
 	return cards[0], true
@@ -532,6 +582,16 @@ func layoutRepeatRows(lc layoutContext, name string) ([]layoutServiceRow, int) {
 		}
 		return rows, 0
 	case blockRepeatMaterials:
+		// Материал-объект важнее позиции (2026-11-13): если в предложении
+		// выбраны материалы описанием, повтор печатает ИХ — с описанием и
+		// ссылками, без цены. Позиции остаются для старых КП, где материала
+		// как объекта нет вовсе (`AGENTS.md`, бэклог п. 12).
+		if chosen := lc.materialList(); len(chosen) > 0 {
+			for i := range chosen {
+				rows = append(rows, layoutServiceRow{chosenMaterial: &chosen[i]})
+			}
+			return rows, 0
+		}
 		total := len(lc.offer.Items)
 		count := total
 		if count > layoutMaterialRepeatLimit {

@@ -12,6 +12,7 @@ import type {
   CombatSheet,
   CompetitorsResponse,
   ComposeSystemResponse,
+  ComposeMaterialResponse,
   Material,
   MaterialSearchItem,
   Offer,
@@ -576,7 +577,7 @@ export class OffersService {
    * обоснование и ссылки, а состав с ценами менеджер заводит сам.
    */
   async addSystem(offerId: number, choice: string): Promise<ComposeSystemResponse> {
-    return this.writeSystem(offerId, choice, 'POST');
+    return this.writeRef<ComposeSystemResponse>(offerId, choice, 'POST', 'system');
   }
 
   /**
@@ -586,31 +587,48 @@ export class OffersService {
    * систему, которой больше нет в Базе знаний: сервер такую не ищет.
    */
   async removeSystem(offerId: number, choice: string): Promise<ComposeSystemResponse> {
-    return this.writeSystem(offerId, choice, 'DELETE');
+    return this.writeRef<ComposeSystemResponse>(offerId, choice, 'DELETE', 'system');
   }
 
   /**
-   * Разбор хэндла системы — одна точка на добавление и удаление.
+   * Выбрать материал в предложение ОПИСАНИЕМ (2026-11-13).
+   *
+   * Материал, как и система, — объект предложения: в документ идут его описание
+   * и ссылки. Позицией он становится только через «Материал в позиции», и это
+   * отдельный выбор — подписи в карточке говорят, какой из них какой.
+   */
+  async addMaterial(offerId: number, choice: string): Promise<ComposeMaterialResponse> {
+    return this.writeRef<ComposeMaterialResponse>(offerId, choice, 'POST', 'material');
+  }
+
+  /** Убрать материал из предложения (2026-11-13). Позиции не трогает. */
+  async removeMaterial(offerId: number, choice: string): Promise<ComposeMaterialResponse> {
+    return this.writeRef<ComposeMaterialResponse>(offerId, choice, 'DELETE', 'material');
+  }
+
+  /**
+   * Разбор хэндла — одна точка на системы и материалы, добавление и удаление.
    *
    * `sys-<noteId>` — заметка, остальное — код. Держать это дважды значило бы
    * разойтись в правиле: у живых карточек кода нет вовсе (2026-11-02).
    */
-  private async writeSystem(
+  private async writeRef<T>(
     offerId: number,
     choice: string,
     method: 'POST' | 'DELETE',
-  ): Promise<ComposeSystemResponse> {
+    kind: 'system' | 'material',
+  ): Promise<T> {
     const note = /^sys-(\d+)$/.exec(choice.trim());
     const body = note ? { noteId: Number(note[1]) } : { sku: choice.trim() };
-    // Выбор системы ДОЛГО ждёт ответа: модель пишет её тексты один раз
-    // (2026-11-06). Общий 20-секундный предел обрывал бы именно этот вызов.
+    // Выбор ДОЛГО ждёт ответа: модель пишет тексты один раз (2026-11-06).
+    // Общий 20-секундный предел обрывал бы именно этот вызов.
     if (method === 'DELETE') {
-      return this.request<ComposeSystemResponse>(method, `/offers/${offerId}/system`, body);
+      return this.request<T>(method, `/offers/${offerId}/${kind}`, body);
     }
     return this.withTokenRetry(async (token) => {
       const res = await withTimeout(
         requestUrl({
-          url: `${this.base()}/api/offers/offers/${offerId}/system`,
+          url: `${this.base()}/api/offers/offers/${offerId}/${kind}`,
           method,
           headers: {
             'Content-Type': 'application/json',
@@ -620,13 +638,13 @@ export class OffersService {
           throw: false,
         }),
         LONG_TIMEOUT_MS,
-        'Тексты системы не закончили писаться: сервер не ответил за 5 минут.',
+        'Тексты не закончили писаться: сервер не ответил за 5 минут.',
       );
       if (res.status === 401) throw new OffersError('unauthorized', 401);
       if (res.status < 200 || res.status >= 300) {
         throw new OffersError(this.extractError(res.text, res.status), res.status);
       }
-      return JSON.parse(res.text) as ComposeSystemResponse;
+      return JSON.parse(res.text) as T;
     });
   }
 

@@ -70,6 +70,12 @@ func main() {
 	if err := s.migrate(ctx); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+	// Колонка material_choice появилась 2026-11-13, но вживую лучше не тянуть
+	// полотно в первом же запросе: заполняем пустые значения сразу при старте.
+	if _, err := pool.Exec(ctx,
+		`UPDATE offers_offer SET material_choice = '[]' WHERE material_choice IS NULL`); err != nil {
+		log.Printf("material_choice: пустые значения не заполнены: %v", err)
+	}
 	if err := s.seedForms(ctx); err != nil {
 		log.Fatalf("seedForms: %v", err)
 	}
@@ -141,6 +147,10 @@ func main() {
 	// позиции знает только он (вилка из таблиц менеджера), а не клиент.
 	mux.HandleFunc("POST /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleAddSystem))
 	mux.HandleFunc("DELETE /api/offers/offers/{id}/system", s.requirePerm("editor")(s.handleRemoveSystem))
+	// Материал как объект предложения (2026-11-13): в документ попадают его
+	// описание и ссылки, а не цена. Позицию он даёт только через состав.
+	mux.HandleFunc("POST /api/offers/offers/{id}/material", s.requirePerm("editor")(s.handleAddMaterial))
+	mux.HandleFunc("DELETE /api/offers/offers/{id}/material", s.requirePerm("editor")(s.handleRemoveMaterial))
 	// Тексты системы (2026-11-06, шаг B): модель пишет их ОДИН РАЗ при выборе
 	// системы, а сборка документа только вставляет готовое. Путь «по заметке»
 	// позволяет пересчитать текст, когда карточка Базы знаний изменилась.
@@ -254,6 +264,10 @@ func main() {
 	// дописывается позициями. Правило состава то же, что у плагина.
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/system", s.requireServiceSecret(s.handleBotAddSystem))
 	mux.HandleFunc("DELETE /api/offers/bot/offers/{id}/system", s.requireServiceSecret(s.handleBotRemoveSystem))
+	// Материал как объект предложения в боте (2026-11-13): та же ручка, другой
+	// вход — секрет сервиса и chat_id вместо JWT.
+	mux.HandleFunc("POST /api/offers/bot/offers/{id}/material", s.requireServiceSecret(s.handleBotAddMaterial))
+	mux.HandleFunc("DELETE /api/offers/bot/offers/{id}/material", s.requireServiceSecret(s.handleBotRemoveMaterial))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/docx", s.requireServiceSecret(s.handleBotDocx))
 	mux.HandleFunc("POST /api/offers/bot/offers/{id}/link", s.requireServiceSecret(s.handleBotOfferLink))
 	// Бриф-диалог (2026-10-29): вопросы менеджеру и текст секций пишет
@@ -403,6 +417,10 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		// form_values: по ней печатаются описание и ссылки, и её же читает
 		// раздел «Системы». Пустой JSON — система не выбрана.
 		`ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS system_choice JSONB NOT NULL DEFAULT '{}'`,
+		// Материалы, предложенные описанием (2026-11-13). Отдельная колонка, а
+		// не позиция в items: выбор материала не добавляет цену, он даёт текст
+		// в документ. Форма та же, что у system_choice (`[{sku,noteId}]`).
+		`ALTER TABLE offers_offer ADD COLUMN IF NOT EXISTS material_choice JSONB NOT NULL DEFAULT '[]'`,
 		// Токен Telegram-бота — ОДИН хозяин (2026-10-29): до этой правки он
 		// приходил из TELEGRAM_BOT_TOKEN окружения, и в соседнем portal-embed
 		// именно второй источник полтора суток слал чужим ботом. Пустая строка —

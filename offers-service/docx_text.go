@@ -94,8 +94,7 @@ func systemCacheHandle(card SystemCard) string {
 	return "0"
 }
 
-// cardsForOffer — карточки систем, о которых говорится в предложении.
-//
+// cardsForOffer — карточки систем, о которых говорится в предложении.//
 // Основание — сам факт выбора системы, а не совпадение названий позиций
 // (2026-11-03). До этого карточка попадала в КП, только если какой-то её
 // материал нашёлся среди позиций; система, выбранная ради обоснования, в
@@ -137,6 +136,41 @@ func containsCard(cards []SystemCard, card SystemCard) bool {
 		}
 	}
 	return false
+}
+
+// materialsForOffer — карточки материалов, которые предложены ОПИСАНИЕМ
+// (2026-11-13).
+//
+// Источник — справочник материалов (`GET /materials`) плюс заметка Базы знаний:
+// карточка материала для печати та же, что у системы, — название, описание,
+// ссылки. Материал ищется по заметке, а при её отсутствии по коду: код у
+// материала серверный (MAT-…), и в живых предложениях есть и то, и другое.
+func materialsForOffer(materialCards []SystemCard, chosen RefList) []SystemCard {
+	if len(chosen) == 0 {
+		return nil
+	}
+	out := make([]SystemCard, 0, len(chosen))
+	for _, ref := range chosen {
+		for _, card := range materialCards {
+			if !sameRefCard(ref, card) {
+				continue
+			}
+			if !containsCard(out, card) {
+				out = append(out, card)
+			}
+			break
+		}
+	}
+	return out
+}
+
+// sameRefCard — выбранная карточка и карточка справочника — одно и то же.
+func sameRefCard(ref Ref, card SystemCard) bool {
+	if ref.NoteID > 0 && card.NoteID == ref.NoteID {
+		return true
+	}
+	sku := strings.ToUpper(strings.TrimSpace(ref.SKU))
+	return sku != "" && strings.ToUpper(strings.TrimSpace(card.SKU)) == sku
 }
 
 // normalizeItemName — название для сравнения: регистр, ё и пробелы.

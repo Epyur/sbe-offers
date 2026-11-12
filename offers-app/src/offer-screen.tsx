@@ -11,7 +11,9 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { ApiError } from './api.ts';
 import {
+  addMaterial,
   addSystem,
+  chosenMaterials,
   chosenSystems,
   clientChanged,
   draftToItem,
@@ -23,10 +25,12 @@ import {
   loadOffer,
   loadSystemCatalog,
   money,
+  removeMaterial,
   removeSystem,
   rowSum,
   saveClient,
   saveItems,
+  searchMaterials,
   searchSystems,
   type ChosenSystem,
   type ItemDraft,
@@ -148,6 +152,20 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
         onSave={(drafts) =>
           apply(() => saveItems(id, drafts.map(draftToItem)), 'Позиции сохранены.')
         }
+      />
+
+      <MaterialsZone
+        offer={offer}
+        busy={busy}
+        onAdd={(material) => {
+          apply(
+            async () => (await addMaterial(id, material)).offer,
+            `Материал «${material.title}» добавлен описанием.`,
+          );
+        }}
+        onRemove={(material) => {
+          apply(async () => (await removeMaterial(id, material)).offer, 'Материал убран.');
+        }}
       />
 
       <SectionsZone id={id} />
@@ -437,6 +455,138 @@ function ItemsZone({
       </div>
       {problem === '' ? null : <p className="app-error-text">{problem}</p>}
       <p className="app-muted">Итог: {money(draftTotal(drafts))} ₽ (считает сервер при сохранении)</p>
+    </div>
+  );
+}
+
+/**
+ * Материалы-объекты предложения (2026-11-13, R3).
+ *
+ * Материал здесь попадает в документ ОПИСАНИЕМ, а не строкой с ценой. Подпись
+ * говорит это дословно: рядом находятся позиции, и человек должен понимать
+ * разницу до нажатия. Поиск тот же, что у выбора материала в позиции.
+ */
+function MaterialsZone({
+  offer,
+  busy,
+  onAdd,
+  onRemove,
+}: {
+  offer: OfferDto;
+  busy: boolean;
+  onAdd: (material: ChosenSystem) => void;
+  onRemove: (material: ChosenSystem) => void;
+}): JSX.Element {
+  const chosen = chosenMaterials(offer);
+  return (
+    <div className="app-card">
+      <h2 className="app-h2">Материалы (описанием)</h2>
+      {chosen.length === 0 ? (
+        <p className="app-muted">
+          Материалов описанием нет: в документ идут их описание и ссылки, а цена — только в позициях.
+        </p>
+      ) : (
+        <ul className="app-chips">
+          {chosen.map((material) => (
+            <li className="app-chip" key={`${material.sku}:${material.noteId}`}>
+              <span>{material.title}</span>
+              <button
+                className="app-chip-x"
+                type="button"
+                aria-label={`Убрать материал ${material.title}`}
+                disabled={busy}
+                onClick={() => onRemove(material)}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <MaterialSearch busy={busy} chosen={chosen} onPick={onAdd} />
+      <p className="app-muted">
+        Выбор материала описанием не добавляет позицию — цена и количество вводятся в таблице.
+      </p>
+    </div>
+  );
+}
+
+function MaterialSearch({
+  busy,
+  chosen,
+  onPick,
+}: {
+  busy: boolean;
+  chosen: ChosenSystem[];
+  onPick: (material: ChosenSystem) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [found, setFound] = useState<Array<{ noteId: number; sku?: string; name: string }>>([]);
+  const [hint, setHint] = useState('');
+
+  useEffect(() => {
+    if (query.trim() === '') {
+      setFound([]);
+      setHint('');
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      searchMaterials(query)
+        .then((res) => {
+          if (!alive) return;
+          setFound(res.items ?? []);
+          setHint(res.error ?? '');
+        })
+        .catch((e: unknown) => {
+          if (alive) {
+            setFound([]);
+            setHint(errorText(e));
+          }
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  const taken = new Set(chosen.map((c) => `${c.sku.toUpperCase()}:${c.noteId}`));
+  return (
+    <div className="app-search-block">
+      <input
+        className="app-input"
+        type="search"
+        value={query}
+        placeholder="Найти материал для предложения"
+        aria-label="Поиск материала"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {hint === '' ? null : <p className="app-muted">{hint}</p>}
+      {found.length === 0 ? null : (
+        <ul className="app-results">
+          {found.map((item) => {
+            const key = `${(item.sku ?? '').toUpperCase()}:${item.noteId}`;
+            const isTaken = taken.has(key);
+            return (
+              <li key={key}>
+                <button
+                  className="app-result"
+                  type="button"
+                  disabled={busy || isTaken}
+                  onClick={() => {
+                    onPick({ sku: item.sku ?? '', noteId: item.noteId, title: item.name });
+                    setQuery('');
+                  }}
+                >
+                  <span>{item.name}</span>
+                  <span className="app-muted">{isTaken ? 'уже выбран' : 'добавить'}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

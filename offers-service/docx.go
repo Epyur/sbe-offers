@@ -431,9 +431,16 @@ type renderCtx struct {
 	offer   Offer
 	refs    []skills.CardRef
 	// cards — карточки систем предложения: нужны узлу сравнения.
-	cards  []SystemCard
-	images ImageSource
-	media  *docxMedia
+	cards []SystemCard
+	// materialCards — карточки материалов, предложенных ОПИСАНИЕМ
+	// (2026-11-13): повтор `repeat:"materials"` печатает их, а не позиции.
+	materialCards []SystemCard
+	// chosenMaterial — материал текущего прохода повтора по материалам
+	// (2026-11-13). Внутри блока формы метка `{{материал}}` берёт его, а не
+	// позицию предложения; nil — прохода нет.
+	chosenMaterial *SystemCard
+	images         ImageSource
+	media          *docxMedia
 	// layoutRuntime — состояние сборки по макету (сборщик картинок, нумерация
 	// и собранные ссылки). Общий указатель с внешним контекстом печати: иначе
 	// ссылки, напечатанные меткой внутри блока формы, попадали бы в тело, а их
@@ -628,6 +635,9 @@ func (rc renderCtx) layoutContext() layoutContext {
 		systemText: rc.systemText,
 		cards:      func() []SystemCard { return rc.cards },
 		images:     rc.images,
+		// Карточки материалов-объектов (2026-11-13): повтор
+		// `repeat:"materials"` печатает их описанием, а не позициями.
+		materialCards: func() []SystemCard { return rc.materialCards },
 	}
 	// Сборщик картинок обязан доехать до метки системы: без него
 	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке
@@ -645,11 +655,15 @@ func (rc renderCtx) layoutContext() layoutContext {
 }
 
 // serviceRow — проход повтора: своя система или своя позиция.
+//
+// Материал-объект прохода тоже едет сюда: внутри повтора по материалам блок
+// обязан печатать СВОЙ материал, а не первую систему предложения.
 func (rc renderCtx) serviceRow() layoutServiceRow {
 	row := layoutServiceRow{material: rc.materialIndex}
 	if rc.systemCard != nil {
 		row.system = rc.systemCard
 	}
+	row.chosenMaterial = rc.chosenMaterial
 	return row
 }
 
@@ -1347,10 +1361,15 @@ func splitTemplateBody(docXML string) (prefix, suffix string, err error) {
 		return "", "", fmt.Errorf("в шаблоне не найден <w:body>")
 	}
 	bodyContentStart := bodyOpen + len("<w:body>")
-	sectPr := strings.Index(docXML, "<w:sectPr")
-	if sectPr < bodyContentStart {
+	// sectPr ищем ПОСЛЕ начала тела. Раньше брался первый `<w:sectPr` во всём
+	// документе: у бланка он есть ещё в колонтитуле, и файл, где такие элементы
+	// идут до тела, обрезался почти целиком — документ выходил пустым
+	// (2026-11-13, стенд: 558 байт вместо 84 КБ).
+	sectPr := strings.Index(docXML[bodyContentStart:], "<w:sectPr")
+	if sectPr < 0 {
 		return "", "", fmt.Errorf("в шаблоне не найден <w:sectPr>")
 	}
+	sectPr += bodyContentStart
 	return docXML[:bodyContentStart], docXML[sectPr:], nil
 }
 

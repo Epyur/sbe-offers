@@ -20,6 +20,14 @@ type OfferItem = model.OfferItem
 type OfferClient = model.OfferClient
 type OfferSystem = model.OfferSystem
 type OfferSystems = model.OfferSystems
+type OfferMaterial = model.Ref
+type OfferMaterials = model.OfferMaterials
+
+// Ref — выбор карточки (система или материал): код и/или номер заметки.
+type Ref = model.Ref
+
+// RefList — общий список выбора (Add/Remove, терпимость к старому виду).
+type RefList = model.RefList
 
 // roundMoney округляет до копеек без двоичных хвостов (0.1+0.2). Множитель
 // 1000 снимает артефакт представления: 1.005 * 100 = 100.49999999999999,
@@ -101,13 +109,13 @@ FROM offers_offer WHERE number LIKE '%' || $1`, suffix).Scan(&maxNum)
 
 func (s *Server) loadOffer(ctx context.Context, id int64) (Offer, error) {
 	var offer Offer
-	var client, items, values, system []byte
+	var client, items, values, system, material []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT id, number, owner_email, client, items, form_values, system_choice, total, status, docx_key,
+SELECT id, number, owner_email, client, items, form_values, system_choice, material_choice, total, status, docx_key,
 	to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
 FROM offers_offer WHERE id = $1`, id).
-		Scan(&offer.ID, &offer.Number, &offer.OwnerEmail, &client, &items, &values, &system,
+		Scan(&offer.ID, &offer.Number, &offer.OwnerEmail, &client, &items, &values, &system, &material,
 			&offer.Total, &offer.Status, &offer.DocxKey, &offer.CreatedAt, &offer.UpdatedAt)
 	if err != nil {
 		return offer, err
@@ -115,6 +123,7 @@ FROM offers_offer WHERE id = $1`, id).
 	offer.Client = OfferClient{}
 	offer.Items = []OfferItem{}
 	offer.FormValues = map[string]string{}
+	offer.Materials = OfferMaterials{}
 	if len(client) > 0 {
 		_ = json.Unmarshal(client, &offer.Client)
 	}
@@ -126,6 +135,9 @@ FROM offers_offer WHERE id = $1`, id).
 	}
 	if len(system) > 0 {
 		_ = json.Unmarshal(system, &offer.Systems)
+	}
+	if len(material) > 0 {
+		_ = json.Unmarshal(material, &offer.Materials)
 	}
 	return offer, nil
 }
@@ -280,6 +292,11 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
 	}
+	materialJSON, err := json.Marshal(offer.Materials)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
 
 	var id int64
 	if raw := r.PathValue("id"); raw != "" {
@@ -302,14 +319,16 @@ func (s *Server) handleSaveOffer(w http.ResponseWriter, r *http.Request) {
 		// Пустой выбор в запросе не стирает сохранённый (2026-11-03): плагин и
 		// бот присылают предложение без этого поля, и полное сохранение
 		// обнуляло бы системы, выбранные отдельной ручкой. С 2026-11-05 пустой
-		// выбор — это `[]`, поэтому терпим оба вида.
+		// выбор — это `[]`, поэтому терпим оба вида. То же правило — материалы.
 		_, err = s.pool.Exec(r.Context(), `
 UPDATE offers_offer SET client = $2, items = $3, form_values = $4, total = $5,
 	status = $6,
 	system_choice = CASE WHEN $7::jsonb IN ('{}'::jsonb, '[]'::jsonb)
 		THEN system_choice ELSE $7::jsonb END,
+	material_choice = CASE WHEN $8::jsonb IN ('{}'::jsonb, '[]'::jsonb)
+		THEN material_choice ELSE $8::jsonb END,
 	updated_at = now()
-WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status, systemJSON)
+WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status, systemJSON, materialJSON)
 		if err != nil {
 			dbError(w, "update offer", err)
 			return
@@ -321,10 +340,10 @@ WHERE id = $1`, id, clientJSON, itemsJSON, valuesJSON, offer.Total, offer.Status
 			return
 		}
 		err = s.pool.QueryRow(r.Context(), `
-INSERT INTO offers_offer (number, owner_email, client, items, form_values, system_choice, total, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+INSERT INTO offers_offer (number, owner_email, client, items, form_values, system_choice, material_choice, total, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 			number, strings.ToLower(actorEmailFromCtx(r)), clientJSON, itemsJSON,
-			valuesJSON, systemJSON, offer.Total, offer.Status).Scan(&id)
+			valuesJSON, systemJSON, materialJSON, offer.Total, offer.Status).Scan(&id)
 		if err != nil {
 			dbError(w, "insert offer", err)
 			return

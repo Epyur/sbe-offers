@@ -5,6 +5,7 @@ package model
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -37,60 +38,64 @@ type OfferClient struct {
 	Contact string `json:"contact"`
 }
 
-// OfferSystem — система, которую менеджер выбрал для предложения.
+// Ref — выбор карточки Базы знаний: система или материал (2026-11-13).
+//
+// Раньше это был OfferSystem. Система и материал выбираются ОДИНАКОВО — код из
+// карточки и/или номер заметки, — и второй тип с теми же полями и той же
+// логикой слияния завёл бы вторую копию правила (ошибка модели, правило
+// 2026-11-11). Поэтому один тип и два именованных списка: OfferSystems и
+// OfferMaterials.
 //
 // Хранится и код, и заметка (2026-11-03): у живых карточек `system_sku` не
-// заполнен, и без номера заметки система не находится после перезапуска.
-//
-// Позиции выбор системы НЕ добавляет: цены и состав ведёт менеджер.
-type OfferSystem struct {
+// заполнен, и без номера заметки выбор не находится после перезапуска.
+type Ref struct {
 	SKU    string `json:"sku,omitempty"`
 	NoteID int64  `json:"noteId,omitempty"`
 }
 
-// Empty — система не выбрана.
-func (s OfferSystem) Empty() bool {
-	return s.SKU == "" && s.NoteID <= 0
+// OfferSystem — старое имя выбора; оставлено, чтобы не переписывать вызовы.
+type OfferSystem = Ref
+
+// Empty — карточка не выбрана.
+func (r Ref) Empty() bool {
+	return r.SKU == "" && r.NoteID <= 0
 }
 
 // Same — тот же выбор. Код главнее заметки и сравнивается без учёта регистра:
 // в карточку его пишут руками, и `TN-roof` с пробелом — тот же код.
-func (s OfferSystem) Same(other OfferSystem) bool {
-	a := strings.ToUpper(strings.TrimSpace(s.SKU))
+func (r Ref) Same(other Ref) bool {
+	a := strings.ToUpper(strings.TrimSpace(r.SKU))
 	b := strings.ToUpper(strings.TrimSpace(other.SKU))
 	if a != "" || b != "" {
 		return a != "" && a == b
 	}
-	return s.NoteID > 0 && s.NoteID == other.NoteID
+	return r.NoteID > 0 && r.NoteID == other.NoteID
 }
 
-// OfferSystems — системы предложения в порядке выбора.
-//
-// Список, а не одно значение (2026-11-05): менеджеру нужно предложить и
-// сравнить несколько систем в одном КП — как СТИЛОБАТ V1.0 и V2.0 в образце.
-// Старые предложения хранят выбор объектом (`{"sku":…}` или `{}`); такой JSON
-// читается UnmarshalJSON ниже, поэтому миграция данных не нужна.
-type OfferSystems []OfferSystem
+// RefList — общий список выбора: Add/Remove/Marshal/Unmarshal и терпимость к
+// старому виду (объект вместо массива) для систем и материалов одинаковы.
+type RefList []Ref
 
-// Add дописывает систему, если её ещё нет. Порядок выбора сохраняется: по нему
-// нумеруются разделы документа, и перескакивать при каждом сохранении нельзя.
-func (l OfferSystems) Add(s OfferSystem) OfferSystems {
-	if s.Empty() {
+// Add дописывает карточку, если её ещё нет. Порядок выбора сохраняется: по
+// нему нумеруются разделы документа, и перескакивать при каждом сохранении
+// нельзя.
+func (l RefList) Add(r Ref) RefList {
+	if r.Empty() {
 		return l
 	}
 	for _, existing := range l {
-		if existing.Same(s) {
+		if existing.Same(r) {
 			return l
 		}
 	}
-	return append(l, s)
+	return append(l, r)
 }
 
-// Remove убирает систему; нет её — список не меняется.
-func (l OfferSystems) Remove(s OfferSystem) OfferSystems {
-	out := make(OfferSystems, 0, len(l))
+// Remove убирает карточку; нет её — список не меняется.
+func (l RefList) Remove(r Ref) RefList {
+	out := make(RefList, 0, len(l))
 	for _, existing := range l {
-		if existing.Same(s) {
+		if existing.Same(r) {
 			continue
 		}
 		out = append(out, existing)
@@ -103,47 +108,62 @@ func (l OfferSystems) Remove(s OfferSystem) OfferSystems {
 // Терпимость к старому виду — не удобство, а условие: `system_choice` живых КП
 // записан объектом, и без этого разбора все уже выбранные системы разом
 // пропали бы из документов.
-func (l *OfferSystems) UnmarshalJSON(data []byte) error {
+func (l *RefList) UnmarshalJSON(data []byte) error {
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" || trimmed == "null" || trimmed == `""` {
-		*l = OfferSystems{}
+		*l = RefList{}
 		return nil
 	}
 	if strings.HasPrefix(trimmed, "[") {
-		var list []OfferSystem
+		var list []Ref
 		if err := json.Unmarshal(data, &list); err != nil {
 			return err
 		}
 		if list == nil {
-			list = []OfferSystem{}
+			list = []Ref{}
 		}
 		*l = list
 		return nil
 	}
 	if trimmed == `{}` {
-		*l = OfferSystems{}
+		*l = RefList{}
 		return nil
 	}
-	var one OfferSystem
+	var one Ref
 	if err := json.Unmarshal(data, &one); err != nil {
 		return err
 	}
 	if one.Empty() {
-		*l = OfferSystems{}
+		*l = RefList{}
 		return nil
 	}
-	*l = OfferSystems{one}
+	*l = RefList{one}
 	return nil
 }
 
 // MarshalJSON пишет массив и никогда не пишет `null`: клиент, получивший
 // null, снова увидит непривычный тип.
-func (l OfferSystems) MarshalJSON() ([]byte, error) {
+func (l RefList) MarshalJSON() ([]byte, error) {
 	if l == nil {
 		return []byte("[]"), nil
 	}
-	return json.Marshal([]OfferSystem(l))
+	return json.Marshal([]Ref(l))
 }
+
+// OfferSystems — системы предложения в порядке выбора.
+//
+// Список, а не одно значение (2026-11-05): менеджеру нужно предложить и
+// сравнить несколько систем в одном КП — как СТИЛОБАТ V1.0 и V2.0 в образце.
+// Старые предложения хранят выбор объектом (`{"sku":…}` или `{}`); такой JSON
+// читается UnmarshalJSON выше, поэтому миграция данных не нужна.
+type OfferSystems = RefList
+
+// OfferMaterials — материалы, предложенные описанием (2026-11-13).
+//
+// Материал, как и система, — ОБЪЕКТ предложения: в документ попадает его
+// описание и ссылки, а не цена. Позицией он становится только через выбор в
+// таблице состава — это другой путь и остаётся как был.
+type OfferMaterials = RefList
 
 // Offer — коммерческое предложение.
 type Offer struct {
@@ -155,10 +175,56 @@ type Offer struct {
 	FormValues map[string]string `json:"formValues"`
 	// Systems — выбранные системы (2026-11-05). Пусто — ни одна не выбрана.
 	// Поле `system` в JSON оставлено на чтение старых КП, см. Systems().
-	Systems   OfferSystems `json:"systems"`
-	Total     float64      `json:"total"`
-	Status    string       `json:"status"`
-	DocxKey   string       `json:"docxKey"`
-	CreatedAt string       `json:"createdAt"`
-	UpdatedAt string       `json:"updatedAt"`
+	Systems OfferSystems `json:"systems"`
+	// Materials — материалы, предложенные описанием (2026-11-13). Позиций они
+	// не добавляют: цена строки приходит из таблицы менеджера.
+	Materials OfferMaterials `json:"materials"`
+	Total     float64        `json:"total"`
+	Status    string         `json:"status"`
+	DocxKey   string         `json:"docxKey"`
+	CreatedAt string         `json:"createdAt"`
+	UpdatedAt string         `json:"updatedAt"`
+}
+
+// SelectionHandle — устойчивый признак набора выбранных карточек: по нему
+// ключуется кэш текстов, которые зависят от ВСЕГО набора.
+func SelectionHandle(refs RefList) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(refs))
+	for _, r := range refs {
+		if sku := strings.ToUpper(strings.TrimSpace(r.SKU)); sku != "" {
+			parts = append(parts, "sku:"+sku)
+			continue
+		}
+		if r.NoteID > 0 {
+			parts = append(parts, "note:"+itoa64(r.NoteID))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+// itoa64 — номер заметки строкой без пакета strconv на каждый вызов.
+func itoa64(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }

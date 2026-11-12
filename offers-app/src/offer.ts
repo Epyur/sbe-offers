@@ -42,6 +42,8 @@ export interface OfferDto {
   items: OfferItemDto[];
   formValues: Record<string, string>;
   systems: OfferSystemDto[];
+  /** Материалы, предложенные описанием (2026-11-13). Позиций не добавляют. */
+  materials?: OfferSystemDto[];
   total: number;
   status: string;
   createdAt: string;
@@ -98,10 +100,39 @@ export async function addSystem(id: number, system: ChosenSystem): Promise<Compo
   });
 }
 
+/** Ответ выбора материала: карточка и написанное описание. */
+export interface ComposeMaterialResponse {
+  offer: OfferDto;
+  material?: SystemCardDto;
+  title?: string;
+  texts?: Record<string, string>;
+  missing?: string[];
+  error?: string;
+}
+
 export async function removeSystem(id: number, system: ChosenSystem): Promise<ComposeSystemResponse> {
   return apiRequest<ComposeSystemResponse>(`/offers/${id}/system`, {
     method: 'DELETE',
     body: { sku: system.sku, noteId: system.noteId },
+  });
+}
+
+/**
+ * Материал — ОБЪЕКТ предложения (2026-11-13): в документ идут описание и
+ * ссылки, а не цена. Позицию он даёт только через таблицу состава, и это
+ * отдельная зона экрана с отдельной подписью.
+ */
+export async function addMaterial(id: number, material: ChosenSystem): Promise<ComposeMaterialResponse> {
+  return apiRequest<ComposeMaterialResponse>(`/offers/${id}/material`, {
+    method: 'POST',
+    body: { sku: material.sku, noteId: material.noteId },
+  });
+}
+
+export async function removeMaterial(id: number, material: ChosenSystem): Promise<ComposeMaterialResponse> {
+  return apiRequest<ComposeMaterialResponse>(`/offers/${id}/material`, {
+    method: 'DELETE',
+    body: { sku: material.sku, noteId: material.noteId },
   });
 }
 
@@ -110,6 +141,28 @@ export async function searchSystems(query: string): Promise<SearchSystemsRespons
   const q = query.trim();
   if (q === '') return { items: [], total: 0 };
   return apiRequest<SearchSystemsResponse>(`/systems/search?q=${encodeURIComponent(q)}`);
+}
+
+/** Карточка материала в поиске: название и ключ выбора. */
+export interface MaterialSearchItem {
+  noteId: number;
+  sku?: string;
+  name: string;
+  unit?: string;
+}
+
+export interface SearchMaterialsResponse {
+  items?: MaterialSearchItem[];
+  total?: number;
+  kbEnabled?: boolean;
+  error?: string;
+}
+
+/** Поиск материалов — тот же серверный поиск, что у выбора материала в позиции. */
+export async function searchMaterials(query: string): Promise<SearchMaterialsResponse> {
+  const q = query.trim();
+  if (q === '') return { items: [], total: 0 };
+  return apiRequest<SearchMaterialsResponse>(`/materials/search?q=${encodeURIComponent(q)}`);
 }
 
 /** Справочник систем: по нему карточка показывает названия уже выбранных. */
@@ -130,14 +183,27 @@ export function systemKey(system: { sku?: string; noteId?: number }): string {
  * пустую строку: человек должен видеть, что в документе что-то есть.
  */
 export function chosenSystems(offer: OfferDto, catalog: SystemCardDto[]): ChosenSystem[] {
+  return chosenRefs(offer.systems, catalog);
+}
+
+/**
+ * Названия выбранных МАТЕРИАЛОВ (2026-11-13). Каталог материалов в приложении
+ * не грузится: у материала название приходит из описания и продукта, а здесь
+ * достаточно кода или номера заметки — человек видит, что материал выбран.
+ */
+export function chosenMaterials(offer: OfferDto): ChosenSystem[] {
+  return chosenRefs(offer.materials, []);
+}
+
+function chosenRefs(refs: OfferSystemDto[] | undefined, catalog: SystemCardDto[]): ChosenSystem[] {
   const byKey = new Map<string, SystemCardDto>();
   for (const card of catalog) byKey.set(systemKey(card), card);
-  return (offer.systems ?? []).map((ref) => {
+  return (refs ?? []).map((ref) => {
     const card = byKey.get(systemKey(ref));
     return {
       sku: (ref.sku ?? '').trim(),
       noteId: ref.noteId ?? 0,
-      title: card?.title?.trim() || (ref.sku ?? '').trim() || `система ${ref.noteId ?? ''}`.trim(),
+      title: card?.title?.trim() || (ref.sku ?? '').trim() || `материал ${ref.noteId ?? ''}`.trim(),
     };
   });
 }

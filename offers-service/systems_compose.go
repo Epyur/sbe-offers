@@ -289,10 +289,7 @@ func (s *Server) persistOfferSystem(ctx context.Context, offer Offer) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
-UPDATE offers_offer SET system_choice = $2, updated_at = now() WHERE id = $1`,
-		offer.ID, raw)
-	return err
+	return s.persistOfferColumn(ctx, offer.ID, "system_choice", raw)
 }
 
 // handleAddSystem — «Добавить систему» в редакторе плагина.

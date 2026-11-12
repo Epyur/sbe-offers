@@ -52,6 +52,11 @@ type layoutContext struct {
 	// «сравнения вариантов».
 	items func() [][]string
 	cards func() []SystemCard
+	// materialCards - карточки МАТЕРИАЛОВ, предложенных описанием (2026-11-13).
+	// Повтор `repeat:"materials"` печатает их, а не позиции: у блока с повтором
+	// ОДИН плейсхолдер, и что он печатает, решает данные, а не имя метки.
+	// nil - материалов нет, повтор по материалам идёт по позициям.
+	materialCards func() []SystemCard
 	// images — источник байтов картинки для метки «{картинка}» (2026-11-06).
 	// Без него (и без ключа у карточки) метка молчит: картинка необязательна,
 	// как и узел `image` в блоках формы.
@@ -1438,10 +1443,18 @@ func cardByNote(cards []SystemCard, noteID int64) SystemCard {
 // хеш данных: сменился набор — текст пересобирается, повторный выбор той же
 // системы — нет.
 func offerSelectionHandle(offer Offer) string {
-	parts := make([]string, 0, len(offer.Systems))
+	parts := make([]string, 0, len(offer.Systems)+len(offer.Materials))
 	for _, s := range offer.Systems {
 		if handle := systemChoiceHandle(s); handle != "" {
 			parts = append(parts, handle)
+		}
+	}
+	// Материалы входят в набор (2026-11-13): текст вступления видит и системы,
+	// и предложенные описанием материалы, поэтому при смене любого из них он
+	// обязан пересобраться.
+	for _, m := range offer.Materials {
+		if handle := systemChoiceHandle(m); handle != "" {
+			parts = append(parts, "m"+handle)
 		}
 	}
 	return strings.Join(parts, "+")

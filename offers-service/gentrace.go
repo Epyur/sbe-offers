@@ -48,7 +48,8 @@ func writeTimeoutFor(path string) time.Duration {
 	switch {
 	case hasSuffixPath(path, "/docx"), hasSuffixPath(path, "/link"), hasSuffixPath(path, "/export"):
 		return layoutBuildTimeout
-	case hasSuffixPath(path, "/system"), hasSuffixPath(path, "/recalculate"):
+	case hasSuffixPath(path, "/system"), hasSuffixPath(path, "/recalculate"),
+		hasSuffixPath(path, "/material"):
 		return systemTextTimeout
 	}
 	return quickResponseTimeout

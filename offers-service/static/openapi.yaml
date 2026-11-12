@@ -448,6 +448,104 @@ paths:
           description: Такой системы в предложении нет
         '400':
           description: Не передан ни `sku`, ни `noteId`
+  /api/offers/offers/{id}/material:
+    post:
+      summary: Выбрать материал для предложения (описанием)
+      description: |
+        «Материалы в предложении (описанием)» в редакторе предложения
+        (2026-11-13). Материал, как и система, — ОБЪЕКТ предложения: в документ
+        попадают его описание и ссылки, а не цена.
+
+        Выбор материала НЕ добавляет позицию: цены и количество ведутся
+        менеджером отдельно, в таблице состава. Два пути к материалу остаются
+        раздельными намеренно («Материал в позиции» и «Материалы в предложении»),
+        и подписи в интерфейсе говорят, какой из них какой.
+
+        Выбранные материалы хранятся в `Offer.materials` и печатаются блоком
+        формы с `repeat: "materials"`. Блок ОДИН плейсхолдер: у макета один
+        образец, и второй маркер сломал бы вёрстку.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Выбор материала — `sku` или `noteId`.
+              properties:
+                sku:
+                  type: string
+                  description: Код материала из справочника (`MAT-…`).
+                noteId:
+                  type: integer
+                  format: int64
+                  description: Заметка Базы знаний, из которой заведён материал.
+      responses:
+        '200':
+          description: Материал выбран; позиции предложения не менялись
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer:
+                    $ref: '#/components/schemas/Offer'
+                  material:
+                    type: object
+                    description: |
+                      Карточка выбранного материала: название, описание, ссылки.
+                  title:
+                    type: string
+                    description: Название выбранного материала строкой.
+                  texts:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: |
+                      Описание материала, написанное при выборе (блок
+                      `material.description`).
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                    description: Какие блоки не удалось написать.
+        '404':
+          description: Материал не найден
+        '400':
+          description: Не передан ни `sku`, ни `noteId` или у материала нет названия
+    delete:
+      summary: Убрать материал из предложения
+      description: |
+        Снимает материал с предложения (2026-11-13). Позиции не трогает: они
+        ведутся менеджером отдельно.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Та же пара `sku` / `noteId`, что и у добавления.
+              properties:
+                sku:
+                  type: string
+                noteId:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Материал убран; в ответе обновлённое предложение
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer:
+                    $ref: '#/components/schemas/Offer'
+        '400':
+          description: Не передан ни `sku`, ни `noteId`
   /api/offers/offers/{id}/system-texts:
     get:
       summary: Тексты систем, написанные при выборе
@@ -2174,6 +2272,62 @@ paths:
         '400':
           description: Не передан ни `sku`, ни `noteId`
 
+  /api/offers/bot/offers/{id}/material:
+    post:
+      summary: Выбрать материал для КП из бота (описанием)
+      description: |
+        Та же ручка, что у плагина, другой вход: секрет сервиса и `chat_id`
+        вместо пользовательского JWT (2026-11-13). В КП попадают описание
+        материала и его ссылки; позиции не добавляются.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id]
+              description: Выбор материала — `sku` или `noteId`.
+              properties:
+                chat_id:
+                  type: string
+                sku:
+                  type: string
+                noteId:
+                  type: integer
+                  format: int64
+    delete:
+      summary: Убрать материал из предложения (бот)
+      description: |
+        Снимает материал с предложения из чата (2026-11-13). Позиции не трогает.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id]
+              properties:
+                chat_id:
+                  type: string
+                sku:
+                  type: string
+                noteId:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: Материал убран
+        '400':
+          description: Не передан ни `sku`, ни `noteId`
+
   /api/offers/bot/offers/{id}/docx:
     post:
       summary: Получить DOCX (base64) для отправки в чат
@@ -3475,6 +3629,20 @@ components:
             ни одна не выбрана. По ним печатаются описание, преимущества и
             ссылки; позиций они не добавляют. Систем несколько — чтобы
             предложить и сравнить два решения в одном КП.
+          items:
+            type: object
+            properties:
+              sku:
+                type: string
+              noteId:
+                type: integer
+                format: int64
+        materials:
+          type: array
+          description: |
+            Материалы, предложенные ОПИСАНИЕМ (2026-11-13). Пустой массив —
+            ни один не выбран. По ним печатаются описание и ссылки; цену они
+            получают только через позиции состава, то есть отдельным путём.
           items:
             type: object
             properties:

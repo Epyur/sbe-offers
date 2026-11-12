@@ -416,6 +416,9 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		// характеристик карточек. См. layoutTableFor.
 		items: func() [][]string { return layoutOfferTable(offer) },
 		cards: func() []SystemCard { return cards },
+		// Материалы-объекты предложения (2026-11-13): повтор
+		// `repeat:"materials"` печатает их описанием, а не позиции.
+		materialCards: func() []SystemCard { return s.materialCardsForOffer(r.Context(), offer) },
 		// Служебные метки (шаг C): блоки формы по id, ссылки карточек и тексты
 		// систем — всё из данных, без модели.
 		form:        func() OfferForm { return form },
@@ -499,7 +502,19 @@ func (s *Server) offerWithBrief(ctx context.Context, offer Offer) Offer {
 func (s *Server) systemCardsForOffer(ctx context.Context, offer Offer) ([]SystemCard, []skills.CardRef) {
 	cards, err := s.loadCachedSystemCards(ctx)
 	if err != nil || len(cards) == 0 {
-		return nil, nil
+		// Кеша нет — читаем Базу знаний ОДИН раз и заполняем его (2026-11-13).
+		//
+		// Раньше пустой кеш означал «документ без систем»: после очистки кеша
+		// (а её делает и стенд, и живой сбой) следующая же сборка печатала КП
+		// без описания, состава и ссылок — и человек видел пустой файл, хотя
+		// система в предложении выбрана. Ошибка Базы знаний по-прежнему не
+		// роняет сборку: тогда карточек просто нет.
+		fresh, refreshErr := s.refreshSystemCards(ctx, "")
+		if refreshErr != nil {
+			log.Printf("карточки систем: кеш пуст, База знаний не ответила: %v", refreshErr)
+			return nil, nil
+		}
+		cards = fresh
 	}
 	// Ключ картинки добирается по выбранным карточкам: в кеше он может быть
 	// пуст (кеш прочитан до 2026-11-05), и тогда `{{система}}` печатает состав
@@ -1020,9 +1035,32 @@ func (s *Server) persistOfferFormValues(ctx context.Context, offer Offer) error 
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
-UPDATE offers_offer SET form_values = $2, updated_at = now() WHERE id = $1`,
-		offer.ID, values)
+	return s.persistOfferColumn(ctx, offer.ID, "form_values", values)
+}
+
+// offerColumnNames — какие колонки предложения можно писать одной секцией.
+//
+// Список, а не свободная строка: имя колонки уходит в SQL подстановкой (SQL не
+// принимает имя колонки параметром), и опечатка из кода не должна превращаться
+// в запрос к несуществующей колонке. Новая секция — дописать сюда.
+var offerColumnNames = map[string]bool{
+	"system_choice":   true,
+	"material_choice": true,
+	"form_values":     true,
+}
+
+// persistOfferColumn пишет одну секцию предложения и двигает updated_at.
+//
+// Одна функция на все секции (2026-11-13): `system_choice`, `material_choice`
+// и `form_values` писались тремя одинаковыми функциями, и правило «запись
+// двигает updated_at» держалось в трёх местах. Само правило остаётся одно:
+// без него правка не выигрывает слияние.
+func (s *Server) persistOfferColumn(ctx context.Context, id int64, column string, raw []byte) error {
+	if !offerColumnNames[column] {
+		return fmt.Errorf("persistOfferColumn: неизвестная колонка %q", column)
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE offers_offer SET `+column+` = $2, updated_at = now() WHERE id = $1`, id, raw)
 	return err
 }
 

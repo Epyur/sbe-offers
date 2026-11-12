@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  chosenMaterials,
   chosenSystems,
   clientChanged,
   draftToItem,
@@ -114,4 +115,18 @@ test('выбранные системы называются по карточк
 test('система без карточки в справочнике всё равно видна', () => {
   const chosen = chosenSystems({ ...offer, systems: [{ sku: 'OLD-1', noteId: 9 }] }, catalog);
   assert.equal(chosen[0]?.title, 'OLD-1');
+});
+
+test('выбранные материалы показываются отдельно от систем', () => {
+  const withMaterials = {
+    ...offer,
+    systems: [{ noteId: 7547 }],
+    materials: [{ sku: 'MAT-КРОВ-ПВХ-0001', noteId: 100 }],
+  };
+  const systems = chosenSystems(withMaterials, catalog);
+  const materials = chosenMaterials(withMaterials);
+  assert.equal(systems.length, 1);
+  assert.equal(materials.length, 1);
+  assert.equal(materials[0]?.sku, 'MAT-КРОВ-ПВХ-0001');
+  assert.equal(chosenMaterials({ ...offer, materials: undefined }).length, 0);
 });
