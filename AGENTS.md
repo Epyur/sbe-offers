@@ -115,7 +115,33 @@ Checks: bot `tsc` 0, App 50, plugin `tsc` 0, `build` OK, `check_bundle_strings`
 both lists asked from the service by the bot secret; skips honestly when
 `BOT_DIR`/`OFFERS_BOT_URL` are not mounted.
 **Plan for the whole batch:** `docs/superpowers/plans/2026-11-13-sbe-offers-bot-ux-and-materials-plan.md`
-(R1, R2 done; R3 = materials as offer objects, R4 = the bot agent).
+(R1–R3 done and released; R4 = the bot agent).
+
+**R4 re-framed 2026-11-14** (user decision + live evidence):
+`docs/superpowers/specs/2026-11-13-sbe-offers-single-agent-design.md`.
+The agent is NOT a third entity next to КП and the combat sheet — **the agent IS
+the assembler**: it edits the same row the App and the bot edit, and the linear
+bot flows become its tools (they stay in the code; S5 is still user-gated).
+Two observations drove this: the portal agent (`b6e9ac7a…docx`) noticed that
+«ТН-КРОВЛЯ Стандарт Проф» does not exist and compared the nearest systems,
+while the bot "did not understand" the same request; and the bot has never
+recognised a system/material from free text (0 of 27 offers, 0 of 14 sheets).
+- **P4 done 2026-11-14**: the agent loop is now ONE file —
+  `sbe-core/src/agent/engine.ts` (no imports, deps injected), with copies in the
+  portal (`web/sbe-web/src/modules/agent/engineCore.ts`) and here
+  (`offers-bot/src/agent/engine.ts`). Parity: `plugins/scripts/check_agent_engine.mjs`
+  (25 checks). While doing this a **live defect was found and fixed**: the DSML
+  parser never worked (regex missed the tag; the tool name sits BEFORE `>`),
+  so a model answering in that shape had its markup shown to the user instead
+  of being executed.
+- **Code heads:** `backend` `8729842` (only the bot's `src/agent/` copy and the docs changed —
+  the plugin version stays 0.9.21, nothing was deployed), `main` `c0ae671`.
+- **Next: P6** — tool executor in `offers-service` (whitelist over existing
+  functions: `suggestionsFor`, `searchSystems`, `renderOfferDocx`, combat
+  renderer), the manager-analysis journal `offers_agent_log` +
+  `GET /api/offers/admin/agent-log` (role admin, 180 days), and the bot
+  transport (`flow/agent.ts`, `/bot/agent/message`). Then **P5b**
+  (`/internal/mailer/agent/*`, PDF-only).
 
 **The App is deployed separately from the plugin.** Current bundle:
 `assets/index-…js` + `vendor/telegram-web-app.js`, served from our own domain
@@ -334,7 +360,9 @@ Sub-packages: `model/` (domain types + `jsonrepair.go`, shared with `skills`);
 `skills/` (prompts, checklists, card and attachment parsing, `cardrefs.go`,
 `filecontext*.go`, `blockstructure.go`).
 
-`offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), `src/routes.ts`
+`offers-bot/`: `src/main.ts`, `src/poller.ts` (transport only), **`src/agent/engine.ts`** (копия
+канона цикла агента из `sbe-core/src/agent/engine.ts`, 2026-11-14 — пока не
+подключён к маршрутам, подключается шагом P6), `src/routes.ts`
 (routing + the single sign-in check + `openAppList`), `src/callbacks.ts` (button
 handlers, including the combat sheet — 2026-11-09 — and the `nd:*` family of
 «Создать новый документ»), `src/telegram.ts` (Bot API via SOCKS),
@@ -686,6 +714,28 @@ measurements) are in the archive.
   array". The block system prompt (`skills/prompt.go`) also asks for paragraphs
   and correct punctuation. Tests: `docx_text_typography_test.go`.
 
+### Agent engine (2026-11-14)
+
+- **The agent loop lives in `sbe-core/src/agent/engine.ts` — edit it THERE.**
+  `offers-bot/src/agent/engine.ts` and the portal's
+  `web/sbe-web/src/modules/agent/engineCore.ts` are verbatim copies; the
+  Obsidian plugin keeps only an adapter. Copy the file, never hand-patch a copy:
+  `node plugins/scripts/check_agent_engine.mjs` compares them by the rule
+  constants and the header.
+- **Never write U+FF5C (the DSML bar) as a literal in source or fixtures.** It
+  does not survive a rewrite through a PowerShell pipeline, esbuild, or some
+  editors — it silently becomes something else and a "green" test proves
+  nothing. Build it: `String.fromCharCode(0xff5c)`. Both mistakes were made on
+  2026-11-14 and both showed up as a test passing on a broken fixture.
+- **The DSML tag cannot be parsed with one regex.** Two shapes are live:
+  `<…DSML…>tool_calls>` + `<…DSML…>invoke name="x">` (name before `>`), and
+  `<…DSML…>invoke name="x">` alone. `dsmlTagEnd` + `blockNameEnd` scan
+  character by character for exactly this reason; a quantifier over a class
+  containing U+FF5C also stops matching on long inputs.
+- **The tool is the boundary, not the prompt** (design §4.4): documents are
+  filtered by `product_refs`, letters by the presence of a PDF, in the route.
+  Neither internal route takes an `email` parameter.
+
 ### Bot and rights
 
 - **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
@@ -839,6 +889,71 @@ measurements) are in the archive.
   returns nil).
 - **Model extraction never overrides the literal one** (`MergeFileContexts`).
 - **`jsonrepair.go` lives in `model`**, shared with `skills`; do not copy it.
+
+## Agent in the bot — P6 (2026-11-14, built, **not released/deployed**)
+
+The agent is the **document assembler** (design
+`docs/superpowers/specs/2026-11-13-sbe-offers-single-agent-design.md`, §4): it edits
+the same `offers_offer`/`offers_combat_sheet` rows the App and the bot edit, and every
+tool wraps an existing service function. This step is server-side plus the bot; **the
+plugin (0.9.21) and the release are untouched** — nothing was deployed.
+
+**Where it lives (all `offers-service/`, server-side):**
+
+| file | what |
+|---|---|
+| `agenttools.go` | tool schema, `objectSchema`/`argString`/`argInt`, `agentEnv` (email, chat, files, `Fixes`) |
+| `agenttools_impl.go` | the 9 tools; each wraps a real function (`suggestionsFor`, `liveSystemCard`, `assembleSystem`, `assembleMaterial`, `handleExportDocx`, `handleExportCombat`) |
+| `agentloop.go` | the turn: model → `parseAgentTurn` → tool → observe → final; anti-loop, protocol retry, synthesis, journal write |
+| `agentprotocol.go` | JSON-turn parser (`final`/`tool_call`), fence/prose/truncation tolerant |
+| `agentprompt.go` | system prompt (sets the JSON shape + “the tool is the boundary”) and transcript |
+| `agentlog.go` | `offers_agent_log` write + 180-day trim + `GET /admin/agent-log` |
+| `agentapi.go` | bot transport `POST /bot/agent/message`, `GET /bot/agent/history` |
+| `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
+| `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
+
+**Tools in v1** (whitelist, `agentTools`): `get_our_products`, `read_card`,
+`get_documents`, `get_document_link`, `read_document_file`, `set_system`,
+`set_material`, `build_docx`, `build_combat_docx`. **Not** in v1: emails (P5b),
+YouGile, rules/skills/presentation, any write to YouGile.
+
+**Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
+(`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
+agent (`handleAgentText` runs **before** `handleNewDocText`/`handleDraftText`, so a
+product name never becomes a ₽0 line). «🏠 В меню» (`agent:off`) turns it off. No
+existing flow was removed.
+
+**Rules that now hold (each was a decision, not a default):**
+- **The tool is the boundary, not the prompt.** `get_documents` calls only the
+  filtered `/internal/documents/agent/*` route (documents with `product_refs`, not
+  archived, not `no_agent`); there is no unfiltered path in offers-service. An empty
+  documents client (no `DOCUMENTS_SERVICE_URL`/`DOCUMENTS_INTERNAL_SECRET`) is a
+  **refusal**, never an empty list.
+- **Rendering reuses the export handler.** `build_docx`/`build_combat_docx` build an
+  `*http.Request` around the turn's context and call `handleExportDocx`/
+  `handleExportCombat` via `httptest`, so the document is printed by the ONE renderer,
+  identity included (`permEmailCtx`). Do not add a second render path for the agent.
+- **Writes respect ownership.** `offerForWrite` = own row or admin, and a `final`
+  offer is refused — same rule as `handleSaveOffer`. Every write records before/after
+  into `env.Fixes` → `offers_agent_log.manual_fix`.
+- **PDF is not read as text in v1** (no PDF lib; a new dependency is a licence
+  decision). `document_text.go` extracts DOCX (zip + XML) and plain text; a PDF/scan
+  yields `""` and the agent uses `get_document_link`. Do not return base64 to the model.
+
+**Checks (all green 2026-11-14):** `gofmt`/`go vet`/`go test ./...` ok; bot `tsc` 0
+and **201 passing** (8 new in `agent.test.ts`); plugin `tsc` 0, `build` OK (no source
+change); `check_offers_openapi.mjs` **117/117**; `check_bundle_strings` 0;
+`check_marker_registry` OK; stand **472/0** (new section «Помощник (агент) в боте
+(P6)», 11 checks — the stub model drives a real turn: tool → answer → journal).
+
+**Config to add on the server when deploying:** in the `offers` compose block —
+`DOCUMENTS_SERVICE_URL: http://documents:3000` and
+`DOCUMENTS_INTERNAL_SECRET: ${DOCUMENTS_INTERNAL_SECRET}` (same secret as documents’
+P5a routes; `depends_on: documents`). Added to the local `sbe-core/docker` copy;
+deploy is user-gated and the local compose copy diverges — insert pointwise.
+
+**Not verified:** a live turn under a real model/bot token (the stand uses
+`llm-stub`); week-long journal analysis is future work (`GET /api/offers/admin/agent-log`).
 
 ## Next iterations (backlog)
 
