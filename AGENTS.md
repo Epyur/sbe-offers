@@ -1099,21 +1099,28 @@ below.
 
 ## ЗАДАЧА ДЛЯ АГЕНТА (P5b, 2026-11-14): письма в контексте КП
 
-> Статус: **сторона писем ГОТОВА и РАСКАТАНА 2026-11-13 (sbe-mailer 0.1.21).**
-> Ручки живут на боевом: `GET /internal/mailer/agent/emails?q=&limit=` и
-> `GET /internal/mailer/agent/email?id=`, секрет `MAILER_INTERNAL_SECRET`
-> (тот же, что у detach). Блок `offers` серверного compose уже получил
-> `MAILER_SERVICE_URL: http://backend:3000` и этот секрет, контейнер `offers`
-> пересоздан; живой вызов из `offers` с секретом — **200**, без секрета — 403.
-> **Фикстура пришла** — `scripts/mailer-fixture.json`, записанный живой ответ
-> (два письма: со сканом и без). Подробности и что именно проверено —
-> `sbe-mailer/p5b-handoff.md`.
+> Статус: **СДЕЛАНА 2026-11-14, НЕ ВЫПУЩЕНА.** Сторона писем раскатана раньше
+> (sbe-mailer 0.1.21, ручки `GET /internal/mailer/agent/emails?q=&limit=` и
+> `GET /internal/mailer/agent/email?id=` под `MAILER_INTERNAL_SECRET`). Сторона
+> КП сделана в этой папке: `mailer_client.go`, `agentmail.go` (оба инструмента),
+> 15 имён в `agentTools()`, правило в `agentSystemPrompt`, стенд
+> (`mailer-stub.mjs` на ЗАПИСАННОЙ фикстуре, `documents-stub.mjs`, секция
+> `sectionAgentP5b`), тесты `mailer_client_test.go` и `agent_test.go`
+> (`TestAgentToolListAfterP5b`, `TestGetEmailsDropsUnlinked`,
+> `TestGetEmailsEmptyVisibleSet`).
 >
-> Что осталось — ваша половина: `offers-service/mailer_client.go`, инструменты
-> `get_emails` (список ∩ документы) и `read_email` (полный текст + `file_key` по
-> `document_id` из видимого набора), регистрация в `agentTools()` (15 имён),
-> строка в `agentSystemPrompt`, `mailer-stub.mjs` на фикстуре, тесты
-> (`TestAgentToolListAfterP5b`, `TestGetEmailsDropsUnlinked`) и секция стенда.
+> Проверки: `gofmt`/`go vet`/`go test ./...` зелёные, бот `tsc` 0 и **208**
+> тестов, плагин `tsc` 0, `check_bundle_strings` 0, `check_marker_registry` OK,
+> `check_docs_state` OK, OpenAPI **117/117**, `check_agent_engine` зелёный,
+> стенд **505/0**.
+>
+> **Что осталось для выпуска:** (1) на сервере в блоке `offers` —
+> `MAILER_SERVICE_URL: http://backend:3000` и `MAILER_INTERNAL_SECRET:
+> ${MAILER_INTERNAL_SECRET}` (точечно, бэкап, `docker compose config -q`;
+> `DOCUMENTS_*` там уже есть с P6); (2) живой ход под настоящей моделью;
+> (3) «привязал отметку — письмо видно на следующем ходе» на бою. Версию не
+> поднимали: по команде «Фиксируй» — версия + новость ЦУП + выкладка.
+>
 > Контракт ниже — заморожен и подтверждён живым ответом; отступать от него
 > нельзя:
 
@@ -1126,7 +1133,62 @@ below.
 сервисов делается **здесь** (решение пользователя, вариант «б»): мейлер и
 документы друг о друге не знают.
 
-### Что сделать
+### Как сделано (2026-11-14)
+
+1. **`offers-service/mailer_client.go`** — клиент по образцу
+   `documents_client.go`: `MAILER_SERVICE_URL` (default `http://backend:3000`),
+   `MAILER_INTERNAL_SECRET`, таймаут 60 с, лимит тела 64 МиБ.
+   `configured() == false` → **отказ** (`errMailerNotConfigured`), не пустой
+   список. `Emails(ctx, query, limit)` и `Letter(ctx, id)`; `items:null` →
+   `[]`, `attachments:null` → `[]`.
+
+2. **`get_emails`** — `offers-service/agentmail.go`:
+   - `letters := mailer.Emails(q, limit)` — все, у кого есть карточка скана;
+   - `visible` — `NewDocumentsAgentClient().List("", 200)`, кэш **на ход** в
+     `agentEnv` (`visibleDocs`/`visibleDocsReady`); ошибка не кэшируется;
+   - видимость письма — `kind == "signed"` и `document_id > 0` ХОТЯ БЫ одного
+     вложения есть в `visible`; к письму прикладываются **названия привязок**
+     (`products: [{noteId,title,sku?}]`, дедуп по noteId, порядок по noteId) и
+     карточки сканов с `file_key` видимой карточки;
+   - пусто → «Писем, относящихся к продуктам, не нашлось.» — **никогда** не
+     «писем нет»;
+   - аргументы: `query`, `limit`, `product` (noteId числом или слово из
+     названия привязки; слово сравнивается через `foldText` — без регистра и
+     «ё»/«е»).
+
+3. **`read_email`** — полный текст письма (`mailer.Letter(id)`), сканы с
+   `file_key` по `document_id` из того же `visible`; письмо без видимой
+   карточки скана → отказ «письмо недоступно: у него нет карточки скана,
+   привязанной к продукту». PDF не парсится: текст скана открывается
+   существующими `get_document_link` / `read_document_file`. Нового инструмента
+   для PDF не заведено.
+
+4. **Регистрация и промт.** `agentTools()` — **15** имён (`get_emails`,
+   `read_email` после документов), они же в `agentToolDescriptors`; в
+   `agentSystemPrompt` под «Что важно помнить» — правило писем и прямой запрет
+   искать обход.
+
+5. **Конфиг и стенд.** Стенд: `docker-compose.local.yml` — `mailer-stub` и
+   `documents-stub`, у `offers` переменные `MAILER_SERVICE_URL`/
+   `MAILER_INTERNAL_SECRET` (`test-mailer-internal-secret`) и
+   `DOCUMENTS_SERVICE_URL`/`DOCUMENTS_INTERNAL_SECRET`
+   (`test-documents-internal-secret`). `scripts/mailer-stub.mjs` отдаёт
+   **записанную** фикстуру `scripts/mailer-fixture.json` + одно письмо со
+   сканом, которого нет в видимом наборе (проверка, что фильтр не протекает);
+   `scripts/documents-stub.mjs` — одна привязанная карточка (`document_id`
+   1788168804943 → noteId 7547 «LOGICROOF V-RP»). Секция стенда
+   `sectionAgentP5b` — «письма видны только через привязку к продукту (P5b)».
+
+### Осталось для выпуска
+
+- На сервере в блоке `offers` — `MAILER_SERVICE_URL: http://backend:3000`,
+  `MAILER_INTERNAL_SECRET: ${MAILER_INTERNAL_SECRET}` (точечно, бэкап,
+  `docker compose config -q`; `DOCUMENTS_*` там уже есть с P6).
+- Живой ход под настоящей моделью и ботом.
+- На бою: «поставил отметку на карточке скана — письмо видно на следующем
+  ходе агента».
+
+### Исходное ТЗ (как было поставлено)
 
 1. **`offers-service/mailer_client.go`** — клиент по образцу
    `documents_client.go` (та же форма, те же причины): `MAILER_SERVICE_URL`

@@ -138,22 +138,48 @@ Logicbase в Базе знаний (материал без тега `material` 
   него нет. Признак живого бота — строки в логах «поллер запущен» и
   «проверка токена слушает :3000».
 
-## Открытый хвост: P5b — письма в контексте КП (спланировано 2026-11-14, НЕ начато)
+## P5b — письма в контексте КП (КОД СДЕЛАН 2026-11-14, НЕ ВЫПУЩЕН)
 
 Модель, объём и порядок работы — `docs/superpowers/plans/2026-11-14-sbe-offers-p5b-mailer-agent-plan.md`;
-вход для новой сессии с разделением работы на два агента —
-`docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md`;
-задача этого плагина — `AGENTS.md`, раздел «ЗАДАЧА ДЛЯ АГЕНТА (P5b, 2026-11-14)».
+вход с разделением работы на два агента — `docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md`;
+контракт писем — `sbe-mailer/AGENTS.md` и `sbe-mailer/p5b-handoff.md`.
 
 Коротко: письмо видно агенту только если у карточки его скана в «Документах»
 есть `product_refs` (та же граница, что у документов). Привязку ставит автор
-письма при прикладывании скана (только `commercial_propose`/`material`), позже
-— из карточки письма или из «Документов». Мейлер отдаёт письма и текст
-(`/internal/mailer/agent/{emails,email}`), `offers-service` пересекает их с
-видимыми карточками и даёт агенту `get_emails` + `read_email` (два инструмента,
-станет 15). `file_key` мейлер не отдаёт — сканы открываются через P5a по
-`document_id`. **Документы не меняются.** Обе части делаются параллельно двумя
-агентами; после мейлера его записанная фикстура заменяет заглушку на стенде.
+письма при прикладывании скана. Мейлер отдаёт письма с карточкой скана
+(`/internal/mailer/agent/{emails,email}`, `file_key` не отдаёт), `offers-service`
+пересекает их с видимым набором документов и даёт агенту `get_emails` +
+`read_email` — 15 инструментов. **Документы не меняются.**
+
+**Сделано 2026-11-14 (сторона offers-service):**
+- `mailer_client.go` — клиент как `documents_client.go` (`MAILER_SERVICE_URL`,
+  `MAILER_INTERNAL_SECRET`, 60 с, 64 МиБ, пустой секрет = отказ).
+- `agentmail.go` — `get_emails` (пересечение с `/internal/documents/agent/list`,
+  названия привязок к каждому письму, `visible` кэш на ход в `agentEnv`) и
+  `read_email` (полный текст + `file_key` видимой карточки скана; PDF не
+  парсится — ссылка через `get_document_link`).
+- `agenttools.go` / `agentprompt.go` — 15 инструментов, правило писем в промте.
+- Стенд: `scripts/mailer-stub.mjs` (отдаёт ЗАПИСАННУЮ фикстуру
+  `scripts/mailer-fixture.json`; фикстура была перекодирована из cp866 в
+  UTF-8 — её записали через PowerShell `>` (UTF-16/cp866), а не байтами),
+  `scripts/documents-stub.mjs`, секция `sectionAgentP5b` (**505/0**: осталось
+  одно письмо из двух, `read_email` по непривязанному 862 отказывает).
+- Compose на стенде: `docker-compose.local.yml` — `MAILER_*` и `DOCUMENTS_*`
+  у `offers`, сервисы-заглушки `mailer-stub`/`documents-stub`.
+
+**Не проверено:** живой ход под настоящей моделью и боевым мейлером; живая
+привязка «поставил отметку — письмо появилось» на бою.
+
+**Что нужно на сервере при раскатке** (точечно в блок `offers`, бэкап,
+`docker compose config -q`):
+
+```yaml
+    MAILER_SERVICE_URL: http://backend:3000
+    MAILER_INTERNAL_SECRET: ${MAILER_INTERNAL_SECRET}
+```
+
+(Желательно `depends_on: backend`. `DOCUMENTS_SERVICE_URL`/`DOCUMENTS_INTERNAL_SECRET`
+в боевом compose уже есть с P6.)
 
 ## Что в 0.9.21 (2026-11-13, R3): материал — объект предложения
 
