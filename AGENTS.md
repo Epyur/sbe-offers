@@ -30,12 +30,12 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.24** — **RELEASED 2026-11-14.** Three points converge:
-`main` `f5be852`, `backend` `e50a2ec`, self-hosted `43235f12…` / `1d0115a8…` /
-`a32ac3df…` (verified over https, in `/registry.json`, **and** through
-`raw.githubusercontent.com` for old clients), registry git copy
-`sbe-apstore-registry` `83c9073`. Only the bot was rebuilt and recreated;
-`offers-service` and `offers-app` were not touched this batch. See «0.9.24»
+Current version = **0.9.25** — **PREPARED 2026-11-14, NOT RELEASED.** The last
+release is 0.9.24 (`main` `581fa94`, `backend` `1808616`, self-hosted
+`43235f12…` / `1d0115a8…` / `a32ac3df…`, registry `sbe-apstore-registry`
+`83c9073`). 0.9.25 code is `backend` `009a399` — it answers the follow-up
+complaint «бот долго думает»: a «⌛» before the write, parallel system-text
+blocks, and no double answer on a second «Добавить выбранные». See «0.9.25»
 below.
 
 **0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
@@ -81,6 +81,35 @@ once (`Add`/`Remove`/`Same`/JSON tolerance to the old object shape).
   `writeRef` replaces `writeSystem`), card «Материалы в предложении
   (описанием)» next to «Материал в позиции» (the labels differ on purpose).
 - App: «Материалы (описанием)» zone with its own search (`/materials/search`).
+
+**0.9.25 (unreleased, 2026-11-14): the bot stops looking frozen.**
+
+Live complaint right after 0.9.24: «при выборе продукта бот долго думает,
+кажется, что завис, хочется нажать повторно». Measured on the live service
+(`gen:` lines of `docker logs mailers-offers-1`): one product = **two** model
+calls, `description` 20.8/21.6 s and `advantages` 20.6/24.3 s — ~45 s of
+silence, and the silence lands while the list is shown, before «Добавить
+выбранные» is even pressed.
+
+- **`writeBlocksInParallel` (`systemtext.go`)** — the two blocks are written
+  concurrently; ~45 s → ~25 s. Independent by construction (own instruction,
+  own hash, no shared state). One failing block does not cancel the other, and
+  `missing` keeps the block order. Grouped in a pure function so it is tested
+  without Postgres (`systemtext_parallel_test.go`).
+- **«⌛» before the write** (`progressNote`/`updateProgress`, the same helper the
+  analogue picker uses) — the note is replaced by the result, so the chat does
+  not grow service lines.
+- **A second «Добавить выбранные» after the write answers «уже записано»** and
+  keeps the `nd:more`/`nd:enough`/`nd:app` row; before, it said «Ничего не
+  отмечено» twice (the same class as `cban:all`).
+- **Marking a number no longer promises the «контекст / приложение» fork** —
+  those buttons belong to the next step, and the old text sent people looking
+  for them.
+
+`generateSystemTextsWith`/`writeAndStoreSystemTextWith` are the seams for tests
+with a stub model. Checks: `go test ./...` green, `gofmt`/`go vet` clean, bot
+`tsc` 0 and **208** tests, plugin `tsc` 0 + `build` OK, `check_bundle_strings`
+0, stand **496/0**.
 
 **0.9.24 (2026-11-14, RELEASED): multi-product КП from the bot.**
 
@@ -1070,11 +1099,23 @@ below.
 
 ## ЗАДАЧА ДЛЯ АГЕНТА (P5b, 2026-11-14): письма в контексте КП
 
-> Статус: **не начата.** Отдельный агент работает только в этой папке
-> (`sbe-offers/`). Второй агент параллельно делает `sbe-mailer/` и
-> `sbe-mailer/backend/`. Контракт заморожен, фикстура придёт от него:
-> [docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md](../../docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md).
-> План — `docs/superpowers/plans/2026-11-14-sbe-offers-p5b-mailer-agent-plan.md`.
+> Статус: **сторона писем ГОТОВА и РАСКАТАНА 2026-11-13 (sbe-mailer 0.1.21).**
+> Ручки живут на боевом: `GET /internal/mailer/agent/emails?q=&limit=` и
+> `GET /internal/mailer/agent/email?id=`, секрет `MAILER_INTERNAL_SECRET`
+> (тот же, что у detach). Блок `offers` серверного compose уже получил
+> `MAILER_SERVICE_URL: http://backend:3000` и этот секрет, контейнер `offers`
+> пересоздан; живой вызов из `offers` с секретом — **200**, без секрета — 403.
+> **Фикстура пришла** — `scripts/mailer-fixture.json`, записанный живой ответ
+> (два письма: со сканом и без). Подробности и что именно проверено —
+> `sbe-mailer/p5b-handoff.md`.
+>
+> Что осталось — ваша половина: `offers-service/mailer_client.go`, инструменты
+> `get_emails` (список ∩ документы) и `read_email` (полный текст + `file_key` по
+> `document_id` из видимого набора), регистрация в `agentTools()` (15 имён),
+> строка в `agentSystemPrompt`, `mailer-stub.mjs` на фикстуре, тесты
+> (`TestAgentToolListAfterP5b`, `TestGetEmailsDropsUnlinked`) и секция стенда.
+> Контракт ниже — заморожен и подтверждён живым ответом; отступать от него
+> нельзя:
 
 ### Модель (решение пользователя 2026-11-14)
 
