@@ -31,7 +31,8 @@ hashes, post-mortems) lives in
 hashes, checks, what is unfinished, where to look when something breaks.
 
 Current version = **0.9.26** — **RELEASED 2026-11-14.** Three points converge:
-`main` `8e93230`, `backend` `21af387`, self-hosted
+`main` `ab59f03`, `backend` `95bb68d` (release commits `8e93230` / `21af387`,
+then docs; the release slice is byte for byte the same), self-hosted
 `08c452e4…` / `f11a8e47…` / `a32ac3df…` (verified over https, in
 `/registry.json`, **and** through `raw.githubusercontent.com`), registry
 `sbe-apstore-registry` `36bc504`. Service and bot rebuilt and recreated
