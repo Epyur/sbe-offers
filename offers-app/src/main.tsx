@@ -21,15 +21,30 @@ registerStyles();
 
 type AuthState = { kind: 'loading' } | { kind: 'ready'; result: SessionResult };
 
+/** Адрес из браузера; в тестах (`node --test`) окна нет — пусто. */
+function readHash(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location.hash;
+}
+
 function App(): JSX.Element {
-  const [hash, setHash] = useState(() => window.location.hash);
+  // Хэш берётся из подписки, и адрес читается после её установки: экран,
+  // открытый сразу с маршрутом (`#/list/offers` из кнопки бота), иначе мог
+  // показать приветствие (дефект 2026-11-14).
+  const [hash, setHash] = useState(() => readHash());
   const [auth, setAuth] = useState<AuthState>({ kind: 'loading' });
 
   useEffect(() => {
-    const onHashChange = (): void => setHash(window.location.hash);
+    const onHashChange = (): void => setHash(readHash());
     window.addEventListener('hashchange', onHashChange);
+    setHash(readHash());
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    // Вход в бот идёт в фоне: пока шёл запрос, человек мог сменить маршрут.
+    setHash(readHash());
+  }, [auth.kind]);
 
   useEffect(() => {
     let alive = true;

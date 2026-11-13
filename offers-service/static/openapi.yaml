@@ -121,6 +121,58 @@ paths:
         '503':
           description: Токен бота не настроен в сервисе
 
+  /api/offers/app/answer:
+    post:
+      summary: Собрать документ по подписи приложения и отправить его в чат бота
+      description: |
+        Путь «Отправить в чат» из Mini App. `Telegram.WebApp.sendData` работает
+        только у приложения, открытого кнопкой клавиатуры, поэтому файл идёт
+        через бота: приложение присылает подпись, сервис собирает документ
+        теми же путями, что бот, и просит бота прислать его в чат человека.
+
+        Коды: 400 — документ не указан или тело не JSON; 401/403 — та же
+        проверка подписи, что у `/app/session` (`not_linked` — человека нет в
+        боте); 502 — файл собран, но в чат не ушёл (текст в `error`/`detail`).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData, action, kind, id]
+              properties:
+                initData:
+                  type: string
+                  description: Строка `window.Telegram.WebApp.initData`
+                action:
+                  type: string
+                  enum: [docx]
+                kind:
+                  type: string
+                  enum: [offer, combat]
+                id:
+                  type: integer
+                  description: Номер КП или боевого листка
+      responses:
+        '200':
+          description: Файл отправлен в чат
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          description: Документ не указан или тело не JSON
+        '401':
+          description: Подпись неверна или устарела
+        '403':
+          description: Человек ещё не входил в бота (`not_linked`)
+        '502':
+          description: Файл собран, но в чат не ушёл (текст в `error`/`detail`)
+
   /api/offers/permissions/me:
     get:
       summary: Роль текущего пользователя

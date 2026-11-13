@@ -368,6 +368,105 @@ code {
   text-align: center;
   color: var(--tg-hint);
 }
+
+/* Приветствие: три карточки-заглушки разделов (2026-11-14). */
+.app-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-gap);
+  margin-bottom: var(--app-gap);
+}
+
+.app-section-tile {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--app-radius);
+  background: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  text-decoration: none;
+}
+
+.app-section-tile:active {
+  opacity: 0.85;
+}
+
+.app-section-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1376 / 768;
+  object-fit: cover;
+  background: var(--tg-bg);
+}
+
+/* Пока картинка раздела не вшита (section-images.ts): узор вместо пустоты. */
+.app-section-image-offers {
+  background: linear-gradient(135deg, #2f6db5 0%, #7fb2e5 100%);
+}
+
+.app-section-image-sheets {
+  background: linear-gradient(135deg, #8c3a2e 0%, #d98a65 100%);
+}
+
+.app-section-image-ambulance {
+  background: linear-gradient(135deg, #b3261e 0%, #f2a900 100%);
+}
+
+.app-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--app-gap);
+}
+
+.app-section-title {
+  font-weight: 600;
+  font-size: 17px;
+}
+
+.app-section-caption {
+  color: var(--tg-hint);
+  font-size: 13px;
+}
+
+/*
+ * Разделы строкой на экране списка (2026-11-14): приветствие осталось только
+ * на главной, и без этой строки из КП не видно, что есть боевые листки.
+ */
+.app-sections-compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.app-section-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--tg-hint);
+  background: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.app-section-chip-current {
+  border-color: var(--tg-link);
+  color: var(--tg-link);
+  background: transparent;
+}
+
+.app-section-chip-image {
+  display: block;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: var(--tg-bg);
+}
 `;
 
 /** Идемпотентно: повторный вызов (StrictMode) не плодит второй <style>. */

@@ -1,9 +1,11 @@
 /**
  * Экраны приложения.
  *
- * S0 — заглушки карточек, S1 — вход, S2 — списки КП и боевых листков с
- * поиском по заказчику / названию (2026-11-13). Карточки документов —
- * шаги S3 (КП) и S6 (боевой листок), поэтому они пока только называют номер.
+ * S0 — приветствие с тремя карточками разделов, S1 — вход, S2 — списки КП и
+ * боевых листков с поиском по заказчику / названию (2026-11-13). Карточки
+ * документов — шаги S3 (КП) и S6 (боевой листок), поэтому они пока только
+ * называют номер. «Скорая помощь» — раздел, которого ещё нет (2026-11-14):
+ * карточка честно говорит об этом, а не ведёт в пустоту.
  *
  * Список одинаков для двух видов: разница — адрес, подсказка поиска, подпись
  * строки и текст пустого состояния (`lists.ts`). Второй почти такой же экран
@@ -27,8 +29,26 @@ import {
 import { CombatCard } from './combat-screen.tsx';
 import { OfferCard } from './offer-screen.tsx';
 import { routeHash, type Route } from './router.ts';
+import { AMBULANCE_IMAGE, OFFERS_IMAGE, SHEETS_IMAGE } from './section-images.ts';
 
 type ListKind = 'offers' | 'sheets';
+
+/** Картинки трёх разделов (вшиты в бандл, `scripts/embed_sections.mjs`). */
+const SECTION_IMAGE_URLS = {
+  offers: OFFERS_IMAGE,
+  sheets: SHEETS_IMAGE,
+  ambulance: AMBULANCE_IMAGE,
+};
+
+type SectionImageKey = keyof typeof SECTION_IMAGE_URLS;
+
+/** Карточка приветствия: картинка-заглушка, название, куда ведёт. */
+interface SectionCard {
+  id: SectionImageKey;
+  title: string;
+  caption: string;
+  href: string;
+}
 
 interface ListState<T> {
   kind: 'loading' | 'ready' | 'error';
@@ -144,10 +164,15 @@ function ListScreen<T>({
   state: ListState<T>;
   renderRow: (row: T) => JSX.Element;
 }): JSX.Element {
-  const otherHref = kind === 'offers' ? '#/list/sheets' : '#/list/offers';
   const onQuery = useCallback((q: string) => goList(kind, q), [kind]);
   return (
     <section>
+      <HomeLink />
+      <div className="app-sections app-sections-compact">
+        {SECTION_CARDS.map((card) => (
+          <SectionChip key={card.id} card={card} current={card.id === kind} />
+        ))}
+      </div>
       <h1>{title}</h1>
       <SearchBox kind={kind} query={query} onQuery={onQuery} />
       {state.kind === 'loading' ? <p className="app-muted">Загружаем…</p> : null}
@@ -168,11 +193,6 @@ function ListScreen<T>({
       {state.kind === 'ready' && query.trim() !== '' ? (
         <p className="app-muted">Найдено: {state.rows.length}</p>
       ) : null}
-      <p className="app-muted">
-        <a className="app-link" href={otherHref}>
-          {kind === 'offers' ? 'Боевые листки' : 'Коммерческие предложения'}
-        </a>
-      </p>
     </section>
   );
 }
@@ -233,11 +253,130 @@ export function NotFoundScreen({ hash }: { hash: string }): JSX.Element {
         <p className="app-muted">
           <code>{hash === '' ? '(пусто)' : hash}</code>
         </p>
-        <a className="app-link" href="#/list/offers">
-          Открыть список КП
+        <a className="app-link" href={routeHash({ name: 'home' })}>
+          На главную
         </a>
       </div>
     </section>
+  );
+}
+
+/**
+ * Три карточки приветствия (2026-11-14, просьба пользователя).
+ *
+ * Картинки — макеты разделов (сжатые, 1376x768), вшиты в бандл
+ * (`section-images.ts`). У «Скорой помощи» раздела ещё нет: карточка ведёт на
+ * честный экран «ещё не открыт», а не в пустоту.
+ */
+const SECTION_CARDS: SectionCard[] = [
+  {
+    id: 'offers',
+    title: 'Коммерческие предложения',
+    caption: 'Список КП: заказчик, номер, статус',
+    href: routeHash({ name: 'list', kind: 'offers', query: '' }),
+  },
+  {
+    id: 'sheets',
+    title: 'Боевые листки',
+    caption: 'Сравнение наших систем с конкурентами',
+    href: routeHash({ name: 'list', kind: 'sheets', query: '' }),
+  },
+  {
+    id: 'ambulance',
+    title: 'Скорая помощь',
+    caption: 'Раздел ещё готовится',
+    href: routeHash({ name: 'ambulance' }),
+  },
+];
+
+function SectionTile({ card }: { card: SectionCard }): JSX.Element {
+  const image = SECTION_IMAGE_URLS[card.id];
+  return (
+    <a className="app-section-tile" href={card.href} aria-label={card.title}>
+      {image === '' ? (
+        // Картинка ещё не вшита (`section-images.ts`): показываем узор, а не
+        // `<img src="">` — пустой src браузер грузит как саму страницу.
+        <span className={`app-section-image app-section-image-${card.id}`} aria-hidden="true" />
+      ) : (
+        <img className="app-section-image" src={image} alt="" />
+      )}
+      <span className="app-section-body">
+        <span className="app-section-title">{card.title}</span>
+        <span className="app-section-caption">{card.caption}</span>
+      </span>
+    </a>
+  );
+}
+
+/**
+ * Раздел на экране списка — тонкой строкой с картинкой (2026-11-14).
+ *
+ * Приветствие показывается только на главной; значит, из списка КП нельзя
+ * увидеть, что рядом есть боевые листки, если не вернуться на главную. Эта
+ * строка и есть переход между разделами, а не второй список («вышли из КП»
+ * вместо «вышли из приложения»). Текущий раздел помечен и не кликается.
+ */
+function SectionChip({ card, current }: { card: SectionCard; current: boolean }): JSX.Element {
+  const image = SECTION_IMAGE_URLS[card.id];
+  const body = (
+    <>
+      {image === '' ? (
+        <span className={`app-section-chip-image app-section-image-${card.id}`} aria-hidden="true" />
+      ) : (
+        <img className="app-section-chip-image" src={image} alt="" />
+      )}
+      <span>{card.title}</span>
+    </>
+  );
+  if (current) {
+    return (
+      <span className="app-section-chip app-section-chip-current" aria-current="page">
+        {body}
+      </span>
+    );
+  }
+  return (
+    <a className="app-section-chip" href={card.href}>
+      {body}
+    </a>
+  );
+}
+
+export function WelcomeScreen(): JSX.Element {
+  return (
+    <section>
+      <h1>С чего начать</h1>
+      <div className="app-sections">
+        {SECTION_CARDS.map((card) => (
+          <SectionTile key={card.id} card={card} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** «Скорая помощь»: раздел заявлен, но кода за ним ещё нет. */
+export function AmbulanceScreen(): JSX.Element {
+  return (
+    <section>
+      <HomeLink />
+      <h1>Скорая помощь</h1>
+      <div className="app-card">
+        <p>Раздел ещё не открыт: его готовит команда приложения.</p>
+        <p className="app-muted">Пока пользуйтесь «Коммерческими предложениями» и «Боевыми листками».</p>
+      </div>
+    </section>
+  );
+}
+
+/** Возврат в приветствие — одна строка на все экраны разделов. */
+function HomeLink(): JSX.Element {
+  return (
+    <p className="app-muted">
+      <a className="app-link" href={routeHash({ name: 'home' })}>
+        ← На главную
+      </a>
+    </p>
   );
 }
 
@@ -249,6 +388,10 @@ export interface Viewer {
 
 export function screenFor(route: Route, viewer: Viewer): JSX.Element {
   switch (route.name) {
+    case 'home':
+      return <WelcomeScreen />;
+    case 'ambulance':
+      return <AmbulanceScreen />;
     case 'list':
       return route.kind === 'offers' ? <OffersListScreen query={route.query} /> : <SheetsListScreen query={route.query} />;
     case 'offer':

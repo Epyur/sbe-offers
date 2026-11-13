@@ -10,8 +10,8 @@ import test from 'node:test';
 import { parseRoute, routeHash } from '../src/router.ts';
 
 test('пустой адрес открывает список КП', () => {
-  assert.deepEqual(parseRoute(''), { name: 'list', kind: 'offers', query: '' });
-  assert.deepEqual(parseRoute('#/'), { name: 'list', kind: 'offers', query: '' });
+  assert.deepEqual(parseRoute(''), { name: 'home' });
+  assert.deepEqual(parseRoute('#/'), { name: 'home' });
 });
 
 test('список листков и поиск по клиенту', () => {
@@ -42,7 +42,7 @@ test('неизвестный путь не роняет приложение', (
 test('адрес для бота собирается и читается тем же разбором', () => {
   assert.equal(routeHash({ name: 'offer', id: 12 }), '#/offer/12');
   assert.equal(routeHash({ name: 'sheet', id: 3 }), '#/sheet/3');
-  assert.equal(routeHash({ name: 'list', kind: 'offers', query: '' }), '#/list/offers');
+  assert.equal(routeHash({ name: 'home' }), '#/');
 
   const withQuery = routeHash({ name: 'list', kind: 'sheets', query: 'мембрана' });
   const parsed = parseRoute(withQuery);
@@ -59,13 +59,20 @@ test('хэш от Telegram (tgWebAppData) не превращается в «э�
   // их отбрасывания человек видел «Адрес не распознан» на самом первом экране.
   const tg =
     '#tgWebAppData=query_id%3DAAFe&tgWebAppVersion=9.6&tgWebAppPlatform=tdesktop';
-  assert.deepEqual(parseRoute(tg), { name: 'list', kind: 'offers', query: '' });
+  assert.deepEqual(parseRoute(tg), { name: 'home' });
   assert.notEqual(parseRoute(tg).name, 'notFound');
 });
 
 test('маршрут из startapp платформы уважается', () => {
   const tg = '#tgWebAppData=abc&tgWebAppStartParam=%2Foffer%2F12&tgWebAppVersion=9.6';
   assert.deepEqual(parseRoute(tg), { name: 'offer', id: 12 });
+});
+
+test('приветствие и «Скорая помощь» — свои маршруты', () => {
+  assert.deepEqual(parseRoute(routeHash({ name: 'home' })), { name: 'home' });
+  assert.deepEqual(parseRoute(routeHash({ name: 'ambulance' })), { name: 'ambulance' });
+  assert.equal(routeHash({ name: 'ambulance' }), '#/ambulance');
+  assert.equal(parseRoute('#/ambulance/whatever').name, 'notFound');
 });
 
 test('свой поиск в адресе от бота сохраняется', () => {

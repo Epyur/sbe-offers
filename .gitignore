@@ -26,3 +26,6 @@ offers-service/.metrics/
 offers-app/dist/
 offers-app/node_modules/
 offers-app/.vite/
+# Снимок проверки приветствия (scripts/check_home_screen.mjs) - не артефакт приложения.
+offers-app/home-screen.png
+offers-app/dist/home.png

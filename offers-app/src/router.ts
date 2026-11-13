@@ -7,6 +7,8 @@
  */
 
 export type Route =
+  | { name: 'home' }
+  | { name: 'ambulance' }
   | { name: 'list'; kind: 'offers' | 'sheets'; query: string }
   | { name: 'offer'; id: number }
   | { name: 'sheet'; id: number }
@@ -25,16 +27,19 @@ const EMPTY_HASH = '';
 /**
  * `#/offer/12` → `{name:'offer', id:12}`; мусор → notFound, а не исключение.
  *
+ * Корень (`''`, `#/`, `#`, только параметры Telegram) — приветственная
+ * страница: три карточки разделов (2026-11-14).
+ *
  * Хэш приходит в двух видах:
  *   - от бота: `#/offer/12`, `#/list/offers?q=…`;
  *   - от Telegram: `#tgWebAppData=…&tgWebAppVersion=9.6` (маршрута нет —
- *     открылся тот адрес, что задан кнопкой меню, то есть список).
+ *     открылся тот адрес, что задан кнопкой меню, то есть приветствие).
  * Поэтому сначала отбрасываем параметры платформы и берём путь.
  */
 export function parseRoute(hash: string): Route {
   const raw = hash.trim();
   if (raw === EMPTY_HASH || raw === '#/' || raw === '#') {
-    return { name: 'list', kind: 'offers', query: '' };
+    return { name: 'home' };
   }
 
   const withoutHash = raw.startsWith('#') ? raw.slice(1) : raw;
@@ -82,6 +87,10 @@ export function parseRoute(hash: string): Route {
     }
   }
 
+  if (parts.length === 1 && parts[0] === 'ambulance') {
+    return { name: 'ambulance' };
+  }
+
   if (parts.length === 2) {
     const id = Number(parts[1]);
     if (Number.isInteger(id) && id > 0) {
@@ -91,19 +100,23 @@ export function parseRoute(hash: string): Route {
   }
 
   // Хэш есть, но маршрута в нём нет: Telegram дописал только свои параметры
-  // (значит, открыли адрес кнопки меню без маршрута) — показываем список КП,
+  // (значит, открыли адрес кнопки меню без маршрута) — показываем приветствие,
   // а не «Экран не найден». Ошибкой остаётся только настоящий мусор в пути.
   if (pathPart === '' && withoutHash !== '') {
-    return { name: 'list', kind: 'offers', query: '' };
+    return { name: 'home' };
   }
 
   return { name: 'notFound', hash: raw };
 }
 
-/** Собрать адрес для бота: `#/offer/12`, `#/list/sheets?q=…`. */
+/** Собрать адрес для бота: `#/offer/12`, `#/list/sheets?q=…`, `#/` — приветствие. */
 export function routeHash(route: Exclude<Route, { name: 'notFound' }>, base = ''): string {
   const prefix = base.endsWith('/') || base === '' ? base : `${base}/`;
   switch (route.name) {
+    case 'home':
+      return `${prefix}#/`;
+    case 'ambulance':
+      return `${prefix}#/ambulance`;
     case 'list': {
       const q = route.query.trim();
       const suffix = q === '' ? '' : `?q=${encodeURIComponent(q)}`;
