@@ -30,7 +30,7 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.0** — **RELEASED 2026-11-14.**
+Current version = **0.10.0** — **RELEASED 2026-11-14.** `backend` `7a702d0`, `main` `4626080`;
 
 **0.10.0 (2026-11-14): приложение открывается заглавной страницей.** Корень
 Mini App (`#/`) — три карточки разделов («Коммерческие предложения», «Боевые
