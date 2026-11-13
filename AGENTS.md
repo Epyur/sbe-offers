@@ -30,12 +30,13 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.23** — **RELEASED 2026-11-14.** Three points converge:
-`main` `533ac36`, `backend` `05686b7`, self-hosted `8561ca81…` / `ee4a1749…` /
-`a32ac3df…` (verified over https **and** in `/registry.json`), registry git copy
-`sbe-apstore-registry` `4997d05`. The service and the bot were rebuilt and
-recreated; `md5sum` of 284/284 files matched after CRLF normalisation; health
-`ok`, poller running. The App did not change this batch.
+Current version = **0.9.24** — **PREPARED 2026-11-14, NOT RELEASED.** The last
+release is 0.9.23 (three points: `main` `533ac36`, `backend` `05686b7`,
+self-hosted `8561ca81…` / `ee4a1749…` / `a32ac3df…`, registry
+`sbe-apstore-registry` `4997d05`). 0.9.24 is bot-only in substance (multi-product
+КП from chat, materials by description, search-limit split, write by `noteId`);
+the plugin changed only through the version and the CUP news string. See
+«0.9.24» below.
 
 **0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
 RELEASED.** Also the bot menu compaction in the same batch. See «P6-bis» below.
@@ -80,6 +81,43 @@ once (`Add`/`Remove`/`Same`/JSON tolerance to the old object shape).
   `writeRef` replaces `writeSystem`), card «Материалы в предложении
   (описанием)» next to «Материал в позиции» (the labels differ on purpose).
 - App: «Материалы (описанием)» zone with its own search (`/materials/search`).
+
+**0.9.24 (unreleased, 2026-11-14): multi-product КП from the bot.**
+
+Live complaint: «выбрал «ТН-ФУНДАМЕНТ Протект Экстра», бот ответил
+«продукт записать не удалось»», and «по запросу Logicbase не предложено ни
+одного материала». Four defects behind them:
+
+1. `suggestItems` (`flow/suggest.ts`) filled `SUGGEST_LIMIT` with systems
+   first, so when the search returned 8+ systems the materials the server
+   DID return were dropped. The limit is now split: materials keep at least
+   half, and a half that has nothing in it gives its room to the other.
+2. `addPickedOfferProduct` (`callbacks.ts`) sent **both** `noteId` and `sku`
+   to `/bot/offers/{id}/system`. `FindSystem` matches the SKU FIRST and never
+   looks at the note — a card with a same-named SKU could take the choice, and
+   a miss produced the generic «записать не удалось». Now only `noteId` is
+   sent (SKU only when there is no note), and the server's error text reaches
+   the person instead of a swallowed `catch {}`.
+3. Materials were never written at all (`return false` for `kind:'material'`).
+   They now go through `api.addMaterial` → `POST /bot/offers/{id}/material`
+   (`assembleMaterial`, `material_choice`) — by DESCRIPTION, never as a
+   priced position (user decision 2026-11-14).
+4. Nobody could pick several products. Numbers are toggles now (`✓ N`),
+   «✓ Добавить выбранные (N)» writes the marked set, and after the write the
+   bot asks **«Нужно добавить ещё продукт или систему — или этого
+   достаточно?»** with `nd:more` / `nd:enough` / `nd:app`. The document row is
+   created on the FIRST write (`ensureNewDocDocument`), so an abandoned
+   conversation keeps what was already chosen (user decision: write
+   immediately, not in a batch at the end).
+
+`NewDocState.step` gained `'more'` and `NewDocState.added` holds what has been
+written, so the summary names every product. `onNewDocKind` clears
+`draft`/`combat`: a row opened before the dialog must not take the new choice.
+Checks: bot `tsc` EXIT=0, **207 passing** (new: materials survive an 8-system
+list, toggle + «добавить выбранные», «добавить ещё» keeps the previous pick),
+stand **496/0** (new section checks: materials written by description, system
+and material in one offer, material is not a position, system found by noteId
+alone). Plugin and service code untouched; nothing deployed.
 
 **0.9.20 (2026-11-13, R2): one «Создать новый документ» button.** `🧾 Собрать
 КП` and `⚔️ Боевой листок` leave the menu (their captions stay in `routeMenu`
@@ -1027,8 +1065,96 @@ of a battle sheet. A bare `material` tag is a material.
   `kb-selfhost.sh` writing hashes to the DB) — `HANDOFF.md`, «Как выкладывать
   выпуск».
 
-**Still P5b:** emails (`get_emails` / `read_email_pdf`) — `/internal/mailer/agent/*`
-routes do not exist yet (work in `sbe-mailer`).
+**Still P5b:** emails (`get_emails` / `read_email`) — see the task section right
+below.
+
+## ЗАДАЧА ДЛЯ АГЕНТА (P5b, 2026-11-14): письма в контексте КП
+
+> Статус: **не начата.** Отдельный агент работает только в этой папке
+> (`sbe-offers/`). Второй агент параллельно делает `sbe-mailer/` и
+> `sbe-mailer/backend/`. Контракт заморожен, фикстура придёт от него:
+> [docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md](../../docs/superpowers/plans/2026-11-14-sbe-offers-p5b-START-HERE.md).
+> План — `docs/superpowers/plans/2026-11-14-sbe-offers-p5b-mailer-agent-plan.md`.
+
+### Модель (решение пользователя 2026-11-14)
+
+Письмо видно агенту **только если у карточки его скана в «Документах» есть
+`product_refs`** — та же граница, что уже раскатана для документов
+(`documents-service/agentdocs.go:24,169-173,222-238`). Ни «есть PDF», ни
+`doc_type`, ни совпадение названия не используются. Пересечение двух
+сервисов делается **здесь** (решение пользователя, вариант «б»): мейлер и
+документы друг о друге не знают.
+
+### Что сделать
+
+1. **`offers-service/mailer_client.go`** — клиент по образцу
+   `documents_client.go` (та же форма, те же причины): `MAILER_SERVICE_URL`
+   (имя контейнера мейлера сверить с боевым compose — `backend`),
+   `MAILER_INTERNAL_SECRET`, таймаут 60 с, лимит тела 64 МиБ.
+   `configured() == false` → **отказ**, не пустой список.
+   `Emails(ctx, query, limit)` и `Letter(ctx, id)`.
+
+2. **`get_emails`** — новый инструмент в `agenttools_impl.go` рядом с
+   документами:
+   - `letters := mailer.Emails(q, limit)` — все, у кого есть карточка скана;
+   - `visible := NewDocumentsAgentClient().List("", 0)` — набор P5a;
+   - оставить письмо, если `document_id` хотя бы одного его вложения есть в
+     `visible`; к каждому оставшемуся приложить **названия привязок** его
+     карточки (модель должна понимать, к какому продукту относится письмо);
+   - пусто → «Писем, относящихся к продуктам, не нашлось.» — **никогда** не
+     «писем нет»;
+   - `visible` кэшировать **на ход** (в `agentEnv`), не на сервер: привязку
+     могли поставить секунду назад;
+   - аргументы: `query`, `limit`, опционально `product` (id заметки или слово)
+     — агент обычно знает, о каком продукте идёт речь.
+   - описание инструмента (видит модель) — про границу: письма видны только
+     те, чей скан привязан к системе или материалу; пустой результат не повод
+     искать обход.
+
+3. **`read_email`** — полный текст письма (`mailer.Letter(id)`); в результате
+   ещё список сканов и для каждого **`file_key`**, разрешённый по
+   `document_id` из того же `visible` набора (отдельной ручки для этого не
+   нужно). Текст PDF в v1 пустой — отвечать честно, как
+   `toolReadDocumentFile` («нет текстового слоя — откройте сканом»), сканы
+   открывать **существующими** `get_document_link` / `read_document_file`.
+   Нового инструмента для PDF не заводить.
+
+4. **Регистрация и промт.** В `agentTools()` (15 имён после P6-бис + 2),
+   в упорядоченном списке `agentToolDescriptors`; заменить комментарий «письма
+   — P5b» на правило как оно есть; одна строка в `agentSystemPrompt` под «Что
+   важно помнить».
+
+5. **Конфиг и стенд.** В `offers` блок серверного compose: `MAILER_SERVICE_URL`,
+   `MAILER_INTERNAL_SECRET` (то же значение, что у мейлера), `depends_on:
+   backend` — точечно, с бэкапом, `docker compose config -q`. На локальном
+   стенде — `mailer-stub.mjs` в `scripts/` по замороженному контракту, пока не
+   придёт записанная фикстура.
+
+### НЕ делать
+
+- Не менять `sbe-mailer/`, `sbe-documents/`, `sbe-core/`.
+- Не вводить фильтр по PDF/`doc_type`/названию ни в одном месте.
+- Не отдавать модели base64 и не парсить PDF.
+- Не поднимать версию и не деплоить без явной команды.
+
+### Чек-лист сдачи
+
+```
+cd offers-service && gofmt -l . && go vet ./... && go test ./...
+cd .. && node ../scripts/check_offers_openapi.mjs   # 117/117, новые ручки — /internal
+cd ../offers-bot && npm run typecheck && node --test "src/**/*.test.ts"
+cd .. && npx tsc --noEmit && npm run build && node scripts/check_bundle_strings.mjs
+node ../scripts/check_agent_engine.mjs
+# стенд: секция «письма видны только через привязку к продукту (P5b)»
+```
+
+- тесты: `mailer_client_test.go` (заголовок секрета, `configured()` без env,
+  текст 403, `items:null` → `[]`); `agent_test.go` — `TestAgentToolListAfterP5b`
+  (15 имён) и `TestGetEmailsDropsUnlinked` (стаб мейлера: две записи, стаб
+  документов: одна видимая карточка → остаётся одно письмо, а пустой
+  результат — текст про «нет привязанных писем»);
+- сообщить: файлы, коды выхода и числа, что не проверено, что ждёт от
+  мейлер-агента (фикстура), нужные строки compose.
 
 ## Next iterations (backlog)
 
