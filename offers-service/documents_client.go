@@ -65,14 +65,24 @@ func (c *DocumentsAgentClient) configured() bool {
 // AgentDoc — документ в том виде, в каком его видит агент. Поля — snake_case,
 // как у ручки (чужой контракт, не наш тип).
 type AgentDoc struct {
-	DocumentID int64  `json:"document_id"`
-	Title      string `json:"title"`
-	DocType    string `json:"doc_type"`
-	FileName   string `json:"file_name"`
-	FileKey    string `json:"file_key"`
-	LinkURL    string `json:"link_url"`
-	NoAgent    bool   `json:"no_agent"`
-	UpdatedAt  string `json:"updated_at"`
+	DocumentID  int64             `json:"document_id"`
+	Title       string            `json:"title"`
+	DocType     string            `json:"doc_type"`
+	FileName    string            `json:"file_name"`
+	FileKey     string            `json:"file_key"`
+	LinkURL     string            `json:"link_url"`
+	ProductRefs []AgentProductRef `json:"product_refs"`
+	NoAgent     bool              `json:"no_agent"`
+	UpdatedAt   string            `json:"updated_at"`
+}
+
+// AgentProductRef — привязка карточки к продукту Базы знаний. Поля — как у
+// документов (`product_refs` JSONB): `note_id`, `title`, необязательный `sku`.
+// Своего типа на каждый сервис не заводим: форма одна, привязка — одна.
+type AgentProductRef struct {
+	NoteID int64  `json:"note_id"`
+	Title  string `json:"title"`
+	SKU    string `json:"sku,omitempty"`
 }
 
 // AgentDocList — ответ списка. `Items` всегда массив (ручка гарантирует).

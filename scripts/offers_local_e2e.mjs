@@ -3187,6 +3187,68 @@ async function sectionAgentP6bis() {
     JSON.stringify(offerTurn.json?.files)?.slice(0, 160));
 }
 
+/**
+ * Письма видны только через привязку к продукту (P5b, 2026-11-14).
+ *
+ * Модель (решение пользователя 2026-11-14): письмо видно агенту ТОЛЬКО если у
+ * карточки его скана в «Документах» есть `product_refs`. Второго признака нет.
+ * Пересечение делает offers-service: мейлер отдаёт письма с карточкой скана и
+ * видимость НЕ проверяет, документы отдают набор с привязками.
+ *
+ * Что стоит на стенде: `mailer-stub` (записанная фикстура, два письма в
+ * памяти) и `documents-stub` (одна привязанная карточка — скан письма
+ * ТД/КФ/021). Второе письмо мейлера со сканом (`document_id` 1788168804900)
+ * в набор документов НАМЕРЕННО не входит: если фильтр протекает, «осталось
+ * одно письмо» покраснеет.
+ *
+ * Без `MAILER_SERVICE_URL` у `offers` письма честно отказывают: раздел
+ * проверяет и это — отказ вместо пустого списка.
+ */
+async function sectionAgentP5b() {
+  console.log('\nПисьма видны только через привязку к продукту (P5b)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999003';
+  const botHeaders = { 'X-Service-Secret': BOT_SECRET };
+
+  const turn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'найди письма по LOGICROOF V-RP' },
+  });
+  ok('ход «найди письма по продукту» отвечает 200', turn.status === 200,
+    `код ${turn.status} ${turn.text?.slice(0, 160)}`);
+  ok('ответ агента не пустой', typeof turn.json?.answer === 'string' && turn.json.answer.length > 0,
+    JSON.stringify(turn.json)?.slice(0, 160));
+
+  const log = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const row = (log.json?.items ?? []).find((r) => String(r.userText ?? '').includes('найди письма'));
+  ok('ход «найди письма» попал в журнал', Boolean(row),
+    JSON.stringify((log.json?.items ?? []).map((r) => r.userText)).slice(0, 240));
+
+  const emails = (row?.tools ?? []).find((t) => t.name === 'get_emails');
+  ok('агент вызвал get_emails', Boolean(emails), JSON.stringify(row?.tools ?? []).slice(0, 240));
+  ok('письма через агента доступны (связь настроена)', emails?.ok === true,
+    JSON.stringify(emails)?.slice(0, 240));
+  ok('оставлено ОДНО письмо: второе не привязано к продукту',
+    String(emails?.summary ?? '').includes('1'), String(emails?.summary ?? ''));
+
+  const read = (row?.tools ?? []).find((t) => t.name === 'read_email');
+  ok('агент прочитал письмо read_email', read?.ok === true, JSON.stringify(read)?.slice(0, 240));
+
+  // Письмо БЕЗ карточки скана и несуществующее письмо отвечают одинаково —
+  // 404 «email not found» (единственное тело на обе причины). Заглушка
+  // модели в этом ходе зовёт read_email по id, который назвал человек.
+  const unlinked = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'найди письма 862' },
+  });
+  ok('ход «найди письма 862» отвечает 200', unlinked.status === 200, `код ${unlinked.status}`);
+  const unlinkedLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const unlinkedRow = (unlinkedLog.json?.items ?? []).find((r) => String(r.userText ?? '').includes('862'));
+  const unlinkedRead = (unlinkedRow?.tools ?? []).find((t) => t.name === 'read_email');
+  ok('письмо без карточки скана не открывается: read_email по 862 отказывает',
+    unlinkedRead?.ok !== true && /недоступно/.test(String(unlinkedRead?.summary ?? '')),
+    JSON.stringify(unlinkedRead)?.slice(0, 240));
+}
+
 await sectionCombat();
 await sectionPickerSearch();
 await sectionOfferMaterials();
@@ -3194,6 +3256,7 @@ await sectionBotAppLinks();
 await sectionNewDoc();
 await sectionAgent();
 await sectionAgentP6bis();
+await sectionAgentP5b();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

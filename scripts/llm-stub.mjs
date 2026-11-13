@@ -136,6 +136,30 @@ function reply(system, user) {
     }
     return JSON.stringify({ type: 'tool_call', tool: 'create_offer', arguments: { clientName: 'ООО «Тест»' } });
   }
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /письм/i.test(user)) {
+    const asked = (user.match(/письм[аоы]?\s+(\d{3,})/i) ?? [])[1];
+    if (/\[Результат тула read_email/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'Письмо прочитано, сканы доступны ссылкой.' });
+    }
+    if (/\[Результат тула get_emails/.test(user)) {
+      const id = (user.match(/"id":\s*(\d+)/) ?? [])[1] ?? '0';
+      if (id === '0') {
+        return JSON.stringify({ type: 'final', text: 'Писем, относящихся к продуктам, не нашлось.' });
+      }
+      return JSON.stringify({ type: 'tool_call', tool: 'read_email', arguments: { id: Number(id) } });
+    }
+    // «найди письма 862» — человек назвал номер: читаем именно его. Так стенд
+    // проверяет, что письмо без карточки скана НЕ открывается: ручка отвечает
+    // 404, и инструмент отказывает вместо пересказа пустоты.
+    if (asked) {
+      return JSON.stringify({ type: 'tool_call', tool: 'read_email', arguments: { id: Number(asked) } });
+    }
+    return JSON.stringify({
+      type: 'tool_call',
+      tool: 'get_emails',
+      arguments: { product: 'LOGICROOF V-RP' },
+    });
+  }
   if (/Ты — помощник менеджера отдела продаж/.test(system)) {
     if (/\[Результат тула /.test(user)) {
       return JSON.stringify({ type: 'final', text: 'Нашёл в Базе знаний, что можно предложить.' });

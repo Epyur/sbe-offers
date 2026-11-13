@@ -66,6 +66,13 @@ type agentEnv struct {
 	// Fixes — ручные правки строки за ход (`manual_fix` журнала): что было и
 	// что стало. В модель не идут; это материал разбора переписки менеджеров.
 	Fixes []agentManualFix
+	// visibleDocs — видимый набор документов на ход (письма проверяют по нему
+	// привязку к продукту). Кэш на ОДИН ход, а не на сервер: привязку могли
+	// поставить секунду назад, и «письмо не появилось» в тот же миг — задержка
+	// кэша документов, а не ошибка. `ready` отличает «не спрашивали» от
+	// «спросили, пришёл пустой набор».
+	visibleDocs      []AgentDoc
+	visibleDocsReady bool
 }
 
 // agentFile — готовый документ за ход.
@@ -102,7 +109,6 @@ func (env *agentEnv) noteFix(column string, rowID int64, before, after any) {
 // промт строит список из этой же карты.
 //
 // Чего здесь НЕТ и почему:
-//   - письма (`get_emails`) — P5b, ручек mailer ещё нет;
 //   - YouGile, правила, навыки, презентации — не входят в scope;
 //   - `list_offers`/`get_offer` — менеджер и так видит их в приложении;
 //     агенту нужен результат, а не второй список.
@@ -111,6 +117,10 @@ func (env *agentEnv) noteFix(column string, rowID int64, before, after any) {
 // карточки материалов «не открывались»), добавлены `search_competitors`,
 // `create_combat_sheet`, `set_combat_side` и `create_offer` (агент больше не
 // упирается в «предложение не найдено» без id).
+//
+// P5b (2026-11-14): `get_emails` и `read_email` — письма, но видимые ТОЛЬКО
+// через привязку карточки скана к продукту. Видимость письма — не «есть PDF»
+// и не совпадение названия, а `product_refs` карточки (agentmail.go).
 func (s *Server) agentTools() map[string]agentToolSpec {
 	tools := []agentToolSpec{
 		s.toolGetOurProducts(),
@@ -119,6 +129,8 @@ func (s *Server) agentTools() map[string]agentToolSpec {
 		s.toolGetDocuments(),
 		s.toolGetDocumentLink(),
 		s.toolReadDocumentFile(),
+		s.toolGetEmails(),
+		s.toolReadEmail(),
 		s.toolCreateOffer(),
 		s.toolSetSystem(),
 		s.toolSetMaterial(),
@@ -140,6 +152,7 @@ func (s *Server) agentToolDescriptors() []map[string]any {
 	order := []string{
 		"get_our_products", "read_card", "search_competitors",
 		"get_documents", "get_document_link", "read_document_file",
+		"get_emails", "read_email",
 		"create_offer", "set_system", "set_material",
 		"create_combat_sheet", "set_combat_side",
 		"build_docx", "build_combat_docx",

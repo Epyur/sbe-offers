@@ -117,8 +117,10 @@ func TestAgentToolsWhitelist(t *testing.T) {
 			t.Fatalf("схема %s не объект: %+v", name, schema)
 		}
 	}
-	// v1 не содержит инструментов записи YouGile и писем (P5b ещё нет).
-	for _, forbidden := range []string{"create_yougile_task", "save_rule", "add_skill", "get_emails"} {
+	// v1 не содержит инструментов записи YouGile (P5b — письма читают, но не
+	// пишут, и видят только привязанные к продукту: это проверяет
+	// TestGetEmailsDropsUnlinked).
+	for _, forbidden := range []string{"create_yougile_task", "save_rule", "add_skill"} {
 		for _, spec := range specs {
 			if spec["name"] == forbidden {
 				t.Fatalf("инструмент %q не должен быть в v1", forbidden)
@@ -151,6 +153,120 @@ func TestAgentToolsAfterP6bis(t *testing.T) {
 		if !found {
 			t.Fatalf("set_combat_side: аргумент %q не обязателен: %v", key, required("set_combat_side"))
 		}
+	}
+}
+
+// Инструменты P5b (2026-11-14): письма в карте ровно два — список и чтение;
+// в упорядоченном списке схем они тоже есть, иначе модель их не увидит, хотя
+// `agentTools` их знает.
+func TestAgentToolListAfterP5b(t *testing.T) {
+	server := &Server{}
+	tools := server.agentTools()
+	for _, name := range []string{"get_emails", "read_email"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("инструмента %q нет в карте", name)
+		}
+	}
+	descriptors := server.agentToolDescriptors()
+	names := make(map[string]bool, len(descriptors))
+	for _, descriptor := range descriptors {
+		if name, _ := descriptor["name"].(string); name != "" {
+			names[name] = true
+		}
+	}
+	if !names["get_emails"] || !names["read_email"] {
+		t.Fatalf("письма не попали в схемы модели: %v", names)
+	}
+	if len(descriptors) != len(tools) {
+		t.Fatalf("карта и схемы разошлись: %d инструментов, %d схем", len(tools), len(descriptors))
+	}
+	emailSchema := tools["read_email"].InputSchema
+	if required, _ := emailSchema["required"].([]string); len(required) != 1 || required[0] != "id" {
+		t.Fatalf("read_email: аргумент id обязателен и единственный: %v", required)
+	}
+	if strings.TrimSpace(tools["get_emails"].Description) == "" {
+		t.Fatal("get_emails без описания: модель не узнает про границу привязки")
+	}
+}
+
+// Письмо видно агенту ТОЛЬКО через карточку скана, привязанную к продукту
+// (модель 2026-11-14). Заглушки: мейлер отдаёт письмо со сканом и письмо без
+// карточки видимости; документы — одну видимую карточку (со сканом первого).
+// Остаётся одно письмо, и его карточка несёт названия привязок.
+func TestGetEmailsDropsUnlinked(t *testing.T) {
+	server := newTestServerAgainstStubs(t, `{
+  "source": "mailer",
+  "total": 2,
+  "items": [
+    {"id": 11, "number": "ТД/КФ/021", "subject": "О LOGICROOF V-RP", "text": "текст",
+     "attachments": [{"document_id": 900, "file_name": "scan.pdf", "kind": "signed"}]},
+    {"id": 12, "number": "01.02.476", "subject": "Без карточки скана", "text": "текст",
+     "attachments": []}
+  ]
+}`, `{
+  "source": "documents",
+  "total": 1,
+  "items": [
+    {"document_id": 900, "title": "ТД/КФ/021 - О LOGICROOF V-RP", "file_name": "scan.pdf",
+     "file_key": "documents/9f2/main-scan.pdf",
+     "product_refs": [{"note_id": 7547, "title": "LOGICROOF V-RP"}]}
+  ]
+}`)
+
+	env := &agentEnv{Ctx: context.Background(), Server: server, Email: "owner@tn.ru"}
+	result, err := server.agentTools()["get_emails"].Run(context.Background(), env, map[string]any{})
+	if err != nil {
+		t.Fatalf("get_emails вернул ошибку: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("get_emails отказал: %+v", result)
+	}
+	data, _ := result.Data.(map[string]any)
+	items, _ := data["items"].([]map[string]any)
+	if len(items) != 1 {
+		t.Fatalf("должно остаться одно письмо (привязанное), а не %d: %+v", len(items), data["items"])
+	}
+	email := items[0]
+	if email["id"] != int64(11) {
+		t.Fatalf("осталось не то письмо: %+v", email)
+	}
+	products, _ := email["products"].([]map[string]any)
+	if len(products) != 1 || products[0]["title"] != "LOGICROOF V-RP" {
+		t.Fatalf("к письму не приложены названия привязок: %+v", email["products"])
+	}
+	scans, _ := email["attachments"].([]map[string]any)
+	if len(scans) != 1 || scans[0]["file_key"] != "documents/9f2/main-scan.pdf" {
+		t.Fatalf("скан без ключа файла видимой карточки: %+v", email["attachments"])
+	}
+}
+
+// Видимого набора нет — письмо не показывается, и текст ответа честный:
+// «Писем, относящихся к продуктам, не нашлось», а не «писем нет».
+func TestGetEmailsEmptyVisibleSet(t *testing.T) {
+	server := newTestServerAgainstStubs(t, `{
+  "source": "mailer",
+  "total": 1,
+  "items": [
+    {"id": 11, "number": "ТД/КФ/021", "subject": "О LOGICROOF V-RP", "text": "текст",
+     "attachments": [{"document_id": 900, "file_name": "scan.pdf", "kind": "signed"}]}
+  ]
+}`, `{"source": "documents", "total": 0, "items": []}`)
+
+	env := &agentEnv{Ctx: context.Background(), Server: server, Email: "owner@tn.ru"}
+	result, err := server.agentTools()["get_emails"].Run(context.Background(), env, map[string]any{})
+	if err != nil {
+		t.Fatalf("get_emails вернул ошибку: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("get_emails отказал: %+v", result)
+	}
+	if !strings.Contains(result.Summary, "не нашлось") {
+		t.Fatalf("текст пустого результата врёт: %q", result.Summary)
+	}
+	data, _ := result.Data.(map[string]any)
+	items, isSlice := data["items"].([]any)
+	if !isSlice || len(items) != 0 {
+		t.Fatalf("items должен быть пустым массивом: %+v", data["items"])
 	}
 }
 

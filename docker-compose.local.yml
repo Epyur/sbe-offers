@@ -73,6 +73,35 @@ services:
       - ./scripts:/app:ro
     networks: [offersnet]
 
+  # Заглушка mailer-service (2026-11-14, P5b): две внутренние ручки писем на
+  # ЗАПИСАННОЙ фикстуре (scripts/mailer-fixture.json, живой ответ 2026-11-13).
+  # Ключа файла не отдаёт вовсе, видимость не проверяет — как настоящая ручка.
+  mailer-stub:
+    image: node:22-alpine
+    container_name: offers-local-mailer-stub
+    working_dir: /app
+    command: node mailer-stub.mjs
+    environment:
+      MAILER_PORT: "3000"
+      MAILER_INTERNAL_SECRET: test-mailer-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
+  # Заглушка documents-service (2026-11-14, P5b): набор документов, привязанных
+  # к продукту. По нему offers-service проверяет видимость письма.
+  documents-stub:
+    image: node:22-alpine
+    container_name: offers-local-documents-stub
+    working_dir: /app
+    command: node documents-stub.mjs
+    environment:
+      DOCUMENTS_PORT: "3000"
+      DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
   offers:
     build: ./offers-service
     container_name: offers-local-app
@@ -98,6 +127,14 @@ services:
       S3_SECRET_KEY: y
       SMTP_HOST: 127.0.0.1
       SMTP_PORT: "2525"
+      # Письма (P5b, 2026-11-14): ручки внутренние, видимость письма решает
+      # карточка скана. На стенде — mailer-stub на записанной фикстуре.
+      MAILER_SERVICE_URL: http://mailer-stub:3000
+      MAILER_INTERNAL_SECRET: test-mailer-internal-secret
+      # Набор «документы, привязанные к продукту» — по нему проверяется
+      # видимость письма. На стенде — documents-stub.
+      DOCUMENTS_SERVICE_URL: http://documents-stub:3000
+      DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
     depends_on:
       db:
         condition: service_healthy
@@ -106,6 +143,10 @@ services:
       llm-stub:
         condition: service_started
       kb-stub:
+        condition: service_started
+      mailer-stub:
+        condition: service_started
+      documents-stub:
         condition: service_started
     ports:
       - "18080:3000"
