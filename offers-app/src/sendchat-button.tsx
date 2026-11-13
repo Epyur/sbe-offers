@@ -10,7 +10,7 @@
  * ждёт ответа: пока его нет, повторное нажатие не шлёт второй запрос.
  */
 import { useState, type JSX } from 'react';
-import { inTelegram } from './tg.ts';
+import { initData, inTelegram, platformInfo } from './tg.ts';
 import { preflightProblem, sendButtonText, sendDocumentToChat, type DocumentKind } from './sendchat.ts';
 
 export function SendToChatButton({ kind, id }: { kind: DocumentKind; id: number }): JSX.Element | null {
@@ -29,6 +29,8 @@ export function SendToChatButton({ kind, id }: { kind: DocumentKind; id: number 
     setProblem('');
     void sendDocumentToChat(kind, id)
       .then((outcome) => {
+        // Отказ виден словами синим текстом и НЕ закрывает окно: если окно
+        // закрылось без текста — значит сервис подтвердил отправку.
         if (!outcome.sent) setProblem(outcome.problem);
       })
       .finally(() => setBusy(false));
@@ -37,9 +39,13 @@ export function SendToChatButton({ kind, id }: { kind: DocumentKind; id: number 
   return (
     <div className="app-card">
       <button className="app-button" type="button" onClick={onClick} disabled={busy}>
-        {busy ? '⏳ Собираю файл…' : sendButtonText(kind)}
+        {busy ? '⏳ Отправляю…' : sendButtonText(kind)}
       </button>
       <p className="app-muted">Файл соберёт бот и пришлёт его в чат с приложением.</p>
+      <p className="app-muted">
+        Отправка: {initData() === '' ? 'нет ключа Telegram' : 'ключ есть'}
+        {platformInfo().version === '' ? '' : `, Telegram ${platformInfo().version}`}
+      </p>
       {problem === '' ? null : <p className="app-error-text">{problem}</p>}
     </div>
   );

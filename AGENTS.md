@@ -30,7 +30,16 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.28** — **RELEASED 2026-11-14.** `backend` `23a2dcb`, `main` `3623635`;
+Current version = **0.9.29** — см. «0.9.29» в `HANDOFF.md`. 0.9.28 (`main` `a9e064f`) — файл через бота.
+
+**0.9.29 (2026-11-14): отказ события сейчас виден.** Живая проверка 0.9.28 дала
+«закрылось, файла нет», а в журналах Caddy и сервиса **не было ни одного
+`/api/offers/app/answer`** — запрос не уходил. Приложение больше не закрывается при
+отказе (`close()` — только после подтверждённой отправки), под кнопкой есть
+строка «ключ есть / нет ключа Telegram», а сервис пишет в журнал каждую отправку
+с `chat_id` и размером файла.
+
+**0.9.28 (2026-11-14, RELEASED):** `backend` `23a2dcb`, `main` `3623635`;
 self-hosted `899e87b4…` / `4587c651…` / `a32ac3df…` (verified over https, in `/registry.json`),
 registry `sbe-apstore-registry` `8f9b1de`; service and bot rebuilt and recreated
 (`*.bak-20261114-0928`), app deployed as `assets/index-BGVw3l4T.js`. См. «0.9.28» ниже.

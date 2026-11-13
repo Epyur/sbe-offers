@@ -64,15 +64,24 @@ export async function sendDocumentToChat(kind: DocumentKind, id: number): Promis
     };
   }
 
+  let answer: { ok?: boolean; sent?: boolean; detail?: string };
   try {
-    await apiRequest<{ ok: boolean }>('/app/answer', {
+    answer = await apiRequest<{ ok?: boolean; sent?: boolean; detail?: string }>('/app/answer', {
       method: 'POST',
       body: { initData: raw, ...payload },
     });
   } catch (e: unknown) {
+    // Отказ НЕ закрываем: человек должен увидеть причину в самом
+    // приложении: после close() её уже некому показать.
     return { problem: failureText(e), sent: false };
   }
-  // Ответ ушёл — закрываем окно: файл Telegram подставит сам.
+  if (answer?.sent === false) {
+    return {
+      problem: answer.detail === undefined || answer.detail === '' ? 'Файл не ушёл. Попробуйте ещё раз.' : answer.detail,
+      sent: false,
+    };
+  }
+  // Сервис подтвердил отправку — закрываем окно.
   close();
   return { problem: '', sent: true };
 }

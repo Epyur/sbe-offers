@@ -113,10 +113,16 @@ func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.deliverToChat(r.Context(), chatID, fileName, data); err != nil {
-		log.Printf("app answer: отправка в чат: %v", err)
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		log.Printf("app answer: отправка в чат %s: %v", chatID, err)
+		// Отказ отдаём ТЕКСТОМ и с деталью, а не только кодом 502: приложение
+		// показывает `error` человеку и не закрывается.
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":  err.Error(),
+			"detail": "Файл собран, но в чат не ушёл: " + err.Error(),
+		})
 		return
 	}
+	log.Printf("app answer: файл %q отправлен в чат %s (%d байт)", fileName, chatID, len(data))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
