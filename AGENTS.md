@@ -30,13 +30,13 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.25** — **PREPARED 2026-11-14, NOT RELEASED.** The last
-release is 0.9.24 (`main` `581fa94`, `backend` `1808616`, self-hosted
-`43235f12…` / `1d0115a8…` / `a32ac3df…`, registry `sbe-apstore-registry`
-`83c9073`). 0.9.25 code is `backend` `009a399` — it answers the follow-up
-complaint «бот долго думает»: a «⌛» before the write, parallel system-text
-blocks, and no double answer on a second «Добавить выбранные». See «0.9.25»
-below.
+Current version = **0.9.25** — **RELEASED 2026-11-14.** Three points converge:
+`main` `9006ca7`, `backend` `afdf4ca` (code `009a399`), self-hosted
+`dee25876…` / `4fdf942c…` / `a32ac3df…` (verified over https, in
+`/registry.json`, **and** through `raw.githubusercontent.com`), registry
+`sbe-apstore-registry` `5353d7c`. Service and bot rebuilt and recreated;
+live measurement on a fresh card: two blocks in parallel, 31 s total instead of
+~45. See «0.9.25» below. The previous release is 0.9.24 (`main` `581fa94`).
 
 **0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
 RELEASED.** Also the bot menu compaction in the same batch. See «P6-bis» below.
@@ -82,7 +82,7 @@ once (`Add`/`Remove`/`Same`/JSON tolerance to the old object shape).
   (описанием)» next to «Материал в позиции» (the labels differ on purpose).
 - App: «Материалы (описанием)» zone with its own search (`/materials/search`).
 
-**0.9.25 (unreleased, 2026-11-14): the bot stops looking frozen.**
+**0.9.25 (2026-11-14, RELEASED): the bot stops looking frozen.**
 
 Live complaint right after 0.9.24: «при выборе продукта бот долго думает,
 кажется, что завис, хочется нажать повторно». Measured on the live service
