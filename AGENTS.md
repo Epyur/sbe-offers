@@ -30,15 +30,24 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.26** — **RELEASED 2026-11-14.** Three points converge:
-`main` `ab59f03`, `backend` `95bb68d` (release commits `8e93230` / `21af387`,
-then docs; the release slice is byte for byte the same), self-hosted
-`08c452e4…` / `f11a8e47…` / `a32ac3df…` (verified over https, in
-`/registry.json`, **and** through `raw.githubusercontent.com`), registry
-`sbe-apstore-registry` `36bc504`. Service and bot rebuilt and recreated
-(`*.bak-20261113-1249`); the `offers` compose block already carried
-`MAILER_SERVICE_URL`/`MAILER_INTERNAL_SECRET` — no compose edit in this batch.
-See «0.9.26» below. The previous release is 0.9.25 (`main` `9006ca7`).
+Current version = **0.9.27** — **RELEASED 2026-11-14.** Only
+`offers-app` (the Mini App) and the plugin's version/news changed; service and
+bot were **not** rebuilt or recreated, no compose edit. See «0.9.27» below.
+The previous release is 0.9.26 (`main` `ab59f03`).
+
+**0.9.27 (2026-11-14): «📤 Отправить в чат» no longer swallows the refusal.**
+Live complaint «в мини-аппе выбрать отправить документ в чат — ничего никуда
+не приходит», clarified: the App **closed** and the chat stayed empty. Cause is
+ours: `sendToChat` (`offers-app/src/tg.ts`) called `app.sendData(...)` without
+`try`; the platform throws `WebAppDataInvalid`, the exception went to React and
+the next line `app.close()` closed the App anyway. Now `sendToChat` returns the
+error text and does **not** close on failure (`close()` only after a successful
+`sendData`); `sendDocumentToChat` passes that text to the screen. Guards:
+`offers-app/test/tg.test.ts` (2 cases; they fail with `WebAppDataInvalid` on the
+old code — verified by reverting). The button type stays `web_app` and the bot
+poller still reads `message.web_app_data` — if the screen now shows «Telegram не
+принял данные для бота», the platform refuses `sendData` itself and the button
+type is the next (separate) decision.
 
 **0.9.26 (2026-11-14, P5b): the agent reads emails linked to a product —
 RELEASED.** `get_emails` and `read_email` (the tool list is now **15**: 13

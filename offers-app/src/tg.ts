@@ -120,12 +120,28 @@ export function platformInfo(): { version: string; platform: string } {
   return { version: app?.version ?? '', platform: app?.platform ?? '' };
 }
 
-/** Вернуть результат в чат (шаг S7): `tg.sendData` → `message.web_app_data`. */
-export function sendToChat(payload: Record<string, unknown>): void {
+/**
+ * Вернуть результат в чат (шаг S7): `tg.sendData` → `message.web_app_data`.
+ *
+ * **Живой дефект 2026-11-13: в чат не приходило ничего.** `sendData` бросает
+ * `WebAppDataInvalid`, когда данных нет или они длиннее 4096 байт, — прежний
+ * `void`-вызов исключение не ловил и молча шёл дальше, а `close()` закрывал
+ * приложение. Человек видел «нажал — приложение закрылось, в чате пусто».
+ * Поэтому исключение возвращается текстом и приложение **не закрывается**:
+ * ошибку нужно прочитать в самом приложении.
+ */
+export function sendToChat(payload: Record<string, unknown>): string {
   const app = readTelegram();
-  if (app === null) return;
-  app.sendData(JSON.stringify(payload));
+  if (app === null) return 'Отправка работает только внутри Telegram.';
+  try {
+    app.sendData(JSON.stringify(payload));
+  } catch (e: unknown) {
+    return e instanceof Error
+      ? `Telegram не принял данные для бота: ${e.message}`
+      : 'Telegram не принял данные для бота.';
+  }
   app.close();
+  return '';
 }
 
 export function close(): void {

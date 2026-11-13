@@ -28,7 +28,8 @@ export function payloadOf(kind: DocumentKind, id: number): SendChatRequest | nul
 
 /**
  * Отправить документ в чат и закрыть приложение. Возвращает текст, если
- * отправить не удалось (вне Telegram) — экран покажет его человеку.
+ * отправить не удалось (вне Telegram, несохранённый документ или отказ
+ * платформы) — экран покажет его человеку.
  */
 export function sendDocumentToChat(kind: DocumentKind, id: number): string {
   if (!inTelegram()) {
@@ -38,8 +39,7 @@ export function sendDocumentToChat(kind: DocumentKind, id: number): string {
   if (payload === null) {
     return 'Документ не сохранён: сначала сохраните карточку.';
   }
-  sendToChat({ ...payload });
-  return '';
+  return sendToChat({ ...payload });
 }
 
 /** Подпись кнопки — по ней человек понимает, что произойдёт. */
