@@ -9,10 +9,10 @@
 | | значение |
 |---|---|
 | версия | **0.9.27** |
-| `backend` | см. `git log` — код 0.9.27 одним коммитом, следом доки |
-| `main` | релизный срез 0.9.27 (только плагин; сервис/бот/приложение — только `backend`) |
-| самораздача | хэши ниже, сверены по https после `kb-selfhost.sh` |
-| реестр (git-копия) | `sbe-apstore-registry` — коммит 0.9.27 |
+| `backend` | `85d61ad` (код + доки одним коммитом) |
+| `main` | `b7829fe` (релизный срез; сервис/бот/приложение — только `backend`) |
+| самораздача | `manifest 13cdb98b…` / `main 27a899d8…` / `styles a32ac3df…`, сверено по https и в `/registry.json` **и** через `raw.githubusercontent.com` |
+| реестр (git-копия) | `sbe-apstore-registry` `a01d8bd` |
 | приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`: `assets/index-C6_fhOtG.js`, `index.html`, `vendor/telegram-web-app.js` |
 | сервис и бот | **НЕ менялись и НЕ пересоздавались**; правок compose нет |
 
