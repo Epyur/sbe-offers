@@ -30,19 +30,21 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.28** — см. «0.9.28» ниже. Предыдущие: 0.9.27 (приложение и новость),
-0.9.26 (`main` `ab59f03`).
+Current version = **0.9.28** — **RELEASED 2026-11-14.** `backend` `23a2dcb`, `main` `3623635`;
+self-hosted `899e87b4…` / `4587c651…` / `a32ac3df…` (verified over https, in `/registry.json`),
+registry `sbe-apstore-registry` `8f9b1de`; service and bot rebuilt and recreated
+(`*.bak-20261114-0928`), app deployed as `assets/index-BGVw3l4T.js`. См. «0.9.28» ниже.
 
-**0.9.28 (2026-11-14): «Отправить в чат» через `answerWebAppQuery`.**
+**0.9.28 (2026-11-14): «Отправить в чат» — файл через бота (`sendDocument`).**
 `Telegram.WebApp.sendData` работает **только у Mini App, открытого кнопкой
 клавиатуры** (документация Telegram). Приложение КП открывается inline-кнопкой
 `📱 NNN/yyyy`, поэтому `sendData` там ничего не делал и **не бросал ошибки** — только
 закрывал окно (пустой журнал бота — тому подтверждение). Теперь:
-`offers-app/src/tg.ts` `queryId()` читает `query_id` из `initData`; `sendchat.ts` шлёт `POST /app/answer`;
+`sendchat.ts` шлёт `POST /app/answer {initData, action, kind, id}`;
 `offers-service/appanswer.go` проверяет подпись и собирает теми же путями, что
-`handleBotDocx`/`handleBotExportCombat`; `offers-bot` ручка `/internal/answer` — `sendDocument` боту → `file_id` →
-`answerWebAppQuery`. Путь только через бота: у сервиса нет доступа к `api.telegram.org` (СОКС — у бота).
-`chat_id` и `query_id` берутся из подписи, не из тела. Грабли версии — «0.9.28» в `HANDOFF.md`. — **RELEASED 2026-11-14.** Three points converge:
+`handleBotDocx`/`handleBotExportCombat`; `offers-bot` ручка `/internal/answer` — `sendDocument` в чат человека
+(`answerWebAppQuery` непригоден: нужен `file_id`, а в свой чат боту Telegram писать не даёт). Путь только через бота: у сервиса нет доступа к `api.telegram.org` (СОКС — у бота).
+`chat_id` берётся из подписи, не из тела. Грабли версии — «0.9.28» в `HANDOFF.md`. — **RELEASED 2026-11-14.** Three points converge:
 `backend` `85d61ad`, `main` `b7829fe` (release slice; service, bot and
 `offers-app` live on `backend` only), self-hosted
 `13cdb98b…` / `27a899d8…` / `a32ac3df…` (verified over https, in
