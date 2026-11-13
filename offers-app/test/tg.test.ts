@@ -4,16 +4,21 @@
  * Главное здесь: мост ищется ПРИ КАЖДОМ ОБРАЩЕНИИ. Раньше он захватывался при
  * загрузке модуля, и если скрипт платформы появлялся позже, приложение навсегда
  * оставалось «вне Telegram» — человек видел «initData: нет» до перезагрузки.
+ *
+ * Второе: `query_id` берётся из `initData`, а не из отдельного поля платформы —
+ * у вендорного скрипта его нет в `initDataUnsafe`. Отсутствие `query_id` и
+ * есть признак кнопки клавиатуры, где `sendData` работает иначе.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { inTelegram, initData, platformInfo, sendToChat, waitForTelegram } from '../src/tg.ts';
+import { inTelegram, initData, platformInfo, queryId, waitForTelegram } from '../src/tg.ts';
 
 // В node окна нет вовсе — это и есть самый важный случай: модуль не падает, а
 // честно говорит «не Telegram».
 test('без окна модуль не падает и отвечает «не Telegram»', () => {
   assert.equal(inTelegram(), false);
   assert.equal(initData(), '');
+  assert.equal(queryId(), '');
   assert.deepEqual(platformInfo(), { version: '', platform: '' });
 });
 
@@ -28,69 +33,55 @@ test('мост — функция, а не снимок: значение чит
   assert.equal(typeof inTelegram, 'function');
 });
 
-/**
- * Живой дефект 2026-11-13: «выбрал Отправить в чат — приложение закрылось,
- * в чате пусто». `sendData` бросает `WebAppDataInvalid`, прежний вызов это
- * исключение не ловил, а `close()` закрывал приложение — человек не видел ни
- * ошибки, ни файла. Здесь окно подменяется: платформа отказывает, значит
- * человек обязан получить текст, а приложение — остаться открытым.
- */
-function withFakeTelegram(sendData: (data: string) => void): { closed: () => boolean; restore: () => void } {
+/** Подменить окно Telegram подписанной строкой initData. */
+function withInitData(raw: string): () => void {
   const win = globalThis as unknown as { Telegram?: unknown; window?: unknown };
   win.window = win;
   const saved = win.Telegram;
-  let closed = false;
   win.Telegram = {
     WebApp: {
-      initData: '',
+      initData: raw,
       initDataUnsafe: {},
       colorScheme: 'light',
       themeParams: {},
       ready: () => {},
       expand: () => {},
-      close: () => {
-        closed = true;
-      },
-      sendData,
+      close: () => {},
+      sendData: () => {},
       onEvent: () => {},
       offEvent: () => {},
       version: '9.6',
       platform: 'android',
     },
   };
-  return {
-    closed: () => closed,
-    restore: () => {
-      win.Telegram = saved;
-    },
+  return () => {
+    win.Telegram = saved;
   };
 }
 
-test('отказ платформы виден человеку, а приложение не закрывается', () => {
-  const fake = withFakeTelegram(() => {
-    throw new Error('WebAppDataInvalid');
-  });
+test('query_id берётся из initData — с него начинается отправка', () => {
+  const restore = withInitData('query_id=AAHabc123&user=%7B%22id%22%3A810181470%7D&hash=deadbeef');
   try {
-    const text = sendToChat({ action: 'docx', kind: 'offer', id: 3 });
-    assert.match(text, /Telegram не принял/i);
-    assert.match(text, /WebAppDataInvalid/);
-    assert.equal(fake.closed(), false);
+    assert.equal(queryId(), 'AAHabc123');
   } finally {
-    fake.restore();
+    restore();
   }
 });
 
-test('успешная отправка закрывает приложение и не возвращает ошибку', () => {
-  let sent = '';
-  const fake = withFakeTelegram((data) => {
-    sent = data;
-  });
+test('у кнопки клавиатуры query_id нет — вернётся пусто, а не мусор', () => {
+  const restore = withInitData('auth_date=1763000000&user=%7B%22id%22%3A1%7D&hash=deadbeef');
   try {
-    const text = sendToChat({ action: 'docx', kind: 'combat', id: 7 });
-    assert.equal(text, '');
-    assert.deepEqual(JSON.parse(sent), { action: 'docx', kind: 'combat', id: 7 });
-    assert.equal(fake.closed(), true);
+    assert.equal(queryId(), '');
   } finally {
-    fake.restore();
+    restore();
+  }
+});
+
+test('поиск query_id не зависит от порядка полей', () => {
+  const restore = withInitData('auth_date=1&query_id=ZZZ&hash=x&user=%7B%7D');
+  try {
+    assert.equal(queryId(), 'ZZZ');
+  } finally {
+    restore();
   }
 });

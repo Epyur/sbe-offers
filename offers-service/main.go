@@ -100,6 +100,7 @@ func main() {
 	// намеренно, иначе вход по initData был бы невозможен.
 	mux.HandleFunc("POST /api/offers/app/session", s.handleAppSession)
 	mux.HandleFunc("GET /api/offers/app/config", s.handleAppConfig)
+	mux.HandleFunc("POST /api/offers/app/answer", s.handleAppAnswer)
 
 	mux.HandleFunc("GET /api/offers/permissions/me", s.requirePerm("viewer")(s.handleMyPermission))
 	mux.HandleFunc("GET /api/offers/permissions/list", s.requirePerm("admin")(s.handleListPermissions))

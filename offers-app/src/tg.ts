@@ -121,26 +121,24 @@ export function platformInfo(): { version: string; platform: string } {
 }
 
 /**
- * Вернуть результат в чат (шаг S7): `tg.sendData` → `message.web_app_data`.
+ * `query_id` — ключ диалога для `answerWebAppQuery` (2026-11-14).
  *
- * **Живой дефект 2026-11-13: в чат не приходило ничего.** `sendData` бросает
- * `WebAppDataInvalid`, когда данных нет или они длиннее 4096 байт, — прежний
- * `void`-вызов исключение не ловил и молча шёл дальше, а `close()` закрывал
- * приложение. Человек видел «нажал — приложение закрылось, в чате пусто».
- * Поэтому исключение возвращается текстом и приложение **не закрывается**:
- * ошибку нужно прочитать в самом приложении.
+ * Telegram кладёт его в `initData` строкой `query_id=AAH…`. Значение есть у приложения,
+ * открытого **inline**-кнопкой или из меню; у кнопки клавиатуры его нет — там
+ * работает `sendData`.
  */
-export function sendToChat(payload: Record<string, unknown>): string {
-  const app = readTelegram();
-  if (app === null) return 'Отправка работает только внутри Telegram.';
-  try {
-    app.sendData(JSON.stringify(payload));
-  } catch (e: unknown) {
-    return e instanceof Error
-      ? `Telegram не принял данные для бота: ${e.message}`
-      : 'Telegram не принял данные для бота.';
+export function queryId(): string {
+  const raw = initData();
+  if (raw === '') return '';
+  for (const chunk of raw.split('&')) {
+    if (chunk.startsWith('query_id=')) {
+      try {
+        return decodeURIComponent(chunk.slice('query_id='.length));
+      } catch {
+        return '';
+      }
+    }
   }
-  app.close();
   return '';
 }
 

@@ -1,16 +1,19 @@
 /**
- * «Отправить в чат» (2026-11-13, шаг S7).
+ * «Отправить в чат» (2026-11-13, шаг S7; переделано 2026-11-14).
  *
- * Приложение не может приложить файл к сообщению само — у него нет Bot API.
- * Оно отправляет боту УКАЗАТЕЛЬ (`tg.sendData`), а бот собирает документ
- * своими ручками и кладёт файл в чат. Поэтому здесь всего одна чистая
- * функция построения нагрузки и один вызов Telegram.
+ * Приложение не может приложить файл к сообщению само — у него нет Bot API,
+ * а `tg.sendData` работает **только у кнопки клавиатуры**. Приложение
+ * открывается inline-кнопкой, поэтому `sendData` там молча ничего не делает
+ * и просто закрывает окно (живой дефект: «нажал — закрылось, в чате пусто»).
  *
- * В указателе нет ни адреса, ни байтов — только вид документа и номер:
- * чужие данные в эту строку не попадают, а `chat_id` бот берёт из самого
- * обновления.
+ * Теперь путь штатный для inline-кнопки: приложение отдаёт сервису СВОЙ
+ * `query_id` (лежит в `initData`), сервис проверяет подпись Telegram, собирает
+ * DOCX и отвечает боту через `answerWebAppQuery` — файл приходит в чат от
+ * имени человека. Адрес и байты в запрос не попадают, а `chat_id` сервис
+ * берёт из самой подписи `initData`.
  */
-import { close, inTelegram, sendToChat } from './tg.ts';
+import { ApiError, apiRequest } from './api.ts';
+import { close, inTelegram, initData, queryId } from './tg.ts';
 
 export type DocumentKind = 'offer' | 'combat';
 
@@ -26,20 +29,55 @@ export function payloadOf(kind: DocumentKind, id: number): SendChatRequest | nul
   return { action: 'docx', kind, id };
 }
 
-/**
- * Отправить документ в чат и закрыть приложение. Возвращает текст, если
- * отправить не удалось (вне Telegram, несохранённый документ или отказ
- * платформы) — экран покажет его человеку.
- */
-export function sendDocumentToChat(kind: DocumentKind, id: number): string {
+export interface SendChatOutcome {
+  /** Пустая строка — файл ушёл в чат. */
+  problem: string;
+  /** Отправка принята сервисом: приложение можно закрывать. */
+  sent: boolean;
+}
+
+/** Текст, который видит человек, когда отправить нельзя ещё до запроса. */
+export function preflightProblem(kind: DocumentKind, id: number): string {
   if (!inTelegram()) {
     return 'Отправить в чат можно только из Telegram: откройте приложение из бота.';
   }
-  const payload = payloadOf(kind, id);
-  if (payload === null) {
+  if (payloadOf(kind, id) === null) {
     return 'Документ не сохранён: сначала сохраните карточку.';
   }
-  return sendToChat({ ...payload });
+  return '';
+}
+
+/**
+ * Попросить сервис отправить документ в чат. Успех закрывает приложение
+ * (Telegram сам подставит файл в диалог), отказ — показывается на экране.
+ */
+export async function sendDocumentToChat(kind: DocumentKind, id: number): Promise<SendChatOutcome> {
+  const problem = preflightProblem(kind, id);
+  if (problem !== '') return { problem, sent: false };
+  const payload = payloadOf(kind, id);
+  if (payload === null) return { problem, sent: false };
+
+  const raw = initData();
+  const query = queryId();
+  if (query === '') {
+    return {
+      problem:
+        'Это окно открыто без ключа Telegram. Откройте документ в приложении и нажмите кнопку ещё раз.',
+      sent: false,
+    };
+  }
+
+  try {
+    await apiRequest<{ ok: boolean }>('/app/answer', {
+      method: 'POST',
+      body: { initData: raw, ...payload },
+    });
+  } catch (e: unknown) {
+    return { problem: failureText(e), sent: false };
+  }
+  // Ответ ушёл — закрываем окно: файл Telegram подставит сам.
+  close();
+  return { problem: '', sent: true };
 }
 
 /** Подпись кнопки — по ней человек понимает, что произойдёт. */
@@ -50,4 +88,20 @@ export function sendButtonText(kind: DocumentKind): string {
 /** Отдельная «×» для случая, когда отправка не удалась: закрыть без файла. */
 export function closeApp(): void {
   close();
+}
+
+function failureText(e: unknown): string {
+  if (e instanceof ApiError) {
+    switch (e.code) {
+      case 'not_linked':
+        return 'Сначала войдите в бота: /start и код из письма — потом откройте приложение заново.';
+      case 'initData':
+        return 'Telegram не подтвердил, что это вы. Откройте документ из бота заново.';
+      case 'query_used':
+        return 'Эта отправка уже была. Откройте документ заново и нажмите кнопку ещё раз.';
+      default:
+        return e.message;
+    }
+  }
+  return e instanceof Error ? `Не удалось отправить: ${e.message}` : 'Не удалось отправить: сервер не ответил.';
 }
