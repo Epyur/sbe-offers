@@ -9,8 +9,8 @@
 | | значение |
 |---|---|
 | версия | **0.9.27** |
-| `backend` | `85d61ad` (код + доки одним коммитом) |
-| `main` | `b7829fe` (релизный срез; сервис/бот/приложение — только `backend`) |
+| `backend` | `85d61ad` (код `85d61ad` + доки `7d30b3d`) |
+| `main` | `b7829fe` (релизный срез + доки `763f0be`; сервис/бот/приложение — только `backend`) |
 | самораздача | `manifest 13cdb98b…` / `main 27a899d8…` / `styles a32ac3df…`, сверено по https и в `/registry.json` **и** через `raw.githubusercontent.com` |
 | реестр (git-копия) | `sbe-apstore-registry` `a01d8bd` |
 | приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`: `assets/index-C6_fhOtG.js`, `index.html`, `vendor/telegram-web-app.js` |
