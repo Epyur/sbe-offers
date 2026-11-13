@@ -116,22 +116,36 @@ export function formatSuggestLine(n: number, item: SuggestItem): string {
  * Собрать список найденного: сначала системы, потом материалы.
  *
  * Порядок не случаен: система — это то, ради чего собирают КП, материал —
- * её состав. Обрезка до `SUGGEST_LIMIT` идёт по этому же порядку, чтобы при
- * длинном списке первыми остались системы.
+ * её состав.
+ *
+ * Лимит ДЕЛИТСЯ между двумя половинами (2026-11-14, живая жалоба: по запросу
+ * «Logicbase» бот не предложил ни одного материала). Раньше обрезка шла по
+ * общему порядку, и восемь найденных систем выбирали лимит целиком — сервер
+ * материалы отдал, а бот их выбросил. Теперь материалам оставляется не меньше
+ * половины, а если одну половину нечем заполнить, остаток забирает другая:
+ * «ровно восемь систем» больше не прячет материалы.
  */
 export function suggestItems(
   systems: CombatSystemItem[],
   materials: SuggestMaterial[],
   limit = SUGGEST_LIMIT,
 ): SuggestItem[] {
+  const half = Math.ceil(limit / 2);
+  const systemRoom = Math.min(materials.length > 0 ? half : limit, systems.length);
   const items: SuggestItem[] = [];
-  for (const s of systems) {
-    if (items.length >= limit) return items;
+  for (const s of systems.slice(0, systemRoom)) {
     items.push({ kind: 'system', noteId: s.noteId, title: s.title, code: s.sku });
   }
-  for (const m of materials) {
-    if (items.length >= limit) return items;
+  // Свободное место после систем забирают материалы — и только добрав остаток,
+  // мы возвращаемся к системам, отложенным из-за половины.
+  const room = limit - items.length;
+  for (const m of materials.slice(0, room)) {
     items.push({ kind: 'material', noteId: m.noteId, title: m.name, code: m.sku });
+  }
+  if (items.length < limit) {
+    for (const s of systems.slice(systemRoom, systemRoom + (limit - items.length))) {
+      items.push({ kind: 'system', noteId: s.noteId, title: s.title, code: s.sku });
+    }
   }
   return items;
 }

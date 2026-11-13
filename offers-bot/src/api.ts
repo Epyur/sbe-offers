@@ -255,6 +255,26 @@ export async function offerLink(id: number, chatId: string): Promise<{ url: stri
   return call('POST', `/bot/offers/${id}/link?chat_id=${encodeURIComponent(chatId)}`);
 }
 
+/**
+ * Добавить МАТЕРИАЛ в предложение описанием (2026-11-14).
+ *
+ * Материал, как и система, — объект предложения: в документ идут его текст и
+ * ссылки, никогда — цена (правило 2026-11-03/2026-11-13). Позицию с ценой
+ * заводит таблица состава, это другой путь.
+ */
+export async function addMaterial(
+  offerId: number,
+  chatId: string,
+  choice: { noteId?: number; sku?: string },
+): Promise<{ offer: unknown; title: string }> {
+  return call(
+    'POST',
+    `/bot/offers/${offerId}/material`,
+    { chat_id: chatId, ...choice },
+    LONG_TIMEOUT_MS,
+  );
+}
+
 export async function listOffers(chatId: string): Promise<OfferPayload[]> {
   const res = await call<{ offers: OfferPayload[] }>('GET', `/bot/offers?chat_id=${encodeURIComponent(chatId)}`);
   return res.offers ?? [];

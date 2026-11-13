@@ -92,6 +92,33 @@ test('системы идут первыми и не теряются при о�
   assert.equal(items[2].kind, 'material');
 });
 
+// 2026-11-14, живая жалоба: по запросу «Logicbase» бот не предложил ни одного
+// материала. Восемь систем выбирали лимит целиком, и материалы, которые сервер
+// отдал, терялись при обрезке. Половина лимита теперь принадлежит материалам.
+test('материалы не теряются, когда систем ровно по лимиту', () => {
+  const systems = Array.from({ length: 8 }, (_, i) => ({ noteId: 100 + i, title: `Система ${i + 1}` }));
+  const materials = [
+    { noteId: 201, materialId: 201, name: 'Логическая смола', unit: 'кг', priceMin: 0, priceMax: 0 },
+    { noteId: 202, materialId: 202, name: 'Логическая панель', unit: 'м2', priceMin: 0, priceMax: 0 },
+  ];
+  const items = suggestItems(systems, materials, 8);
+  assert.equal(items.length, 8);
+  const kinds = items.map((i) => i.kind);
+  assert.ok(kinds.includes('material'), 'материалы должны остаться в списке');
+  assert.equal(kinds.filter((k) => k === 'material').length, 2);
+  assert.equal(kinds.filter((k) => k === 'system').length, 6);
+});
+
+test('одна половина пустая — место забирает другая', () => {
+  const systems = Array.from({ length: 8 }, (_, i) => ({ noteId: i + 1, title: `Система ${i + 1}` }));
+  assert.equal(suggestItems(systems, [], 8).length, 8);
+  const materials = [
+    { noteId: 9, materialId: 9, name: 'Мембрана', unit: 'м2', priceMin: 0, priceMax: 0 },
+  ];
+  const only = suggestItems([], materials, 8);
+  assert.deepEqual(only.map((i) => i.kind), ['material']);
+});
+
 test('кнопки-номера по четыре в ряд и «продолжить» всегда', () => {
   const items: SuggestItem[] = Array.from({ length: 6 }, (_, i) => ({
     kind: 'system' as const,

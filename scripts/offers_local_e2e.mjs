@@ -2994,6 +2994,52 @@ async function sectionNewDoc() {
     ok('наш продукт из нового диалога ложится в листок', side.status === 200,
       `статус ${side.status} ${side.text?.slice(0, 120)}`);
   }
+
+  // 5. Множественный выбор (2026-11-14): системы и материалы пишутся в ОДНО КП.
+  //
+  // Живой дефект, из которого вырос раздел: по запросу «Logicbase» бот показал
+  // восемь систем и ни одного материала (лимит выбирали системы), а выбор
+  // материала не записывался вовсе. Здесь проверяется серверная половина:
+  // обе ручки принимают выбор по заметке и оба вида видны в сохранённом КП.
+  const materials = await call('GET', `/bot/suggest?q=${encodeURIComponent('мембрана')}`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+  });
+  ok('поиск отдаёт материалы рядом с системами', (materials.json?.materials ?? []).length > 0,
+    JSON.stringify(materials.json ?? {}).slice(0, 160));
+  const material = (materials.json?.materials ?? [])[0];
+  if (newDocOfferId > 0 && material?.noteId) {
+    const matAdded = await call('POST', `/bot/offers/${newDocOfferId}/material`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+      body: { chat_id: chatId, noteId: material.noteId },
+    });
+    ok('материал из нового диалога записывается в КП описанием', matAdded.status === 200,
+      `статус ${matAdded.status} ${matAdded.text?.slice(0, 120)}`);
+    const after = await call('GET', `/bot/offers/${newDocOfferId}?chat_id=${encodeURIComponent(chatId)}`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+    });
+    const mats = (after.json?.materials ?? []).map((m) => m.noteId);
+    const syss = (after.json?.systems ?? []).map((s) => s.noteId);
+    ok('материал виден в сохранённом КП', mats.includes(material.noteId), JSON.stringify(mats));
+    ok('система и материал живут в одном КП', syss.length > 0 && mats.length > 0,
+      JSON.stringify({ systems: syss, materials: mats }));
+    ok('материал не стал позицией', (after.json?.items ?? []).length === 0,
+      JSON.stringify((after.json?.items ?? []).length));
+  }
+
+  // 6. Запись по noteId при наличии кода (2026-11-14).
+  //
+  // `FindSystem` ищет по коду ПЕРВЫМ: бот раньше присылал и `noteId`, и `sku`,
+  // и выбор уезжал на чужую карточку с тем же кодом. Теперь бот шлёт только
+  // заметку — проверяем, что запись по одному noteId принимается.
+  const withCode = (found.json?.systems ?? []).find((s) => s.sku) ?? null;
+  if (newDocOfferId > 0 && withCode) {
+    const onlyNote = await call('POST', `/bot/offers/${newDocOfferId}/system`, {
+      headers: { 'X-Service-Secret': BOT_SECRET },
+      body: { chat_id: chatId, noteId: withCode.noteId },
+    });
+    ok('система находится по одной заметке, без кода', onlyNote.status === 200,
+      `статус ${onlyNote.status} ${onlyNote.text?.slice(0, 120)}`);
+  }
 }
 
 /**

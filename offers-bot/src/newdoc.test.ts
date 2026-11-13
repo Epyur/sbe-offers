@@ -90,6 +90,17 @@ function buttons(keyboard: Record<string, unknown> | undefined): Array<Record<st
   return rows.flat();
 }
 
+/**
+ * Дождаться, пока карты маршрута сохранятся.
+ *
+ * `state.newDoc`/сессия пишутся не сразу: `apply` откладывает сохранение до
+ * конца обработчика, а тест зовёт следующий сразу. Без паузы следующий вызов
+ * читает состояние ДО нажатия и отвечает «список устарел».
+ */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('«Создать новый документ» (R2)', () => {
   it('кнопка спрашивает, что собираем, и даёт ровно два вида', async () => {
     const { deps, state } = makeDeps();
@@ -164,7 +175,7 @@ describe('«Создать новый документ» (R2)', () => {
     assert.ok(buttons(sent[0].keyboard).some((b) => Boolean(b.web_app)));
   });
 
-  it('выбор продукта даёт развилку «контекст / приложение»', async () => {
+  it('одна отметка не пишет сразу: сначала «Добавить выбранные»', async () => {
     const { deps, state } = makeDeps();
     fakeService({ systems: 2 });
     const route = await import('./routes.ts');
@@ -173,10 +184,70 @@ describe('«Создать новый документ» (R2)', () => {
     sent.length = 0;
     await route.routeCallback(deps, '42', 'nd:pick:1', 'cb2', state);
 
-    assert.match(sent[0].text, /Продукт для предложения: «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.match(sent[0].text, /Отмечено: 1/);
     const all = buttons(sent[0].keyboard);
-    assert.ok(all.some((b) => b.callback_data === 'nd:context'));
+    assert.ok(all.some((b) => b.callback_data === 'nd:addpicked'));
+  });
+
+  it('«Добавить выбранные» пишет отмеченное и спрашивает, нужно ли ещё', async () => {
+    const { deps, state } = makeDeps();
+    fakeService({ systems: 2 });
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:offer', 'cb1', state);
+    await route.routeText(deps, '42', 'Гарант', state);
+    await route.routeCallback(deps, '42', 'nd:pick:1', 'cb2', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
+
+    assert.match(sent[0].text, /Системы: «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.match(sent[0].text, /Нужно добавить ещё/);
+    const all = buttons(sent[0].keyboard);
+    assert.ok(all.some((b) => b.callback_data === 'nd:more'));
+    assert.ok(all.some((b) => b.callback_data === 'nd:enough'));
     assert.ok(all.some((b) => b.callback_data === 'nd:app'));
+  });
+
+  it('несколько систем подряд: «добавить ещё» сохраняет прежний выбор', async () => {
+    const { deps, state } = makeDeps();
+    fakeService({ systems: 2 });
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:offer', 'cb1', state);
+    await route.routeText(deps, '42', 'Гарант', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'cb2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
+    await route.routeCallback(deps, '42', 'nd:more', 'cb4', state);
+    sent.length = 0;
+    // Второй запрос — другими словами: два одинаковых сообщения подряд бот
+    // считает повтором (окно 10 с) и второй поиск не выполняет.
+    await route.routeText(deps, '42', 'Гарант RE30', state);
+    await route.routeCallback(deps, '42', 'nd:pick:1', 'cb5', state);
+
+    // Второй продукт пишется в ТО ЖЕ предложение, а сводка помнит первый.
+    assert.match(sent[0].text, /ТН-КРОВЛЯ Гарант Плюс/);
+    assert.match(sent[0].text, /ТН-КРОВЛЯ Гарант RE30/);
+  });
+
+  it('отметка нескольких номеров даёт кнопку «Добавить выбранные»', async () => {
+    const { deps, state } = makeDeps();
+    fakeService({ systems: 2 });
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:offer', 'cb1', state);
+    await route.routeText(deps, '42', 'Гарант', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'cb2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
+    await route.routeCallback(deps, '42', 'nd:more', 'cb4', state);
+    sent.length = 0;
+    await route.routeText(deps, '42', 'Гарант RE30', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'cb5', state);
+    await route.routeCallback(deps, '42', 'nd:pick:1', 'cb6', state);
+
+    const marked = sent[sent.length - 1];
+    assert.match(marked.text, /Отмечено: 2/);
+    const all = buttons(marked.keyboard);
+    assert.ok(all.some((b) => b.callback_data === 'nd:addpicked'));
+    const labels = all.map((b) => String(b.text));
+    assert.ok(labels.some((l) => l.startsWith('✓ 1')));
+    assert.ok(labels.some((l) => l.startsWith('✓ 2')));
   });
 
   it('«Собрать контекст» создаёт КП и начинает бриф', async () => {

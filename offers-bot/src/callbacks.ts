@@ -81,15 +81,18 @@ import {
   KIND_KEYBOARD,
   NEW_DOC_KIND_QUESTION,
   NEW_DOC_LIMIT,
-  decideKeyboard,
+  addedMessage,
   foundKeyboard,
   foundListMessage,
+  moreKeyboard,
+  moreQuestion,
   newDocState,
   notFoundMessage,
   pickIndex,
   pickedMessage,
   productQuestion,
   retryOrAppKeyboard,
+  type NewDocAdded,
   type NewDocKind,
   type NewDocState,
 } from './flow/newdoc.ts';
@@ -728,26 +731,42 @@ function appSheetButton(sheetId: number, number: string): { text: string; web_ap
  * Записать выбранный в чате продукт в созданное КП.
  *
  * Система — выбором системы (описание и ссылки, без позиций — правило
- * 2026-11-03). Материал — командой «система» он не станет (у материала своя
- * карточка), и позицией его здесь НЕ добавляем: в R2 выбор материала ещё не
- * значит «позиция», а черновик позиций заводит приложение. Сообщаем честно.
- * Возвращает false, когда записать не удалось: вызывающий обязан сказать это
- * человеку, а не молчать — иначе выбор продукта пропадёт без следа.
+ * 2026-11-03). Материал — тоже ОБЪЕКТОМ, описанием (2026-11-13, `material_choice`),
+ * а не позицией: цена строки приходит из таблицы менеджера.
+ *
+ * Возвращает текст ошибки или `null`: именно эта строка уходит человеку, когда
+ * записать не удалось. Раньше ошибку глотали и отвечали одинаковой фразой, и по
+ * жалобе «система не добавляется» нельзя было понять, что ответил сервер.
+ *
+ * Код карточки передаётся только когда заметки нет (2026-11-14): `FindSystem`
+ * ищет по коду ПЕРВЫМ и, найдя, на заметку уже не смотрит — с двумя полями
+ * выбор уезжал на чужую карточку с тем же `system_sku`.
  */
-async function addPickedOfferProduct(ctx: CallbackCtx, item: SuggestItem): Promise<boolean> {
+async function addPickedOfferProduct(ctx: CallbackCtx, item: SuggestItem): Promise<string | null> {
   const offerId = ctx.session.draft?.offerId ?? 0;
-  if (!offerId) return false;
-  try {
-    if (item.kind === 'system') {
-      await api.addSystem(offerId, ctx.chatId, { noteId: item.noteId, sku: item.code ?? '' });
-      return true;
+  if (!offerId) return 'предложение не найдено';
+  if (item.kind === 'system') {
+    const system: api.SystemItem = { noteId: item.noteId, title: item.title, sku: item.code ?? '' };
+    try {
+      await api.addSystem(offerId, ctx.chatId, systemChoice(system));
+      return null;
+    } catch (e) {
+      return (e as Error).message;
     }
-    // Материал в КП как ОБЪЕКТ появится в R3 (`material_choice`). Пока его
-    // записывать некуда — честно говорим, что выбор сохранён только в чате.
-    return false;
-  } catch {
-    return false;
   }
+  try {
+    await api.addMaterial(offerId, ctx.chatId, chooseRef(item.noteId, item.code));
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+/** Чем выбирается материал: заметка главнее кода. */
+function chooseRef(noteId: number, code?: string): { noteId?: number; sku?: string } {
+  if (noteId > 0) return { noteId };
+  const sku = (code ?? '').trim();
+  return sku === '' ? { noteId } : { sku };
 }
 
 /** Записать выбранный в чате продукт на нашу сторону боевого листка. */
@@ -1013,7 +1032,11 @@ export async function startNewDoc(ctx: CallbackCtx): Promise<void> {
 
 /** Выбран вид документа: `nd:kind:offer` / `nd:kind:combat`. */
 export async function onNewDocKind(ctx: CallbackCtx, kind: NewDocKind): Promise<void> {
-  apply(ctx, { ...ctx.session, newDoc: kind });
+  // Новый документ — новая строка: старый черновик или листок, открытый раньше,
+  // не должны принять чужой выбор. Чистим здесь, а не по ходу разговора, чтобы
+  // не пришлось гадать, чей это `offerId`.
+  const cleared = { ...ctx.session, newDoc: kind, draft: undefined, combat: undefined };
+  apply(ctx, cleared);
   const state: NewDocState = { ...newDocState(), kind, step: 'query' };
   ctx.newDoc = state;
   ctx.rememberNewDoc?.(state);
@@ -1074,7 +1097,7 @@ async function searchNewDocProduct(ctx: CallbackCtx, state: NewDocState, query: 
     await ctx.deps.send(ctx.chatId, notFoundMessage(query), retryOrAppKeyboard(state.kind));
     return;
   }
-  await ctx.deps.send(ctx.chatId, foundListMessage(query, items), foundKeyboard(items, state.kind));
+  await ctx.deps.send(ctx.chatId, foundListMessage(query, items), foundKeyboard(items, state.kind, next.picked));
 }
 
 /** «Ничего из этого — уточню название»: вернуться к вводу, старый список забыть. */
@@ -1088,6 +1111,10 @@ export async function onNewDocAgain(ctx: CallbackCtx): Promise<void> {
 
 /**
  * Нажатие номера: `nd:pick:<индекс>`.
+ *
+ * Номер — ПЕРЕКЛЮЧАТЕЛЬ, а не «выбрать одно» (2026-11-14: человек собирает КП
+ * из нескольких систем). Отметка сразу пишется в документ, чтобы выбор не
+ * потерялся, и бот спрашивает «добавить ещё или достаточно».
  *
  * Номер относится к ПОКАЗАННОМУ списку. Если список перезаписали (новый
  * запрос), индекс укажет на чужую строку — тогда честно просим назвать заново,
@@ -1103,14 +1130,165 @@ export async function onNewDocPick(ctx: CallbackCtx, index: number): Promise<voi
     );
     return;
   }
-  const next: NewDocState = { ...state, picked: [index] };
+  const next: NewDocState = { ...state, picked: togglePicked(state.picked, index) };
   ctx.newDoc = next;
   ctx.rememberNewDoc?.(next);
-  await ctx.deps.send(ctx.chatId, pickedMessage(state.kind, item), decideKeyboard(state.kind));
+
+  if (next.picked.length === 0) {
+    // Сняли последнюю отметку: не «записать пустое», а прежний список.
+    await ctx.deps.send(
+      ctx.chatId,
+      foundListMessage(state.query, state.items),
+      foundKeyboard(state.items, state.kind, []),
+    );
+    return;
+  }
+  // Одна отметка — сразу записываем и спрашиваем про ещё (2026-11-14).
+  // Несколько — сначала «✓ Добавить выбранные»: карточку с моделью писать
+  // многосекундно, и по одному касанию это недопустимо.
+  await ctx.deps.send(
+    ctx.chatId,
+    pickedMessage(state.kind, item) + `\n\nОтмечено: ${next.picked.length}. Добавить их?`,
+    foundKeyboard(state.items, state.kind, next.picked),
+  );
+}
+
+/** Отметка номера: был отмечен — снять, не был — отметить. Порядок возрастает. */
+function togglePicked(picked: number[], index: number): number[] {
+  return picked.includes(index) ? picked.filter((i) => i !== index) : [...picked, index].sort((a, b) => a - b);
+}
+
+/** «✓ Добавить выбранные (N)»: записать все отмеченные и спросить про ещё. */
+export async function onNewDocAddPicked(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc;
+  if (!state) {
+    await ctx.deps.send(ctx.chatId, 'Разговор про новый документ уже завершён.', MAIN_KEYBOARD);
+    return;
+  }
+  const picked = pickedItems(state);
+  if (picked.length === 0) {
+    await ctx.deps.send(ctx.chatId, 'Ничего не отмечено — нажмите номер продукта.', foundKeyboard(state.items, state.kind, []));
+    return;
+  }
+  await writeAndAsk(ctx, state);
 }
 
 /**
- * «📚 Собрать контекст в чате»: создать документ и начать разговор.
+ * Пункт «Достаточно»: закрыть диалог и продолжить обычным путём документа.
+ *
+ * Листок ли откроется, бриф ли начнётся — документ уже создан и заполнен, так
+ * что оба пути только переходят к следующему шагу.
+ */
+export async function onNewDocEnough(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc;
+  const kind = state?.kind ?? ctx.session.newDoc ?? 'offer';
+  const added = state?.added ?? [];
+  apply(ctx, { ...ctx.session, newDoc: undefined });
+  ctx.rememberNewDoc?.({ ...newDocState() });
+
+  if (kind === 'combat') {
+    const sheetId = ctx.session.combat?.sheetId ?? 0;
+    await ctx.deps.send(
+      ctx.chatId,
+      sheetId > 0
+        ? `Боевой листок № ${ctx.session.combat?.number ?? ''} собран. Добавьте конкурентов кнопкой ниже.`
+        : 'Листок создан.',
+      COMBAT_KEYBOARD,
+    );
+    return;
+  }
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  if (offerId > 0) {
+    await beginBrief(ctx, offerId);
+    return;
+  }
+  await startDraft(ctx);
+}
+
+/** «➕ Добавить ещё»: вернуть к поиску, отметки уже записанного не трогаем. */
+export async function onNewDocMore(ctx: CallbackCtx): Promise<void> {
+  const state = ctx.newDoc ?? newDocState();
+  const next: NewDocState = { ...state, step: 'query', query: '', items: [], picked: [] };
+  ctx.newDoc = next;
+  ctx.rememberNewDoc?.(next);
+  await ctx.deps.send(ctx.chatId, moreQuestion(next.kind));
+}
+
+/**
+ * Записать все отмеченные в документ, у которого уже есть строка.
+ *
+ * Ошибка одной карточки не должна отменять соседние: их записывают по очереди,
+ * и человеку важно знать, какая именно не легла в КП.
+ */
+async function addPickedOfferProducts(ctx: CallbackCtx, items: SuggestItem[]): Promise<NewDocAdded[]> {
+  const added: NewDocAdded[] = [];
+  for (const item of items) {
+    const failure = await addPickedOfferProduct(ctx, item);
+    if (failure === null) {
+      added.push({ kind: item.kind, title: item.title });
+      continue;
+    }
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось записать «${item.title}»: ${failure}. ` +
+        'Можно выбрать её ещё раз или добавить позже в приложении.',
+    );
+  }
+  return added;
+}
+
+/** Сообщение после записи: что легло в документ и что дальше. */
+async function writeAndAsk(ctx: CallbackCtx, state: NewDocState): Promise<void> {
+  if (!(await ensureNewDocDocument(ctx))) return;
+  const added = await addPickedOfferProducts(ctx, pickedItems(state));
+  const next: NewDocState = {
+    ...state,
+    step: 'more',
+    picked: [],
+    added: [...(state.added ?? []), ...added],
+  };
+  ctx.newDoc = next;
+  ctx.rememberNewDoc?.(next);
+  await ctx.deps.send(ctx.chatId, addedMessage(next.kind, next.added ?? []), moreKeyboard(next.kind));
+}
+
+/**
+ * Создать документ, если его ещё нет, и записать туда продукт, выбранный до
+ * создания (путь «сразу в приложение» и «контекст в чате»).
+ *
+ * Возвращает true, если строка документа есть и в неё можно писать.
+ */
+async function ensureNewDocDocument(ctx: CallbackCtx): Promise<boolean> {
+  const kind = ctx.newDoc?.kind ?? ctx.session.newDoc ?? 'offer';
+  if (kind === 'combat') {
+    if ((ctx.session.combat?.sheetId ?? 0) > 0) return true;
+    try {
+      const sheet = await api.createCombat(ctx.chatId, 'Боевой листок');
+      apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
+      return true;
+    } catch (e) {
+      await ctx.deps.send(ctx.chatId, `Не удалось создать боевой листок: ${(e as Error).message}`, MAIN_KEYBOARD);
+      return false;
+    }
+  }
+  if ((ctx.session.draft?.offerId ?? 0) > 0) return true;
+  try {
+    const offer = await api.createOffer({
+      chatId: ctx.chatId,
+      client: { name: '', contact: '' },
+      items: [],
+      formValues: {},
+    });
+    apply(ctx, { ...ctx.session, draft: { ...newDraft(), offerId: offer.id, number: offer.number } });
+    return true;
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось создать предложение: ${(e as Error).message}`, MAIN_KEYBOARD);
+    return false;
+  }
+}
+
+/**
+ * «📚 Собрать контекст в чате»: документ уже создан, начинается бриф.
  *
  * КП — существующий бриф (объект, адресат, задачи…). Листок — его обычное
  * приветствие: в листке контекста нет, есть стороны.
@@ -1118,89 +1296,107 @@ export async function onNewDocPick(ctx: CallbackCtx, index: number): Promise<voi
 export async function onNewDocContext(ctx: CallbackCtx): Promise<void> {
   const state = ctx.newDoc;
   const kind = state?.kind ?? ctx.session.newDoc ?? 'offer';
-  const picked = state ? state.items[state.picked[0] ?? -1] : undefined;
+  const picked = pickedItems(state);
+  const added = state?.added ?? [];
   apply(ctx, { ...ctx.session, newDoc: undefined });
   ctx.rememberNewDoc?.({ ...newDocState() });
 
   if (kind === 'combat') {
-    await startCombat(ctx);
-    if (picked) await addPickedCombatProduct(ctx, picked);
+    await ensureNewDocDocument(ctx);
+    for (const item of picked) await addPickedCombatProduct(ctx, item);
+    // Все уже записанные стороны в чате не трогаем: листок собран, дальше —
+    // «⚔️ Наш продукт» / «🏷️ Добавить конкурента» из меню листка.
+    await ctx.deps.send(ctx.chatId, combatIntro(ctx.session.combat?.number ?? ''), COMBAT_KEYBOARD);
     return;
   }
-  await startDraft(ctx);
-  if (picked) await addPickedOfferProduct(ctx, picked);
+  if (!(await ensureNewDocDocument(ctx))) return;
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  const number = ctx.session.draft?.number ?? '';
+  // Продукты, отмеченные до создания строки, пишем сразу: бриф длинный, и по
+  // дороге человек не должен потерять то, что уже выбрал.
+  for (const item of picked) await addPickedOfferProduct(ctx, item);
+  if (offerId <= 0) {
+    await startDraft(ctx);
+    return;
+  }
+  // Строка создаётся уже на этапе контекста: бриф спрашивает объект и адресата,
+  // позиций в нём ещё нет.
+  apply(ctx, {
+    ...ctx.session,
+    draft: { ...(ctx.session.draft ?? newDraft()), offerId, number, stage: 'context' as const },
+  });
+  const names = [...added.map((a) => a.title), ...picked.map((p) => p.title)];
+  const what = names.length > 0 ? ` В него записано: ${names.map((n) => `«${n}»`).join(', ')}.` : '';
+  await ctx.deps.send(ctx.chatId, `Предложение № ${number}.${what} ${briefIntro()}`);
+  await beginBrief(ctx, offerId);
 }
 
 /**
- * «📱 Продолжить в приложении»: создать документ и дать ссылку на него.
+ * «📱 Продолжить в приложении»: документ уже создан, даём ссылку на него.
  *
- * Создаём строку сразу: без неё приложение откроется на пустом списке, и выбор
- * продукта в чате пропал бы. Продукт тоже запоминаем — иначе человек выбирал
- * его зря.
+ * Строка создаётся сразу: без неё приложение откроется на пустом списке, и выбор
+ * продукта в чате пропал бы.
  */
 export async function onNewDocApp(ctx: CallbackCtx): Promise<void> {
   const state = ctx.newDoc;
   const kind = state?.kind ?? ctx.session.newDoc ?? 'offer';
-  const picked = state ? state.items[state.picked[0] ?? -1] : undefined;
+  const picked = pickedItems(state);
+  const added = state?.added ?? [];
   apply(ctx, { ...ctx.session, newDoc: undefined });
   ctx.rememberNewDoc?.({ ...newDocState() });
 
   if (kind === 'combat') {
-    await openCombatInApp(ctx, picked);
+    await openCombatInApp(ctx, picked, added);
     return;
   }
-  await openOfferInApp(ctx, picked);
+  await openOfferInApp(ctx, picked, added);
+}
+
+/** Отмеченные в списке карточки — в порядке показанного списка. */
+function pickedItems(state: NewDocState | undefined): SuggestItem[] {
+  if (!state) return [];
+  return state.picked
+    .map((i) => state.items[i])
+    .filter((item): item is SuggestItem => Boolean(item));
 }
 
 /** Новое КП и кнопка «открыть в приложении». */
-async function openOfferInApp(ctx: CallbackCtx, picked?: SuggestItem): Promise<void> {
-  let offer: api.OfferPayload;
-  try {
-    offer = await api.createOffer({
-      chatId: ctx.chatId,
-      client: { name: '', contact: '' },
-      items: [],
-      formValues: {},
-    });
-  } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось создать предложение: ${(e as Error).message}`, MAIN_KEYBOARD);
+async function openOfferInApp(ctx: CallbackCtx, picked: SuggestItem[], already: NewDocAdded[]): Promise<void> {
+  if (!(await ensureNewDocDocument(ctx))) return;
+  const offerId = ctx.session.draft?.offerId ?? 0;
+  const number = ctx.session.draft?.number ?? '';
+  const failures: string[] = [];
+  // Продукт пишем в сохранённое КП, а не в черновик: приложение читает
+  // именно строку предложения. Если не записался — говорим об этом, чтобы
+  // человек выбрал его заново в приложении, а не искал по всему каталогу.
+  for (const item of picked) {
+    const failure = await addPickedOfferProduct(ctx, item);
+    if (failure !== null) failures.push(`«${item.title}» — ${failure}`);
+  }
+  if (failures.length > 0) {
+    await ctx.deps.send(
+      ctx.chatId,
+      `Предложение № ${number} создано, но не удалось записать: ${failures.join('; ')}. ` +
+        'Выберите в приложении ещё раз.',
+      { inline_keyboard: [[appOfferButton(offerId, number)]] },
+    );
     return;
   }
-  if (picked) {
-    // Продукт пишем в сохранённое КП, а не в черновик: приложение читает
-    // именно строку предложения. Если не записался — говорим об этом, чтобы
-    // человек выбрал его заново в приложении, а не искал по всему каталогу.
-    const written = await addPickedOfferProduct(ctx, picked);
-    if (!written) {
-      await ctx.deps.send(
-        ctx.chatId,
-        `Предложение № ${offer.number} создано, но продукт «${picked.title}» записать не удалось — ` +
-          'выберите его в приложении ещё раз.',
-        {
-          inline_keyboard: [[appOfferButton(offer.id, offer.number)]],
-        },
-      );
-      return;
-    }
-  }
-  await ctx.deps.send(ctx.chatId, `Предложение № ${offer.number} создано. Продолжите в приложении.`, {
-    inline_keyboard: [[appOfferButton(offer.id, offer.number)]],
+  const what = already.length > 0 ? ` Уже записано: ${already.map((a) => `«${a.title}»`).join(', ')}.` : '';
+  await ctx.deps.send(ctx.chatId, `Предложение № ${number} создано.${what} Продолжите в приложении.`, {
+    inline_keyboard: [[appOfferButton(offerId, number)]],
   });
 }
 
 /** Новый листок и кнопка «открыть в приложении». */
-async function openCombatInApp(ctx: CallbackCtx, picked?: SuggestItem): Promise<void> {
-  let sheet: api.CombatSheet;
-  try {
-    sheet = await api.createCombat(ctx.chatId, 'Боевой листок');
-  } catch (e) {
-    await ctx.deps.send(ctx.chatId, `Не удалось создать боевой листок: ${(e as Error).message}`, MAIN_KEYBOARD);
-    return;
-  }
-  apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
-  if (picked) await addPickedCombatProduct(ctx, picked);
-  await ctx.deps.send(ctx.chatId, `Боевой листок № ${sheet.number} создан. Продолжите в приложении.`, {
-    inline_keyboard: [[appSheetButton(sheet.id, sheet.number)]],
+async function openCombatInApp(ctx: CallbackCtx, picked: SuggestItem[], already: NewDocAdded[]): Promise<void> {
+  if (!(await ensureNewDocDocument(ctx))) return;
+  const sheet = ctx.session.combat;
+  if (!sheet) return;
+  for (const item of picked) await addPickedCombatProduct(ctx, item);
+  const what = already.length > 0 ? ` Уже записано: ${already.map((a) => `«${a.title}»`).join(', ')}.` : '';
+  await ctx.deps.send(ctx.chatId, `Боевой листок № ${sheet.number} создан.${what} Продолжите в приложении.`, {
+    inline_keyboard: [[appSheetButton(sheet.sheetId, sheet.number)]],
   });
 }
 
@@ -1865,6 +2061,11 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'nd:again': onNewDocAgain,
   'nd:context': onNewDocContext,
   'nd:app': onNewDocApp,
+  // Множественный выбор (2026-11-14): отметить несколько, записать все,
+  // вернуться к поиску за следующей системой.
+  'nd:addpicked': onNewDocAddPicked,
+  'nd:more': onNewDocMore,
+  'nd:enough': onNewDocEnough,
   cat: onCatalog,
   more: onMore,
   back: onBack,

@@ -32,8 +32,10 @@ export type NewDocStep =
   | 'kind'
   /** Ждём название продукта (текст). */
   | 'query'
-  /** Показан список найденного, ждём номер или выбор дальше. */
-  | 'pick';
+  /** Показан список найденного, ждём номера-отметки или решение. */
+  | 'pick'
+  /** Продукт(ы) отмечены и записаны: спрашиваем, нужно ли ещё (2026-11-14). */
+  | 'more';
 
 /**
  * Состояние разговора «создать новый документ».
@@ -50,6 +52,14 @@ export interface NewDocState {
   items: SuggestItem[];
   /** Отмеченные номера (для отметки нескольких перед «Дальше»). */
   picked: number[];
+  /** Уже записанные карточки в порядке выбора: по ним строится сводка. */
+  added?: NewDocAdded[];
+}
+
+/** Записанная в документ карточка: так человек видит, что уже легло в КП. */
+export interface NewDocAdded {
+  kind: 'system' | 'material';
+  title: string;
 }
 
 export function newDocState(): NewDocState {
@@ -168,16 +178,32 @@ export function foundListMessage(query: string, items: SuggestItem[]): string {
 }
 
 /**
- * Клавиатура найденного: номера по четыре в ряд, «уточнить» и «в приложении».
+ * Клавиатура найденного: номера-отметки по четыре в ряд, «добавить выбранные»,
+ * «уточнить» и «в приложении».
+ *
+ * Номер — переключатель (2026-11-14): человека просили «выбрать ТН-Кровля,
+ * потом ТН-Перекрытие, ТН-Фундамент», а кнопка-номер запоминала ровно один
+ * выбор. Отмеченные несут галочку, и одна кнопка записывает их все.
  *
  * «В приложении» стоит здесь же, а не только после выбора: заявка прямо
  * разрешает «позже выбрать продукт в миниапе», и возвращаться к поиску ради
  * этого было бы лишним шагом.
  */
-export function foundKeyboard(items: SuggestItem[], kind: NewDocKind): Record<string, unknown> {
+export function foundKeyboard(
+  items: SuggestItem[],
+  kind: NewDocKind,
+  picked: number[] = [],
+): Record<string, unknown> {
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-  const numbers = items.map((_, i) => ({ text: `${i + 1}`, callback_data: `nd:pick:${i}` }));
+  const chosen = new Set(picked);
+  const numbers = items.map((item, i) => ({
+    text: chosen.has(i) ? `✓ ${i + 1}` : `${i + 1}`,
+    callback_data: `nd:pick:${i}`,
+  }));
   for (let i = 0; i < numbers.length; i += 4) rows.push(numbers.slice(i, i + 4));
+  if (chosen.size > 0) {
+    rows.push([{ text: `✓ Добавить выбранные (${chosen.size})`, callback_data: 'nd:addpicked' }]);
+  }
   rows.push([{ text: '🔎 Ничего из этого — уточню название', callback_data: 'nd:again' }]);
   rows.push([{ text: '📱 Выбрать в приложении', callback_data: 'nd:app' }]);
   return { inline_keyboard: rows };
@@ -187,6 +213,52 @@ export function foundKeyboard(items: SuggestItem[], kind: NewDocKind): Record<st
 export function pickedLabel(item: SuggestItem): string {
   const kind = item.kind === 'material' ? 'материал' : 'система';
   return `${item.title} (${kind})`;
+}
+
+/**
+ * Что сказать после того, как отмеченное записано (2026-11-14).
+ *
+ * Требование пользователя дословно: после выбора продукта спросить, нужно ли
+ * добавить ещё или этого достаточно — человек собирает КП из нескольких систем
+ * (ТН-Кровля, затем ТН-Перекрытие, ТН-Фундамент). Поэтому сводка перечисляет
+ * уже записанное, а решение — кнопками, а не свободным текстом.
+ */
+export function addedMessage(kind: NewDocKind, added: NewDocAdded[]): string {
+  const systems = added.filter((a) => a.kind === 'system');
+  const materials = added.filter((a) => a.kind === 'material');
+  const lines: string[] = [];
+  if (systems.length > 0) {
+    lines.push(`Системы: ${systems.map((a) => `«${a.title}»`).join(', ')}.`);
+  }
+  if (materials.length > 0) {
+    lines.push(`Материалы (описанием): ${materials.map((a) => `«${a.title}»`).join(', ')}.`);
+  }
+  const what = kind === 'combat' ? 'листок' : 'предложение';
+  return (
+    `Записано в ${what}:\n${lines.join('\n')}\n\n` +
+    'Нужно добавить ещё продукт или систему — или этого достаточно?'
+  );
+}
+
+/** Развилка после записи: добавить ещё или продолжить. */
+export function moreKeyboard(kind: NewDocKind): Record<string, unknown> {
+  const done = kind === 'combat' ? '✅ Достаточно — листок собран' : '✅ Достаточно — собрать контекст';
+  const appText = kind === 'combat' ? '📱 Открыть листок в приложении' : '📱 Продолжить в приложении';
+  return {
+    inline_keyboard: [
+      [{ text: '➕ Добавить ещё продукт или систему', callback_data: 'nd:more' }],
+      [{ text: done, callback_data: 'nd:enough' }],
+      [{ text: appText, callback_data: 'nd:app' }],
+    ],
+  };
+}
+
+/** Вопрос при возврате к поиску: отметки уже записанного не теряются. */
+export function moreQuestion(kind: NewDocKind): string {
+  return kind === 'combat'
+    ? 'Какой продукт добавить в листок ещё?\n\nНапишите название (можно часть слова) — найду в Базе знаний.'
+    : 'Какой продукт или систему добавить в предложение ещё?\n\n' +
+        'Напишите название (можно часть слова) — найду в Базе знаний.';
 }
 
 /** Что сказать после выбора продукта. */
