@@ -82,16 +82,19 @@ import {
   NEW_DOC_KIND_QUESTION,
   NEW_DOC_LIMIT,
   addedMessage,
+  alreadyAddedText,
   foundKeyboard,
   foundListMessage,
   moreKeyboard,
   moreQuestion,
   newDocState,
   notFoundMessage,
+  nothingPickedText,
   pickIndex,
-  pickedMessage,
+  pickedHint,
   productQuestion,
   retryOrAppKeyboard,
+  writingNoteText,
   type NewDocAdded,
   type NewDocKind,
   type NewDocState,
@@ -1143,12 +1146,12 @@ export async function onNewDocPick(ctx: CallbackCtx, index: number): Promise<voi
     );
     return;
   }
-  // Одна отметка — сразу записываем и спрашиваем про ещё (2026-11-14).
-  // Несколько — сначала «✓ Добавить выбранные»: карточку с моделью писать
-  // многосекундно, и по одному касанию это недопустимо.
+  // Отметка НЕ пишет в документ и не обещает развилку (2026-11-14): раньше
+  // здесь подставлялся текст «Дальше можно собрать контекст или открыть в
+  // приложении», и человек искал кнопки, которых на шаге отметки нет.
   await ctx.deps.send(
     ctx.chatId,
-    pickedMessage(state.kind, item) + `\n\nОтмечено: ${next.picked.length}. Добавить их?`,
+    `Отмечено: «${item.title}».\n\n${pickedHint(next.picked.length)}`,
     foundKeyboard(state.items, state.kind, next.picked),
   );
 }
@@ -1165,9 +1168,15 @@ export async function onNewDocAddPicked(ctx: CallbackCtx): Promise<void> {
     await ctx.deps.send(ctx.chatId, 'Разговор про новый документ уже завершён.', MAIN_KEYBOARD);
     return;
   }
+  // Повторное нажатие ПОСЛЕ записи (живая жалоба 2026-11-14): запись долгая,
+  // человек жмёт ещё раз, и вчера это давало «Ничего не отмечено» дважды подряд.
+  if (state.step === 'more') {
+    await ctx.deps.send(ctx.chatId, alreadyAddedText(state.added ?? [], state.kind), moreKeyboard(state.kind));
+    return;
+  }
   const picked = pickedItems(state);
   if (picked.length === 0) {
-    await ctx.deps.send(ctx.chatId, 'Ничего не отмечено — нажмите номер продукта.', foundKeyboard(state.items, state.kind, []));
+    await ctx.deps.send(ctx.chatId, nothingPickedText(), foundKeyboard(state.items, state.kind, []));
     return;
   }
   await writeAndAsk(ctx, state);
@@ -1237,10 +1246,26 @@ async function addPickedOfferProducts(ctx: CallbackCtx, items: SuggestItem[]): P
   return added;
 }
 
-/** Сообщение после записи: что легло в документ и что дальше. */
+/**
+ * Сообщение после записи: что легло в документ и что дальше.
+ *
+ * «⌛» пишется ДО записи и ЗАМЕНЯЕТСЯ результатом (2026-11-14). Сервер пишет
+ * описание системы через модель по 20-40 секунд на блок; без «⌛» человек
+ * решает, что бот завис, и жмёт кнопку повторно — так и появилась жалоба
+ * «нажал дважды». Идемпотентности ради повторное нажатие гасит сам обработчик
+ * (`state.step === 'more'`), но ждать молча всё равно нельзя.
+ */
 async function writeAndAsk(ctx: CallbackCtx, state: NewDocState): Promise<void> {
-  if (!(await ensureNewDocDocument(ctx))) return;
-  const added = await addPickedOfferProducts(ctx, pickedItems(state));
+  const picked = pickedItems(state);
+  const noteId = await progressNote(
+    ctx,
+    picked.length === 1 ? writingNoteText(picked[0]) : `⌛ Записываю в документ: ${picked.length}. Это занимает до минуты…`,
+  );
+  if (!(await ensureNewDocDocument(ctx))) {
+    await updateProgress(ctx, noteId, 'Не удалось создать документ — попробуйте начать заново.');
+    return;
+  }
+  const added = await addPickedOfferProducts(ctx, picked);
   const next: NewDocState = {
     ...state,
     step: 'more',
@@ -1249,7 +1274,7 @@ async function writeAndAsk(ctx: CallbackCtx, state: NewDocState): Promise<void> 
   };
   ctx.newDoc = next;
   ctx.rememberNewDoc?.(next);
-  await ctx.deps.send(ctx.chatId, addedMessage(next.kind, next.added ?? []), moreKeyboard(next.kind));
+  await updateProgress(ctx, noteId, addedMessage(next.kind, next.added ?? []), moreKeyboard(next.kind));
 }
 
 /**

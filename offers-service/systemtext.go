@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"mailers/offers/skills"
@@ -163,13 +164,28 @@ SET text = EXCLUDED.text, hash = EXCLUDED.hash, updated_at = now()`,
 // Авария модели НЕ является аварией выбора системы: выбор сохранён, тексты
 // остаются пустыми, а ответ говорит какие. Пустой блок честнее черновика —
 // то же правило, что у блоков формы.
+// generateSystemTexts пишет недостающие блоки текста системы.
+//
+// Блоки пишутся ПАРАЛЛЕЛЬНО (2026-11-14): замер на боевом сервере показал
+// `description` 20.8/21.6 с и `advantages` 20.6/24.3 с — последовательно это
+// ~45 секунд ожидания в боте на КАЖДЫЙ выбранный продукт, и человек решает,
+// что бот завис. Блоки независимы: у каждого своя инструкция и свой хеш, общего
+// состояния у них нет. Ошибка одного не мешает другому — тот же принцип, что
+// у «одна сломанная карточка не скрывает остальные».
 func (s *Server) generateSystemTexts(ctx context.Context, offer Offer, card SystemCard, force bool) (map[string]string, []string) {
+	return s.generateSystemTextsWith(ctx, offer, card, force, llmCompleter{})
+}
+
+// generateSystemTextsWith — то же с явной моделью: тесты подставляют заглушку
+// и проверяют, что блоки идут параллельно, не ходя в сеть.
+func (s *Server) generateSystemTextsWith(ctx context.Context, offer Offer, card SystemCard, force bool, c Completer) (map[string]string, []string) {
 	texts := map[string]string{}
-	var missing []string
 	if card.IsEmpty() {
-		return texts, missing
+		return texts, nil
 	}
 	existing := s.storedSystemTexts(ctx, []int64{card.NoteID})[card.NoteID]
+
+	var pending []string
 	for _, block := range systemTextBlocks {
 		if !force {
 			if old, ok := existing[block]; ok && old.Hash == systemTextHash(card, block) && strings.TrimSpace(old.Text) != "" {
@@ -177,12 +193,57 @@ func (s *Server) generateSystemTexts(ctx context.Context, offer Offer, card Syst
 				continue
 			}
 		}
-		text, ok := s.writeAndStoreSystemText(ctx, offer, card, block)
-		if !ok {
+		pending = append(pending, block)
+	}
+	if len(pending) == 0 {
+		return texts, nil
+	}
+	// Оставшееся — чистый запуск по блокам: его и проверяет тест.
+	written, missing := writeBlocksInParallel(ctx, pending, func(ctx context.Context, block string) (string, bool) {
+		return s.writeAndStoreSystemTextWith(ctx, offer, card, block, c)
+	})
+	for block, text := range written {
+		texts[block] = text
+	}
+	return texts, missing
+}
+
+// writeBlocksInParallel пишет блоки ОДНОВРЕМЕННО и возвращает написанное и
+// недостающее.
+//
+// Вынесено из Server, чтобы проверялось без базы: правка про скорость — это
+// именно порядок вызовов модели, и тест на него не должен требовать Postgres.
+// Ошибка одного блока не отменяет соседние; порядок в `missing` — как в
+// `blocks`, чтобы человек видел те же блоки в том же порядке.
+func writeBlocksInParallel(
+	ctx context.Context,
+	blocks []string,
+	write func(ctx context.Context, block string) (string, bool),
+) (map[string]string, []string) {
+	type result struct {
+		text string
+		ok   bool
+	}
+	got := make([]result, len(blocks))
+	var wg sync.WaitGroup
+	for i, block := range blocks {
+		wg.Add(1)
+		go func(i int, block string) {
+			defer wg.Done()
+			text, ok := write(ctx, block)
+			got[i] = result{text: text, ok: ok}
+		}(i, block)
+	}
+	wg.Wait()
+
+	texts := make(map[string]string, len(blocks))
+	var missing []string
+	for i, block := range blocks {
+		if !got[i].ok {
 			missing = append(missing, block)
 			continue
 		}
-		texts[block] = text
+		texts[block] = got[i].text
 	}
 	return texts, missing
 }
@@ -190,9 +251,14 @@ func (s *Server) generateSystemTexts(ctx context.Context, offer Offer, card Syst
 // writeAndStoreSystemText — один блок: модель, затем запись. false — не вышло
 // ни написать, ни сохранить; вызывающий решает, как об этом сказать.
 func (s *Server) writeAndStoreSystemText(ctx context.Context, offer Offer, card SystemCard, block string) (string, bool) {
+	return s.writeAndStoreSystemTextWith(ctx, offer, card, block, llmCompleter{})
+}
+
+// writeAndStoreSystemTextWith — то же с явной моделью (тесты).
+func (s *Server) writeAndStoreSystemTextWith(ctx context.Context, offer Offer, card SystemCard, block string, c Completer) (string, bool) {
 	instruction := systemTextInstruction[block]
 	started := time.Now()
-	raw, err := writeSystemText(ctx, instruction, offer, card, card.Refs)
+	raw, err := writeSystemTextWith(ctx, instruction, offer, card, card.Refs, c)
 	logModelCall("system:"+block, fmt.Sprintf("note=%d", card.NoteID), len(instruction), started, err)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return "", false

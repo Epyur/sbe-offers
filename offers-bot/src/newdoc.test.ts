@@ -16,6 +16,7 @@ import type { BotDeps, RouterState } from './routes.ts';
 
 const REAL_ENV = { ...process.env };
 const sent: Array<{ chatId: string; text: string; keyboard?: Record<string, unknown> }> = [];
+const edits: Array<{ chatId: string; messageId: number; text: string; keyboard?: Record<string, unknown> }> = [];
 
 beforeEach(() => {
   sent.length = 0;
@@ -44,11 +45,17 @@ function makeDeps(): { deps: BotDeps; state: RouterState; session(): ChatSession
     foundAnalogs: new Map(),
   };
   state.sessions.set('42', { ...AUTHED });
+  edits.length = 0;
   const deps: BotDeps = {
     now: () => 1_000_000,
     send: async (chatId, text, keyboard) => {
       sent.push({ chatId, text, keyboard });
       return sent.length;
+    },
+    // Замена «⌛» результатом (как в poller.ts): без неё проверка «⌛ сменяется
+    // ответом» не отличила бы правку от второго сообщения.
+    edit: async (chatId, messageId, text, keyboard) => {
+      edits.push({ chatId, messageId, text, keyboard });
     },
     identity: async () => ({ email: 'ivanov@tn.ru' }),
     session: async () => state.sessions.get('42') ?? { ...AUTHED },
@@ -184,7 +191,8 @@ describe('«Создать новый документ» (R2)', () => {
     sent.length = 0;
     await route.routeCallback(deps, '42', 'nd:pick:1', 'cb2', state);
 
-    assert.match(sent[0].text, /Отмечено: 1/);
+    assert.match(sent[0].text, /Отмечено: «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.match(sent[0].text, /Добавить этот продукт в документ/);
     const all = buttons(sent[0].keyboard);
     assert.ok(all.some((b) => b.callback_data === 'nd:addpicked'));
   });
@@ -197,14 +205,41 @@ describe('«Создать новый документ» (R2)', () => {
     await route.routeText(deps, '42', 'Гарант', state);
     await route.routeCallback(deps, '42', 'nd:pick:1', 'cb2', state);
     sent.length = 0;
+    edits.length = 0;
     await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
 
-    assert.match(sent[0].text, /Системы: «ТН-КРОВЛЯ Гарант RE30»/);
-    assert.match(sent[0].text, /Нужно добавить ещё/);
-    const all = buttons(sent[0].keyboard);
+    // Ожидание видно СРАЗУ: «⌛» уходит до записи, а не через полминуты.
+    assert.match(sent[0].text, /⌛ Записываю систему «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.match(sent[0].text, /Повторно нажимать не нужно/);
+    // И заменяется результатом — чат не копится служебными строками.
+    const last = edits[edits.length - 1];
+    assert.ok(last, 'результат должен заменять «⌛», а не идти новым сообщением');
+    assert.match(last.text, /Системы: «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.match(last.text, /Нужно добавить ещё/);
+    const all = buttons(last.keyboard);
     assert.ok(all.some((b) => b.callback_data === 'nd:more'));
     assert.ok(all.some((b) => b.callback_data === 'nd:enough'));
     assert.ok(all.some((b) => b.callback_data === 'nd:app'));
+  });
+
+  // Живая жалоба 2026-11-14: запись идёт десятки секунд, человек жмёт кнопку
+  // второй раз и получает «Ничего не отмечено» дважды подряд.
+  it('повторное нажатие «Добавить выбранные» не пишет второй раз и не пугает', async () => {
+    const { deps, state } = makeDeps();
+    fakeService({ systems: 2 });
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:offer', 'cb1', state);
+    await route.routeText(deps, '42', 'Гарант', state);
+    await route.routeCallback(deps, '42', 'nd:pick:1', 'cb2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
+    sent.length = 0;
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb4', state);
+
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].text, /В предложение уже записано: «ТН-КРОВЛЯ Гарант RE30»/);
+    assert.doesNotMatch(sent[0].text, /Ничего не отмечено/);
+    const all = buttons(sent[0].keyboard);
+    assert.ok(all.some((b) => b.callback_data === 'nd:more'), 'развилка должна остаться на месте');
   });
 
   it('несколько систем подряд: «добавить ещё» сохраняет прежний выбор', async () => {
