@@ -9,12 +9,12 @@
 | | значение |
 |---|---|
 | версия | **0.9.28** |
-| `backend` | `85d61ad` (код `85d61ad` + доки `7d30b3d`) |
-| `main` | `b7829fe` (релизный срез + доки `763f0be`; сервис/бот/приложение — только `backend`) |
-| самораздача | `manifest 13cdb98b…` / `main 27a899d8…` / `styles a32ac3df…`, сверено по https и в `/registry.json` **и** через `raw.githubusercontent.com` |
-| реестр (git-копия) | `sbe-apstore-registry` `a01d8bd` |
-| приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`: `assets/index-C6_fhOtG.js`, `index.html`, `vendor/telegram-web-app.js` |
-| сервис и бот | **НЕ менялись и НЕ пересоздавались**; правок compose нет |
+| `backend` | `23a2dcb` (0.9.28; в `main` уходит только плагин) |
+| `main` | релизный срез 0.9.28 (сервис/бот/приложение — только `backend`) |
+| самораздача | `manifest 899e87b4…` / `main 4587c651…` / `styles a32ac3df…`, сверено по https и в `/registry.json` |
+| реестр (git-копия) | `sbe-apstore-registry` `8f9b1de` |
+| приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`: `assets/index-BGVw3l4T.js`, `index.html`, `vendor/telegram-web-app.js` (sha256 сверены по https) |
+| сервис `offers` и бот | пересобраны и пересозданы 2026-11-14 (`--force-recreate`); бэкапы `*.bak-20261114-0928`; правок compose нет |
 
 | файл | sha256 | байт |
 |---|---|---|
