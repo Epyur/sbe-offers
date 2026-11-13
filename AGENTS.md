@@ -30,10 +30,17 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.27** — **RELEASED 2026-11-14.** Only
-`offers-app` (the Mini App) and the plugin's version/news changed; service and
-bot were **not** rebuilt or recreated, no compose edit. See «0.9.27» below.
-The previous release is 0.9.26 (`main` `ab59f03`).
+Current version = **0.9.27** — **RELEASED 2026-11-14.** Three points converge:
+`backend` `85d61ad`, `main` `b7829fe` (release slice; service, bot and
+`offers-app` live on `backend` only), self-hosted
+`13cdb98b…` / `27a899d8…` / `a32ac3df…` (verified over https, in
+`/registry.json` **and** through `raw.githubusercontent.com`), registry
+`sbe-apstore-registry` `a01d8bd`. Only `offers-app` (the Mini App), the plugin
+version and the CUP news changed; service and bot were **not** rebuilt or
+recreated, no compose edit. App deployed to `/app-offers/`
+(`assets/index-C6_fhOtG.js`, `index.html`, `vendor/telegram-web-app.js`; the old
+bundle removed, read of its old name now answers the SPA fallback).
+See «0.9.27» below. The previous release is 0.9.26 (`main` `ab59f03`).
 
 **0.9.27 (2026-11-14): «📤 Отправить в чат» no longer swallows the refusal.**
 Live complaint «в мини-аппе выбрать отправить документ в чат — ничего никуда
