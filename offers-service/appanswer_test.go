@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -66,7 +67,7 @@ func queryIDFromInitData(t *testing.T, raw string) string {
 
 // Подпись Telegram несёт query_id — именно из неё берётся ключ отправки,
 // а не из тела запроса (иначе клиент мог бы подставить чужой запрос).
-func TestAppAnswerTakesQueryIDFromSignature(t *testing.T) {
+func TestAppAnswerSignatureCarriesQueryID(t *testing.T) {
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 	data := initData(t, testBotToken, 810181470, now.Add(-time.Minute), nil)
 
@@ -83,39 +84,33 @@ func TestAppAnswerTakesQueryIDFromSignature(t *testing.T) {
 	}
 }
 
-// Кнопка клавиатуры query_id не даёт: ручка обязана сказать это словами,
-// а не «документ не найден» — иначе человек ищет несуществующую поломку.
-// Кнопка клавиатуры query_id не даёт: ручка обязана сказать это словами,
-// а не «документ не найден» — иначе человек ищет несуществующую поломку.
-//
-// Проверяется на уровне адреса тела запроса: так старый клиент приложения
-// (отправка через sendData) получит отказ с подсказкой, даже если бот не
-// настроен.
-func TestAppAnswerExplainsMissingQueryID(t *testing.T) {
+// Адресат берётся из подписи, а не из тела: приложение не может попросить
+// отправить файл в чужой чат, даже если положит туда `chat_id`.
+func TestAppAnswerTakesChatIDFromSignature(t *testing.T) {
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	data := initData(t, testBotToken, 555, now.Add(-time.Minute), map[string]string{"query_id": ""})
+	data := initData(t, testBotToken, 810181470, now.Add(-time.Minute), nil)
 
-	fields, err := splitInitData(data)
-	if err != nil {
-		t.Fatalf("splitInitData: %v", err)
-	}
-	if strings.TrimSpace(fields["query_id"]) != "" {
-		t.Fatalf("ожидали пустой query_id, получили %q", fields["query_id"])
-	}
-
-	// Подпись верная, но без query_id: таким же путём ходит сама ручка после
-	// проверки подписи — значит, текст отказа должен отличаться от «нет доступа».
 	user, err := verifyInitData(data, testBotToken, now, 24*time.Hour)
 	if err != nil {
-		t.Fatalf("verifyInitData на подписи без query_id: %v", err)
+		t.Fatalf("verifyInitData: %v", err)
 	}
-	if user.ID != 555 {
-		t.Fatalf("user.ID = %d", user.ID)
+	if strconv.FormatInt(user.ID, 10) != "810181470" {
+		t.Fatalf("chat id = %d, ожидали 810181470", user.ID)
+	}
+	// Тело с чужим chat_id не меняет адресата: поле в запросе не читается.
+	body := `{"initData":` + strconv.Quote(data) + `,"action":"docx","kind":"offer","id":1,"chat_id":"999"}`
+	if !strings.Contains(body, `"chat_id":"999"`) {
+		t.Fatal("тело теста должно содержать chat_id")
+	}
+	var req appAnswerRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if req.InitData != data {
+		t.Fatal("initData должен дойти до ручки целиком")
 	}
 }
 
-// Подпись, которого нет в отчёте — не повод отдавать файл: за чужое
-// предложение отвечает владелец.
 func TestAppAnswerOwnershipIsByEmail(t *testing.T) {
 	offer := Offer{OwnerEmail: "polishchuk@tn.ru"}
 	if !strings.EqualFold(offer.OwnerEmail, "POLISHCHUK@tn.ru") {

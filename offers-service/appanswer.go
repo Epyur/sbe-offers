@@ -8,7 +8,7 @@ package main
 // поэтому `sendData` там молча ничего не делает и лишь закрывает окно —
 // человек видел «нажал, приложение закрылось, в чате пусто».
 //
-// Штатный путь для inline-кнопки — `answerWebAppQuery`: приложение отдаёт
+// Путь, который работает для любой кнопки: приложение отдаёт
 // СВОЙ `query_id` (он лежит в `initData`), сервис собирает файл и отвечает
 // боту от имени человека.
 //
@@ -106,29 +106,13 @@ func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields, err := splitInitData(req.InitData)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "initData"})
-		return
-	}
-	queryID := strings.TrimSpace(fields["query_id"])
-	if queryID == "" {
-		// Кнопка клавиатуры query_id не даёт: там работает sendData, и это
-		// не ошибка входа — приложению нужно сказать, что делать.
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "query_id",
-			"hint":  "откройте документ в приложении из бота и нажмите кнопку ещё раз",
-		})
-		return
-	}
-
 	data, fileName, status, problem := s.answerDocx(r, req, email)
 	if problem != "" {
 		writeJSON(w, status, map[string]any{"error": problem})
 		return
 	}
 
-	if err := s.deliverToChat(r.Context(), chatID, queryID, fileName, data); err != nil {
+	if err := s.deliverToChat(r.Context(), chatID, fileName, data); err != nil {
 		log.Printf("app answer: отправка в чат: %v", err)
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -185,14 +169,13 @@ func (s *Server) answerDocx(r *http.Request, req appAnswerRequest, email string)
 //
 // Ответ бота передаётся человеку как есть: «WEB_APP_QUERY_ID_INVALID» означает
 // повторное нажатие, и общее «не удалось» скрыло бы причину.
-func (s *Server) deliverToChat(ctx context.Context, chatID, queryID, fileName string, data []byte) error {
+func (s *Server) deliverToChat(ctx context.Context, chatID, fileName string, data []byte) error {
 	base := strings.TrimRight(getEnv("OFFERS_BOT_URL"), "/")
 	if base == "" {
 		base = "http://offers-bot:3000"
 	}
 	payload, err := json.Marshal(map[string]any{
 		"chat_id":   chatID,
-		"query_id":  queryID,
 		"file_name": fileName,
 		"caption":   captionForAnswer(fileName),
 		"content":   base64.StdEncoding.EncodeToString(data),

@@ -26,7 +26,7 @@
 Сервис, бот и база не тронуты. Плагин в Obsidian физически изменился только
 текстом новости ЦУП — сама отправка в чат живёт в приложении, а не в плагине.
 
-## 0.9.28: «Отправить в чат» через answerWebAppQuery (2026-11-14)
+## 0.9.28: «Отправить в чат» — файл шёл боту (2026-11-14)
 
 Живая жалоба после 0.9.27: «ошибка сохраняется, приложение закрывается,
 документ не приходит» — и то же на десктопе.
@@ -36,21 +36,24 @@ App, открытого кнопкой клавиатуры**. Приложен�
 поэтому `sendData` там ничего не делает и **не бросает ошибки** — просто закрывает
 окно. Это же объясняет пустой журнал бота: события `web_app_data` не было ни разу.
 
-**Штатный путь — `answerWebAppQuery`:** приложение отдаёт сервису `query_id` из `initData`,
-сервис собирает файл, бот отвечает им на нажатие — файл приходит в чат от
-имени человека.
+**Путь, который работает:** приложение отдаёт сервису подпись `initData`, сервис
+собирает DOCX и просит бота прислать его в чат человека (`sendDocument`).
+
+**Почему не `answerWebAppQuery`** (сначала был этот путь, он не работает): он требует
+`file_id`, а залить файл можно только в чат существующего человека. Свой чат бота
+не подходит: Telegram ответил живьём `Forbidden: the bot can't send messages to the bot`
+(проверено на сервере 2026-11-14).
 
 | что | где | как |
 |---|---|---|
 | отправка из приложения | `offers-app/src/sendchat.ts` | `POST /app/answer {initData, action, kind, id}`; `sendData` убран |
-| `query_id` | `offers-app/src/tg.ts` `queryId()` | читает поле из `initData` (в `initDataUnsafe` его нет) |
-| ручка сервиса | `offers-service/appanswer.go` | `verifyInitData`; `chat_id`/`query_id` ИЗ ПОДПИСИ; сборка путями `handleBotDocx`/`handleBotExportCombat` |
+| ручка сервиса | `offers-service/appanswer.go` | `verifyInitData`; `chat_id` ИЗ ПОДПИСИ (поле chat_id в теле не читается); сборка путями `handleBotDocx`/`handleBotExportCombat` |
 | отправка в Telegram | `offers-bot/src/verify-server.ts` `/internal/answer`, `telegram.ts answerWebAppDocument` | `sendDocument` боту — `file_id` — `answerWebAppQuery`; SOCKS есть только у бота |
 
 **Почему через бота:** сервер в РФ не достаёт до `api.telegram.org`; путь есть только
 через SOCKS-сайдкар бота (та же причина, что у `askBotToVerify`).
 
-**Границы:** `chat_id` и `query_id` — из подписи, не из тела; КП — только владельцу,
+**Границы:** `chat_id` — из подписи, не из тела; КП — только владельцу,
 листок — по правилу чтения 2026-11-12 (`botCanReadCombat`).
 
 **Проверки:** Go `gofmt`/`go vet`/`go test ./...` зелёные (`appanswer_test.go`, 4 теста); бот `tsc` 0,

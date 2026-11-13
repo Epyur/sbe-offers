@@ -120,28 +120,6 @@ export function platformInfo(): { version: string; platform: string } {
   return { version: app?.version ?? '', platform: app?.platform ?? '' };
 }
 
-/**
- * `query_id` — ключ диалога для `answerWebAppQuery` (2026-11-14).
- *
- * Telegram кладёт его в `initData` строкой `query_id=AAH…`. Значение есть у приложения,
- * открытого **inline**-кнопкой или из меню; у кнопки клавиатуры его нет — там
- * работает `sendData`.
- */
-export function queryId(): string {
-  const raw = initData();
-  if (raw === '') return '';
-  for (const chunk of raw.split('&')) {
-    if (chunk.startsWith('query_id=')) {
-      try {
-        return decodeURIComponent(chunk.slice('query_id='.length));
-      } catch {
-        return '';
-      }
-    }
-  }
-  return '';
-}
-
 export function close(): void {
   readTelegram()?.close();
 }

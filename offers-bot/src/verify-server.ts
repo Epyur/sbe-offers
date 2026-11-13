@@ -8,7 +8,7 @@
  * docker-сети.
  */
 import http from 'node:http';
-import { answerWebAppDocument, verifyToken } from './telegram.ts';
+import { sendDocument, verifyToken } from './telegram.ts';
 
 const PORT = Number(process.env.VERIFY_PORT ?? 3000);
 const SECRET = process.env.OFFERS_BOT_SECRET ?? '';
@@ -77,7 +77,7 @@ async function handleVerify(req: http.IncomingMessage, res: http.ServerResponse)
 }
 
 /**
- * Ответ на нажатие в Mini App (2026-11-14).
+ * Отправка файла в чат по просьбе Mini App (2026-11-14).
  *
  * Сервис собирает DOCX и присылает его сюда секретом, потому что только у бота
  * есть путь в Telegram (СОКС-туннель). Бот ничего не решает про права: документ уже
@@ -93,15 +93,17 @@ async function handleAnswer(req: http.IncomingMessage, res: http.ServerResponse)
     send(res, 413, { ok: false, error: 'request too large' });
     return;
   }
-  let parsed: { query_id?: unknown; file_name?: unknown; content?: unknown };
+  let parsed: { chat_id?: unknown; file_name?: unknown; caption?: unknown; content?: unknown };
   try {
     parsed = JSON.parse(body) as typeof parsed;
   } catch {
     send(res, 400, { ok: false, error: 'invalid json' });
     return;
   }
-  if (typeof parsed.query_id !== 'string' || parsed.query_id === '') {
-    send(res, 400, { ok: false, error: 'нет query_id' });
+  // Адресат обязателен: сервис берёт его из подписи initData и пустым не шлёт.
+  const chatId = typeof parsed.chat_id === 'string' ? parsed.chat_id.trim() : '';
+  if (!/^-?[0-9]+$/.test(chatId)) {
+    send(res, 400, { ok: false, error: 'нет chat_id' });
     return;
   }
   if (typeof parsed.content !== 'string' || parsed.content === '') {
@@ -109,10 +111,10 @@ async function handleAnswer(req: http.IncomingMessage, res: http.ServerResponse)
     return;
   }
   const fileName = typeof parsed.file_name === 'string' && parsed.file_name !== '' ? parsed.file_name : 'документ.docx';
+  const caption = typeof parsed.caption === 'string' ? parsed.caption : '';
   try {
-    // Ошибку Telegram отдаём текстом: человеку важно увидеть «отправка уже была»,
-    // а не общее «не удалось».
-    await answerWebAppDocument(parsed.query_id, fileName, Buffer.from(parsed.content, 'base64'));
+    // Ошибку Telegram отдаём текстом: человеку важна причина, а не «не удалось».
+    await sendDocument(chatId, fileName, Buffer.from(parsed.content, 'base64'), caption);
     send(res, 200, { ok: true });
   } catch (e) {
     send(res, 502, { ok: false, error: (e as Error).message });

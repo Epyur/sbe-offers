@@ -6,14 +6,12 @@
  * открывается inline-кнопкой, поэтому `sendData` там молча ничего не делает
  * и просто закрывает окно (живой дефект: «нажал — закрылось, в чате пусто»).
  *
- * Теперь путь штатный для inline-кнопки: приложение отдаёт сервису СВОЙ
- * `query_id` (лежит в `initData`), сервис проверяет подпись Telegram, собирает
- * DOCX и отвечает боту через `answerWebAppQuery` — файл приходит в чат от
- * имени человека. Адрес и байты в запрос не попадают, а `chat_id` сервис
- * берёт из самой подписи `initData`.
+ * Теперь работает путь без ограничений кнопки: приложение отдаёт сервису
+ * подпись Telegram (`initData`), сервис собирает DOCX и просит бота прислать файл
+ * в чат. Адресат берётся из самой подписи, так что попросить чужой чат нельзя.
  */
 import { ApiError, apiRequest } from './api.ts';
-import { close, inTelegram, initData, queryId } from './tg.ts';
+import { close, inTelegram, initData } from './tg.ts';
 
 export type DocumentKind = 'offer' | 'combat';
 
@@ -58,8 +56,7 @@ export async function sendDocumentToChat(kind: DocumentKind, id: number): Promis
   if (payload === null) return { problem, sent: false };
 
   const raw = initData();
-  const query = queryId();
-  if (query === '') {
+  if (raw === '') {
     return {
       problem:
         'Это окно открыто без ключа Telegram. Откройте документ в приложении и нажмите кнопку ещё раз.',
@@ -97,8 +94,6 @@ function failureText(e: unknown): string {
         return 'Сначала войдите в бота: /start и код из письма — потом откройте приложение заново.';
       case 'initData':
         return 'Telegram не подтвердил, что это вы. Откройте документ из бота заново.';
-      case 'query_used':
-        return 'Эта отправка уже была. Откройте документ заново и нажмите кнопку ещё раз.';
       default:
         return e.message;
     }
