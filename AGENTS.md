@@ -30,13 +30,24 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.25** — **RELEASED 2026-11-14.** Three points converge:
-`main` `9006ca7`, `backend` `afdf4ca` (code `009a399`), self-hosted
-`dee25876…` / `4fdf942c…` / `a32ac3df…` (verified over https, in
+Current version = **0.9.26** — **RELEASED 2026-11-14.** Three points converge:
+`main` `8e93230`, `backend` `21af387`, self-hosted
+`08c452e4…` / `f11a8e47…` / `a32ac3df…` (verified over https, in
 `/registry.json`, **and** through `raw.githubusercontent.com`), registry
-`sbe-apstore-registry` `5353d7c`. Service and bot rebuilt and recreated;
-live measurement on a fresh card: two blocks in parallel, 31 s total instead of
-~45. See «0.9.25» below. The previous release is 0.9.24 (`main` `581fa94`).
+`sbe-apstore-registry` `36bc504`. Service and bot rebuilt and recreated
+(`*.bak-20261113-1249`); the `offers` compose block already carried
+`MAILER_SERVICE_URL`/`MAILER_INTERNAL_SECRET` — no compose edit in this batch.
+See «0.9.26» below. The previous release is 0.9.25 (`main` `9006ca7`).
+
+**0.9.26 (2026-11-14, P5b): the agent reads emails linked to a product —
+RELEASED.** `get_emails` and `read_email` (the tool list is now **15**: 13
+after P6-bis + the two email tools) return only letters whose signed-scan card
+carries `product_refs`. Verified live that the mailer route answers `200` with
+the secret and `403` without it, that the raw answer carries no `file_key`, and
+that on live data 200 scanned letters are currently **all hidden** (no scan has
+been tagged yet — that is the model, not a defect). Plugin `main.js` changed
+only through the version and the CUP news text. Full write-up —
+«ЗАДАЧА ДЛЯ АГЕНТА (P5b)» below.
 
 **0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
 RELEASED.** Also the bot menu compaction in the same batch. See «P6-bis» below.
@@ -990,12 +1001,14 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 | `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
 | `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
 
-**Tools** (whitelist, `agentTools`; after P6-bis 2026-11-14 — 13):
+**Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15):
 `get_our_products`, `read_card` (**any** note), `search_competitors`,
-`get_documents`, `get_document_link`, `read_document_file`, `create_offer`,
+`get_documents`, `get_document_link`, `read_document_file`, `get_emails`,
+`read_email`, `create_offer`,
 `set_system`, `set_material`, `create_combat_sheet`, `set_combat_side`,
-`build_docx`, `build_combat_docx`. **Not** in the list: emails (P5b — the routes
-do not exist), YouGile, rules/skills/presentation, any write to YouGile.
+`build_docx`, `build_combat_docx`. **Not** in the list: YouGile,
+rules/skills/presentation, any write to YouGile. Emails are read-only and only
+for letters whose signed-scan card carries `product_refs` (`agentmail.go`).
 
 **Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
 (`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
@@ -1094,12 +1107,12 @@ of a battle sheet. A bare `material` tag is a material.
   `kb-selfhost.sh` writing hashes to the DB) — `HANDOFF.md`, «Как выкладывать
   выпуск».
 
-**Still P5b:** emails (`get_emails` / `read_email`) — see the task section right
-below.
+**P5b — RELEASED in 0.9.26:** emails (`get_emails` / `read_email`). See the task
+section right below.
 
 ## ЗАДАЧА ДЛЯ АГЕНТА (P5b, 2026-11-14): письма в контексте КП
 
-> Статус: **СДЕЛАНА 2026-11-14, НЕ ВЫПУЩЕНА.** Сторона писем раскатана раньше
+> Статус: **ВЫПУЩЕНА 0.9.26 (2026-11-14).** Сторона писем раскатана раньше
 > (sbe-mailer 0.1.21, ручки `GET /internal/mailer/agent/emails?q=&limit=` и
 > `GET /internal/mailer/agent/email?id=` под `MAILER_INTERNAL_SECRET`). Сторона
 > КП сделана в этой папке: `mailer_client.go`, `agentmail.go` (оба инструмента),
@@ -1114,12 +1127,18 @@ below.
 > `check_docs_state` OK, OpenAPI **117/117**, `check_agent_engine` зелёный,
 > стенд **505/0**.
 >
-> **Что осталось для выпуска:** (1) на сервере в блоке `offers` —
-> `MAILER_SERVICE_URL: http://backend:3000` и `MAILER_INTERNAL_SECRET:
-> ${MAILER_INTERNAL_SECRET}` (точечно, бэкап, `docker compose config -q`;
-> `DOCUMENTS_*` там уже есть с P6); (2) живой ход под настоящей моделью;
-> (3) «привязал отметку — письмо видно на следующем ходе» на бою. Версию не
-> поднимали: по команде «Фиксируй» — версия + новость ЦУП + выкладка.
+> **Что осталось человеку:** (1) поставить отметки «🏷️ Системы и материалы»
+> на карточках сканов (на бою на момент выпуска `visible=0` из 200 писем со
+> сканами — это модель, а не дефект); (2) после этого — живой ход помощника
+> «найди письма по <продукт>» и «прочитай письмо». Compose правки не
+> потребовал: `MAILER_SERVICE_URL`/`MAILER_INTERNAL_SECRET` в блоке `offers`
+> уже стояли с раскатки писем.
+>
+> **Про выпуск 0.9.26:** `backend` `21af387` → `main` `8e93230`; сервис и бот
+> пересобраны и пересозданы (`*.bak-20261113-1249`), health `ok`, поллер
+> запущен; самораздача `08c452e4…` / `f11a8e47…` / `a32ac3df…`, реестр
+> `36bc504`. Живая сверка: ручка писем с секретом — `200`, без — `403`,
+> `file_key` в ответе нет; набор документов P5a — `200`.
 >
 > Контракт ниже — заморожен и подтверждён живым ответом; отступать от него
 > нельзя:
