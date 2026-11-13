@@ -30,7 +30,16 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.29** — **RELEASED 2026-11-14.** `backend` `a48bdea`, `main` `fb23107`;
+Current version = **0.9.30** — см. «0.9.30» в `HANDOFF.md`.
+
+**0.9.30 (2026-11-14): макет и тексты систем в КП из чата.** Живое КП 031/2026 ушло в чат
+упрощённым (313 КБ вместо макета на 2.37 МБ), без описания первой системы и без
+второй, а сборка шла минутами. Три правки: `/app/answer` получил длинный предел
+(`writeTimeoutFor`), ошибка макета пишется в журнал (а не молча уходит в блочный
+путь), а уже написанные тексты пишутся в КП в контексте **без отмены запроса**
+(`context.WithoutCancel`) — именно отмена теряла их и заставляла модель работать заново.
+
+**0.9.29 (2026-11-14, RELEASED):** `backend` `a48bdea`, `main` `fb23107`;
 self-hosted `9e6ad1f3…` / `ffe7a37b…` / `a32ac3df…`, registry `sbe-apstore-registry` `f4e0e6d`,
 app `assets/index-ChpvzRrm.js`. 0.9.28 (`main` `a9e064f`) — файл через бота.
 

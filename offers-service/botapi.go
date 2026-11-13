@@ -324,8 +324,16 @@ func (s *Server) renderOffer(r *http.Request, offer Offer) ([]byte, error) {
 	// Макет пользователя главнее блоков формы (2026-11-05): если он загружен,
 	// документ собирается по нему, со своими стилями и колонтитулами. Блоки
 	// формы при этом остаются — вернуться к ним можно, удалив макет.
-	if layout, err := s.loadLayout(r); err == nil && len(layout) > 0 {
+	layout, layoutErr := s.loadLayout(r)
+	if layoutErr == nil && len(layout) > 0 {
 		return s.renderLayoutOffer(r, layout, form, offer, cards, refs, report)
+	}
+	// Макет есть, но не собрался — это НЕ «макета нет» (2026-11-14).
+	//
+	// Живое КП 031/2026: макет 2.4 МБ не успевал за отведённое время, сборка
+	// молча уходила в блочный путь и давала другой документ без признаков поломки.
+	if layoutErr != nil {
+		log.Printf("макет КП %s не применён, печать по блокам формы: %v", offer.Number, layoutErr)
 	}
 	// Блочный путь получает те же тексты систем, что и макет (2026-11-07):
 	// иначе метка `{{текст: система: …}}` в блоке формы молчит, хотя в макете
@@ -545,7 +553,16 @@ func (s *Server) refreshBlockTexts(ctx context.Context, form OfferForm, offer Of
 	}
 	offer.FormValues = values
 	if written > 0 {
-		if err := s.persistOfferFormValues(ctx, offer); err != nil {
+		// Запись не должна зависеть от того, жив ли контекст ЗАПРОСА (2026-11-14).
+		//
+		// Живое КП 031/2026: сборка упиралась в предел времени, тексты успевали
+		// написаться, а UPDATE падал с `context deadline exceeded` — и тексты терялись.
+		// Следующая сборка шла в модель заново — и снова упиралась.
+		// Модель уже ответила: это деньги и минуты человека, и терять их
+		// из-за оборванного соединения нельзя.
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), blockTextPersistTimeout)
+		defer cancel()
+		if err := s.persistOfferFormValues(persistCtx, offer); err != nil {
 			// Документ важнее записи: файл соберём с текстом в памяти.
 			log.Printf("block texts: не записано в КП %s: %v", offer.Number, err)
 		}

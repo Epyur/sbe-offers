@@ -37,6 +37,12 @@ const (
 	systemTextTimeout = 420 * time.Second
 	// quickResponseTimeout — обычные ручки: без модели и без долгих обходов.
 	quickResponseTimeout = 60 * time.Second
+	// blockTextPersistTimeout — запись уже написанных текстов в КП.
+	//
+	// Свой короткий предел на ОТДЕЛЬНЫЙ контекст без отмены запроса (2026-11-14):
+	// модель уже ответила, и обрыв соединения не должен выбрасывать
+	// написанное (живое КП 031/2026 перегенерировалось на каждой сборке).
+	blockTextPersistTimeout = 30 * time.Second
 )
 
 // writeTimeoutFor — сколько запросу отведено на ответ.
@@ -46,7 +52,12 @@ const (
 // нескольких минут), ручка списка — нет, и общий предел обязан быть разным.
 func writeTimeoutFor(path string) time.Duration {
 	switch {
-	case hasSuffixPath(path, "/docx"), hasSuffixPath(path, "/link"), hasSuffixPath(path, "/export"):
+	case hasSuffixPath(path, "/docx"), hasSuffixPath(path, "/link"),
+		hasSuffixPath(path, "/export"), hasSuffixPath(path, "/app/answer"):
+		// `/app/answer` — «Отправить в чат» из Mini App (2026-11-14): собирает тот же
+		// документ, что и «⬇ DOCX». Без этой строки ручка получала 60 с: макет
+		// не успевал (уходил в блочный путь), а тексты систем обрывались
+		// на второй системе (живое КП 031/2026).
 		return layoutBuildTimeout
 	case hasSuffixPath(path, "/system"), hasSuffixPath(path, "/recalculate"),
 		hasSuffixPath(path, "/material"):
