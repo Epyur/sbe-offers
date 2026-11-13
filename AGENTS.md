@@ -30,13 +30,13 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.24** — **PREPARED 2026-11-14, NOT RELEASED.** The last
-release is 0.9.23 (three points: `main` `533ac36`, `backend` `05686b7`,
-self-hosted `8561ca81…` / `ee4a1749…` / `a32ac3df…`, registry
-`sbe-apstore-registry` `4997d05`). 0.9.24 is bot-only in substance (multi-product
-КП from chat, materials by description, search-limit split, write by `noteId`);
-the plugin changed only through the version and the CUP news string. See
-«0.9.24» below.
+Current version = **0.9.24** — **RELEASED 2026-11-14.** Three points converge:
+`main` `f5be852`, `backend` `e50a2ec`, self-hosted `43235f12…` / `1d0115a8…` /
+`a32ac3df…` (verified over https, in `/registry.json`, **and** through
+`raw.githubusercontent.com` for old clients), registry git copy
+`sbe-apstore-registry` `83c9073`. Only the bot was rebuilt and recreated;
+`offers-service` and `offers-app` were not touched this batch. See «0.9.24»
+below.
 
 **0.9.23 (2026-11-14, P6-bis): the agent reads ANY note + competitor tools —
 RELEASED.** Also the bot menu compaction in the same batch. See «P6-bis» below.
@@ -82,7 +82,7 @@ once (`Add`/`Remove`/`Same`/JSON tolerance to the old object shape).
   (описанием)» next to «Материал в позиции» (the labels differ on purpose).
 - App: «Материалы (описанием)» zone with its own search (`/materials/search`).
 
-**0.9.24 (unreleased, 2026-11-14): multi-product КП from the bot.**
+**0.9.24 (2026-11-14, RELEASED): multi-product КП from the bot.**
 
 Live complaint: «выбрал «ТН-ФУНДАМЕНТ Протект Экстра», бот ответил
 «продукт записать не удалось»», and «по запросу Logicbase не предложено ни
