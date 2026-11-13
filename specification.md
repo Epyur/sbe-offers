@@ -558,6 +558,50 @@ offers_bot_link (chat_id PK, email, confirmed_at)
 offers_access   (email PK, role, created_at, updated_at)
 ```
 
+## Инструменты агента (P6 → P6-бис → P5b, 2026-11-14)
+
+> Краткая справка для чтения схемы; подробности — `AGENTS.md`, «Agent in the bot — P6»,
+> «P6-bis» и «ЗАДАЧА ДЛЯ АГЕНТА (P5b)».
+
+Агент — это цикл «модель → `tool_call` → наблюдение → `final`» с белым списком
+инструментов. Каждый инструмент — обёртка над готовой функцией сервиса; обхода
+границ через промт не существует.
+
+| инструмент | что делает | граница |
+|---|---|---|
+| `get_our_products` | поиск систем и материалов (`suggestionsFor`) | — |
+| `read_card` | читает ЛЮБУЮ заметку (`noteId`), отдаёт роль по тегам | — |
+| `search_competitors` | поиск карточек с тегом `competitor` | — |
+| `get_documents` | документы с привязкой к продукту | `/internal/documents/agent/list`: `product_refs` не пустее, не архив, без `no_agent` |
+| `get_document_link` / `read_document_file` | ссылка / текст файла документа по `file_key` | ручка документов проверяет, что ключ принадлежит видимому документу |
+| **`get_emails`** | письма с карточкой скана, **видимые только через `product_refs`**; к письму — названия привязок | пересечение мейлера и видимого набора документов; `visible` кэшируется на ХОД |
+| **`read_email`** | полный текст письма + `file_key` видимой карточки скана | письмо без видимой карточки — отказ; PDF не парсится |
+| `create_offer` | открывает КП (тот же INSERT, что у бота) | — |
+| `set_system` / `set_material` | добавляет систему/материал ОПИСАНИЕМ (не позицию, не цену) | `offerForWrite`: своё или admin, `final` не правится |
+| `create_combat_sheet` / `set_combat_side` | боевой листок и его стороны | сторона `our` — только system/material; `competitor` — только competitor; правит автор/admin |
+| `build_docx` / `build_combat_docx` | готовый DOCX тем же рендером, что кнопка | `offerForRead` / чтение листка по правилу 2026-11-12 |
+
+**Контракт писем** (sbe-mailer 0.1.21, `MAILER_INTERNAL_SECRET`):
+
+```
+GET /internal/mailer/agent/emails?q=&limit=      → {source,total,items:[{...attachments:[{document_id,file_name,kind}]}]}
+GET /internal/mailer/agent/email?id=<id>         → письмо с ПОЛНЫМ text
+```
+
+- `items`/`attachments` — всегда массивы; **`file_key` мейлер не отдаёт** — ключ
+  разрешается в `offers-service` по `document_id` через документы;
+- мейлер отдаёт письма с карточкой скана (`kind="signed"`, `document_id > 0`) и
+  видимость **не проверяет** — пересечение делает `offers-service`
+  (`agentmail.go`); ни один сервис о другом не знает;
+- текст в списке ≤ 600 рун, в `email?id=` — полный; `limit` 20/200;
+- письмо без скана и несуществующий id — одинаковый `404 {"error":"email not found"}`;
+- без `MAILER_INTERNAL_SECRET` — `503`, с чужим — `403`.
+
+**Конфиг `offers`:** `MAILER_SERVICE_URL` (default `http://backend:3000`),
+`MAILER_INTERNAL_SECRET` (то же значение, что у мейлера),
+`DOCUMENTS_SERVICE_URL`/`DOCUMENTS_INTERNAL_SECRET`. Пустой секрет — **отказ**
+инструмента, никогда не пустой список.
+
 ## S3
 
 Бакет `sbe-offers` (rclone CLI, remote `firstvds_offers` из env `S3_*`).

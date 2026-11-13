@@ -382,7 +382,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
-| `scripts/offers_local_e2e.mjs` | the stand: **444 checks**, 28 sections |
+| `scripts/mailer-stub.mjs` + `documents-stub.mjs` | stand stubs for the agent's emails: the mailer stub replays the RECORDED fixture `scripts/mailer-fixture.json` (live response 2026-11-13) and keeps one scanned letter unlinked on purpose; the documents stub serves the one linked card |
+| `scripts/offers_local_e2e.mjs` | the stand: **505 checks**, 29 sections |
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
@@ -991,14 +992,16 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 
 | file | what |
 |---|---|
-| `agenttools.go` | tool schema, `objectSchema`/`argString`/`argInt`/`argFloat`/`argBool`, `agentEnv` (email, chat, files, `Fixes`) |
-| `agenttools_impl.go` | the 13 tools; each wraps a real function (`suggestionsFor`, `readNoteCard`, `searchCompetitors`, `assembleSystem`, `assembleMaterial`, `createCombat`, `combatSide`, `handleExportDocx`, `handleExportCombat`) |
+| `agenttools.go` | tool schema, `objectSchema`/`argString`/`argInt`/`argFloat`/`argBool`, `agentEnv` (email, chat, files, `Fixes`, per-turn `visibleDocs` cache) |
+| `agenttools_impl.go` | 13 of the tools; each wraps a real function (`suggestionsFor`, `readNoteCard`, `searchCompetitors`, `assembleSystem`, `assembleMaterial`, `createCombat`, `combatSide`, `handleExportDocx`, `handleExportCombat`) |
 | `agentloop.go` | the turn: model → `parseAgentTurn` → tool → observe → final; anti-loop, protocol retry, synthesis, journal write |
 | `agentprotocol.go` | JSON-turn parser (`final`/`tool_call`), fence/prose/truncation tolerant |
 | `agentprompt.go` | system prompt (sets the JSON shape + “the tool is the boundary”) and transcript |
 | `agentlog.go` | `offers_agent_log` write + 180-day trim + `GET /admin/agent-log` |
 | `agentapi.go` | bot transport `POST /bot/agent/message`, `GET /bot/agent/history` |
 | `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
+| `mailer_client.go` | internal `/internal/mailer/agent/*` client (P5b): `MAILER_SERVICE_URL`, `MAILER_INTERNAL_SECRET`, refusal when not configured |
+| `agentmail.go` | the two email tools (P5b): `get_emails` intersects the mailer with the visible documents set (per-turn cache in `agentEnv`), `read_email` resolves each scan's `file_key` through that same set; `foldText`, `visibleScanCards`, `docsMatchProduct`, `emailView` live here |
 | `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
 
 **Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15):
