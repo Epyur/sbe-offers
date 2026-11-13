@@ -30,7 +30,9 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.29** — см. «0.9.29» в `HANDOFF.md`. 0.9.28 (`main` `a9e064f`) — файл через бота.
+Current version = **0.9.29** — **RELEASED 2026-11-14.** `backend` `a48bdea`, `main` `fb23107`;
+self-hosted `9e6ad1f3…` / `ffe7a37b…` / `a32ac3df…`, registry `sbe-apstore-registry` `f4e0e6d`,
+app `assets/index-ChpvzRrm.js`. 0.9.28 (`main` `a9e064f`) — файл через бота.
 
 **0.9.29 (2026-11-14): отказ события сейчас виден.** Живая проверка 0.9.28 дала
 «закрылось, файла нет», а в журналах Caddy и сервиса **не было ни одного
