@@ -30,7 +30,7 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.9.30** — см. «0.9.30» в `HANDOFF.md`.
+Current version = **0.9.30** — **RELEASED 2026-11-14.** `backend` `1973557`, `main` `252e1be`;
 
 **0.9.30 (2026-11-14): макет и тексты систем в КП из чата.** Живое КП 031/2026 ушло в чат
 упрощённым (313 КБ вместо макета на 2.37 МБ), без описания первой системы и без

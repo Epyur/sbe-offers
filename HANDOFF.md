@@ -9,12 +9,12 @@
 | | значение |
 |---|---|
 | версия | **0.9.30** |
-| `backend` | `a48bdea` (0.9.29) |
-| `main` | `fb23107` (релизный срез 0.9.29; сервис/бот/приложение — только `backend`) |
-| самораздача | `manifest 9e6ad1f3…` / `main ffe7a37b…` / `styles a32ac3df…`, сверено по https и в `/registry.json` |
-| реестр (git-копия) | `sbe-apstore-registry` `f4e0e6d` |
+| `backend` | `1973557` (0.9.30) |
+| `main` | `252e1be` (релизный срез 0.9.30; сервис/бот/приложение — только `backend`) |
+| самораздача | `manifest f9b8ad70…` / `main 49c193dc…` / `styles a32ac3df…`, сверено по https и в `/registry.json` |
+| реестр (git-копия) | `sbe-apstore-registry` `99efa99` |
 | приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`: `assets/index-ChpvzRrm.js`, `index.html`, `vendor/telegram-web-app.js` (sha256 сверены по https) |
-| сервис `offers` и бот | пересобраны и пересозданы 2026-11-14 (`--force-recreate`); бэкапы `*.bak-20261114-0928`; правок compose нет |
+| сервис `offers` | пересобран и пересоздан 2026-11-14 (`--force-recreate`), бэкап `offers-service.bak-20261114-0930`; бот не менялся |
 
 | файл | sha256 | байт |
 |---|---|---|
