@@ -1,11 +1,12 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import type { Block, OfferForm, Placeholder } from '../types/offers';
+import type { Block, ContentSection, OfferForm, Placeholder } from '../types/offers';
 import { renderBlockEditor } from './block-editor';
 import { pickAndUploadImage } from './image-picker';
 import { renderFormPreview } from './form-preview';
 import { DescribeBlockModal, applyDescribedBlock } from './describe-block-modal';
 import { pickLayoutFile, renderLayoutCard } from './form-layout';
+import { renderSectionsEditor, SECTIONS_EDITOR_TEXTS } from './sections-editor';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
@@ -39,6 +40,12 @@ async function load(view: OffersView, container: HTMLElement, mode: string): Pro
 function render(view: OffersView, container: HTMLElement, form: OfferForm, mode: string): void {
   const placeholders: Placeholder[] = form.placeholders.map((p) => ({ ...p }));
   const blocks = form.blocks.map((b) => ({ ...b, content: JSON.parse(JSON.stringify(b.content)) }));
+  // Содержательные разделы (2026-11-14): на них ссылается метка `{ content: <id> }`.
+  // Копия — как у блоков: правки в редакторе до сохранения не трогают форму.
+  const sections: ContentSection[] = (form.sections ?? []).map((s) => ({
+    ...s,
+    subsections: s.subsections.map((sub) => ({ ...sub })),
+  }));
   const required = new Set(form.requiredFields);
 
   const titleRow = container.createDiv({ cls: 'tn-offers-card' });
@@ -132,6 +139,23 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     }).open();
   });
 
+  // Содержательные разделы (2026-11-14, шаг 6). Блоки — вёрстка, написанная
+  // руками; раздел — бриф для модели. Редактор разделов стоит рядом с блоками
+  // и рисует рамку, но модель не зовёт.
+  //
+  // Макет без метки `{ content: <id> }` разделы не печатает. Предупреждение
+  // нужно, чтобы человек не искал, почему «настройка есть, а документа нет».
+  const sectionsCard = container.createDiv({ cls: 'tn-offers-card' });
+  sectionsCard.createDiv({ cls: 'tn-offers-muted', text: SECTIONS_EDITOR_TEXTS.cardTitle });
+  renderSectionsEditor(sectionsCard.createDiv(), sections, {
+    // Предложение здесь не открыто: редактор формы задаёт правила, а не
+    // конкретный КП. Без предложения предпросмотр показывает форму рамки и
+    // условия словами; условия, зависящие от предложения, видны как «попадут».
+    onChange: () => {
+      /* Предпросмотр разделов живёт внутри самого редактора. */
+    },
+  });
+
   // Макет .docx (2026-11-05): если он загружен, документ печатается по нему,
   // а блоки остаются в форме для возврата. Поэтому карточка стоит перед
   // блоками и говорит прямо, что сейчас печатается.
@@ -161,6 +185,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       title: titleInput.value.trim() || (mode === 'combat' ? 'Боевой листок' : 'Коммерческое предложение'),
       placeholders,
       blocks,
+      sections,
       requiredFields: Array.from(required),
     };
     try {

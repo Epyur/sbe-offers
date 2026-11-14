@@ -74,6 +74,9 @@ function expectedKind(value) {
   const key = markerKey(value);
   if (key === 'block' || key === 'блок') return 'block';
   if (key === 'текст' || key === 'text') return 'text';
+  // `{ content: <id> }` — содержательный раздел (2026-11-14): сервер узнаёт ключ
+  // до промта (`serviceLayoutKindOf`, `layout_tokens.go`).
+  if (key === 'content' || key === 'содержание') return 'section';
   if (imageStems.some((stem) => value.toLowerCase().startsWith(stem))) return 'image';
   for (const service of serviceKeys) {
     if (key.startsWith(service) || service.startsWith(key.slice(0, 4))) {
@@ -123,6 +126,7 @@ for (const [name, prefixes] of [
   ['текст', ['текст', 'text']],
   ['ссылки', ['ссылки']],
   ['характеристики', ['характеристик']],
+  ['содержательный раздел', ['content', 'содержание']],
 ]) {
   const covered = [...seen].some((v) => prefixes.some((p) => v.startsWith(p)));
   check(`в плагине есть метка «${name}…»`, covered);

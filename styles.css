@@ -1206,3 +1206,68 @@
 .tn-offers-describe-result:empty {
   display: none;
 }
+
+/* Содержательные разделы (2026-11-14, шаг 6): карточка раздела, таблица
+   подразделов и предпросмотр рамки. Стили оформления документа здесь НЕ
+   повторяются: оформление задаёт макет Word (дизайн §4). */
+.tn-offers-sections-list {
+  margin-bottom: 8px;
+}
+
+.tn-offers-section-card {
+  border-left: 3px solid var(--accent-color, var(--interactive-accent));
+}
+
+.tn-offers-instruction {
+  width: 100%;
+  min-height: 56px;
+  margin: 6px 0;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.tn-offers-narrow {
+  width: 80px;
+}
+
+.tn-offers-subsections {
+  margin-top: 8px;
+}
+
+.tn-offers-subsection-card {
+  background: var(--background-secondary-a-hover);
+  margin: 6px 0;
+}
+
+.tn-offers-section-preview {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px dashed var(--border-secondary-enabled);
+  border-radius: var(--tn-radius);
+}
+
+.tn-offers-frame {
+  margin-top: 6px;
+}
+
+.tn-offers-frame-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.tn-offers-frame-subsection {
+  padding: 4px 8px;
+  margin: 3px 0;
+  border-left: 2px solid var(--border-secondary-enabled);
+  background: var(--background-primary-a-enabled);
+}
+
+.tn-offers-frame-sub-title {
+  font-weight: 500;
+}
+
+.tn-offers-frame-skipped {
+  opacity: 0.5;
+  font-style: italic;
+  text-decoration: line-through;
+}
