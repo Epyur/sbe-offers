@@ -35,10 +35,11 @@
 | | значение |
 |---|---|
 | версия | **0.10.1** |
-| `backend` | см. `AGENTS.md` (закоммичено с этой правкой) |
-| `main` | релизный срез 0.10.1 (сервис/бот/приложение — только `backend`) |
+| `backend` | `b6f2d3b` (код + приложение + доки) |
+| `main` | `a6d50ca` (релизный срез 0.10.1; `offers-app/` — только `backend`) |
 | самораздача | `manifest ec3d0eef…` / `main 91ae7171…` / `styles a32ac3df…` (прежний `styles.css` не менялся) |
-| приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`, бандл `assets/index-wlCTYUrx.js` (527 870 Б, sha256 `57397c8c…`) |
+| реестр (git-копия) | `sbe-apstore-registry` `ef07757` |
+| приложение `offers-app` | выложено в `/opt/mailers/www/app-offers/`, бандл `assets/index-wlCTYUrx.js` (527 870 Б, sha256 `57397c8c…`), бэкап `app-offers.bak-20261114-1530` |
 | сервис `offers` / бот | **НЕ пересобирались** — менялись плагин (версия + новость ЦУП) и приложение |
 
 | файл | sha256 | байт |
