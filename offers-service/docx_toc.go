@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -49,14 +50,34 @@ func (lc layoutContext) tocHeadingXML(text string, level int, opts paraOpts) str
 	if level > 4 {
 		level = 4
 	}
-	// В ревизии оглавление напечатанных заголовков ещё не собирается —
-	// подробности и план исправления: docs/superpowers/plans/
-	// 2026-11-14-sbe-offers-content-sections-START-HERE.md, раздел
-	// «Что не работает (открытие нового контекста)».
-	_ = lc.addTOCHeading
-	_ = rebuildLayoutTOC
-	_ = rebuildLayoutTOCWithStyles
-	return headingXMLOpts(text, level, opts)
+	bookmark, id := lc.addTOCHeading(text, level)
+	if bookmark == "" {
+		// Вне сборки пакета закладке негде жить — печатаем обычный заголовок.
+		return headingXMLOpts(text, level, opts)
+	}
+	heading := headingXMLOpts(text, level, opts)
+	return wrapHeadingBookmark(heading, bookmark, id)
+}
+
+// wrapHeadingBookmark ставит закладку вокруг текста заголовка.
+//
+// Закладка идёт ВНУТРИ абзаца и обнимает прогоны: `<w:bookmarkStart>` до
+// первого `<w:r>` и `<w:bookmarkEnd>` после последнего `</w:r>`. Заголовок,
+// собранный нашим `headingXMLOpts`, всегда один прогон — но ставим между
+// `</w:pPr>` и концом абзаца, чтобы numPr и стиль остались нетронутыми.
+func wrapHeadingBookmark(heading, bookmark string, id int) string {
+	open := strings.Index(heading, "</w:pPr>")
+	if open < 0 {
+		return heading
+	}
+	open += len("</w:pPr>")
+	close := strings.LastIndex(heading, "</w:p>")
+	if close < open {
+		return heading
+	}
+	start := `<w:bookmarkStart w:id="` + strconv.Itoa(id) + `" w:name="` + escapeXML(bookmark) + `"/>`
+	end := `<w:bookmarkEnd w:id="` + strconv.Itoa(id) + `"/>`
+	return heading[:open] + start + heading[open:close] + end + heading[close:]
 }
 
 // addTOCHeading регистрирует заголовок и отдаёт имя закладки и её id.
@@ -78,6 +99,23 @@ func (lc layoutContext) addTOCHeading(text string, level int) (string, int) {
 		Text: text, Level: level, Bookmark: bookmark,
 	})
 	return bookmark, tocBookmarkID(seq)
+}
+
+// dropTOCHeading снимает последнюю зарегистрированную закладку.
+//
+// Нужен там, где заголовок зарегистрирован ДО того, как стало известно, что он
+// не напечатается: рамка раздела заводит закладку заголовка первой (порядок
+// документа), а «ни один подраздел не написался» означает «раздел молчит
+// целиком» (§10.1). Закладка без абзаца в оглавлении дала бы пункт-ссылку в
+// никуда.
+func (lc layoutContext) dropTOCHeading() {
+	if lc.layout == nil || len(lc.layout.toc) == 0 {
+		return
+	}
+	lc.layout.toc = lc.layout.toc[:len(lc.layout.toc)-1]
+	if lc.layout.tocSeq > 0 {
+		lc.layout.tocSeq--
+	}
 }
 
 // tocBookmarkID — id закладки: стартуем выше всего макета.

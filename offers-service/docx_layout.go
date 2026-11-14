@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -196,9 +195,7 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	// напечатанных заголовков. Кэш макета — снимок образца, и читатель без
 	// Word (Телеграм) иначе видит оглавление другого файла.
 	if len(lc.layout.toc) > 0 {
-		log.Printf("DEBUG toc=%d head=%q", len(lc.layout.toc), rendered[:200])
 		rendered = rebuildLayoutTOCWithStyles(rendered, files, lc.layout.toc)
-		log.Printf("DEBUG after=%q", rendered[:200])
 		logTOC(len(lc.layout.toc))
 	}
 	// Метки `{{ссылки}}` печатают подпись, а адрес держат в отношении, поэтому

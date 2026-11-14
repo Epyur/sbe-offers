@@ -83,6 +83,42 @@ func TestSectionUnknownIdIsSilentAndLogged(t *testing.T) {
 	}
 }
 
+// TestSectionMarkerSplitAcrossRunsPrints — метка, разбитая Word на прогоны,
+// печатает раздел.
+//
+// Живой temple.docx режет `{{block:marteh}}` на четыре `<w:t>`: `{{`, `block:`,
+// `marteh`, `}}`. Склейка абзаца обязана собрать из них одну метку — иначе
+// администратор видит в документе правильное имя раздела, а печати нет вовсе
+// (симптом 2026-11-14: «метка { content: … } до renderContentSection не
+// доходит»).
+func TestSectionMarkerSplitAcrossRunsPrints(t *testing.T) {
+	lc := serviceLayoutContext(nil)
+	lc.form = func() OfferForm {
+		return OfferForm{Sections: []ContentSection{{
+			ID: "proposal_systems", Title: "Описание систем",
+			Subsections: []ContentSubsection{{ID: "intro", Title: "Введение", Instruction: "Напиши вступление", Condition: conditionAlways}},
+		}}}
+	}
+	lc.sectionText = func(ContentSection, sectionCall) string {
+		return sectionParagraphAnswer("Вступление по делу.")
+	}
+	// Прогоны как в живом макете: метка `{ content: proposal_systems }` разбита.
+	doc := layoutDocxFromXML(t, wordDoc(`<w:p>`+
+		`<w:r><w:t>{</w:t></w:r><w:r><w:t xml:space="preserve"> content: </w:t></w:r>`+
+		`<w:r><w:t>proposal_systems</w:t></w:r><w:r><w:t> }</w:t></w:r></w:p>`))
+	out, err := renderLayoutDocx(doc, lc)
+	if err != nil {
+		t.Fatalf("печать: %v", err)
+	}
+	body := string(docxEntry(t, out, "word/document.xml"))
+	if !strings.Contains(body, "Вступление по делу.") {
+		t.Fatalf("метка, разбитая на прогоны, не напечатала раздел:\n%s", body)
+	}
+	if strings.Contains(body, "proposal_systems") {
+		t.Fatalf("имя раздела ушло клиенту литералом:\n%s", body)
+	}
+}
+
 // TestSectionKnownIdPrintsNothingYet — до шага 5 известный раздел тоже молчит.
 //
 // Это не «метка не работает»: настройка есть, а печать подразделов приходит

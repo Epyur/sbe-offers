@@ -159,6 +159,11 @@ func renderContentSection(sectionID string, lc layoutContext, row layoutServiceR
 	// Списки заводятся ДО печати: подраздел обязан ссылаться на список своего
 	// раздела, а порядок ссылок не зависит от того, какой подраздел что печатал.
 	titleList, subsectionLists := nums.listsFor(numberTitles)
+	// Порядок регистрации заголовков в оглавлении — порядок ДОКУМЕНТА
+	// (2026-11-14). Заголовок раздела печатается первым, поэтому и закладка
+	// заводится первой: иначе пересборка оглавления шла бы в порядке вызовов,
+	// и «1. Раздел» стоял бы после «1.1 Введение» — пункты в неверном порядке.
+	titleMarkup := sectionTitleMarkup(section, lc, titleList)
 	var sb strings.Builder
 	var printed []string
 	for i, call := range calls {
@@ -173,11 +178,15 @@ func renderContentSection(sectionID string, lc layoutContext, row layoutServiceR
 	printed = nonEmptyStrings(printed)
 	if len(printed) == 0 {
 		// Ни один подраздел не написался — раздел молчит целиком: заголовок
-		// без содержимого — та же поломка на уровень выше.
+		// без содержимого — та же поломка на уровень выше. Заголовок в этом
+		// случае НЕ печатается, поэтому и закладку для него не оставляем.
+		if titleMarkup != "" {
+			lc.dropTOCHeading()
+		}
 		log.Printf("макет: раздел %q не напечатан — текстов подразделов нет", id)
 		return ""
 	}
-	sb.WriteString(sectionTitleMarkup(section, lc, titleList))
+	sb.WriteString(titleMarkup)
 	sb.WriteString(strings.Join(printed, ""))
 	if lc.report != nil {
 		lc.report.addGenerated()

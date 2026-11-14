@@ -16,7 +16,14 @@ import (
 // пункта шаблона не осталось; каждая ссылка оглавления имеет закладку в теле.
 // Номера страниц — дело Word, и здесь они не проверяются (честный предел).
 
-// templateBookmarks — закладки оглавления живого temple.docx.
+// templateBookmarks — закладки, которыми МАКЕТ связал свои заголовки с
+// СВОИМ оглавлением.
+//
+// В temple.docx это закладки заголовков `КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ` и `АЛЬБОМ
+// ТИПОВЫХ РЕШЕНИЙ` — не кэш пунктов, а сами заголовки. Since the master is
+// the document's own layout, its heading paragraphs remain, and their bookmarks
+// with them: the point of §12 is that the CACHED TOC ENTRIES never describe the
+// template any more, not that the master's headings disappear.
 var templateBookmarks = []string{"_Toc245563567", "_Toc245563568"}
 
 // tocSection — раздел с двумя подразделами, оба печатаются.
@@ -41,7 +48,6 @@ func tocContext(section ContentSection, answers map[string]string) layoutContext
 // TestSectionTocEntriesMatchHeadings — заголовки печати попадают в оглавление
 // по порядку и со своими закладками.
 func TestSectionTocEntriesMatchHeadings(t *testing.T) {
-	t.Skip("ревизия 2026-11-14: пересборка оглавления не доведена — см. START-HERE, «Что не работает»")
 	rendered := renderSectionIntoMaster(t, tocContext(tocSection(), map[string]string{
 		"intro": sectionParagraphAnswer("Вступление по делу."),
 		"each":  sectionParagraphAnswer("Описание одной системы."),
@@ -72,15 +78,26 @@ func TestSectionTocEntriesMatchHeadings(t *testing.T) {
 	}
 }
 
-// TestSectionTocHasNoTemplateEntries — пункты шаблона в документе не остаются.
+// TestSectionTocHasNoTemplateEntries — ни одного пункта шаблона в самом
+// ОГЛАВЛЕНИИ не остаётся.
+//
+// Проверяется sdt оглавления, а НЕ весь документ: закладки `_Toc245563567/568`
+// принадлежат заголовкам самого макета (`КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ`,
+// `АЛЬБОМ ТИПОВЫХ РЕШЕНИЙ`) — они часть документа и остаются законно.
+// Проверка по всему телу краснела бы на правильном документе: конструкция
+// «поиск по всему документу» не является проверкой (правило AGENTS.md
+// «A check that searches the WHOLE document … is not a check»).
 func TestSectionTocHasNoTemplateEntries(t *testing.T) {
-	t.Skip("ревизия 2026-11-14: пересборка оглавления не доведена — см. START-HERE, «Что не работает»")
 	rendered := renderSectionIntoMaster(t, tocContext(tocSection(), map[string]string{
 		"intro": sectionParagraphAnswer("Вступление по делу."),
 	}))
+	toc := tocSDT(rendered.body)
+	if toc == "" {
+		t.Fatalf("оглавление не найдено в документе:\n%s", rendered.body)
+	}
 	for _, stale := range templateBookmarks {
-		if strings.Contains(rendered.body, stale) {
-			t.Fatalf("в оглавлении/теле осталась закладка шаблона %q:\n%s", stale, rendered.body)
+		if strings.Contains(toc, stale) {
+			t.Fatalf("в оглавлении остался пункт шаблона %q:\n%s", stale, toc)
 		}
 	}
 }
@@ -88,7 +105,6 @@ func TestSectionTocHasNoTemplateEntries(t *testing.T) {
 // TestSectionTocAnchorsResolve — у каждой ссылки `<w:hyperlink w:anchor>` в
 // оглавлении есть закладка в теле (класс ошибки «r:id без отношения»).
 func TestSectionTocAnchorsResolve(t *testing.T) {
-	t.Skip("ревизия 2026-11-14: пересборка оглавления не доведена — см. START-HERE, «Что не работает»")
 	rendered := renderSectionIntoMaster(t, tocContext(tocSection(), map[string]string{
 		"intro": sectionParagraphAnswer("Вступление по делу."),
 		"each":  sectionParagraphAnswer("Описание одной системы."),
@@ -116,9 +132,14 @@ type renderedDocx struct {
 // существуют. Без него (`OFFERS_LIVE_LAYOUT` не задан) берётся маленький
 // макет со стилями оглавления и закладками шаблона — тестам нужна та же
 // форма, а живой файл проверяет TestSectionPrintsIntoReferenceTemple.
+//
+// Метки в temple.docx стоят как `{{block:…}}` — разбитые Word на прогоны.
+// Печать раздела требует `{ content: … }`, поэтому тест ПОДМЕНЯЕТ такую метку:
+// иначе раздел просто не печатается, и оглавление винит не тот код
+// (ревизия 2026-11-14, START-HERE — «доходит ли метка вообще»).
 func renderSectionIntoMaster(t *testing.T, lc layoutContext) renderedDocx {
 	t.Helper()
-	layout := referenceTemple(t)
+	layout := withSectionMarker(t, referenceTemple(t), "proposal")
 	out, err := renderLayoutDocx(layout, lc)
 	if err != nil {
 		t.Fatalf("печать: %v", err)
@@ -128,6 +149,48 @@ func renderSectionIntoMaster(t *testing.T, lc layoutContext) renderedDocx {
 		t.Fatalf("разбор пакета: %v", err)
 	}
 	return renderedDocx{body: string(files["word/document.xml"]), files: files}
+}
+
+// withSectionMarker заменяет первую метку `{{block:…}}` на `{ content: id }`.
+//
+// Замена идёт по СКЛЕЙКЕ абзаца, а не по байтам: Word режет метку на несколько
+// `<w:t>` (`{{`, `block:`, `marteh`, `}}`), и побайтовая замена не находит её
+// вовсе (проверено на живом temple.docx).
+func withSectionMarker(t *testing.T, layout []byte, id string) []byte {
+	t.Helper()
+	files, names, err := readZipEntries(layout)
+	if err != nil {
+		t.Fatalf("разбор макета: %v", err)
+	}
+	doc, ok := files["word/document.xml"]
+	if !ok {
+		t.Fatalf("в макете нет word/document.xml")
+	}
+	marker := `<w:p><w:r><w:t>{ content: ` + id + ` }</w:t></w:r></w:p>`
+	rewritten, replaced := replaceBlockMarkerParagraph(string(doc), marker)
+	if !replaced {
+		// Метки `{{block:…}}` в макете нет (другой макет) — используется как есть.
+		return layout
+	}
+	files["word/document.xml"] = []byte(rewritten)
+	out, err := zipFiles(files, names)
+	if err != nil {
+		t.Fatalf("сборка макета: %v", err)
+	}
+	return out
+}
+
+// replaceBlockMarkerParagraph ставит marker вместо первого абзаца с
+// `{{block:…}}`. Ищет по склейке текста абзаца — границы прогонов не важны.
+func replaceBlockMarkerParagraph(doc, marker string) (string, bool) {
+	paragraphs := reWordParagraph.FindAllString(doc, -1)
+	for _, paragraph := range paragraphs {
+		if !strings.Contains(strings.Join(paragraphTexts(paragraph), ""), "{{block:") {
+			continue
+		}
+		return strings.Replace(doc, paragraph, marker, 1), true
+	}
+	return doc, false
 }
 
 // referenceTemple — живой temple.docx, если он доступен.

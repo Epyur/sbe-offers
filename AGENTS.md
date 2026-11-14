@@ -30,11 +30,16 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.1** — **RELEASED 2026-11-14.** `backend` `35688bc`, `main` `a6d50ca`;
-self-hosted `manifest ec3d0eef…` / `main 91ae7171…` / `styles a32ac3df…`,
-registry `sbe-apstore-registry` `ef07757`, app `assets/index-wlCTYUrx.js`.
-`backend` ahead of the release commit by the content-sections work (steps 1–5
-committed, not deployed — see the content-sections block below).
+Current version = **0.10.2** — **RELEASED 2026-11-14.** `backend` `__BACKEND_SHA__`, `main` `__MAIN_SHA__`;
+self-hosted `manifest b79e6ca3…` / `main 37bf429b…` / `styles 97afb22c…`,
+registry `sbe-apstore-registry` `__REGISTRY_SHA__`.
+
+**0.10.2 (2026-11-14): содержательные разделы в «Форме КП».** Раздел тела ТКП
+теперь не фиксированная структура блока, а бриф для модели (`{ content: <id> }`):
+администратор задаёт подразделы, их условия и инструкции, оформление берётся из
+макета Word. Оглавление в готовом DOCX пересобирается из напечатанных
+заголовков. **Изменился только плагин** — сервис, бот, приложение и база не
+тронуты. Подробности и грабли — блок «Content sections» ниже и `HANDOFF.md`.
 
 **0.10.1 (2026-11-14): «Технодайджест» и «Скорая помощь» первой.** Главная Mini
 App получила четвёртую карточку — **«Технодайджест»**, раздел проектируется
@@ -328,29 +333,61 @@ from `offers-bot`. Do not start S5 without an explicit instruction. The step
 notes (S2–S7) and the five live defects of the first launch are in the
 archive, «Ревизия 2026-11-13».
 
-**Content sections — IN PROGRESS, NOT RELEASED (2026-11-14, second session).**
+**Content sections — RELEASED in 0.10.2 (2026-11-14).**
 The two-placeholder model (`[attr]` values vs `{ content: <id> }` briefs), the
-per-subsection fan-out and printing through the Word master are **written and
-green** (steps 1–5 of the plan). **Step 5a — rebuilding the table of contents
-from the printed headings — is written but NOT working**: the heading registry
-and the rebuild are disabled in code (`docx_toc.go`, `layoutContext.tocHeadingXML`
-returns a plain heading, the rebuild call in `renderLayoutDocx` is off), and the
-three TOC tests are `t.Skip`ped. Plugin version stays **0.10.1**; nothing is
-committed or deployed. **Steps 5b, 5c, 6 (editor), 7 (marker registry + help)
-and 8 are not started.**
+per-subsection fan-out, printing through the Word master and rebuilding the
+table of contents from the printed headings are done and green (steps 1–7 of
+the plan).
 
-Files: `offers-service/sections.go` (marker printing, conditions, fan-out),
-`sections_print.go` (frozen `{blocks:[…]}` contract, master constructs, cache),
-`docx_toc.go` (TOC, not wired), `form.go` (`ContentSection` etc.),
-`src/types/offers.ts`, `testdata/temple.docx` (2.37 MB, a copy of
-`C:\Obsidian\mailers\temple.docx` for step 5b). Tests: `sections_test.go`,
+- **Step 5a (TOC) is fixed.** The real cause was not the rebuild code: the test
+  printed a section into `temple.docx`, which carried no `{ content: … }` marker
+  (only `{{block:…}}`), so the section never printed and no heading was ever
+  registered. `tocHeadingXML` again calls `addTOCHeading` and wraps the heading
+  text in `<w:bookmarkStart/End>`; the section title is registered FIRST (document
+  order), and a section where every subsection is skipped drops its heading
+  bookmark (`dropTOCHeading`, §10.1). The debug logs are gone.
+- **Word splits `{{block:…}}` across several `<w:t>`** (`{{`, `block:`, `marteh`,
+  `}}`) — replace a marker in a docx by the paragraph's JOINED text
+  (`paragraphTexts`), never by a byte-for-byte `strings.Replace`.
+- **Step 5b**: `sections_temple_test.go`, `TestSectionPrintsIntoReferenceTemple` —
+  prints a section into the live `temple.docx`, proves it lands under its heading,
+  the landscape `АЛЬБОМ ТИПОВЫХ РЕШЕНИЙ` `sectPr` stays the second and last, and
+  the TOC picks the new heading up.
+- **Step 6**: `src/ui/sections-model.ts` (pure rules — `conditionWords`,
+  `conditionHoldsClient`, `sectionMarker`; no Obsidian/DOM, so a node script can
+  run it) and `src/ui/sections-editor.ts` (section cards, subsection table,
+  frame preview without calling the model, `{ content: <id> }` copy chip), wired
+  into `form-editor.ts`; `sections` round-trips through `OfferForm`/`saveForm`.
+- **Step 7**: `markers.ts` group «Содержательные разделы»; `help.ts` paragraph on
+  the two kinds of placeholder and style-in-master; `check_marker_registry.mjs`
+  now knows the `content` key as a `section` kind and requires it.
+- **Step 5c** stays a rule, not code: delivery is DOCX only, no conversion step
+  (see the "Editable formats only — never PDF" rule).
+
+Files: `offers-service/sections.go` (marker printing, conditions, fan-out, TOC
+order), `sections_print.go` (frozen `{blocks:[…]}` contract, master constructs,
+cache), `docx_toc.go` (TOC registration + rebuild), `docx_layout.go` (rebuild
+call), `form.go` (`ContentSection` etc.), `src/types/offers.ts`,
+`src/ui/sections-model.ts`, `src/ui/sections-editor.ts`, `src/ui/markers.ts`,
+`src/ui/help.ts`, `testdata/temple.docx` (2.37 MB, a copy of
+`C:\Obsidian\mailers\temple.docx`). Tests: `sections_test.go`,
 `sections_form_test.go`, `sections_conditions_test.go`, `sections_calls_test.go`,
-`sections_print_test.go`, `docx_toc_test.go` (3 skipped).
+`sections_print_test.go`, `sections_temple_test.go`, `docx_toc_test.go` (nothing
+skipped). Scripts: `check_sections_conditions.mjs` (16 checks — the client
+condition mirror against the server's `form.go`/`sections.go`).
 
-**The full state, the open TOC defect and the next-context checklist are in
+**Checks (2026-11-14):** `gofmt`/`go vet` clean, `go test ./...`
+green (882 PASS / 6 SKIP — live-layout tests needing `OFFERS_LIVE_LAYOUT`),
+`tsc` 0, `build` OK, `check_bundle_strings` 0, `check_marker_registry` OK,
+`check_sections_conditions` 16/16, OpenAPI 118/118, `check_docs_state` OK,
+stand **505/0**. **Not verified:** a live offer with a content section under the
+real model (the stand runs `llm-stub`); uploading the new `temple.docx` with
+`{ content: … }` markers is the administrator's step (old blocks are not
+migrated).
+
+**The full state, the fixed TOC defect and the next-context checklist are in
 `docs/superpowers/plans/2026-11-14-sbe-offers-content-sections-START-HERE.md`,
-section «Что не работает (открытие нового контекста)». Read it before touching
-`docx_toc.go`.**
+section «Что не работает (открытие нового контекста)».**
 
 ## Purpose (current)
 
@@ -478,6 +515,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/ui/describe-block-modal.ts` | «✨ Опишите блок словами»: free text → nodes |
 | `src/ui/form-layout.ts` | «.docx layout» card: upload / download / delete, tags found in the file, marker cheat sheet |
 | `src/ui/markers.ts` | **the single registry of every layout marker** (chips, layout card, help) |
+| `src/ui/sections-model.ts` | pure rules for content sections — `conditionWords`, `conditionHoldsClient`, `sectionMarker` (no Obsidian/DOM; run by `check_sections_conditions.mjs`) |
+| `src/ui/sections-editor.ts` | «Содержательные разделы» in the form editor: section cards, subsection table, frame preview (no model), `{ content: <id> }` copy chip |
 | `src/ui/image-picker.ts` | picks an image from the vault, uploads it to KB attachments |
 | `src/ui/access-editor.ts` | «👤 Бот и доступ»: codes, bot token, who signed in |
 | `src/ui/help.ts` | help text, built from `markers.ts` (baked into the plugin) |
@@ -485,6 +524,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/styles.css` | `tn-offers-*` classes (the root `styles.css` is **built**, never edit it) |
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
+| `scripts/check_sections_conditions.mjs` | the client condition mirror (`sections-model.ts`) vs the server's `conditionHolds` (`form.go`/`sections.go`); 16 checks |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
 | `scripts/mailer-stub.mjs` + `documents-stub.mjs` | stand stubs for the agent's emails: the mailer stub replays the RECORDED fixture `scripts/mailer-fixture.json` (live response 2026-11-13) and keeps one scanned letter unlinked on purpose; the documents stub serves the one linked card |
 | `scripts/offers_local_e2e.mjs` | the stand: **505 checks**, 29 sections |
@@ -601,6 +641,7 @@ token lives in `offers_bot_config` and is entered from the plugin's «Бот и
 npx tsc --noEmit && npm run build
 node scripts/check_bundle_strings.mjs
 node scripts/check_marker_registry.mjs
+node scripts/check_sections_conditions.mjs
 node scripts/check_docs_state.mjs
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd ../offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
