@@ -53,10 +53,10 @@ Word; модель отдаёт только текст и разметку.
 | | значение |
 |---|---|
 | версия | **0.10.2** |
-| `backend` | `__BACKEND_SHA__` (код + доки) |
-| `main` | `__MAIN_SHA__` (релизный срез 0.10.2; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
+| `backend` | `117655b` (код + доки) |
+| `main` | `d56ee02` (релизный срез 0.10.2; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
 | самораздача | `manifest b79e6ca3…` / `main 37bf429b…` / `styles 97afb22c…` |
-| реестр (git-копия) | `sbe-apstore-registry` `__REGISTRY_SHA__` |
+| реестр (git-копия) | `sbe-apstore-registry` `5fea4b3` |
 | сервис `offers` / бот / приложение | **НЕ пересобирались** — менялся только плагин |
 
 | файл | sha256 | байт |

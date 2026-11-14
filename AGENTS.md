@@ -30,9 +30,9 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.2** — **RELEASED 2026-11-14.** `backend` `__BACKEND_SHA__`, `main` `__MAIN_SHA__`;
+Current version = **0.10.2** — **RELEASED 2026-11-14.** `backend` `117655b`, `main` `d56ee02`;
 self-hosted `manifest b79e6ca3…` / `main 37bf429b…` / `styles 97afb22c…`,
-registry `sbe-apstore-registry` `__REGISTRY_SHA__`.
+registry `sbe-apstore-registry` `5fea4b3`.
 
 **0.10.2 (2026-11-14): содержательные разделы в «Форме КП».** Раздел тела ТКП
 теперь не фиксированная структура блока, а бриф для модели (`{ content: <id> }`):
