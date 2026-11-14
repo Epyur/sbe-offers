@@ -30,9 +30,9 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.1** — **RELEASED 2026-11-14.** `backend` `7a702d0`, `main` `4626080`;
-(self-hosted `manifest ec3d0eef…` / `main 91ae7171…` / `styles a32ac3df…`; версии
-веток 0.10.1 — в `HANDOFF.md`, «Три точки сходятся (0.10.1)»).
+Current version = **0.10.1** — **RELEASED 2026-11-14.** `backend` `b6f2d3b`, `main` `a6d50ca`;
+self-hosted `manifest ec3d0eef…` / `main 91ae7171…` / `styles a32ac3df…`,
+registry `sbe-apstore-registry` `ef07757`, app `assets/index-wlCTYUrx.js`.
 
 **0.10.1 (2026-11-14): «Технодайджест» и «Скорая помощь» первой.** Главная Mini
 App получила четвёртую карточку — **«Технодайджест»**, раздел проектируется
