@@ -2,9 +2,10 @@
  * Проверка приветствия и переходов между разделами (2026-11-14).
  *
  * Поднимает `dist/` на 127.0.0.1 и гоняет настоящий браузер:
- *   `#/`            — три карточки разделов;
+ *   `#/`            — четыре карточки разделов, «Скорая помощь» первой;
  *   `#/list/offers` — список КП и строка разделов;
  *   `#/ambulance`   — экран «раздел ещё готовится»;
+ *   `#/digest`      — экран «раздел проектируется»;
  *   открытие без хэша — приветствие.
  *
  * Подменяются только SDK Telegram (настоящий `initData` иначе пуст) и
@@ -91,7 +92,15 @@ function check(name, ok, detail = '') {
 }
 
 await page.goto(`${base}#/`, { waitUntil: 'networkidle' });
-check('главная: 3 карточки разделов', (await page.locator('.app-section-tile').count()) === 3);
+check('главная: 4 карточки разделов', (await page.locator('.app-section-tile').count()) === 4);
+check(
+  'главная: «Скорая помощь» — первая карточка',
+  ((await page.locator('.app-section-title').first().textContent()) ?? '').includes('Скорая'),
+);
+check(
+  'главная: «Технодайджест» — карточка с названием',
+  (await page.locator('.app-section-title', { hasText: 'Технодайджест' }).count()) === 1,
+);
 check('главная: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 // Снимок — рядом с приложением, НЕ в `dist/`: dist уходит на сервер целиком и
 // считается в бюджете (`npm run size`), а картинка проверки там лишняя.
@@ -99,6 +108,10 @@ await page.screenshot({ path: join(ROOT, 'home-screen.png'), fullPage: true });
 
 await page.goto(`${base}#/list/offers`, { waitUntil: 'networkidle' });
 check('список КП: заголовок списка', ((await page.locator('main h1').first().textContent()) ?? '').includes('Коммерческие'));
+check(
+  'список КП: «Скорая помощь» — первая в строке разделов',
+  ((await page.locator('.app-section-chip').first().textContent()) ?? '').includes('Скорая'),
+);
 
 await page.goto(`${base}#/ambulance`, { waitUntil: 'networkidle' });
 check(
@@ -106,8 +119,14 @@ check(
   ((await page.locator('main h1').first().textContent()) ?? '').includes('Скорая'),
 );
 
+await page.goto(`${base}#/digest`, { waitUntil: 'networkidle' });
+check(
+  '«Технодайджест»: свой экран',
+  ((await page.locator('main h1').first().textContent()) ?? '').includes('Технодайджест'),
+);
+
 await page.goto(base, { waitUntil: 'networkidle' });
-check('открытие без хэша — приветствие', (await page.locator('.app-section-tile').count()) === 3);
+check('открытие без хэша — приветствие', (await page.locator('.app-section-tile').count()) === 4);
 
 await browser.close();
 server.close();

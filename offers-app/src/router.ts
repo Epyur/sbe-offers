@@ -9,6 +9,7 @@
 export type Route =
   | { name: 'home' }
   | { name: 'ambulance' }
+  | { name: 'digest' }
   | { name: 'list'; kind: 'offers' | 'sheets'; query: string }
   | { name: 'offer'; id: number }
   | { name: 'sheet'; id: number }
@@ -91,6 +92,10 @@ export function parseRoute(hash: string): Route {
     return { name: 'ambulance' };
   }
 
+  if (parts.length === 1 && parts[0] === 'digest') {
+    return { name: 'digest' };
+  }
+
   if (parts.length === 2) {
     const id = Number(parts[1]);
     if (Number.isInteger(id) && id > 0) {
@@ -117,6 +122,8 @@ export function routeHash(route: Exclude<Route, { name: 'notFound' }>, base = ''
       return `${prefix}#/`;
     case 'ambulance':
       return `${prefix}#/ambulance`;
+    case 'digest':
+      return `${prefix}#/digest`;
     case 'list': {
       const q = route.query.trim();
       const suffix = q === '' ? '' : `?q=${encodeURIComponent(q)}`;

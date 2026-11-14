@@ -30,7 +30,20 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.0** — **RELEASED 2026-11-14.** `backend` `7a702d0`, `main` `4626080`;
+Current version = **0.10.1** — **RELEASED 2026-11-14.** `backend` `7a702d0`, `main` `4626080`;
+(self-hosted `manifest ec3d0eef…` / `main 91ae7171…` / `styles a32ac3df…`; версии
+веток 0.10.1 — в `HANDOFF.md`, «Три точки сходятся (0.10.1)»).
+
+**0.10.1 (2026-11-14): «Технодайджест» и «Скорая помощь» первой.** Главная Mini
+App получила четвёртую карточку — **«Технодайджест»**, раздел проектируется
+(`DigestScreen`, маршрут `#/digest`), картинка `4.webp` (144×157) вшита скриптом
+`embed_sections.mjs` и показывается `object-fit: contain` — `cover` оставил бы от
+квадратного макета узкую полосу. Порядок разделов теперь «Скорая помощь» →
+«Коммерческие предложения» → «Боевые листки» → «Технодайджест», и на главной, и в
+строке чипов над списками (просьба пользователя: «Скорая помощь» первой).
+`check_home_screen.mjs` — **9 проверок**. Плагин изменился только версией и
+новостью ЦУП; сервис, бот и база не тронуты. **Бюджет картинок разделов почти
+исчерпан: 193 812 из 204 800 Б gzip.**
 
 **0.10.0 (2026-11-14): приложение открывается заглавной страницей.** Корень
 Mini App (`#/`) — три карточки разделов («Коммерческие предложения», «Боевые
@@ -43,7 +56,8 @@ webp; из каждого списка — строка разделов и во
 считается раздельно: код и картинки разделов, у каждого свой потолок 200 КБ
 (`offers-app/scripts/check_size.mjs`). Ruчка `POST /api/offers/app/answer`
 внесена в OpenAPI (её не хватало с 0.9.28). Проверка экранов —
-`offers-app/scripts/check_home_screen.mjs` (реальный браузер, 5 проверок).
+`offers-app/scripts/check_home_screen.mjs` (реальный браузер, 9 проверок —
+четыре карточки, «Скорая помощь» первой, экран `#/digest`).
 
 **0.9.30 (2026-11-14): макет и тексты систем в КП из чата.** Живое КП 031/2026 ушло в чат
 упрощённым (313 КБ вместо макета на 2.37 МБ), без описания первой системы и без
@@ -627,6 +641,24 @@ An `ssh '... while read ...'` swallows stdin — the same class as the
   changes unless the news needs to reach people.
 - Go dependencies: permissive licences only (MIT/BSD/Apache-2.0); check
   `LICENSE` before `go get`.
+- **Editable formats only — never PDF** (rule 2026-11-14, the user's direct
+  requirement: «в пдф мы не конвертируем, нам нужен редактируемый формат,
+  менеджеру может быть необходимо внесение изменений уже после генерации»).
+  Offers and combat sheets are produced as **DOCX and only DOCX**: no
+  conversion step, no headless office, no image-only export. PDF is also never
+  *read* (`documentTextOf` returns `""` for it — P5b/P6). A request for a PDF is
+  «print the DOCX»; an actual converter is a separate design with its own
+  decision, not a flag. Design: `docs/superpowers/specs/2026-11-14-sbe-offers-content-sections-design.md` §13.
+- **The generated DOCX must describe itself** (rule 2026-11-14). A cached field
+  that came from the master — the table-of-contents entries and their
+  `PAGEREF` anchors — is rebuilt from the headings the print actually produced;
+  nothing from the template's cache survives into a document whose content
+  differs from the template's. `<w:updateFields w:val="true"/>`
+  (`ensureUpdateFields`) is kept so Word fills page numbers on open, but it is
+  **not** enough: a file read in Telegram never opens Word, and used to show the
+  template's stale TOC (`_Toc245067377`…`380`, pages 3/3/4/5). Honest limit:
+  page *numbers* need a layout engine we do not run; entry text, order and
+  anchors are always the document's own.
 - `.gitattributes` with `-text` on `manifest.json`/`main.js`/`styles.css` —
   present, keep it.
 - Any data write in the database must move `updated_at`.

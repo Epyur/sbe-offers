@@ -68,11 +68,14 @@ test('маршрут из startapp платформы уважается', () =>
   assert.deepEqual(parseRoute(tg), { name: 'offer', id: 12 });
 });
 
-test('приветствие и «Скорая помощь» — свои маршруты', () => {
+test('приветствие, «Скорая помощь» и «Технодайджест» — свои маршруты', () => {
   assert.deepEqual(parseRoute(routeHash({ name: 'home' })), { name: 'home' });
   assert.deepEqual(parseRoute(routeHash({ name: 'ambulance' })), { name: 'ambulance' });
   assert.equal(routeHash({ name: 'ambulance' }), '#/ambulance');
   assert.equal(parseRoute('#/ambulance/whatever').name, 'notFound');
+  assert.deepEqual(parseRoute(routeHash({ name: 'digest' })), { name: 'digest' });
+  assert.equal(routeHash({ name: 'digest' }), '#/digest');
+  assert.equal(parseRoute('#/digest/whatever').name, 'notFound');
 });
 
 test('свой поиск в адресе от бота сохраняется', () => {

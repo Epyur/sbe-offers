@@ -1,11 +1,13 @@
 /**
  * Экраны приложения.
  *
- * S0 — приветствие с тремя карточками разделов, S1 — вход, S2 — списки КП и
+ * S0 — приветствие с карточками разделов, S1 — вход, S2 — списки КП и
  * боевых листков с поиском по заказчику / названию (2026-11-13). Карточки
  * документов — шаги S3 (КП) и S6 (боевой листок), поэтому они пока только
- * называют номер. «Скорая помощь» — раздел, которого ещё нет (2026-11-14):
- * карточка честно говорит об этом, а не ведёт в пустоту.
+ * называют номер. «Скорая помощь» и «Технодайджест» — разделы, которых ещё
+ * нет (2026-11-14): карточка честно говорит об этом, а не ведёт в пустоту.
+ * Первой в списке кнопок стоит «Скорая помощь» (2026-11-14, просьба
+ * пользователя) — и на главной, и в строке разделов над списками.
  *
  * Список одинаков для двух видов: разница — адрес, подсказка поиска, подпись
  * строки и текст пустого состояния (`lists.ts`). Второй почти такой же экран
@@ -29,15 +31,16 @@ import {
 import { CombatCard } from './combat-screen.tsx';
 import { OfferCard } from './offer-screen.tsx';
 import { routeHash, type Route } from './router.ts';
-import { AMBULANCE_IMAGE, OFFERS_IMAGE, SHEETS_IMAGE } from './section-images.ts';
+import { AMBULANCE_IMAGE, DIGEST_IMAGE, OFFERS_IMAGE, SHEETS_IMAGE } from './section-images.ts';
 
 type ListKind = 'offers' | 'sheets';
 
-/** Картинки трёх разделов (вшиты в бандл, `scripts/embed_sections.mjs`). */
+/** Картинки разделов (вшиты в бандл, `scripts/embed_sections.mjs`). */
 const SECTION_IMAGE_URLS = {
+  ambulance: AMBULANCE_IMAGE,
   offers: OFFERS_IMAGE,
   sheets: SHEETS_IMAGE,
-  ambulance: AMBULANCE_IMAGE,
+  digest: DIGEST_IMAGE,
 };
 
 type SectionImageKey = keyof typeof SECTION_IMAGE_URLS;
@@ -262,13 +265,23 @@ export function NotFoundScreen({ hash }: { hash: string }): JSX.Element {
 }
 
 /**
- * Три карточки приветствия (2026-11-14, просьба пользователя).
+ * Карточки приветствия (2026-11-14, просьба пользователя).
  *
- * Картинки — макеты разделов (сжатые, 1376x768), вшиты в бандл
- * (`section-images.ts`). У «Скорой помощи» раздела ещё нет: карточка ведёт на
- * честный экран «ещё не открыт», а не в пустоту.
+ * Порядок — по ТЗ пользователя: «Скорая помощь» первой (2026-11-14, второй
+ * заход: она должна быть первой в списке кнопок), затем рабочие разделы и
+ * «Технодайджест» — раздел в проектировании, у него только заглушка.
+ *
+ * Картинки — макеты разделов, вшиты в бандл (`section-images.ts`). У «Скорой
+ * помощи» и «Технодайджеста» раздела ещё нет: карточка ведёт на честный экран
+ * «ещё не открыт», а не в пустоту.
  */
 const SECTION_CARDS: SectionCard[] = [
+  {
+    id: 'ambulance',
+    title: 'Скорая помощь',
+    caption: 'Раздел ещё готовится',
+    href: routeHash({ name: 'ambulance' }),
+  },
   {
     id: 'offers',
     title: 'Коммерческие предложения',
@@ -282,10 +295,10 @@ const SECTION_CARDS: SectionCard[] = [
     href: routeHash({ name: 'list', kind: 'sheets', query: '' }),
   },
   {
-    id: 'ambulance',
-    title: 'Скорая помощь',
-    caption: 'Раздел ещё готовится',
-    href: routeHash({ name: 'ambulance' }),
+    id: 'digest',
+    title: 'Технодайджест',
+    caption: 'Раздел проектируется',
+    href: routeHash({ name: 'digest' }),
   },
 ];
 
@@ -298,7 +311,7 @@ function SectionTile({ card }: { card: SectionCard }): JSX.Element {
         // `<img src="">` — пустой src браузер грузит как саму страницу.
         <span className={`app-section-image app-section-image-${card.id}`} aria-hidden="true" />
       ) : (
-        <img className="app-section-image" src={image} alt="" />
+        <img className={`app-section-image app-section-image-${card.id}`} src={image} alt="" />
       )}
       <span className="app-section-body">
         <span className="app-section-title">{card.title}</span>
@@ -323,7 +336,7 @@ function SectionChip({ card, current }: { card: SectionCard; current: boolean })
       {image === '' ? (
         <span className={`app-section-chip-image app-section-image-${card.id}`} aria-hidden="true" />
       ) : (
-        <img className="app-section-chip-image" src={image} alt="" />
+        <img className={`app-section-chip-image app-section-image-${card.id}`} src={image} alt="" />
       )}
       <span>{card.title}</span>
     </>
@@ -369,6 +382,20 @@ export function AmbulanceScreen(): JSX.Element {
   );
 }
 
+/** «Технодайджест»: раздел проектируется, кода за ним ещё нет. */
+export function DigestScreen(): JSX.Element {
+  return (
+    <section>
+      <HomeLink />
+      <h1>Технодайджест</h1>
+      <div className="app-card">
+        <p>Раздел в разработке: он появится в приложении, когда будет готов.</p>
+        <p className="app-muted">Пока пользуйтесь «Коммерческими предложениями» и «Боевыми листками».</p>
+      </div>
+    </section>
+  );
+}
+
 /** Возврат в приветствие — одна строка на все экраны разделов. */
 function HomeLink(): JSX.Element {
   return (
@@ -392,6 +419,8 @@ export function screenFor(route: Route, viewer: Viewer): JSX.Element {
       return <WelcomeScreen />;
     case 'ambulance':
       return <AmbulanceScreen />;
+    case 'digest':
+      return <DigestScreen />;
     case 'list':
       return route.kind === 'offers' ? <OffersListScreen query={route.query} /> : <SheetsListScreen query={route.query} />;
     case 'offer':

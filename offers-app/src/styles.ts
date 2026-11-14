@@ -412,6 +412,16 @@ code {
   background: linear-gradient(135deg, #b3261e 0%, #f2a900 100%);
 }
 
+/*
+ * «Технодайджест» — макет квадратный (144x157), а карточка широкая: cover от
+ * него оставил бы узкую полосу. Показываем картинку целиком на подложке.
+ */
+.app-section-image-digest {
+  object-fit: contain;
+  border-radius: var(--app-radius);
+  background: #0f1b2d;
+}
+
 .app-section-body {
   display: flex;
   flex-direction: column;

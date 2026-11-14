@@ -13,8 +13,9 @@
  * разделов КП). Первая версия этого скрипта писала туда и затёрла файл
  * (`tsc` поймал). Выход — `src/section-images.ts`.
  *
- * Запуск (из offers-app/): node scripts/embed_sections.mjs <папка с 1..3.webp>
- *   1 = Коммерческие предложения, 2 = Боевые листки, 3 = Скорая помощь.
+ * Запуск (из offers-app/): node scripts/embed_sections.mjs <папка с 1..4.webp>
+ *   1 = Коммерческие предложения, 2 = Боевые листки, 3 = Скорая помощь,
+ *   4 = Технодайджест (квадратная 144x157; в карточке обрезается по центру).
  * Без аргумента берёт папку, из которой этот скрипт был запущен в прошлый раз,
  * записанную в `scripts/.section-images-source` — удобно для повторной сборки.
  */
@@ -27,17 +28,18 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const OUT = join(ROOT, 'src', 'section-images.ts');
 const EXTS = ['.webp', '.png', '.jpg'];
 
-/** Порядок — по ТЗ пользователя (2026-11-14). */
+/** Порядок — по ТЗ пользователя (2026-11-14): у «Скорой помощи» свой макет 3. */
 const MAP = [
   ['OFFERS', '1', 'Коммерческие предложения'],
   ['SHEETS', '2', 'Боевые листки'],
   ['AMBULANCE', '3', 'Скорая помощь'],
+  ['DIGEST', '4', 'Технодайджест'],
 ];
 
 const dir = process.argv[2];
 if (!dir) {
   console.error(
-    'укажите папку: node scripts/embed_sections.mjs <папка с 1.webp, 2.webp, 3.webp>',
+    'укажите папку: node scripts/embed_sections.mjs <папка с 1.webp, 2.webp, 3.webp, 4.webp>',
   );
   process.exit(2);
 }

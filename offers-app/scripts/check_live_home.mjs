@@ -9,8 +9,8 @@
  *   1. читает `https://epyur.fvds.ru/app-offers/`, находит имя бандла;
  *   2. запускает браузер, подменяет SDK Telegram и `/app/session` (без входа
  *      в бот сервис отвечает 401) — дальше всё настоящее;
- *   3. проверяет приветствие, три карточки, переходы и сообщает причину,
- *      если экран пуст.
+ *   3. проверяет приветствие, четыре карточки (первая — «Скорая помощь»),
+ *      переходы и сообщает причину, если экран пуст.
  *
  * Запуск: node scripts/check_live_home.mjs [база, по умолчанию https://epyur.fvds.ru]
  */
@@ -74,13 +74,15 @@ function check(name, ok, detail = '') {
 await page.goto(APP, { waitUntil: 'networkidle' });
 const tiles = await page.locator('.app-section-tile').count();
 const h1 = (await page.locator('main h1').first().textContent().catch(() => '')) ?? '';
-check('главная: приветствие открылось', tiles === 3, `карточек ${tiles}, первый заголовок «${h1}»`);
+const firstTitle = (await page.locator('.app-section-title').first().textContent().catch(() => '')) ?? '';
+check('главная: приветствие открылось', tiles === 4, `карточек ${tiles}, первый заголовок «${h1}»`);
+check('главная: «Скорая помощь» первая', firstTitle.includes('Скорая'), `первая карточка «${firstTitle}»`);
 check('главная: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 await page.screenshot({ path: 'dist/live-home.png', fullPage: true });
 
 await page.goto(`${APP}#/list/offers`, { waitUntil: 'networkidle' });
 const chips = await page.locator('.app-section-chip').count();
-check('список КП: строки разделов видны', chips === 3, `найдено ${chips}`);
+check('список КП: строки разделов видны', chips === 4, `найдено ${chips}`);
 
 await browser.close();
 if (failed > 0) {
