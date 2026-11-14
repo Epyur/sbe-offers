@@ -33,6 +33,9 @@ const numberingUserBase = 9000
 type numberingDef struct {
 	numID      int
 	abstractID string
+	// level — на каком уровне списка считается нумерация (0 — обычный список;
+	// 1 — подраздел многоуровневого списка, «%1.%2.»).
+	level int
 }
 
 // numberingPlan — нумерации, заведённые на время одной сборки документа.
@@ -60,6 +63,17 @@ func newNumberingPlan(abstractID string) *numberingPlan {
 // numberingAbstractDecimal — оформление десятичного списка бланка (abstractNum 0).
 const numberingAbstractDecimal = "0"
 
+// newListAt — numId списка, который считается на заданном уровне.
+func (p *numberingPlan) newListAt(level int) string {
+	if p == nil {
+		return styleListNumbered
+	}
+	id := p.next
+	p.next++
+	p.defs = append(p.defs, numberingDef{numID: id, abstractID: p.abstractID, level: level})
+	return itoa(id)
+}
+
 // newList выдаёт numId нового списка, который Word начнёт с единицы.
 //
 // Каждый вызов — отдельный список: именно разные numId и дают перезапуск.
@@ -73,6 +87,70 @@ func (p *numberingPlan) newList() string {
 	p.next++
 	p.defs = append(p.defs, numberingDef{numID: id, abstractID: p.abstractID})
 	return itoa(id)
+}
+
+// sectionNumbering — списки нумерации заголовков содержательного раздела.
+//
+// Раздел получает свой список уровня 0 (номер «1.»), подразделы — отдельный
+// список уровня 1 («%1.%2.»): у многоуровневого списка макета уровень 1 живёт
+// в счётчике уровня 0, а порядок вызовов задаёт ссылки — подраздел ссылается на
+// список, созданный после списка своего раздела.
+//
+// nil-план (макет без numbering.xml) даёт nil: печатать номер некуда, и
+// заголовок идёт без него, а не с выдуманным «1.1».
+type sectionNumbering struct {
+	plan *numberingPlan
+	// list — список подразделов (уровень 1), заведённый при первой просьбе.
+	list *numberingList
+}
+
+// numberingList — numId, который печатает параграф (paraOpts.Numbering).
+type numberingList struct {
+	numID string
+}
+
+// section — список раздела (уровень 0); nil при плане без numbering.xml.
+func (n sectionNumbering) section() *numberingList {
+	if n.plan == nil {
+		return nil
+	}
+	return &numberingList{numID: n.plan.newListAt(0)}
+}
+
+// subsection — список подразделов (уровень 1); nil при плане без numbering.xml.
+func (n sectionNumbering) subsection() *numberingList {
+	if n.plan == nil {
+		return nil
+	}
+	return &numberingList{numID: n.plan.newListAt(1)}
+}
+
+// listsFor заводит списки заголовков ОДНОГО раздела: сначала раздел, затем
+// подразделы.
+//
+// Порядок существенен: у многоуровневого списка подраздел ссылается на уровень
+// 0, заведённый ДО него (список раздела), поэтому заголовок раздела и его
+// подразделы ссылаются на разные numId одного abstractNum. Numbered выключен —
+// ни одна строка не получает номера (списки даже не заводятся).
+func (n sectionNumbering) listsFor(numbered bool) (*numberingList, sectionNumbering) {
+	if !numbered {
+		return nil, sectionNumbering{}
+	}
+	title := n.section()
+	if title == nil {
+		return nil, sectionNumbering{}
+	}
+	subs := sectionNumbering{plan: n.plan}
+	// Список подразделов заводится сейчас, а не при печати: он должен стоять в
+	// плане ПОСЛЕ списка раздела, иначе порядок numId зависел бы от того, есть
+	// ли у раздела подразделы.
+	subs.list = &numberingList{numID: n.plan.newListAt(1)}
+	return title, subs
+}
+
+// subsectionList — список подразделов, заведённый для их заголовков.
+func (n sectionNumbering) subsectionList() *numberingList {
+	return n.list
 }
 
 // numberingXMLInject дописывает определения наших списков в numbering.xml.
@@ -109,7 +187,7 @@ func numberingDefinitionsXML(defs []numberingDef) string {
 	for _, d := range defs {
 		fmt.Fprintf(&sb, `<w:num w:numId="%d"><w:abstractNumId w:val="%s"/>`,
 			d.numID, escapeXML(d.abstractID))
-		sb.WriteString(`<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>`)
+		sb.WriteString(`<w:lvlOverride w:ilvl="` + itoa(d.level) + `"><w:startOverride w:val="1"/></w:lvlOverride>`)
 		sb.WriteString(`</w:num>`)
 	}
 	return sb.String()

@@ -326,6 +326,30 @@ from `offers-bot`. Do not start S5 without an explicit instruction. The step
 notes (S2–S7) and the five live defects of the first launch are in the
 archive, «Ревизия 2026-11-13».
 
+**Content sections — IN PROGRESS, NOT RELEASED (2026-11-14, second session).**
+The two-placeholder model (`[attr]` values vs `{ content: <id> }` briefs), the
+per-subsection fan-out and printing through the Word master are **written and
+green** (steps 1–5 of the plan). **Step 5a — rebuilding the table of contents
+from the printed headings — is written but NOT working**: the heading registry
+and the rebuild are disabled in code (`docx_toc.go`, `layoutContext.tocHeadingXML`
+returns a plain heading, the rebuild call in `renderLayoutDocx` is off), and the
+three TOC tests are `t.Skip`ped. Plugin version stays **0.10.1**; nothing is
+committed or deployed. **Steps 5b, 5c, 6 (editor), 7 (marker registry + help)
+and 8 are not started.**
+
+Files: `offers-service/sections.go` (marker printing, conditions, fan-out),
+`sections_print.go` (frozen `{blocks:[…]}` contract, master constructs, cache),
+`docx_toc.go` (TOC, not wired), `form.go` (`ContentSection` etc.),
+`src/types/offers.ts`, `testdata/temple.docx` (2.37 MB, a copy of
+`C:\Obsidian\mailers\temple.docx` for step 5b). Tests: `sections_test.go`,
+`sections_form_test.go`, `sections_conditions_test.go`, `sections_calls_test.go`,
+`sections_print_test.go`, `docx_toc_test.go` (3 skipped).
+
+**The full state, the open TOC defect and the next-context checklist are in
+`docs/superpowers/plans/2026-11-14-sbe-offers-content-sections-START-HERE.md`,
+section «Что не работает (открытие нового контекста)». Read it before touching
+`docx_toc.go`.**
+
 ## Purpose (current)
 
 The catalogue split into two entities on 2026-10-31 and the sections were

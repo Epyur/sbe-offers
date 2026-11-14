@@ -63,6 +63,16 @@ const (
 	// Единственная метка боевого листка: форму с блоками у него убрали, и
 	// администратор вставляет в макет ровно её.
 	layoutTokenComparison = "comparison"
+	// layoutTokenSection — `{ content: <id> }`: содержательный раздел
+	// (2026-11-14). Называет НАСТРОЙКУ раздела, заведённую администратором в
+	// форме: какие подразделы писать, при каком условии и о чём. Текст пишет
+	// модель по подразделам, оформление — макет Word.
+	//
+	// Почему новый ключ, а не прочие `{…}`: голая метка `{…}` — промт модели
+	// (`layoutTokenPrompt`), и `{content: …}` иначе ушла бы в модель литералом.
+	// `content:` — зарезервированный префикс, разбираемый ДО промта, ровно как
+	// `block:`.
+	layoutTokenSection = "section"
 )
 
 // serviceLayoutMarkers — слова-ключи служебных меток.
@@ -83,6 +93,8 @@ var serviceLayoutMarkers = []struct {
 	{layoutTokenSystem, "систем"},
 	{layoutTokenMaterial, "материал"},
 	{layoutTokenComparison, "сравнени"},
+	{layoutTokenSection, "content"},
+	{layoutTokenSection, "содержани"},
 }
 
 // parseLayoutServiceSpec узнаёт служебную метку по содержимому.
@@ -164,6 +176,11 @@ func serviceLayoutKindOf(key, head string) string {
 		return layoutTokenText
 	case "сравнение", "comparison":
 		return layoutTokenComparison
+	case "content", "содержание":
+		// `{ content: <id> }` — содержательный раздел (2026-11-14). Ключ
+		// проверяется ДО промта и до общего списка слов-ключей: это не
+		// инструкция модели, а имя настройки раздела.
+		return layoutTokenSection
 	}
 	for _, marker := range serviceLayoutMarkers {
 		if !strings.HasPrefix(key, marker.key) {
@@ -205,6 +222,8 @@ type layoutServiceSpec struct {
 	variant string
 	// name — имя повтора (`name="S"`), по нему связываются метка и её блок.
 	name string
+	// sectionID — id содержательного раздела для `{ content: <id> }`.
+	sectionID string
 }
 
 // withKind доделывает разбор: id блока, блок текста и вариант.
@@ -252,6 +271,20 @@ func (s layoutServiceSpec) withKind(kind, rest string) (layoutServiceSpec, bool)
 	case layoutTokenComparison:
 		// `{{сравнение}}` — метка без уточнений: весь боевой листок одним куском.
 		// Остаток игнорируется, чтобы «сравнение продуктов» тоже сработало.
+	case layoutTokenSection:
+		// `{ content: proposal_systems }` — id раздела после двоеточия. Кавычки
+		// снимаются: id может быть записан как `content: "proposal_systems"`.
+		s.sectionID = strings.Trim(strings.TrimSpace(rest), `"'«» `)
+		if at := strings.IndexAny(s.sectionID, " \t;,}"); at >= 0 {
+			s.sectionID = strings.Trim(s.sectionID[:at], `"'«» `)
+		}
+		if s.sectionID == "" {
+			// `{ content: }` без имени — метка, а не инструкция модели: пустой
+			// раздел печатает ничего и пишет в журнал (renderContentSection).
+			// Отказывать в разборе нельзя — иначе пустое имя ушло бы в модель
+			// литералом.
+			return s, true
+		}
 	}
 	return s, true
 }
@@ -644,7 +677,7 @@ func isServiceKind(kind string) bool {
 	switch kind {
 	case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
 		layoutTokenSpecs, layoutTokenText, layoutTokenMaterial,
-		layoutTokenComparison:
+		layoutTokenComparison, layoutTokenSection:
 		return true
 	}
 	return false

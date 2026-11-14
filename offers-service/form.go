@@ -64,15 +64,106 @@ func (b Block) RepeatName() string {
 	return strings.TrimSpace(b.ID)
 }
 
+// SubsectionCondition — условие, при котором подраздел печатается (2026-11-14).
+//
+// Условия нарочно маленькие и декларативные — не код и не язык формул. Их
+// смысл один: подраздел, чьё условие не выполнено, не печатается ВООБЩЕ — ни
+// заголовка, ни пустой таблицы. Это и есть разница с блоками `{{block:…}}`,
+// из-за которой администратор получал заголовки без текста.
+type SubsectionCondition string
+
+const (
+	// conditionAlways — подраздел печатается всегда.
+	conditionAlways SubsectionCondition = "always"
+	// conditionHasSystems — в предложении есть хотя бы одна выбранная система.
+	conditionHasSystems SubsectionCondition = "has_systems"
+	// conditionHasMaterials — есть хотя бы один материал, выбранный описанием.
+	conditionHasMaterials SubsectionCondition = "has_materials"
+	// conditionMultiSystem — систем больше одной: случай «почему эти».
+	conditionMultiSystem SubsectionCondition = "multi_system"
+	// conditionHasCritique — администратор включил у раздела переключатель
+	// `critique` (единственное условие, читающее РАЗДЕЛ, а не предложение).
+	conditionHasCritique SubsectionCondition = "has_critique"
+	// conditionHasItems — в предложении есть позиции с ценой.
+	conditionHasItems SubsectionCondition = "has_items"
+)
+
+// subsectionConditions — известные условия. Одно место и для проверки формы, и
+// для проверки разбора: новое условие без правки здесь просто не сохранится.
+var subsectionConditions = []SubsectionCondition{
+	conditionAlways, conditionHasSystems, conditionHasMaterials,
+	conditionMultiSystem, conditionHasCritique, conditionHasItems,
+}
+
+// knownSubsectionCondition — условие известно серверу.
+func knownSubsectionCondition(c SubsectionCondition) bool {
+	for _, known := range subsectionConditions {
+		if c == known {
+			return true
+		}
+	}
+	return false
+}
+
+// ContentSubsection — подраздел содержательного раздела: ОДИН вызов модели.
+//
+// Модель пишет текст и структуру (заголовок/абзац/список/таблица/ссылка на
+// рисунок); оформление берётся из макета Word. Здесь только бриф: что писать,
+// при каком условии и когда звать модель по разу на систему.
+type ContentSubsection struct {
+	// ID — устойчивый идентификатор: он же префикс ключа кэша текста.
+	ID string `json:"id"`
+	// Title — заголовок подраздела. Его печатает рамка, а не модель.
+	Title string `json:"title"`
+	// Instruction — что написать: бриф для модели.
+	Instruction string `json:"instruction"`
+	// Condition — при каком условии печатать. Пусто — `always`.
+	Condition SubsectionCondition `json:"condition,omitempty"`
+	// Repeat — `systems`: один вызов на каждую выбранную систему.
+	Repeat string `json:"repeat,omitempty"`
+	// MaxWords — предел длины текста; 0 — серверное значение по умолчанию.
+	MaxWords int `json:"maxWords,omitempty"`
+	// Level — уровень заголовка рамки (1..3); 0 — значение по умолчанию.
+	Level int `json:"level,omitempty"`
+}
+
+// ConditionOrAlways — условие с умолчанием: пусто значит «всегда».
+func (s ContentSubsection) ConditionOrAlways() SubsectionCondition {
+	if strings.TrimSpace(string(s.Condition)) == "" {
+		return conditionAlways
+	}
+	return s.Condition
+}
+
+// ContentSection — содержательный раздел: настройка, на которую ссылается
+// метка `{ content: <id> }` (2026-11-14).
+type ContentSection struct {
+	// ID — id метки: `{ content: <id> }`.
+	ID string `json:"id"`
+	// Title — человеческое название раздела; его печатает рамка.
+	Title string `json:"title"`
+	// Numbered — печатать нумерацию разделов (номера даёт нумерация макета).
+	Numbered bool `json:"numbered,omitempty"`
+	// Critique — переключатель, который читает условие `has_critique`.
+	// Один рубильник: его включает администратор, его же проверяет условие.
+	Critique bool `json:"critique,omitempty"`
+	// Subsections — подразделы в порядке печати.
+	Subsections []ContentSubsection `json:"subsections,omitempty"`
+}
+
 // OfferForm — конфигурация формы КП.
 type OfferForm struct {
-	ID             int64         `json:"id"`
-	Mode           string        `json:"mode"`
-	Title          string        `json:"title"`
-	Placeholders   []Placeholder `json:"placeholders"`
-	Blocks         []Block       `json:"blocks"`
-	RequiredFields []string      `json:"requiredFields"`
-	UpdatedAt      string        `json:"updatedAt"`
+	ID           int64         `json:"id"`
+	Mode         string        `json:"mode"`
+	Title        string        `json:"title"`
+	Placeholders []Placeholder `json:"placeholders"`
+	Blocks       []Block       `json:"blocks"`
+	// Sections — содержательные разделы (2026-11-14): настройки, на которые
+	// ссылаются метки `{ content: <id> }`. Сосед блоков: блоки — вёрстка,
+	// написанная администратором руками, разделы — бриф для модели.
+	Sections       []ContentSection `json:"sections,omitempty"`
+	RequiredFields []string         `json:"requiredFields"`
+	UpdatedAt      string           `json:"updatedAt"`
 	// HasLayout/LayoutName — загружен ли макет .docx (2026-11-05). Сами байты
 	// в JSON формы не отдаются: клиенту нужно знать, есть ли макет, а не
 	// тащить десятки килобайт в каждом ответе `/form`.
@@ -129,6 +220,72 @@ func validateForm(f OfferForm) string {
 	for _, req := range f.RequiredFields {
 		if !seenFields[req] {
 			return "обязательное поле «" + req + "» не заведено в списке полей"
+		}
+	}
+	return validateSections(f.Sections)
+}
+
+// validateSections — проверка содержательных разделов (2026-11-14).
+//
+// Ошибка в разделе обязана называться ДО первой сборки: молча не выполненное
+// условие человек увидит как пропавший кусок документа и будет искать причину в
+// модели.
+func validateSections(sections []ContentSection) string {
+	seenSections := make(map[string]bool, len(sections))
+	for _, section := range sections {
+		id := strings.TrimSpace(section.ID)
+		if id == "" {
+			return "у содержательного раздела пустой идентификатор"
+		}
+		if seenSections[id] {
+			return "повторяющийся идентификатор содержательного раздела: " + id
+		}
+		seenSections[id] = true
+		if strings.TrimSpace(section.Title) == "" {
+			return "у содержательного раздела «" + id + "» пустой заголовок"
+		}
+		if msg := validateSubsections(section); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// validateSubsections — подразделы одного раздела: уникальные id, известное
+// условие, известный повтор.
+func validateSubsections(section ContentSection) string {
+	seen := make(map[string]bool, len(section.Subsections))
+	for _, sub := range section.Subsections {
+		id := strings.TrimSpace(sub.ID)
+		if id == "" {
+			return "у подраздела раздела «" + section.ID + "» пустой идентификатор"
+		}
+		if seen[id] {
+			return "повторяющийся идентификатор подраздела «" + id + "» в разделе «" + section.ID + "»"
+		}
+		seen[id] = true
+		if strings.TrimSpace(sub.Title) == "" {
+			return "у подраздела «" + id + "» раздела «" + section.ID + "» пустой заголовок"
+		}
+		if strings.TrimSpace(sub.Instruction) == "" {
+			return "у подраздела «" + id + "» раздела «" + section.ID + "» нет инструкции для модели"
+		}
+		if !knownSubsectionCondition(sub.ConditionOrAlways()) {
+			return "у подраздела «" + id + "» неизвестное условие: " + string(sub.Condition)
+		}
+		// Повтор: пусто или «по системам». Неизвестный повтор молча не выполнился
+		// бы — подраздел напечатался бы один раз, хотя администратор ждал по
+		// системе на каждую.
+		switch strings.TrimSpace(sub.Repeat) {
+		case "", blockRepeatSystems:
+		default:
+			return "у подраздела «" + id + "» неизвестный повтор: " + sub.Repeat
+		}
+		if sub.MaxWords < 0 {
+			return "у подраздела «" + id + "» отрицательный предел слов"
+		}
+		if sub.Level < 0 || sub.Level > 3 {
+			return "у подраздела «" + id + "» уровень заголовка вне 1..3: " + itoa(sub.Level)
 		}
 	}
 	return ""

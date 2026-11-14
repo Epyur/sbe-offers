@@ -414,6 +414,20 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 			log.Printf("макет: текст %s системы %d не сохранён: %v", block, noteID, err)
 		}
 	}
+	// Содержательные разделы (2026-11-14): подразделы пишутся тем же веером
+	// вызовов, но со своим кэшем (`gen.sect.…`). Генератор один на сборку —
+	// так повторная сборка внутри одного запроса не пишет модель дважды.
+	sectionGen := &sectionGen{
+		values:    sectionValuesFor(offer),
+		previous:  offer.FormValues,
+		section:   hashOfferFacts(offer),
+		selection: offerSelectionHandle(offer),
+		offer:     offer,
+		cards:     cards,
+		refs:      refs,
+		complete:  llmCompleter{},
+		report:    report,
+	}
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,
 		prompt: cache.text,
@@ -440,11 +454,17 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		systemText: func(card SystemCard, block string) string {
 			return s.writeMissingSystemText(&offer, cache, card, block)
 		},
+		// Подраздел содержательного раздела: текст из кэша или от модели
+		// (2026-11-14). Вызывается параллельно — writer один на сборку.
+		sectionText: sectionGen.text,
+		report:      report,
 	})
 	if err != nil {
 		return nil, err
 	}
 	// Новые тексты сохраняются, чтобы следующее скачивание взяло их же.
+	// Тексты подразделов — в той же карте: ключи `gen.sect.…` уникальны.
+	mergeSectionValues(cache.values, offer.FormValues, sectionGen.values)
 	if changed := cache.changed(); len(changed) > 0 {
 		offer.FormValues = mergeFormValues(offer.FormValues, changed)
 		if err := s.persistOfferFormValues(r.Context(), offer); err != nil {

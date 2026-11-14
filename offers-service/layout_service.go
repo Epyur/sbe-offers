@@ -71,6 +71,10 @@ func renderLayoutService(token layoutToken, lc layoutContext, row layoutServiceR
 			return ""
 		}
 		return lc.combat.markup
+	case layoutTokenSection:
+		// Содержательный раздел (2026-11-14): подразделы пишет модель по своим
+		// инструкциям, оформление — макет. До шага 5 печатается пусто.
+		return renderContentSection(spec.sectionID, lc, row)
 	}
 	return ""
 }

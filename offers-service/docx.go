@@ -125,8 +125,32 @@ type paraOpts struct {
 	Align string
 	// NoIndent — без отступа первой строки (заголовки, картинки, подписи).
 	NoIndent bool
+	// Numbering — числовой список из плана сборки (2026-11-14): заголовок
+	// раздела получает номер из нумерации МАКЕТА (`<w:numPr>`), а не символы в
+	// `<w:t>`. nil — номер не печатается (обычный заголовок).
+	Numbering *numberingList
+	// NumberingLevel — уровень списка (ilvl) для Numbering.
+	NumberingLevel int
 }
 
+// numberingXML — нумерация абзаца, если она задана.
+//
+// nil: номер не печатается. Заголовок считается на СВОЁМ уровне
+// (NumberingLevel): подраздел — «%1.%2.» на уровне 1 многоуровневого списка
+// макета, раздел — «%1.» на уровне 0.
+func (o paraOpts) numberingXML() string {
+	if o.Numbering == nil {
+		return ""
+	}
+	return `<w:numPr><w:ilvl w:val="` + strconv.Itoa(o.NumberingLevel) +
+		`"/><w:numId w:val="` + o.Numbering.numID + `"/></w:numPr>`
+}
+
+// numberingStyle — какой стиль нумерации абзаца нужен.
+//
+// В многоуровневом списке макета `<w:lvl w:ilvl="0">` ссылается на свой стиль
+// (в temple.docx это `a` — «List Paragraph»), и абзац с numPr обязан нести тот
+// же pStyle, иначе Word не связывает абзац с уровнем.
 // Оформление документа (2026-11-05).
 //
 // Живой КП 003/2026 вышел без выравнивания: стиль Normal бланка (`a0`) —
@@ -312,7 +336,8 @@ func headingXMLOpts(text string, level int, opts paraOpts) string {
 	return `<w:p><w:pPr><w:pStyle w:val="` + style + `"/>` +
 		`<w:keepNext/><w:keepLines/>` +
 		opts.pageBreakXML() + opts.spacingXML() + opts.indentXML() + opts.alignXML() +
-		`<w:outlineLvl w:val="` + outline + `"/></w:pPr>` +
+		`<w:outlineLvl w:val="` + outline + `"/>` +
+		opts.numberingXML() + `</w:pPr>` +
 		runsXML(plainText(text), headingRPr+`<w:sz w:val="`+size+`"/><w:szCs w:val="`+size+`"/>`) +
 		`</w:p>`
 }
@@ -470,6 +495,12 @@ type renderCtx struct {
 	// повторе `cards` сужены до одной системы, а промт вступления обязан знать
 	// весь комплект. Пусто - признак считается по карточкам и `offer.Systems`.
 	selection string
+	// form / sectionText / report — содержательные разделы (2026-11-14):
+	// метка `{ content: <id> }` печатается и внутри блока формы, и ей нужны
+	// настройка раздела и генератор её текстов. nil — разделов в блоке нет.
+	form        func() OfferForm
+	sectionText func(section ContentSection, call sectionCall) string
+	report      *buildReport
 }
 
 // selectionHandle - признак набора систем для ключей кэша текстов.
@@ -638,6 +669,12 @@ func (rc renderCtx) layoutContext() layoutContext {
 		// Карточки материалов-объектов (2026-11-13): повтор
 		// `repeat:"materials"` печатает их описанием, а не позициями.
 		materialCards: func() []SystemCard { return rc.materialCards },
+		// Разделы и их оглавление печатаются и внутри блока формы: без формы
+		// метка раздела молчит, а без собирателя оглавления заголовки блока не
+		// попадают в оглавление (2026-11-14).
+		form:        rc.form,
+		sectionText: rc.sectionText,
+		report:      rc.report,
 	}
 	// Сборщик картинок обязан доехать до метки системы: без него
 	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке

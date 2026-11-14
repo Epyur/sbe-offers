@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -118,6 +119,37 @@ type buildReport struct {
 	Failed      int
 	Started     time.Time
 	offerNumber string
+	// generated/failed/fromCache — те же числа, но пригодные для записи из
+	// нескольких горутин (раздел пишет подразделы параллельно, sections.go).
+	generated int32
+	failed    int32
+	fromCache int32
+}
+
+// addGenerated / addFailed / addFromCache — счётчики из нескольких горутин.
+//
+// Раздел пишет подразделы параллельно, и обычный `++` из двух горутин теряет
+// единицы. Сводка журнала после этого врала бы «написано» в меньшую сторону, и
+// человек искал бы причину в модели.
+func (r *buildReport) addGenerated() {
+	if r == nil {
+		return
+	}
+	atomic.AddInt32(&r.generated, 1)
+}
+
+func (r *buildReport) addFailed() {
+	if r == nil {
+		return
+	}
+	atomic.AddInt32(&r.failed, 1)
+}
+
+func (r *buildReport) addFromCache() {
+	if r == nil {
+		return
+	}
+	atomic.AddInt32(&r.fromCache, 1)
 }
 
 // newBuildReport — начало сборки для журнала.
@@ -131,8 +163,11 @@ func (r *buildReport) logSummary() {
 	if r == nil {
 		return
 	}
+	cached := r.FromCache + int(atomic.LoadInt32(&r.fromCache))
+	generated := r.Generated + int(atomic.LoadInt32(&r.generated))
+	failed := r.Failed + int(atomic.LoadInt32(&r.failed))
 	log.Printf("gen: build offer=%s cached=%d generated=%d failed=%d %s",
-		r.offerNumber, r.FromCache, r.Generated, r.Failed,
+		r.offerNumber, cached, generated, failed,
 		time.Since(r.Started).Round(time.Millisecond))
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -93,6 +94,15 @@ type layoutContext struct {
 	// готовый markup: печать сравнения живёт в combat_docx.go и знает про
 	// карточки обеих сторон, а контекст макета — общий с КП.
 	combat *combatLayoutData
+	// sectionText — текст ОДНОГО вызова содержательного раздела (2026-11-14):
+	// подраздел × система. Вызывается параллельно из renderContentSection, и
+	// сам же решает, брать кэш или звать модель — так правило свежести живёт в
+	// одном месте (шаг 5), а веер вызовов о нём не знает.
+	// nil — печати разделов нет: метка молчит.
+	sectionText func(section ContentSection, call sectionCall) string
+	// report — счётчики сборки. Раздел пишет их из горутин, поэтому поля
+	// buildReport для этого атомарные.
+	report *buildReport
 }
 
 // combatLayoutData — что нужно метке `{{сравнение}}`.
@@ -131,6 +141,14 @@ type layoutRuntime struct {
 	// отношения копятся здесь, а пишутся вместе с теми, что нашёл
 	// linkLayoutDocument.
 	links []renderedLink
+	// toc — заголовки, которые печать РЕАЛЬНО вывела (2026-11-14). Оглавление
+	// макета — снимок шаблона: он описывает документ-образец, а не этот. Из
+	// этого списка собирается кэш оглавления; Word по нему же пересчитает
+	// номера страниц при открытии.
+	toc []tocEntry
+	// tocSeq — сколько заголовков уже зарегистрировано: порядковый номер
+	// делает имя закладки `_Toc…` уникальным.
+	tocSeq int
 }
 
 // renderLayoutDocx собирает КП по макету.
@@ -174,6 +192,15 @@ func renderLayoutDocx(layout []byte, lc layoutContext) ([]byte, error) {
 	// могли стать ссылками ни при каком ответе: читатель видел длинный адрес
 	// простым текстом.
 	rendered, links := linkLayoutDocument(rendered)
+	// Оглавление описывает ЭТОТ документ (2026-11-14): пункты и якоря — из
+	// напечатанных заголовков. Кэш макета — снимок образца, и читатель без
+	// Word (Телеграм) иначе видит оглавление другого файла.
+	if len(lc.layout.toc) > 0 {
+		log.Printf("DEBUG toc=%d head=%q", len(lc.layout.toc), rendered[:200])
+		rendered = rebuildLayoutTOCWithStyles(rendered, files, lc.layout.toc)
+		log.Printf("DEBUG after=%q", rendered[:200])
+		logTOC(len(lc.layout.toc))
+	}
 	// Метки `{{ссылки}}` печатают подпись, а адрес держат в отношении, поэтому
 	// их ссылки сюда не попадают из текста — они накоплены в lc.layout.links.
 	// Один адрес — одно отношение: appendLinkOnce уже схлопнул повторы внутри
@@ -462,7 +489,8 @@ func splitReplacedByParagraph(spans struct {
 				replacement[i] = lc.prompt(token.Inner)
 			}
 		case layoutTokenBlock, layoutTokenSystem, layoutTokenLinks,
-			layoutTokenSpecs, layoutTokenText, layoutTokenMaterial, layoutTokenComparison:
+			layoutTokenSpecs, layoutTokenText, layoutTokenMaterial,
+			layoutTokenComparison, layoutTokenSection:
 			// Служебные метки (шаг C, 2026-11-06): печатают данные предложения
 			// и карточки, модель не зовут вовсе. Их разметка — готовый XML
 			// (таблица, список, картинка), поэтому она идёт полем `blockMarkup`,

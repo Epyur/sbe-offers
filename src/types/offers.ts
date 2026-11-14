@@ -87,6 +87,12 @@ export interface OfferForm {
   title: string;
   placeholders: Placeholder[];
   blocks: Block[];
+  /**
+   * Содержательные разделы (2026-11-14): настройки, на которые ссылаются метки
+   * `{ content: <id> }`. Блоки — вёрстка, написанная руками; раздел — бриф для
+   * модели: какие подразделы писать и при каком условии.
+   */
+  sections?: ContentSection[];
   requiredFields: string[];
   updatedAt: string;
   /** Загружен ли макет .docx (2026-11-05): печать идёт по нему, а не по блокам. */
@@ -95,6 +101,52 @@ export interface OfferForm {
   /** Какие метки `[…]`/`{…}` система нашла в макете. */
   layoutFields?: string[];
   layoutPrompts?: string[];
+}
+
+/**
+ * Условие, при котором подраздел печатается (2026-11-14).
+ *
+ * Подраздел с невыполненным условием не печатается вовсе — ни заголовка, ни
+ * пустой таблицы. Это и есть отличие от блоков `{{block:…}}`, из-за которого
+ * в документе оставались заголовки без текста.
+ */
+export type SubsectionCondition =
+  | 'always'
+  | 'has_systems'
+  | 'has_materials'
+  | 'multi_system'
+  | 'has_critique'
+  | 'has_items';
+
+/** Подраздел содержательного раздела: один вызов модели. */
+export interface ContentSubsection {
+  /** Устойчивый id: он же префикс ключа кэша текста. */
+  id: string;
+  /** Заголовок подраздела — его печатает рамка, не модель. */
+  title: string;
+  /** Что написать: бриф для модели. */
+  instruction: string;
+  /** При каком условии печатать; пусто — `always`. */
+  condition?: SubsectionCondition;
+  /** `systems` — один вызов на каждую выбранную систему. */
+  repeat?: '' | 'systems';
+  /** Предел длины текста; 0 — значение по умолчанию на сервере. */
+  maxWords?: number;
+  /** Уровень заголовка рамки (1..3); 0 — по умолчанию. */
+  level?: 1 | 2 | 3;
+}
+
+/** Содержательный раздел: настройка, на которую ссылается `{ content: <id> }`. */
+export interface ContentSection {
+  /** id метки: `{ content: <id> }`. */
+  id: string;
+  /** Человеческое название раздела; печатается в документе. */
+  title: string;
+  /** Нумеровать разделы (номера берутся из нумерации макета Word). */
+  numbered?: boolean;
+  /** Переключатель, который читает условие `has_critique`. */
+  critique?: boolean;
+  subsections: ContentSubsection[];
 }
 
 /** Карточка системы/материала/работы в каталоге. */
