@@ -369,6 +369,32 @@ code {
   color: var(--tg-hint);
 }
 
+/*
+ * Окно КП (2026-11-15, шаги 2–3 конфигуратора окна).
+ *
+ * app-window-note — строка состояния экрана: настройку окна не прочитали,
+ * показаны все разделы. app-required — МЯГКАЯ подсветка незаполненного
+ * обязательного: рамка, а не блокирующая кнопка. Сохранение обязано проходить
+ * (решение пользователя 2026-11-15).
+ */
+.app-window-note {
+  color: var(--tg-hint);
+  background: var(--tg-secondary-bg);
+  border-left: 3px solid var(--tg-hint);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.app-required {
+  border: 1px solid #d9534f;
+}
+
+p.app-required {
+  border: 0;
+  border-left: 3px solid #d9534f;
+}
+
 /* Приветствие: три карточки-заглушки разделов (2026-11-14). */
 .app-sections {
   display: flex;

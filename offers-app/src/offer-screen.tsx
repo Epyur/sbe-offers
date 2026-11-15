@@ -25,6 +25,7 @@ import {
   loadOffer,
   loadSystemCatalog,
   money,
+  readWindowSave,
   removeMaterial,
   removeSystem,
   rowSum,
@@ -37,15 +38,36 @@ import {
   type OfferClientDto,
   type OfferDto,
   type SystemCardDto,
+  type WindowSaveResponse,
 } from './offer.ts';
 import { shortDate, statusLabel } from './lists.ts';
 import { SectionsZone } from './sections-screen.tsx';
 import { SendToChatButton } from './sendchat-button.tsx';
+import {
+  loadOfferWindow,
+  requiredOf,
+  visibleZones,
+  zonesForScreen,
+  type MissingField,
+  type OfferFormWindowDto,
+  type WindowZoneId,
+} from './window.ts';
 
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'error'; text: string }
-  | { kind: 'ready'; offer: OfferDto; catalog: SystemCardDto[] };
+  | {
+      kind: 'ready';
+      offer: OfferDto;
+      catalog: SystemCardDto[];
+      /**
+       * Окно КП (2026-11-15, шаг 3). `null` — настройку прочитать не удалось:
+       * показываем все зоны и строку об этом, а не пустой экран.
+       */
+      window: OfferFormWindowDto | null;
+      /** `false`, когда форма не прочиталась (тогда `window === null`). */
+      windowRead: boolean;
+    };
 
 function errorText(e: unknown): string {
   if (e instanceof ApiError) {
@@ -59,12 +81,29 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [missing, setMissing] = useState<MissingField[]>([]);
 
   const reload = useCallback(() => {
     setState({ kind: 'loading' });
-    void Promise.all([loadOffer(id), loadSystemCatalog().catch(() => [] as SystemCardDto[])])
-      .then(([offer, catalog]) => {
-        setState({ kind: 'ready', offer, catalog });
+    void Promise.all([
+      loadOffer(id),
+      loadSystemCatalog().catch(() => [] as SystemCardDto[]),
+      // Окно читается отдельным запросом: форма общая для всех КП, и её правка
+      // не должна перезагружать карточку. Ошибка окна — `null`, не отказ.
+      loadOfferWindow()
+        .then((zones) => ({ ok: true as const, zones }))
+        .catch(() => ({ ok: false as const, zones: null })),
+    ])
+      .then(([offer, catalog, windowLoaded]) => {
+        setState({
+          kind: 'ready',
+          offer,
+          catalog,
+          // `zones === null` — не прочитали; иначе это настоящий список зон.
+          window: windowLoaded.zones === null && !windowLoaded.ok ? null : zonesToWindow(windowLoaded.zones),
+          windowRead: windowLoaded.ok,
+        });
+        setMissing([]);
       })
       .catch((e: unknown) => setState({ kind: 'error', text: errorText(e) }));
   }, [id]);
@@ -73,12 +112,14 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
 
   /** Общий приём записи: занятость, ответ сервера, текст для человека. */
   const apply = useCallback(
-    (action: () => Promise<OfferDto>, done: string) => {
+    (action: () => Promise<WindowSaveResponse>, done: string) => {
       setBusy(true);
       setNote('');
       action()
-        .then((offer) => {
-          setState((prev) => (prev.kind === 'ready' ? { ...prev, offer } : prev));
+        .then((res) => {
+          setState((prev) => (prev.kind === 'ready' ? { ...prev, offer: res.offer } : prev));
+          // Мягкая обязательность: сохранение уже прошло, список — что дополнить.
+          setMissing(res.missingRequired ?? []);
           setNote(done);
         })
         .catch((e: unknown) => setNote(errorText(e)))
@@ -113,7 +154,12 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
     );
   }
 
-  const { offer, catalog } = state;
+  const { offer, catalog, window, windowRead } = state;
+  // Зоны в порядке окна; невидимые не рисуются вовсе (шаг 2, `visibleZones`).
+  const zones = windowRead ? visibleZones(window) : [...zonesForScreen(null)];
+  const showAllZones = !windowRead;
+  // Подсветка мягкая: список незаполненного не блокирует сохранение.
+  const softMissing = windowRead ? requiredOf(window, offer) : [];
   return (
     <section>
       <h1>
@@ -127,48 +173,41 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
           {note}
         </p>
       )}
+      {showAllZones ? (
+        <p className="app-window-note" role="status">
+          Настройку окна прочитать не удалось — показаны все разделы.
+        </p>
+      ) : null}
+      {missing.length === 0 ? null : <MissingNote items={missing} />}
 
-      <ClientZone
-        offer={offer}
-        busy={busy}
-        onSave={(client) => apply(() => saveClient(id, client), 'Заказчик сохранён.')}
-      />
-
-      <SystemsZone
-        offer={offer}
-        catalog={catalog}
-        busy={busy}
-        onAdd={(system) => {
-          apply(async () => (await addSystem(id, system)).offer, `Система «${system.title}» добавлена.`);
-        }}
-        onRemove={(system) => {
-          apply(async () => (await removeSystem(id, system)).offer, `Система «${system.title}» убрана.`);
-        }}
-      />
-
-      <ItemsZone
-        offer={offer}
-        busy={busy}
-        onSave={(drafts) =>
-          apply(() => saveItems(id, drafts.map(draftToItem)), 'Позиции сохранены.')
-        }
-      />
-
-      <MaterialsZone
-        offer={offer}
-        busy={busy}
-        onAdd={(material) => {
-          apply(
-            async () => (await addMaterial(id, material)).offer,
-            `Материал «${material.title}» добавлен описанием.`,
-          );
-        }}
-        onRemove={(material) => {
-          apply(async () => (await removeMaterial(id, material)).offer, 'Материал убран.');
-        }}
-      />
-
-      <SectionsZone id={id} />
+      {zones.map((zone) => (
+        <Zone
+          key={zone}
+          zone={zone}
+          offer={offer}
+          catalog={catalog}
+          busy={busy}
+          missing={softMissing}
+          id={id}
+          onSaveClient={(client) => apply(() => saveClient(id, client), 'Заказчик сохранён.')}
+          onSaveItems={(drafts) => apply(() => saveItems(id, drafts.map(draftToItem)), 'Позиции сохранены.')}
+          onAddSystem={(system) => {
+            apply(async () => readWindowSave(await addSystem(id, system)), `Система «${system.title}» добавлена.`);
+          }}
+          onRemoveSystem={(system) => {
+            apply(async () => readWindowSave(await removeSystem(id, system)), `Система «${system.title}» убрана.`);
+          }}
+          onAddMaterial={(material) => {
+            apply(
+              async () => readWindowSave(await addMaterial(id, material)),
+              `Материал «${material.title}» добавлен описанием.`,
+            );
+          }}
+          onRemoveMaterial={(material) => {
+            apply(async () => readWindowSave(await removeMaterial(id, material)), 'Материал убран.');
+          }}
+        />
+      ))}
 
       <SendToChatButton kind="offer" id={id} />
 
@@ -181,13 +220,88 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
   );
 }
 
+/** Обратное собирание окна из списка зон — для экрана (форма нужна `requiredOf`). */
+function zonesToWindow(zones: WindowZoneId[] | null): OfferFormWindowDto | null {
+  if (zones === null) return null;
+  return { window: zones.map((zone) => ({ kind: 'zone', id: zone, visible: true })) };
+}
+
+/** Строка «Не заполнено обязательное: …» — мягкое предупреждение, не блок. */
+function MissingNote({ items }: { items: MissingField[] }): JSX.Element {
+  return (
+    <p className="app-window-note app-required" role="status">
+      Не заполнено обязательное: {items.map((item) => item.label).join(', ')}.
+    </p>
+  );
+}
+
+interface ZoneProps {
+  zone: WindowZoneId;
+  offer: OfferDto;
+  catalog: SystemCardDto[];
+  busy: boolean;
+  missing: MissingField[];
+  id: number;
+  onSaveClient: (client: OfferClientDto) => void;
+  onSaveItems: (drafts: ItemDraft[]) => void;
+  onAddSystem: (system: ChosenSystem) => void;
+  onRemoveSystem: (system: ChosenSystem) => void;
+  onAddMaterial: (material: ChosenSystem) => void;
+  onRemoveMaterial: (material: ChosenSystem) => void;
+}
+
+/** Одна зона окна. Невидимые сюда не доходят: их отсекает `visibleZones`. */
+function Zone(props: ZoneProps): JSX.Element | null {
+  const { zone, offer, catalog, busy, missing, id } = props;
+  const lacks = (key: string): boolean => missing.some((item) => item.id === key);
+  switch (zone) {
+    case 'client':
+      return (
+        <ClientZone
+          offer={offer}
+          busy={busy}
+          required={lacks('client')}
+          onSave={props.onSaveClient}
+        />
+      );
+    case 'systems':
+      return (
+        <SystemsZone
+          offer={offer}
+          catalog={catalog}
+          busy={busy}
+          onAdd={props.onAddSystem}
+          onRemove={props.onRemoveSystem}
+        />
+      );
+    case 'items':
+      return <ItemsZone offer={offer} busy={busy} onSave={props.onSaveItems} />;
+    case 'materials':
+      return (
+        <MaterialsZone
+          offer={offer}
+          busy={busy}
+          onAdd={props.onAddMaterial}
+          onRemove={props.onRemoveMaterial}
+        />
+      );
+    case 'sections':
+      return <SectionsZone id={id} />;
+    default:
+      return null;
+  }
+}
+
 function ClientZone({
   offer,
   busy,
+  required,
   onSave,
 }: {
   offer: OfferDto;
   busy: boolean;
+  /** Окно отметило зону обязательной, а имя и контакт пусты. */
+  required: boolean;
   onSave: (client: OfferClientDto) => void;
 }): JSX.Element {
   const [client, setClient] = useState<OfferClientDto>({
@@ -201,7 +315,7 @@ function ClientZone({
 
   const dirty = clientChanged(client, offer.client);
   return (
-    <div className="app-card">
+    <div className={required ? 'app-card app-required' : 'app-card'}>
       <h2 className="app-h2">Заказчик</h2>
       <label className="app-field">
         <span className="app-field-label">Название</span>

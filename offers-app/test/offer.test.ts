@@ -19,6 +19,7 @@ import {
   money,
   numberText,
   parseNumber,
+  readWindowSave,
   rowSum,
   systemKey,
   type ItemDraft,
@@ -129,4 +130,26 @@ test('выбранные материалы показываются отдел�
   assert.equal(materials.length, 1);
   assert.equal(materials[0]?.sku, 'MAT-КРОВ-ПВХ-0001');
   assert.equal(chosenMaterials({ ...offer, materials: undefined }).length, 0);
+});
+
+test('ответ сохранения читается в новой форме — документ и пустые обязательные', () => {
+  const res = readWindowSave({
+    offer: { ...offer, number: '007/2026' },
+    missingRequired: [{ id: 'object_name', label: 'Объект' }],
+  });
+  assert.equal(res.offer.number, '007/2026');
+  assert.deepEqual(res.missingRequired, [{ id: 'object_name', label: 'Объект' }]);
+});
+
+test('ответ сохранения без missingRequired — пустой список, а не undefined', () => {
+  const res = readWindowSave({ offer });
+  assert.deepEqual(res.missingRequired, []);
+});
+
+test('старый ответ (голый Offer) не превращает экран в пустую карточку', () => {
+  // Сервер прежней сборки (до 0.11.0) отвечал самим документом.
+  const res = readWindowSave(offer);
+  assert.equal(res.offer.number, '003/2026');
+  assert.equal(res.missingRequired, undefined);
+  assert.equal(readWindowSave(null).offer, null);
 });

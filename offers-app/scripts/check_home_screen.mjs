@@ -74,14 +74,51 @@ await page.addInitScript(() => {
 });
 
 await page.route('**/api/offers/**', (route) => {
-  if (route.request().url().includes('/app/session')) {
+  const url = route.request().url();
+  if (url.includes('/app/session')) {
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ token: 'test', user: { email: 'test@tn.ru', role: 'admin' } }),
     });
   }
-  const body = route.request().url().includes('/combat') ? { sheets: [] } : { offers: [] };
+  // Окно КП (2026-11-15): только две зоны из пяти, в обратном порядке —
+  // экран обязан нарисовать ровно их (проверка шага 3 ниже).
+  if (url.includes('/form')) {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        window: [
+          { kind: 'zone', id: 'items', visible: true },
+          { kind: 'zone', id: 'client', visible: true },
+          { kind: 'zone', id: 'systems', visible: false },
+          { kind: 'zone', id: 'materials', visible: false },
+          { kind: 'zone', id: 'sections', visible: false },
+        ],
+      }),
+    });
+  }
+  if (/\/offers\/\d+$/.test(url.split('?')[0] ?? '')) {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 1,
+        number: '001/2026',
+        ownerEmail: 'test@tn.ru',
+        client: { name: '', contact: '' },
+        items: [],
+        formValues: {},
+        systems: [],
+        total: 0,
+        status: 'draft',
+        createdAt: '2026-11-15T09:00:00Z',
+        updatedAt: '2026-11-15T09:00:00Z',
+      }),
+    });
+  }
+  const body = url.includes('/combat') ? { sheets: [] } : url.includes('/systems') ? { systems: [] } : { offers: [] };
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 });
 
@@ -124,6 +161,13 @@ check(
   '«Технодайджест»: свой экран',
   ((await page.locator('main h1').first().textContent()) ?? '').includes('Технодайджест'),
 );
+
+// Окно КП (2026-11-15, шаг 3): экран рисует ТОЛЬКО зоны из настройки и в её
+// порядке. Подмена `/form` выше отдаёт «позиции, заказчик» и прячет остальные.
+await page.goto(`${base}#/offer/1`, { waitUntil: 'networkidle' });
+const zoneTitles = (await page.locator('.app-card h2').allTextContents()).map((s) => s.trim());
+check('карточка КП: рисуются зоны из окна', zoneTitles.join('|') === 'Позиции|Заказчик', zoneTitles.join('|'));
+check('карточка КП: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 
 await page.goto(base, { waitUntil: 'networkidle' });
 check('открытие без хэша — приветствие', (await page.locator('.app-section-tile').count()) === 4);

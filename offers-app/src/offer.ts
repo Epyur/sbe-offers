@@ -76,12 +76,48 @@ export async function loadOffer(id: number): Promise<OfferDto> {
   return apiRequest<OfferDto>(`/offers/${id}`);
 }
 
-export async function saveClient(id: number, client: OfferClientDto): Promise<OfferDto> {
-  return apiRequest<OfferDto>(`/offers/${id}/client`, { method: 'PUT', body: client });
+/**
+ * Ответ ручек правки документа (2026-11-15, шаг 1 конфигуратора окна).
+ *
+ * `PUT /client` и `/items` больше не отдают голый `Offer`: сервер прикладывает
+ * незаполненные обязательные поля окна (`missingWindowFields`). Обязательность
+ * МЯГКАЯ — сохранение прошло, список только говорит, что осталось дополнить.
+ */
+export interface WindowSaveResponse {
+  offer: OfferDto;
+  missingRequired?: MissingFieldDto[];
 }
 
-export async function saveItems(id: number, items: OfferItemDto[]): Promise<OfferDto> {
-  return apiRequest<OfferDto>(`/offers/${id}/items`, { method: 'PUT', body: { items } });
+/** Пустое обязательное поле окна — то же, что уходит `missingWindowFields`. */
+export interface MissingFieldDto {
+  id: string;
+  label: string;
+}
+
+/**
+ * Чтение ответа на сохранение.
+ *
+ * Сервер отвечает `{"offer":…}`; на случай старого ответа (голый `Offer`, как
+ * до 0.11.0) разбираем обе формы. Иначе приложение показало бы пустую карточку
+ * на живом сервере прежней сборки — класс «сохранение прошло, экран пустой».
+ */
+export function readWindowSave(res: unknown): WindowSaveResponse {
+  if (typeof res !== 'object' || res === null) return { offer: res as OfferDto };
+  const candidate = res as Partial<WindowSaveResponse> & Partial<OfferDto>;
+  if (candidate.offer !== undefined && typeof candidate.offer === 'object' && candidate.offer !== null) {
+    return { offer: candidate.offer, missingRequired: candidate.missingRequired ?? [] };
+  }
+  return { offer: candidate as OfferDto };
+}
+
+export async function saveClient(id: number, client: OfferClientDto): Promise<WindowSaveResponse> {
+  const res = await apiRequest<unknown>(`/offers/${id}/client`, { method: 'PUT', body: client });
+  return readWindowSave(res);
+}
+
+export async function saveItems(id: number, items: OfferItemDto[]): Promise<WindowSaveResponse> {
+  const res = await apiRequest<unknown>(`/offers/${id}/items`, { method: 'PUT', body: { items } });
+  return readWindowSave(res);
 }
 
 /** Состав КП не меняет: `POST` возвращает выбранную систему и само предложение. */
