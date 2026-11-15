@@ -131,11 +131,21 @@ func validateOfferItems(items []OfferItem) string {
 }
 
 // respondWithOffer — ответ = документ после записи, как у `GET`.
+//
+// С 2026-11-15 ответ несёт ещё `missingRequired` — незаполненные обязательные
+// поля окна КП. Окно — настройка формы КП (`mode=client`), других режимов у
+// этих ручек нет. Обязательность мягкая: список информирует, сохранение уже
+// прошло. Если форму прочитать не удалось, отдаём пустой список: выдуманные
+// имена полей хуже, чем ничего.
 func (s *Server) respondWithOffer(w http.ResponseWriter, r *http.Request, id int64) {
 	saved, err := s.loadOffer(r.Context(), id)
 	if err != nil {
 		dbError(w, "запрос", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, saved)
+	missing := []WindowFieldRef{}
+	if form, err := s.loadForm(r.Context(), clientFormMode); err == nil {
+		missing = missingWindowFields(form, saved)
+	}
+	writeJSON(w, http.StatusOK, windowMissing{Offer: saved, MissingRequired: missing})
 }

@@ -182,7 +182,12 @@ type OfferForm struct {
 	// Пусто — правила по умолчанию (`skills.DefaultLinkGroupRules`), равные
 	// прежнему поведению: старая форма печатает документы как раньше.
 	LinkGroups LinkGroupRules `json:"linkGroups,omitempty"`
-	UpdatedAt  string         `json:"updatedAt"`
+	// Window — окно КП в приложении (2026-11-15): порядок, видимость и
+	// обязательность полей формы и зон экрана. Пусто — «как сейчас»
+	// (`effectiveWindow` строит нынешнее поведение), и старая форма не
+	// меняет ни экран, ни проверку обязательности.
+	Window    []WindowItem `json:"window,omitempty"`
+	UpdatedAt string       `json:"updatedAt"`
 	// HasLayout/LayoutName — загружен ли макет .docx (2026-11-05). Сами байты
 	// в JSON формы не отдаются: клиенту нужно знать, есть ли макет, а не
 	// тащить десятки килобайт в каждом ответе `/form`.
@@ -242,6 +247,10 @@ func validateForm(f OfferForm) string {
 		}
 	}
 	if msg := validateSections(f.Sections); msg != "" {
+		return msg
+	}
+	// Окно КП (2026-11-15) проверяется после полей: оно ссылается на их id.
+	if msg := validateWindow(f); msg != "" {
 		return msg
 	}
 	// Правила ссылок проверяются только если заданы: пусто — правила по
@@ -467,13 +476,13 @@ func (s *Server) loadForm(ctx context.Context, mode string) (OfferForm, error) {
 		mode = clientFormMode
 	}
 	var form OfferForm
-	var placeholders, blocks, required, sections, linkGroups []byte
+	var placeholders, blocks, required, sections, linkGroups, window []byte
 	var layoutDocx []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT id, mode, title, placeholders, blocks, required_fields, sections, link_groups,
+SELECT id, mode, title, placeholders, blocks, required_fields, sections, link_groups, window_config,
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), layout_docx, layout_name
 FROM offers_form WHERE mode = $1`, mode).
-		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &sections, &linkGroups,
+		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &sections, &linkGroups, &window,
 			&form.UpdatedAt, &layoutDocx, &form.LayoutName)
 	if err != nil {
 		// Строки нет вовсе — форма не настроена, показываем поля по умолчанию.
@@ -521,6 +530,16 @@ FROM offers_form WHERE mode = $1`, mode).
 	}
 	form.HasLayout = len(layoutDocx) > 0
 	form.LayoutFields, form.LayoutPrompts = describeLayout(layoutDocx)
+	// Окно КП (2026-11-15): пусто — «как сейчас», иначе сохранённый порядок
+	// плюс недостающее в конец невидимым. Редактор плагина получает ту же
+	// форму, что увидит приложение, — иначе он показал бы одно, а экран другое.
+	form.Window = make([]WindowItem, 0, len(window))
+	if len(window) > 0 {
+		if err := json.Unmarshal(window, &form.Window); err != nil {
+			return form, err
+		}
+	}
+	form.Window = effectiveWindow(form)
 	return form, nil
 }
 
@@ -623,6 +642,9 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	if form.Sections == nil {
 		form.Sections = []ContentSection{}
 	}
+	if form.Window == nil {
+		form.Window = []WindowItem{}
+	}
 	if msg := validateForm(form); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
 		return
@@ -665,15 +687,30 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 	form.LinkGroups = linkGroups
 
+	// Окно КП в приложении (2026-11-15). Маршалится ВСЁ, что клиент прислал:
+	// молча не записать настройку — ровно та потеря, которую поймал сторож
+	// `sections` (класс 0.1.18). Пусто — пишем `[]`: «настройки нет» значит
+	// умолчание, и оно должно пережить сохранение формы.
+	window := form.Window
+	if window == nil {
+		window = []WindowItem{}
+	}
+	windowJSON, err := json.Marshal(window)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
+
 	_, err = s.pool.Exec(r.Context(), `
-INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, sections, link_groups, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, sections, link_groups, window_config, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
 ON CONFLICT (mode) DO UPDATE SET
 	title = EXCLUDED.title, placeholders = EXCLUDED.placeholders,
 	blocks = EXCLUDED.blocks, required_fields = EXCLUDED.required_fields,
 	sections = EXCLUDED.sections, link_groups = EXCLUDED.link_groups,
+	window_config = EXCLUDED.window_config,
 	updated_at = now()`,
-		form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required, sections, linkGroupsJSON)
+		form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required, sections, linkGroupsJSON, windowJSON)
 	if err != nil {
 		dbError(w, "save form", err)
 		return

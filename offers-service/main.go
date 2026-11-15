@@ -399,6 +399,7 @@ func (s *Server) runMigrations(ctx context.Context, exec execFunc) error {
 			required_fields JSONB NOT NULL DEFAULT '[]',
 			sections        JSONB NOT NULL DEFAULT '[]',
 			link_groups     JSONB NOT NULL DEFAULT '[]',
+			window_config   JSONB NOT NULL DEFAULT '[]',
 			updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE TABLE IF NOT EXISTS offers_offer (
@@ -548,6 +549,11 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		// Пустой массив — правила по умолчанию: старые формы печатают ссылки как
 		// раньше, молча ничего не меняется.
 		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS link_groups JSONB NOT NULL DEFAULT '[]'`,
+
+		// Окно КП в приложении (2026-11-15): порядок, видимость и обязательность
+		// полей формы и зон экрана. Пустой массив — «как сейчас»: старые формы
+		// не меняют ни экран приложения, ни проверку обязательности.
+		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS window_config JSONB NOT NULL DEFAULT '[]'`,
 
 		// Вариации материала: один SKU — много ЕКН (толщина, цвет, размер).
 		// Уникальность по паре, а не по одному ЕКН: один и тот же материал
