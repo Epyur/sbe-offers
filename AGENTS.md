@@ -30,15 +30,32 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.3** — **RELEASED 2026-11-15.** `backend` `6b1165b`, `main` `aece47c`;
-self-hosted `manifest 23bcbe67…` / `main 60d8aa1b…` / `styles b15d618d…`,
-registry `sbe-apstore-registry` `49f87c3`. Service `offers` rebuilt and recreated
-(`*.bak-20261114-10103`); bot and App untouched. Live: all three auth gates `401`
-without credentials, `health ok`, and `offers_form` now really has `sections` and
-`link_groups` (migration ran on start).
-Previous release: 0.10.2 (`backend` `117655b`, `main` `d56ee02`).
+Current version = **0.10.4** — released 2026-11-15 (points of the release filled
+in after the deploy).
 
-**0.10.3 (2026-11-14): четыре дефекта формы КП после 0.10.2.** Живое
+**0.10.4 (2026-11-15): ввод названия раздела больше не обрывается на первой
+букве.** Жалоба пользователя: в «Разделах» заголовок набирался «не более чем по
+одной букве». Причина — обработчик `input` (`src/ui/sections-editor.ts`) звал
+`redraw()`, то есть пересобирал весь список карточек на каждое нажатие клавиши;
+вместе с карточкой уничтожалось само поле ввода и фокус, и следующая буква
+уходила в никуда. Тот же класс, что `input.value = ''` из 0.1.18 — тихая потеря
+введённого. Задержки в коде не было ни одной (`setTimeout` в редакторе нет):
+эффект «парализующей задержки» давала именно перерисовка.
+
+Что сделано: `redraw()` из обработчика убран, заголовок рамки предпросмотра
+обновляется точечно (`syncFramePreviewTitle`), остальное от заголовка не
+зависит. Сторож — `scripts/check_sections_typing.test.mjs` (`node --test`,
+2 проверки): читает исходник, вырезает комментарии и требует, чтобы НИ ОДИН
+обработчик `input` не звал `redraw()`. Проверен откатом: на старом файле
+красный, на новом зелёный.
+
+Изменился только плагин; сервис, бот, приложение и база не тронуты.
+
+**0.10.3 (2026-11-15): четыре дефекта формы КП после 0.10.2.** `backend`
+`6b1165b`, `main` `aece47c`; self-hosted `23bcbe67…` / `60d8aa1b…` / `b15d618d…`,
+registry `5fea4b3`→`49f87c3`. Service `offers` rebuilt (`*.bak-20261114-10103`);
+live: all three auth gates `401` without credentials, `health ok`, `offers_form`
+really has `sections` and `link_groups`. Живое
 использование 0.10.2 дало «собрать КП пока не получится». Всё изменилось
 **в плагине и в `offers-service`**; бот, приложение и база не тронуты.
 

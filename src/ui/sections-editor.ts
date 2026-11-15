@@ -115,7 +115,13 @@ function renderSectionCard(
   titleInput.addEventListener('input', () => {
     section.title = titleInput.value;
     deps.onChange?.();
-    redraw();
+    // redraw() здесь НЕ зовётся. Полная перерисовка списка уничтожает само поле
+    // ввода вместе с фокусом, и набранная следующая буква уходит в никуда —
+    // человек вводил заголовок раздела по одной букве (жалоба 2026-11-15).
+    // Заголовок в карточке ни на что, кроме себя, не влияет: печать читает его
+    // при сборке документа. Заголовок рамки в предпросмотре обновляется сам —
+    // см. правку внутри renderFramePreview.
+    syncFramePreviewTitle(card, titleInput.value);
   });
 
   copyChip(head, section);
@@ -349,6 +355,21 @@ function renderFramePreview(card: HTMLElement, section: ContentSection, deps: Se
     box.createSpan({ cls: 'tn-offers-frame-sub-title', text: sub.title || '(без заголовка)' });
     box.createSpan({ cls: 'tn-offers-muted', text: ` (${conditionWords(sub.condition)}${repeatNote})` });
   }
+}
+
+/**
+ * syncFramePreviewTitle — обновляет заголовок рамки в предпросмотре, НЕ
+ * перерисовывая карточку.
+ *
+ * Зачем отдельная функция, а не `redraw()`: полная перерисовка списка
+ * уничтожает поле ввода вместе с фокусом и курсором, и следующая набранная
+ * буква уходит в никуда. Живой случай 2026-11-15: заголовок раздела вводился
+ * «по одной букве». Здесь меняется только текст заголовка в уже нарисованной
+ * рамке — остальное (подразделы, условия) от заголовка не зависит.
+ */
+function syncFramePreviewTitle(card: HTMLElement, title: string): void {
+  const titleEl = card.querySelector('.tn-offers-frame-title');
+  if (titleEl) titleEl.textContent = title || '(без заголовка)';
 }
 
 /** Чип копирования метки `{ content: <id> }` — как у блоков `{{block:<id>}}`. */
