@@ -14,6 +14,8 @@ import {
   renderLinkGroupsEditor,
   validateLinkGroupRules,
 } from './link-groups-editor';
+import { WINDOW_EDITOR_TEXTS, renderWindowEditor, type WindowEditorHandle } from './window-editor';
+import { windowForEditor, windowForSave, windowProblem, windowSummary } from './window-model';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
@@ -103,7 +105,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       del.addEventListener('click', () => {
         placeholders.splice(i, 1);
         required.delete(p.id);
-        drawFields();
+        redrawFields();
       });
     });
   };
@@ -111,8 +113,44 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   const addField = fieldsCard.createEl('button', { text: '➕ Поле', cls: 'tn-btn tn-btn-ghost' });
   addField.addEventListener('click', () => {
     placeholders.push({ id: `field_${placeholders.length + 1}`, label: 'Новое поле' });
-    drawFields();
+    redrawFields();
   });
+
+  // Окно КП в приложении (2026-11-15, шаг 4). Сразу после «Полей формы»: там
+  // администратор заводит поля, и следующая карточка обязана отвечать на
+  // вопрос «где они будут у менеджера». Пусто с сервера — «как сейчас».
+  const windowItems = windowForEditor(form.window, placeholders);
+  const windowGroup = renderCollapsibleGroup(container, {
+    title: WINDOW_EDITOR_TEXTS.groupTitle,
+    hint: windowSummary(windowItems),
+  });
+  const windowHint = windowGroup.body
+    .closest('.tn-offers-group')
+    ?.querySelector('.tn-offers-group-hint');
+  let windowEditor: WindowEditorHandle | null = null;
+
+  // Окно зависит от `placeholders`, поэтому перерисовывается при каждой правке
+  // списка полей формы: убранное поле уходит из окна, новое дописывается.
+  const drawWindow = (): void => {
+    windowEditor = renderWindowEditor(windowGroup.body, windowItems, placeholders, {
+      onChange: () => {
+        // Заголовок группы несёт сводку: «видно N, обязательных M» — она
+        // должна быть верной в СВЁРНУТОМ виде, а не только в раскрытом.
+        if (windowHint instanceof HTMLElement) windowHint.setText(windowSummary(windowItems));
+      },
+    });
+  };
+  drawWindow();
+
+  /** Правка списка полей: за ней обязано последовать окно.
+   *
+   *  Объявлена функцией, а не `const`: её зовут обработчики «✖»/«➕ Поле»,
+   *  объявленные выше по коду, и `const` оказался бы ещё в TDZ в момент
+   *  развешивания слушателей. */
+  function redrawFields(): void {
+    drawFields();
+    windowEditor?.syncWithForm(placeholders);
+  }
 
   // Блоки документа: заголовок группы несёт счётчик и кнопку «Опишите блок
   // словами» — она принадлежит блокам и должна быть видна, когда группа
@@ -238,6 +276,16 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       linkGroupsGroup.setOpen(true);
       return;
     }
+    // Окно проверяется до запроса: неизвестная зона, поле-призрак или скрытое
+    // обязательное отвергаются сервером, и человек должен узнать причину там,
+    // где её создал, а не из общего отказа сохранения.
+    const windowToSave = windowForSave(windowItems);
+    const windowError = windowProblem(windowToSave, placeholders);
+    if (windowError) {
+      new Notice(`Окно КП: ${windowError}`);
+      windowGroup.setOpen(true);
+      return;
+    }
     const payload: OfferForm = {
       ...form,
       title: titleInput.value.trim() || (mode === 'combat' ? 'Боевой листок' : 'Коммерческое предложение'),
@@ -245,6 +293,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       blocks,
       sections,
       linkGroups,
+      window: windowToSave,
       requiredFields: Array.from(required),
     };
     try {
