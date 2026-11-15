@@ -30,8 +30,10 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.4** — released 2026-11-15 (points of the release filled
-in after the deploy).
+Current version = **0.10.4** — **RELEASED 2026-11-15.** `backend` `0bdfc73`, `main` `bfea7ea`;
+self-hosted `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…`,
+registry `sbe-apstore-registry` `0bb9bce`. Plugin-only release: service, bot and
+App untouched (no rebuild).
 
 **0.10.4 (2026-11-15): ввод названия раздела больше не обрывается на первой
 букве.** Жалоба пользователя: в «Разделах» заголовок набирался «не более чем по

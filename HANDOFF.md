@@ -25,10 +25,10 @@
 | | значение |
 |---|---|
 | версия | **0.10.4** |
-| `backend` | _(заполняется при коммите)_ |
-| `main` | _(заполняется при переносе)_ |
-| самораздача | `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…` |
-| реестр (git-копия) | `sbe-apstore-registry` _(заполняется)_ |
+| `backend` | `0bdfc73` (код + доки) |
+| `main` | `bfea7ea` (релизный срез 0.10.4; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
+| самораздача | `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…`, сверено в `/registry.json` по https |
+| реестр (git-копия) | `sbe-apstore-registry` `0bb9bce`; `/registry.json` отдаёт `0.10.4`, `uploadedAt 2026-11-15T07:45:25Z` |
 | сервис `offers` / бот / приложение | **не пересобирались** — менялся только плагин |
 
 | файл | sha256 | байт |
