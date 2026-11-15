@@ -30,8 +30,12 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.3** — released 2026-11-14 (points of the release, hashes
-and branch SHAs are filled in at the bottom of this block after the deploy).
+Current version = **0.10.3** — **RELEASED 2026-11-15.** `backend` `6b1165b`, `main` `aece47c`;
+self-hosted `manifest 23bcbe67…` / `main 60d8aa1b…` / `styles b15d618d…`,
+registry `sbe-apstore-registry` `49f87c3`. Service `offers` rebuilt and recreated
+(`*.bak-20261114-10103`); bot and App untouched. Live: all three auth gates `401`
+without credentials, `health ok`, and `offers_form` now really has `sections` and
+`link_groups` (migration ran on start).
 Previous release: 0.10.2 (`backend` `117655b`, `main` `d56ee02`).
 
 **0.10.3 (2026-11-14): четыре дефекта формы КП после 0.10.2.** Живое
