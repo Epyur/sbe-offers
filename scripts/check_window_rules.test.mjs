@@ -19,6 +19,7 @@ import {
   defaultWindow,
   dropMissingFields,
   formFieldWindow,
+  instructionFields,
   moveWindowItem,
   windowForEditor,
   windowForSave,
@@ -198,4 +199,31 @@ test('карточка КП в плагине: скрытое обязатель
 
 test('окно по умолчанию не знает обязательности — её задаёт администратор', () => {
   assert.ok(defaultWindow(placeholders).every((i) => i.required === false));
+});
+
+/* --- Шаг 5: бриф вместо промта в предпросмотре -------------------------- */
+
+test('бриф: поля из инструкции называются подписями формы', () => {
+  // `{{id}}` — всегда id; `[Подпись]` ищется по подписи и по id.
+  const fields = instructionFields(
+    'Опиши объект {{object_name}} для [Поставщик]. Адрес: [object_name].',
+    placeholders,
+  );
+  assert.deepEqual(fields, ['Объект', 'Поставщик']);
+});
+
+test('бриф: повтор поля не дублируется, порядок — по встрече', () => {
+  const fields = instructionFields('[Поставщик], затем [Объект], снова [Поставщик]', placeholders);
+  assert.deepEqual(fields, ['Поставщик', 'Объект']);
+});
+
+test('бриф: незнакомое поле остаётся своим именем — опечатку видно', () => {
+  // Молча проглотить нельзя: администратор ищет, почему в документе пусто.
+  assert.deepEqual(instructionFields('Про [Несуществующее поле]', placeholders), ['Несуществующее поле']);
+  assert.deepEqual(instructionFields('Про {{no_such}}', placeholders), ['no_such']);
+});
+
+test('бриф: инструкция без подстановок не даёт полей', () => {
+  assert.deepEqual(instructionFields('Просто напиши вступление по данным КП.', placeholders), []);
+  assert.deepEqual(instructionFields('', placeholders), []);
 });

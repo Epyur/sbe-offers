@@ -210,6 +210,57 @@ export function formFieldWindow(
   }
   return { placeholders: visible, required };
 }
+
+/**
+ * Поля, на которые ссылается инструкция блока «Текст по промту».
+ *
+ * Просьба пользователя (2026-11-15): «сейчас в блоках выводится не конечный
+ * текст, который увидит менеджер, а текст промта с местами для заполнения
+ * брифом — менеджеры вообще не понимают, что это». В предпросмотре вместо
+ * промта теперь заглушка, а список полей нужен под ней — чтобы администратор
+ * видел, ЧТО модель получит значениями, а не придумает сама.
+ *
+ * Ищем обе формы подстановки, которые понимает печать: `[Поле]` и `{{поле}}`.
+ * Возвращаются подписи из формы в порядке встречи; повтор не дублируется;
+ * неизвестное имя остаётся как есть — администратор должен видеть опечатку,
+ * а не пустое место.
+ */
+export function instructionFields(instruction: string, placeholders: Placeholder[]): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  const re = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\[([^[\]]{1,120})\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(instruction)) !== null) {
+    const raw = (match[1] ?? match[2] ?? '').trim();
+    if (raw === '') continue;
+    // `{{id}}` — всегда id; `[Подпись]` — подпись или id, ищем по обоим.
+    const label = match[1] !== undefined ? labelByID(raw, placeholders) : labelByText(raw, placeholders);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+  }
+  return labels;
+}
+
+function labelByID(id: string, placeholders: Placeholder[]): string {
+  const direct = placeholders.find((p) => p.id === id);
+  if (direct) return direct.label;
+  const loose = placeholders.find((p) => p.id === id.trim().toLowerCase().replace(/\s+/g, '_'));
+  return loose?.label ?? id;
+}
+
+function labelByText(raw: string, placeholders: Placeholder[]): string {
+  const exact = placeholders.find((p) => p.label === raw || p.id === raw);
+  if (exact) return exact.label;
+  const lower = raw.toLowerCase();
+  const loose = placeholders.find(
+    (p) => p.label.toLowerCase() === lower || p.id === raw.trim().toLowerCase().replace(/\s+/g, '_'),
+  );
+  return loose?.label ?? raw;
+}
+
+/** Подпись группы: сколько элементов видно и сколько из них обязательные. */
 export function windowSummary(items: WindowItem[]): string {
   const visible = items.filter((item) => item.visible !== false).length;
   const required = items.filter((item) => item.visible !== false && item.required === true).length;
