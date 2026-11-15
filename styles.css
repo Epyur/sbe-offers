@@ -978,6 +978,65 @@
   font-size: 0.9em;
 }
 
+/* Редактор окна КП в приложении (2026-11-15, шаг 4). Строка окна компактнее
+   обычной карточки: их бывает больше десятка (пять зон и все поля формы).
+   Скрытое гасится прозрачностью, а не исчезает: администратор должен видеть,
+   что он спрятал, и вернуть одной галочкой. */
+.tn-offers-window-hint {
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.tn-offers-window-item {
+  padding: 8px;
+  margin-bottom: 6px;
+}
+
+.tn-offers-window-item.is-hidden {
+  opacity: 0.6;
+}
+
+.tn-offers-window-item-zone {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.tn-offers-window-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tn-offers-window-zone {
+  font-weight: 600;
+}
+
+.tn-offers-window-field {
+  font-weight: 400;
+}
+
+.tn-offers-window-checks {
+  gap: 16px;
+  font-size: 0.9em;
+}
+
+/* Предпросмотр окна: ровно то, что менеджер увидит в карточке КП. */
+.tn-offers-window-preview {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+.tn-offers-window-preview-title {
+  font-size: 0.9em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.tn-offers-window-preview-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
 /* Контекст КП: карточки систем из Базы знаний (2026-10-29) */
 .tn-offers-context-hint {
   margin-bottom: 12px;
@@ -1240,6 +1299,55 @@
   font-style: italic;
   margin: 6px 0;
   text-indent: 0;
+}
+
+/* Заглушка и свёрнутый бриф для блока «Текст по промту» (2026-11-15, шаг 5).
+   Менеджер видел в предпросмотре сам промт и не понимал, что это;
+   администратору же инструкция нужна — поэтому она ушла в <details>. */
+.tn-offers-preview-prompt-stub {
+  text-indent: 0;
+  padding: 6px 10px;
+  border-left: 3px dashed var(--background-modifier-border);
+  margin: 6px 0;
+}
+
+.tn-offers-brief-preview {
+  font-family: var(--font-interface);
+  font-size: 0.85em;
+  margin: 4px 0 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  text-indent: 0;
+  background: var(--background-secondary);
+}
+
+.tn-offers-brief-preview > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tn-offers-brief-preview-label {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+.tn-offers-brief-preview-text {
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+
+.tn-offers-brief-preview-fields {
+  margin: 2px 0 0;
+  padding-left: 20px;
+}
+
+.tn-offers-brief-preview-note {
+  margin-top: 8px;
+  color: var(--text-faint);
+  font-style: italic;
 }
 
 .tn-offers-preview-field {

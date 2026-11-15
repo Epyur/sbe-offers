@@ -1,4 +1,22 @@
 import type { Block, Placeholder, RichNode } from '../types/offers';
+import { instructionFields } from './window-model';
+
+/**
+ * Тексты заглушки и свёрнутого брифа (2026-11-15, шаг 5).
+ *
+ * Вынесены в константы, чтобы их видела и проверка бандла
+ * (`check_bundle_strings.mjs`): это ровно те строки, которые читает менеджер,
+ * и «пропали из сборки» проверяется по ним, а не на глаз.
+ */
+export const PROMPT_STUB = 'Здесь будет текст, который напишет модель.';
+export const PROMPT_BRIEF_TITLE = '📋 Бриф для модели';
+export const PROMPT_BRIEF_INSTRUCTION = 'Что писать (инструкция модели)';
+export const PROMPT_BRIEF_HINT = 'Уточнение';
+export const PROMPT_BRIEF_LIMIT = 'Длина';
+export const PROMPT_BRIEF_FIELDS = 'Поля, которые получат значения из КП';
+export const PROMPT_BRIEF_EMPTY = 'Инструкция не задана: модель напишет по общим данным КП.';
+export const PROMPT_BRIEF_PRINTED =
+  'В готовом документе этого брифа нет: здесь печатается написанный текст, оформление — из макета Word.';
 
 /**
  * Живой предпросмотр формы КП (2026-11-05).
@@ -88,11 +106,7 @@ function renderPreviewNode(parent: HTMLElement, node: RichNode, deps: PreviewDep
       });
       return;
     case 'prompt_text':
-      parent.createDiv({
-        cls: 'tn-offers-preview-note',
-        text: `✨ Текст напишет модель по данным КП: «${node.instruction ?? ''}»` +
-          (node.maxWords ? ` (до ${node.maxWords} слов)` : ''),
-      });
+      renderPromptPreview(parent, node, deps);
       return;
     case 'image':
       renderPreviewImage(parent, node, deps);
@@ -109,6 +123,59 @@ function renderPreviewNode(parent: HTMLElement, node: RichNode, deps: PreviewDep
       appendText(p, node.text ?? '', deps);
     }
   }
+}
+
+/**
+ * Блок «Текст по промту»: заглушка вместо сырого промта (2026-11-15, шаг 5).
+ *
+ * Просьба пользователя: «сейчас в блоках выводится не конечный текст, который
+ * увидит менеджер, а текст промта с местами для заполнения брифом —
+ * менеджеры вообще не понимают, что это и как с этим работать, нужно чтобы
+ * поля брифа можно было добавлять сворачиваемым блоком».
+ *
+ * Поэтому: в теле документа — честная заглушка («здесь будет текст»), а сам
+ * бриф — отдельным свёрнутым `<details>`. Менеджер видит, что раздел будет,
+ * администратор одним кликом проверяет инструкцию.
+ *
+ * Почему `<details>`, а не свой аккордеон: это содержательная вставка внутри
+ * предпросмотра, у неё нет состояния «открыто» дольше жизни блока, и нативный
+ * элемент делает то же самое без ещё одного компонента (решение из спеки §7).
+ */
+function renderPromptPreview(parent: HTMLElement, node: RichNode, deps: PreviewDeps): void {
+  const stub = parent.createDiv({ cls: 'tn-offers-preview-prompt-stub' });
+  stub.createDiv({ cls: 'tn-offers-preview-note', text: PROMPT_STUB });
+
+  const details = parent.createEl('details', { cls: 'tn-offers-brief-preview' });
+  details.createEl('summary', { text: PROMPT_BRIEF_TITLE });
+
+  const instruction = (node.instruction ?? '').trim();
+  if (instruction === '') {
+    details.createDiv({ cls: 'tn-offers-muted', text: PROMPT_BRIEF_EMPTY });
+  } else {
+    details.createDiv({ cls: 'tn-offers-brief-preview-label', text: PROMPT_BRIEF_INSTRUCTION });
+    details.createDiv({ cls: 'tn-offers-brief-preview-text', text: instruction });
+  }
+
+  if (node.hint && node.hint.trim() !== '') {
+    details.createDiv({ cls: 'tn-offers-brief-preview-label', text: PROMPT_BRIEF_HINT });
+    details.createDiv({ cls: 'tn-offers-brief-preview-text', text: node.hint.trim() });
+  }
+
+  if (node.maxWords) {
+    details.createDiv({
+      cls: 'tn-offers-muted',
+      text: `${PROMPT_BRIEF_LIMIT}: до ${node.maxWords} слов`,
+    });
+  }
+
+  const fields = instructionFields(instruction, deps.placeholders);
+  if (fields.length > 0) {
+    details.createDiv({ cls: 'tn-offers-brief-preview-label', text: PROMPT_BRIEF_FIELDS });
+    const list = details.createEl('ul', { cls: 'tn-offers-brief-preview-fields' });
+    for (const label of fields) list.createEl('li', { text: label });
+  }
+
+  details.createDiv({ cls: 'tn-offers-brief-preview-note', text: PROMPT_BRIEF_PRINTED });
 }
 
 /** Картинка: рамка с подписью источника. */

@@ -30,10 +30,153 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.4** — **RELEASED 2026-11-15.** `backend` `0bdfc73`, `main` `bfea7ea`;
-self-hosted `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…`,
-registry `sbe-apstore-registry` `0bb9bce`. Plugin-only release: service, bot and
-App untouched (no rebuild).
+Current version = **0.11.0** — **RELEASED 2026-11-15.** `backend` `9cd5064`,
+`main` `bfea7ea`; self-hosted `manifest 7685465c…` /
+`main ac2f1069…` / `styles fcb9758f…`, registry `sbe-apstore-registry`.
+Конфигуратор окна КП в приложении (шаги 1–7 плана). The service was rebuilt
+(migration `window_config`); the bot and the App are unchanged.
+
+> **RELEASED — конфигуратор окна КП в приложении (0.11.0, 2026-11-15).**
+> **Семь шагов из семи сделаны.** Администратор задаёт
+> порядок, видимость и обязательность полей формы **и** зон экрана приложения
+> (`client`/`systems`/`items`/`materials`/`sections`); настройка живёт в
+> `offers_form.window_config JSONB`; пусто = «как сейчас». Обязательность —
+> **мягкая** (предупреждение, сохранение проходит). Предпросмотр `prompt_text`
+> вместо сырого промта показывает заглушку текста и свёрнутый «Бриф для модели».
+> Читать: спека `docs/superpowers/specs/2026-11-15-sbe-offers-window-configurator-design.md`,
+> план `docs/superpowers/plans/2026-11-15-sbe-offers-window-configurator-plan.md`,
+> вход нового контекста `docs/superpowers/plans/2026-11-15-sbe-offers-window-START-HERE.md`.
+> **Эти три файла лежат вне папки плагина** — `C:\Obsidian\mailers\docs\superpowers\`;
+> путь `sbe-offers/docs/…` внутри плагина пуст.
+> Состояние шагов 1–7 — `HANDOFF.md`, блок «Конфигуратор окна КП — состояние на
+> 2026-11-15», там же таблица семи шагов, точки выпуска и принятые решения (в
+> том числе «скрытое обязательное запрещено»). Стенд — **535/0**.
+
+**Конфигуратор окна КП — шаг 1, код сервера (2026-11-15).** `offers-service/form_window.go`:
+`WindowItem{Kind,ID,Label,Visible,Required}`, `knownWindowZones` (`client`,
+`systems`, `items`, `materials`, `sections`), `windowZoneTitles`,
+`effectiveWindow` (пусто → нынешнее поведение), `defaultWindow`,
+`normalizeWindow` (порядок записанного главный; неизвестное и дубли
+выкидываются; недостающее дописывается в конец **невидимым**; при `!Visible`
+снимается `Required`), `validateWindow` (скрытое обязательное —
+**отвергается**), `missingWindowFields` (`Required && Visible && пусто`),
+`windowMissing`. `form.go`: `OfferForm.Window`, `validateWindow` в
+`validateForm`, `window_config` в `loadForm`/`handleSaveForm`. `main.go`:
+колонка в `CREATE` и `ALTER`. `offerfields.go`: `respondWithOffer` отвечает
+`{"offer":…,"missingRequired":[…]}`, поэтому `PUT /offers/{id}/client` и
+`/items` **больше не отдают голый `Offer`** — приложение обязано читать
+`res.offer` (шаг 3). Тесты: `form_window_test.go`, `form_window_schema_test.go`,
+`window_required_test.go` — 16 проверок окна, все сторожа прогнаны откатом.
+Проверки шага: `gofmt` чисто, `go vet` 0, `go test -count=1 ./...` зелёный.
+**Окно читается всегда из формы `clientFormMode`** — у этих ручек других
+режимов нет.
+
+**Конфигуратор окна КП — шаг 2, чистая часть приложения (2026-11-15).**
+`offers-app/src/window.ts` (без DOM, проверяется `node --test`):
+`WindowZoneId`, `DEFAULT_ZONES` (нынешний порядок экрана), `ZONE_TITLES`,
+`WindowItemDto`/`OfferFormWindowDto` (форма `GET /form`), `visibleZones`
+(пусто → умолчание; скрытое не возвращается; незнакомое и дубли зон
+отбрасываются; поля зонами не становятся), `zoneOf`, `loadOfferWindow`
+(`GET /form?mode=client`; **ошибка → `null`**, не исключение),
+`zonesForScreen` (`null` → все зоны), `requiredOf` (пустые обязательные для
+подсветки; правила те же, что у `missingWindowFields`, **мягко**).
+Тест `test/window.test.ts` — **16 проверок**, сторожа прогнаны откатом
+(убрать проверку `visible`/перевернуть «пусто → умолчание» → 2 красных).
+Проверки: приложение `typecheck` 0, `npm test` **69/69** (было 53), `build`
+OK, `size` код 105 734 / картинки 192 618 Б из 204 800. Плагин, сервис, бот и
+база не менялись — только два новых файла в `offers-app`.
+
+**Конфигуратор окна КП — шаг 3, экран рисует зоны окна (2026-11-15).**
+`offer-screen.tsx`: `OfferCard` грузит окно третьим запросом того же
+`Promise.all`, зоны рисуются `zones.map(...)` через компонент `Zone` (`switch`
+по зоне), невидимые не доходят вовсе; над зонами — `app-window-note` («настройку
+окна прочитать не удалось — показаны все разделы», когда `/form` не прочитался)
+и мягкое «Не заполнено обязательное: …»; `ClientZone` получает `required` и
+класс `app-required`. `offer.ts`: `readWindowSave` / `WindowSaveResponse` —
+`PUT /client` и `/items` читают `res.offer` и отдают `missingRequired`;
+**старый голый `Offer` тоже разбирается** (иначе сервер прежней сборки дал бы
+пустую карточку). `styles.ts`: `app-window-note`, `app-required` (мягкая рамка,
+сохранение не блокируется). Тесты: `offer.test.ts` +3 (новая форма ответа,
+отсутствие `missingRequired` → `[]`, старый ответ); `check_home_screen.mjs`
+подменяет `/form` окном «позиции, заказчик» и проверяет на `#/offer/1`, что
+нарисованы ровно эти зоны — **11/11**, сторож прогнан откатом. Проверки:
+`typecheck` 0, `npm test` **72/72**, `build` OK, `size` код 107 025 / картинки
+192 618 Б. Без `FieldsZone` намеренно: элементы `kind:"field"` рисуются вместе с
+редактором (шаг 4), иначе заводится вторая правда о полях.
+
+**Конфигуратор окна КП — шаг 4, редактор в плагине (2026-11-15).**
+`src/ui/window-model.ts` (чистые правила, без DOM): `KNOWN_ZONES`/`ZONE_TITLES`
+(набор и порядок равны серверу), `windowTitle` (зона — подпись из кода, поле —
+из формы), `defaultWindow` (пусто = «как сейчас»), `windowForEditor`,
+`windowProblem` (неизвестная зона, поле-призрак, дубль; `required` только у
+полей и зоны `client`; **скрытое обязательное отвергается**), `windowForSave`
+(снимает `required` у скрытого), `windowPreview`, `windowSummary`,
+`moveWindowItem`, `dropMissingFields` (поле убрали из формы — уходит из окна),
+`appendNewFields` (новое поле — в конец **видимым**, осознанно иначе, чем
+серверная нормализация старой формы), `formFieldWindow` (что рисовать в
+карточке КП в плагине). `src/ui/window-editor.ts` — DOM: строки с ▲/▼, ✖
+только у полей, галочки `виден`/`обязателен` (снимается при скрытии),
+read-only подпись, «↩ Вернуть все поля формы», предпросмотр «Что увидит
+менеджер». `form-editor.ts` — аккордеон «Окно КП в приложении» сразу после
+«Полей формы», сводка в заголовке (видна свёрнутой), `redrawFields` — функция,
+а не `const` (слушатели объявлены выше: `const` был бы в TDZ), при сохранении
+окно нормализуется и проверяется с раскрытием группы. `offers-list.ts` —
+скрытое поле не показывается и в плагине (`formFieldWindow`), иначе настройка
+действовала бы только на телефоне. `help.ts` — раздел про окно. Тесты:
+`scripts/check_window_rules.test.mjs` — **17 проверок**, сторожа (скрытое
+обязательное, снятие `required` при сохранении) прогнаны откатом. Проверки:
+`npx tsc --noEmit` 0, `build` OK, `check_bundle_strings` 0 (новые иглы),
+`check_marker_registry` OK, `check_sections_conditions` 16/16.
+
+**Конфигуратор окна КП — шаг 5, бриф вместо промта (2026-11-15).**
+`form-preview.ts`, ветка `prompt_text`: в теле документа — заглушка «Здесь
+будет текст, который напишет модель.», под ней свёрнутый
+`<details class="tn-offers-brief-preview">` «📋 Бриф для модели» с инструкцией
+целиком, «Уточнением», «Длиной», списком «Поля, которые получат значения из
+КП» и строкой «В готовом документе этого брифа нет…». Тексты — константы
+`PROMPT_STUB`/`PROMPT_BRIEF_*`, чтобы их проверял `check_bundle_strings`.
+`window-model.ts`: `instructionFields` (обе формы `{{id}}` и `[Подпись]`,
+подписи из формы, порядок встречи, без дублей, **незнакомое имя остаётся
+своим** — опечатку видно). Стили `tn-offers-preview-prompt-stub`,
+`tn-offers-brief-preview*`. Тесты: `check_window_rules` **21/21**
+(+4 про `instructionFields`), сторожа (дубли, незнакомое имя) прогнаны
+откатом. Проверки: `tsc` 0, `build` OK, `check_bundle_strings` 0,
+`check_marker_registry` OK, `check_sections_conditions` 16/16. **Следующий —
+шаг 6** (стенд: секция «Окно КП» + справка).
+
+**Конфигуратор окна КП — шаг 6, стенд и справка (2026-11-15).**
+`scripts/offers_local_e2e.mjs`: новая `sectionWindow()` — **20 проверок**
+(порядок зон пережил сохранение; пустое окно = пять зон в прежнем порядке;
+неизвестная зона → 400 русским текстом с id; обязательная зона кроме
+«Заказчика» → 400; скрытое обязательное → 400; скрытое поле не попадает в
+`missingRequired`; `PUT /offers/{id}/client` с пустым обязательным → 200 и
+`missingRequired` — обязательность мягкая, документ сохранён; пустой список —
+массив). **Там же починены 9 протухших проверок** секций 5c/5d: с шага 1 эти
+ручки отвечают `{offer, missingRequired}`, а стенд читал голый `Offer`.
+`src/ui/help.ts` — раздел «Окно КП в приложении: что увидит менеджер»
+вычитан под фактическое поведение (подписи зон, `required_fields`, снятие
+обязательности у скрытого на чтении, кнопка «↩ Вернуть все поля формы»,
+проверка при сохранении и запрет убирать зону). `check_bundle_strings` +3
+иглы. **Дефект, найденный проверкой:** отказ «помечено обязательным, но
+скрыто» печатал `«»` вместо подписи поля — `validateWindow` собирал
+`WindowItem` без `Label`; теперь подпись берётся из `placeholders`
+(`windowTitle`). Проверки: стенд **535/0** (515 + 20), плагин `tsc` 0,
+`build` OK, `check_bundle_strings` 0, `check_window_rules` 21/21,
+сервис `gofmt`/`go vet`/`go test -count=1` зелёные. Сторожа прогнаны
+откатом (неизвестная зона — 2 красных, подпись — 1 красный).
+
+**Конфигуратор окна КП — шаг 7, фиксация (2026-11-15, ВЫПУЩЕНО 0.11.0).**
+`manifest.json` и `package.json`: `0.10.4` → **`0.11.0`**. `src/main.ts` —
+новость ЦУП переписана под конфигуратор окна (какие разделы и поля видит
+менеджер, порядок, скрытие без потери данных, мягкая обязательность) и под
+бриф вместо промта в предпросмотре; новость 0.10.4 снята.
+`scripts/check_bundle_strings.mjs` — иглы 0.10.4 сняты, +4 иглы 0.11.0;
+**все иглы без кавычек-«ёлочек»** (esbuild пишет их как `\xAB`/`\xBB`, проверка
+знает только `\uXXXX` — грабля 2026-11-02 подтвердилась снова). Точки выпуска
+(хэши, ветки, реестр) — `HANDOFF.md`, «Три точки сходятся (0.11.0)».
+**Права проверены на стенде:** `PUT /offers/{id}/client` и `/items` под
+`requirePerm("editor")` — без токена `401`, чужак `403`; `/bot/*` без секрета
+`401`. Новых ручек нет; бот, агент и печать DOCX не трогались.
 
 **0.10.4 (2026-11-15): ввод названия раздела больше не обрывается на первой
 букве.** Жалоба пользователя: в «Разделах» заголовок набирался «не более чем по

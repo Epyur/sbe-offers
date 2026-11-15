@@ -10,6 +10,7 @@ import {
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { formatMoney, itemsTotal } from '../utils/money';
 import { renderBriefCard } from './brief-editor';
+import { formFieldWindow } from './window-model';
 import { renderSheetUpload } from './sheet-upload';
 import { renderFormEditor } from './form-editor';
 import { renderPicker, type PickerCandidate } from './picker';
@@ -502,12 +503,15 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
   formCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы' });  const formValues: Record<string, string> = { ...(current.formValues ?? {}) };
   try {
     const form = await view.plugin.offersService.getForm('client');
-    for (const p of form.placeholders) {
+    // Окно КП (2026-11-15, шаг 4): скрытое администратором поле не показываем
+    // и здесь, иначе настройка действовала бы только на телефоне.
+    const fields = formFieldWindow(form.window, form.placeholders, form.requiredFields);
+    for (const p of fields.placeholders) {
       const row = formCard.createDiv({ cls: 'tn-offers-row' });
       row.createSpan({ cls: 'tn-offers-form-label', text: p.label });
       const input = row.createEl('input', { cls: 'tn-offers-input tn-offers-grow' });
       input.value = formValues[p.id] ?? '';
-      if (form.requiredFields.includes(p.id)) input.addClass('is-required');
+      if (fields.required.has(p.id)) input.addClass('is-required');
       input.addEventListener('input', () => {
         formValues[p.id] = input.value;
       });

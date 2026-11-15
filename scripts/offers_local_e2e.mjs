@@ -618,9 +618,13 @@ console.log('\n5c. Карточка КП из приложения: точечн
     body: { name: 'Новый заказчик', contact: 'Пётр' },
   });
   ok('правка заказчика → 200', clientRes.status === 200, `status ${clientRes.status}`);
-  ok('заказчик записан', clientRes.json?.client?.name === 'Новый заказчик', clientRes.json?.client?.name);
-  ok('позиции правкой заказчика не тронуты', (clientRes.json?.items ?? []).length === 1, `${(clientRes.json?.items ?? []).length} строк`);
-  ok('updatedAt сдвинулся при правке заказчика', (clientRes.json?.updatedAt ?? '') !== before, `${before} → ${clientRes.json?.updatedAt}`);
+  // С 2026-11-15 (окно КП, шаг 1) обе точечные ручки отвечают
+  // `{offer, missingRequired}`, а не голым `Offer`: документ читается из
+  // `res.offer`. Так же его читает приложение (`readWindowSave`).
+  const clientOffer = clientRes.json?.offer;
+  ok('заказчик записан', clientOffer?.client?.name === 'Новый заказчик', clientOffer?.client?.name);
+  ok('позиции правкой заказчика не тронуты', (clientOffer?.items ?? []).length === 1, `${(clientOffer?.items ?? []).length} строк`);
+  ok('updatedAt сдвинулся при правке заказчика', (clientOffer?.updatedAt ?? '') !== before, `${before} → ${clientOffer?.updatedAt}`);
 
   const contactOnly = await call('PUT', `/offers/${cardId}/client`, {
     token: ownerToken,
@@ -628,7 +632,7 @@ console.log('\n5c. Карточка КП из приложения: точечн
   });
   ok('контакт без названия → 400', contactOnly.status === 400, `status ${contactOnly.status}`);
 
-  const itemsBefore = clientRes.json?.updatedAt ?? '';
+  const itemsBefore = clientOffer?.updatedAt ?? '';
   const itemsRes = await call('PUT', `/offers/${cardId}/items`, {
     token: ownerToken,
     body: {
@@ -638,17 +642,18 @@ console.log('\n5c. Карточка КП из приложения: точечн
       ],
     },
   });
+  const itemsOffer = itemsRes.json?.offer;
   ok('правка позиций → 200', itemsRes.status === 200, `status ${itemsRes.status}`);
-  ok('позиций стало две', (itemsRes.json?.items ?? []).length === 2, `${(itemsRes.json?.items ?? []).length}`);
-  ok('сумму строки считает сервер, а не клиент', itemsRes.json?.items?.[0]?.sum === 2999.97, String(itemsRes.json?.items?.[0]?.sum));
-  ok('итог считает сервер', itemsRes.json?.total === 3000.07, String(itemsRes.json?.total));
-  ok('заказчик правкой позиций не тронут', itemsRes.json?.client?.name === 'Новый заказчик', itemsRes.json?.client?.name);
-  ok('updatedAt сдвинулся при правке позиций', (itemsRes.json?.updatedAt ?? '') !== itemsBefore, `${itemsBefore} → ${itemsRes.json?.updatedAt}`);
+  ok('позиций стало две', (itemsOffer?.items ?? []).length === 2, `${(itemsOffer?.items ?? []).length}`);
+  ok('сумму строки считает сервер, а не клиент', itemsOffer?.items?.[0]?.sum === 2999.97, String(itemsOffer?.items?.[0]?.sum));
+  ok('итог считает сервер', itemsOffer?.total === 3000.07, String(itemsOffer?.total));
+  ok('заказчик правкой позиций не тронут', itemsOffer?.client?.name === 'Новый заказчик', itemsOffer?.client?.name);
+  ok('updatedAt сдвинулся при правке позиций', (itemsOffer?.updatedAt ?? '') !== itemsBefore, `${itemsBefore} → ${itemsOffer?.updatedAt}`);
 
   const emptyItems = await call('PUT', `/offers/${cardId}/items`, { token: ownerToken, body: { items: [] } });
   ok('пустой список позиций законен (правка по одной)', emptyItems.status === 200, `status ${emptyItems.status}`);
-  ok('пустой список реально записан', (emptyItems.json?.items ?? []).length === 0, `${(emptyItems.json?.items ?? []).length}`);
-  ok('итог пустого списка нулевой', emptyItems.json?.total === 0, String(emptyItems.json?.total));
+  ok('пустой список реально записан', (emptyItems.json?.offer?.items ?? []).length === 0, `${(emptyItems.json?.offer?.items ?? []).length}`);
+  ok('итог пустого списка нулевой', emptyItems.json?.offer?.total === 0, String(emptyItems.json?.offer?.total));
 
   const badItem = await call('PUT', `/offers/${cardId}/items`, {
     token: ownerToken,
@@ -699,7 +704,9 @@ console.log('\n5d. Тексты разделов из приложения (S4, 
     body: { text: '  Вводный текст КП.  ' },
   });
   ok('принятие вступления → 200', accept.status === 200, `status ${accept.status}`);
-  ok('текст записан в form_values', accept.json?.formValues?.['copy.intro'] === 'Вводный текст КП.', accept.json?.formValues?.['copy.intro']);
+  // С 2026-11-15 ответ этой ручки — `{offer, missingRequired}` (окно КП, шаг 1).
+  const accepted = accept.json?.offer;
+  ok('текст записан в form_values', accepted?.formValues?.['copy.intro'] === 'Вводный текст КП.', accepted?.formValues?.['copy.intro']);
 
   const afterAccept = await call('GET', `/offers/${sectionOfferId}/sections`, { token: ownerToken });
   const intro = (afterAccept.json?.sections ?? []).find((s) => s.key === 'copy.intro');
@@ -708,7 +715,7 @@ console.log('\n5d. Тексты разделов из приложения (S4, 
   // Пропустить — пустой текст: ключ удаляется.
   const skip = await call('PUT', `/offers/${sectionOfferId}/sections/intro`, { token: ownerToken, body: { text: '  ' } });
   ok('пропуск раздела → 200', skip.status === 200, `status ${skip.status}`);
-  ok('ключ раздела удалён при пропуске', !('copy.intro' in (skip.json?.formValues ?? {})), JSON.stringify(skip.json?.formValues));
+  ok('ключ раздела удалён при пропуске', !('copy.intro' in (skip.json?.offer?.formValues ?? {})), JSON.stringify(skip.json?.offer?.formValues));
 
   // Номер системы: без системы секция system отвергается с понятным текстом.
   const noIndex = await call('POST', `/offers/${sectionOfferId}/sections/system`, { token: ownerToken, body: {} });
@@ -3326,6 +3333,193 @@ async function sectionAgentP5b() {
     JSON.stringify(unlinkedRead)?.slice(0, 240));
 }
 
+/**
+ * Окно КП в приложении (2026-11-15, шаг 6 конфигуратора окна).
+ *
+ * Проверяется то, что увидит администратор и менеджер, а не внутреннее
+ * устройство: сохранённый порядок зон читается обратно, негодное окно
+ * отвергается РУССКИМ текстом (человек должен понять отказ), а пустое
+ * обязательное поле возвращается в ответе ручки правки документа, не мешая
+ * сохранению. Сервис обязан быть собран из шага 1 — иначе `window_config`
+ * молча не записывается и секция краснеет на первой же проверке.
+ */
+async function sectionWindow() {
+  console.log('\nОкно КП в приложении: порядок, отказ, мягкая обязательность (2026-11-15)');
+
+  // Заготовка формы: два поля, оба заводятся один раз — окно ссылается на их id.
+  const baseForm = {
+    mode: 'client',
+    title: 'Форма с окном КП',
+    placeholders: [
+      { id: 'client_name', label: 'Клиент' },
+      { id: 'object_name', label: 'Объект' },
+    ],
+    blocks: [],
+    requiredFields: [],
+  };
+
+  // Порядок зон — настройка администратора, и он главный. Берём три зоны не в
+  // том порядке, в каком они в коде: проверка на умолчании прошла бы и без окна.
+  const windowOrder = [
+    { kind: 'zone', id: 'items', visible: true },
+    { kind: 'zone', id: 'client', visible: true, required: true },
+    { kind: 'zone', id: 'systems', visible: true },
+  ];
+  const savedWindow = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: windowOrder },
+  });
+  ok('форма с окном сохраняется', savedWindow.status === 200, `status ${savedWindow.status}`);
+
+  const readWindow = await call('GET', '/form', { token: ownerToken });
+  const window = readWindow.json?.window ?? [];
+  ok('порядок зон пережил сохранение',
+    window.slice(0, 3).map((w) => w.id).join(',') === 'items,client,systems',
+    JSON.stringify(window.map((w) => w.id)));
+  ok('сохранённая зона осталась видимой',
+    window[0]?.visible === true && window[1]?.required === true,
+    JSON.stringify(window.slice(0, 2)));
+
+  // Форма, сохранённая без окна, не должна потерять его: окно — часть формы,
+  // и «Сохранить форму» без правки окна (пустой список) = настройки нет.
+  const clearedWindow = await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
+  ok('пустое окно сохраняется и читается как умолчание',
+    clearedWindow.status === 200 && readWindow.status === 200,
+    `status ${clearedWindow.status}`);
+  const afterClear = await call('GET', '/form', { token: ownerToken });
+  ok('пустое окно отдаёт все пять зон в прежнем порядке',
+    (afterClear.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id).join(',')
+      === 'client,systems,items,materials,sections',
+    JSON.stringify((afterClear.json?.window ?? []).map((w) => w.id)));
+
+  // Неизвестная зона — ошибка, и текст обязан быть русским: это сообщение
+  // человек видит в «Форме КП» вместо «не удалось сохранить».
+  const unknownZone = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: [{ kind: 'zone', id: 'prices_extra', visible: true }] },
+  });
+  ok('неизвестная зона → 400', unknownZone.status === 400, `получили ${unknownZone.status}`);
+  const unknownError = String(unknownZone.json?.error ?? '');
+  ok('отказ неизвестной зоны — русский текст с id зоны',
+    /[А-Яа-яЁё]/.test(unknownError) && unknownError.includes('prices_extra'),
+    unknownError);
+
+  // Скрытое обязательное отвергается (решение пользователя 2026-11-15):
+  // «пока оно скрыто, оно не обязательно».
+  const hiddenRequired = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: [{ kind: 'field', id: 'client_name', visible: false, required: true }] },
+  });
+  ok('скрытое обязательное → 400', hiddenRequired.status === 400, `получили ${hiddenRequired.status}`);
+  ok('отказ скрытого обязательного — русский и называет элемент',
+    /[А-Яа-яЁё]/.test(String(hiddenRequired.json?.error ?? ''))
+      && /скрыт/i.test(String(hiddenRequired.json?.error ?? ''))
+      && String(hiddenRequired.json?.error ?? '').includes('Клиент'),
+    String(hiddenRequired.json?.error ?? ''));
+
+  // Обязательным бывает только «Заказчик»: у остальных зон нечего заполнять.
+  const requiredZone = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: [{ kind: 'zone', id: 'systems', visible: true, required: true }] },
+  });
+  ok('обязательная зона, кроме «Заказчика» → 400', requiredZone.status === 400,
+    `получили ${requiredZone.status}`);
+
+  // Обязательность МЯГКАЯ: пустое обязательное поле возвращается в ответе, но
+  // сохранение уже прошло. Проверка идёт через ручку правки заказчика — так
+  // ходит приложение.
+  const softWindow = [
+    { kind: 'zone', id: 'client', visible: true, required: true },
+    { kind: 'zone', id: 'items', visible: true },
+    { kind: 'field', id: 'object_name', visible: true, required: true },
+  ];
+  const softSaved = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, requiredFields: ['object_name'], window: softWindow },
+  });
+  ok('форма с обязательными сохраняется', softSaved.status === 200, `status ${softSaved.status}`);
+
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: '', contact: '' },
+      items: [{ name: 'Позиция окна', unit: 'шт', qty: 1, price: 10 }],
+      formValues: {},
+    },
+  });
+  const offerId = created.json?.id ?? 0;
+  ok('заготовка КП создана', created.status === 200 && offerId > 0, `status ${created.status}`);
+
+  const emptyRequired = await call('PUT', `/offers/${offerId}/client`, {
+    token: ownerToken,
+    body: { name: '', contact: '' },
+  });
+  ok('пустой заказчик при обязательном окне → 200 (мягко)', emptyRequired.status === 200,
+    `получили ${emptyRequired.status}`);
+  const missing = emptyRequired.json?.missingRequired ?? [];
+  const missingIds = missing.map((m) => m.id).join(',');
+  ok('ответ несёт незаполненные обязательные (зона и поле)',
+    missingIds.includes('client') && missingIds.includes('object_name'), missingIds);
+  ok('у пустого обязательного есть подпись для человека',
+    missing.every((m) => String(m.label ?? '').trim() !== ''), JSON.stringify(missing));
+  ok('документ сохранён, несмотря на предупреждение',
+    emptyRequired.status === 200 && emptyRequired.json?.offer?.id === offerId,
+    JSON.stringify(emptyRequired.json?.offer?.id));
+  ok('пустой список — массив, а не null', Array.isArray(emptyRequired.json?.missingRequired),
+    JSON.stringify(emptyRequired.json?.missingRequired));
+
+  // Заполнили заказчика — из списка уходит зона, поле остаётся пустым.
+  const filled = await call('PUT', `/offers/${offerId}/client`, {
+    token: ownerToken,
+    body: { name: 'ООО Заказчик', contact: 'Пётр' },
+  });
+  const afterFill = (filled.json?.missingRequired ?? []).map((m) => m.id);
+  ok('заполненная обязательная зона уходит из предупреждения',
+    filled.status === 200 && !afterFill.includes('client'), JSON.stringify(afterFill));
+  ok('незаполненное поле остаётся в предупреждении', afterFill.includes('object_name'),
+    JSON.stringify(afterFill));
+
+  // Скрытое не подсвечивается, даже если оно числится в «Обязательных полях
+  // формы»: администратор убрал его с экрана, и требовать с менеджера
+  // невидимое нельзя. Это второй рубеж `missingWindowFields` — первый снимает
+  // обязательность на чтении (`normalizeWindow`).
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      ...baseForm,
+      requiredFields: ['object_name'],
+      window: [
+        { kind: 'zone', id: 'client', visible: true },
+        { kind: 'zone', id: 'items', visible: true },
+        { kind: 'field', id: 'object_name', visible: false },
+      ],
+    },
+  });
+  const hiddenMissing = await call('PUT', `/offers/${offerId}/client`, {
+    token: ownerToken,
+    body: { name: 'ООО Заказчик', contact: 'Пётр' },
+  });
+  ok('скрытое поле не попадает в незаполненные обязательные',
+    hiddenMissing.status === 200
+      && !(hiddenMissing.json?.missingRequired ?? []).some((m) => m.id === 'object_name'),
+    JSON.stringify(hiddenMissing.json?.missingRequired));
+
+  // Вернуть форму по умолчанию для следующих шагов (окно пустое = «как сейчас»).
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      mode: 'client',
+      title: 'Коммерческое предложение',
+      placeholders: [{ id: 'client_name', label: 'Клиент' }],
+      blocks: [
+        { id: 'intro', title: 'Вступление', content: [{ type: 'paragraph', text: 'Клиент: {{client_name}}' }], showInClient: true, showInInternal: false },
+      ],
+      requiredFields: [],
+      window: [],
+    },
+  });
+}
+
 await sectionCombat();
 await sectionPickerSearch();
 await sectionOfferMaterials();
@@ -3334,6 +3528,7 @@ await sectionNewDoc();
 await sectionAgent();
 await sectionAgentP6bis();
 await sectionAgentP5b();
+await sectionWindow();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);
