@@ -1,13 +1,90 @@
 # sbe-offers — вход в новый контекст — версия 0.10.4 (2026-11-15)
 
-> **НОВАЯ РАБОТА — 0.11.0: конфигуратор окна КП (2026-11-15, код не начат).**
-> Спека, план и стартовый файл готовы; ни строки кода не написано, версия не
-> поднята. Вход в новое окно контекста —
+> **РАБОТА В ХОДЕ — конфигуратор окна КП (2026-11-15). ШАГ 1 ИЗ 7 СДЕЛАН.**
+> Версия НЕ поднимается до конца плана (решение пользователя 2026-11-15:
+> «до 11 поднимем когда пройдем все шаги плана»); деплоя и выкладки нет.
+> Вход в новое окно контекста —
 > [docs/superpowers/plans/2026-11-15-sbe-offers-window-START-HERE.md](docs/superpowers/plans/2026-11-15-sbe-offers-window-START-HERE.md).
 > Суть: админ настраивает порядок/видимость/обязательность полей формы **и**
 > зон экрана приложения; `offers_form.window_config JSONB`; пусто = «как
 > сейчас»; обязательность мягкая; предпросмотр `prompt_text` показывает
-> заглушку + свёрнутый «Бриф для модели». Первый шаг — сервер.
+> заглушку + свёрнутый «Бриф для модели».
+> **Дальше — шаг 2** (`offers-app/src/window.ts` + `test/window.test.ts`),
+> подробности и состояние — блок «Конфигуратор окна КП» ниже, сразу после
+> этого заголовка.
+>
+> **Внимание: файлы спеки и плана лежат ВНЕ папки плагина** —
+> `C:\Obsidian\mailers\docs\superpowers\{specs,plans}\`. Ссылки ниже и в
+> `AGENTS.md` (`docs/superpowers/...`) на самом деле ведут в пустую папку
+> `sbe-offers/docs/`: внутри плагина этих файлов нет. Читать по абсолютному
+> пути из `C:\Obsidian\mailers\docs\superpowers\`.
+
+## Конфигуратор окна КП — состояние на 2026-11-15 (шаг 1 из 7)
+
+План: `C:\Obsidian\mailers\docs\superpowers\plans\2026-11-15-sbe-offers-window-configurator-plan.md`.
+Спека: `C:\Obsidian\mailers\docs\superpowers\specs\2026-11-15-sbe-offers-window-configurator-design.md`.
+
+| шаг | что | состояние |
+|---|---|---|
+| 1 | сервер: модель окна, миграция, `missingWindowFields`, ответы ручек | **СДЕЛАН** (2026-11-15), `go test` зелёный, 16 проверок окна |
+| 2 | приложение: `offers-app/src/window.ts` + `test/window.test.ts` | не начат — **следующий** |
+| 3 | приложение: экран рисует зоны окна | не начат |
+| 4 | плагин: `src/ui/window-editor.ts` + аккордеон в `form-editor.ts` | не начат |
+| 5 | плагин: предпросмотр брифа вместо промта | не начат |
+| 6 | стенд: секция «Окно КП» + справка | не начат |
+| 7 | фиксация (версия, новость ЦУП, точки выпуска) | не начат |
+
+### Шаг 1 — что именно сделано
+
+**Новый файл `offers-service/form_window.go`** (337 строк):
+
+| имя | что |
+|---|---|
+| `WindowItem{Kind,ID,Label,Visible,Required}` | один элемент окна: `kind` = `field` (id плейсхолдера) или `zone` (id из `knownWindowZones`) |
+| `knownWindowZones` | `client`, `systems`, `items`, `materials`, `sections` — порядок = прежнее поведение экрана |
+| `windowZoneTitles` | подписи зон для человека (в данных не хранятся: язык экрана один) |
+| `WindowItem.WindowTitle()` | подпись элемента: у зоны из кода, у поля своя |
+| `effectiveWindow(form)` | пусто → `defaultWindow` (нынешнее поведение); иначе `normalizeWindow` |
+| `defaultWindow(form)` | 5 зон видимыми в прежнем порядке, затем все поля; `Required` из `required_fields` |
+| `normalizeWindow(saved, form)` | порядок записанного главный; неизвестное выкидывается; дубли пар (kind,id) выкидываются; подпись поля обновляется из `placeholders`; недостающие зоны и поля дописываются **в конец невидимыми**; `Required` снимается у всех зон кроме `client`; при `!Visible` снимается `Required` |
+| `validateWindow(form)` | пусто законно; `kind`/`id` известны; нет дублей; `required` только у полей и у зоны `client`; **скрытое обязательное отвергается** |
+| `missingWindowFields(form, offer)` | `Required && Visible && пусто`; поле — по `formValues[id]`, зона `client` — пусто и имя, и контакт; всегда массив, не `nil` |
+| `windowMissing{Offer, MissingRequired}` | форма ответа `PUT /client` и `/items` |
+
+**Правки существующих файлов:**
+
+- `form.go`: `OfferForm` += `Window []WindowItem` (`json:"window,omitempty"`); `validateForm` зовёт `validateWindow` после `validateSections`; `loadForm` читает колонку `window_config`, разбирает и прогоняет через `effectiveWindow(form)`; `handleSaveForm` маршалит окно, пишет `window_config` в `INSERT` и `ON CONFLICT … = EXCLUDED.window_config`.
+- `main.go`: `window_config JSONB NOT NULL DEFAULT '[]'` в `CREATE TABLE offers_form` **и** `ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS window_config …`.
+- `offerfields.go`: `respondWithOffer` теперь отвечает `windowMissing{offer, missingRequired}` — то есть `PUT /offers/{id}/client` и `PUT /offers/{id}/items` отдают `{"offer":{…},"missingRequired":[…]}`. Окно читается из формы `client`; если форма не прочиталась — пустой список, а не выдуманные имена.
+
+**Тесты** (16 проверок окна, все зелёные):
+`form_window_test.go` — `TestEffectiveWindowDefault`, `TestEffectiveWindowKeepsOrder`, `TestEffectiveWindowAppendsMissingHidden`, `TestEffectiveWindowDropsUnknown`, `TestValidateWindowChecks` (10 случаев таблицей), `TestValidateWindowRejectsRequiredOnSystems`, `TestFormWindowIsValid`, `TestHiddenWindowItemIsNotRequired`;
+`form_window_schema_test.go` — `TestOffersFormHasWindowColumn`, `TestFormWindowInSaveAndLoad` (по образцу сторожа `sections`, миграции в память);
+`window_required_test.go` — `TestMissingWindowFields`, `…Default`, `…ClientZone`, `…IgnoresHidden`, `…EmptyIsArray`, `…LabelNotRawID`.
+
+**Доказано откатом** (правило плана «сторож проверен откатом»): сторож схемы краснеет без `ALTER`-строки; `TestValidateWindowChecks` краснеет без проверки «скрытое обязательное»; `TestHiddenWindowItemIsNotRequired` краснеет без нормализации `!Visible → Required=false`.
+
+**Проверки шага 1 (2026-11-15):** `gofmt -l .` пусто, `go vet ./...` 0, `go test -count=1 ./...` — `mailers/offers`, `mailers/offers/model`, `mailers/offers/skills` зелёные.
+
+**Не проверено:** ничего живого — код не выкладывался, стенд не запускался (шаг 6), деплоя нет по решению пользователя.
+
+### Решения, принятые по ходу шага 1 (сверх плана)
+
+1. **Скрытое обязательное запрещено** (решение пользователя 2026-11-15, дословно: «обязательное не может быть скрытым, если мы скрываем обязательное, то пока оно скрыто, оно не обязательно»). Следствие в двух местах: `validateWindow` не даёт сохранить такое состояние; `normalizeWindow` снимает `Required` при `!Visible` на чтении (старые формы и прямые правки базы). `missingWindowFields` проверяет `Visible` вторым рубежом.
+2. `effectiveWindow` принимает один `form`, а не `(saved, form)`: второй аргумент плана был тем же `form`.
+3. Окно читается в `respondWithOffer` всегда из `clientFormMode`: у этих ручек других режимов нет.
+
+### Что менять НЕЛЬЗЯ (зафиксировано пользователем на шаге 1)
+
+- Версию плагина не поднимать до конца всех семи шагов; «Фиксируй» и 0.11.0 — в самом конце.
+- Ничего не деплоить и не выкладывать до отдельной команды.
+- Бот, агент, печать DOCX — не трогать.
+
+### Грабли, подтверждённые на шаге 1
+
+- **Правка `.go` через `git show`/PowerShell-пайплайн портит кириллицу** (`git show` с фильтром вернул mojibake в `form.go` и `main.go` — файлы пришлось восстанавливать из бэкапа). Писать только инструментом `edit`/`write`.
+- Откат через `Set-Content` в тестах допустим, но после него проверять BOM (правило: UTF-8 без BOM) — на шаге 1 проверено, BOM нет, mojibake нет.
+- `go test` кэширует: все прогоны шага 1 сделаны с `-count=1`.
 
 > **Правило ролей агентов (2026-11-15)** — `plugins/AGENTS.md`, раздел «Роли
 > агентов», и оно **главнее** любых ролевых правил в документации плагина:

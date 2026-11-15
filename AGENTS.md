@@ -35,19 +35,42 @@ self-hosted `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…`,
 registry `sbe-apstore-registry` `0bb9bce`. Plugin-only release: service, bot and
 App untouched (no rebuild).
 
-> **IN PROGRESS — 0.11.0: конфигуратор окна КП в приложении (2026-11-15).**
-> **Спека и план написаны, код НЕ начат, версия не поднята, ничего не
-> задеплоено.** Администратор задаёт порядок, видимость и обязательность
-> полей формы **и** зон экрана приложения (`client`/`systems`/`items`/
-> `materials`/`sections`); настройка живёт в `offers_form.window_config
-> JSONB`; пусто = «как сейчас». Обязательность — **мягкая** (предупреждение,
-> сохранение проходит). Предпросмотр `prompt_text` вместо сырого промта
-> показывает заглушку текста и свёрнутый «Бриф для модели».
+> **IN PROGRESS — конфигуратор окна КП в приложении (2026-11-15).**
+> **Шаг 1 из 7 СДЕЛАН (сервер), шаг 2 — следующий. Версия НЕ поднимается до
+> конца плана** (решение пользователя 2026-11-15: «до 11 поднимем когда
+> пройдем все шаги плана»); деплоя и выкладки нет. Администратор задаёт
+> порядок, видимость и обязательность полей формы **и** зон экрана приложения
+> (`client`/`systems`/`items`/`materials`/`sections`); настройка живёт в
+> `offers_form.window_config JSONB`; пусто = «как сейчас». Обязательность —
+> **мягкая** (предупреждение, сохранение проходит). Предпросмотр `prompt_text`
+> вместо сырого промта показывает заглушку текста и свёрнутый «Бриф для модели».
 > Читать: спека `docs/superpowers/specs/2026-11-15-sbe-offers-window-configurator-design.md`,
 > план `docs/superpowers/plans/2026-11-15-sbe-offers-window-configurator-plan.md`,
 > вход нового контекста `docs/superpowers/plans/2026-11-15-sbe-offers-window-START-HERE.md`.
-> Первый шаг — сервер (`WindowItem`, `effectiveWindow`, миграция,
-> `missingWindowFields`); форма данных держит всё остальное.
+> **Эти три файла лежат вне папки плагина** — `C:\Obsidian\mailers\docs\superpowers\`;
+> путь `sbe-offers/docs/…` внутри плагина пуст.
+> Состояние шага 1 — `HANDOFF.md`, блок «Конфигуратор окна КП — состояние на
+> 2026-11-15», там же таблица семи шагов и принятые решения (в том числе
+> «скрытое обязательное запрещено»).
+
+**Конфигуратор окна КП — шаг 1, код сервера (2026-11-15).** `offers-service/form_window.go`:
+`WindowItem{Kind,ID,Label,Visible,Required}`, `knownWindowZones` (`client`,
+`systems`, `items`, `materials`, `sections`), `windowZoneTitles`,
+`effectiveWindow` (пусто → нынешнее поведение), `defaultWindow`,
+`normalizeWindow` (порядок записанного главный; неизвестное и дубли
+выкидываются; недостающее дописывается в конец **невидимым**; при `!Visible`
+снимается `Required`), `validateWindow` (скрытое обязательное —
+**отвергается**), `missingWindowFields` (`Required && Visible && пусто`),
+`windowMissing`. `form.go`: `OfferForm.Window`, `validateWindow` в
+`validateForm`, `window_config` в `loadForm`/`handleSaveForm`. `main.go`:
+колонка в `CREATE` и `ALTER`. `offerfields.go`: `respondWithOffer` отвечает
+`{"offer":…,"missingRequired":[…]}`, поэтому `PUT /offers/{id}/client` и
+`/items` **больше не отдают голый `Offer`** — приложение обязано читать
+`res.offer` (шаг 3). Тесты: `form_window_test.go`, `form_window_schema_test.go`,
+`window_required_test.go` — 16 проверок окна, все сторожа прогнаны откатом.
+Проверки шага: `gofmt` чисто, `go vet` 0, `go test -count=1 ./...` зелёный.
+**Окно читается всегда из формы `clientFormMode`** — у этих ручек других
+режимов нет. **Версию, новость ЦУП и деплой не трогать до шага 7.**
 
 **0.10.4 (2026-11-15): ввод названия раздела больше не обрывается на первой
 букве.** Жалоба пользователя: в «Разделах» заголовок набирался «не более чем по
