@@ -44,10 +44,12 @@
 | | значение |
 |---|---|
 | версия | **0.11.0** |
-| `main` | релизный срез 0.11.0 (плагин; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
-| самораздача | `manifest 7685465c…` / `main ac2f1069…` / `styles fcb9758f…` |
-| реестр (git-копия) | `sbe-apstore-registry` |
-| сервис `offers` | пересобран из шага 1 (`form_window.go`, миграция `window_config`) |
+| `backend` | `f373a44` (код + доки) |
+| `main` | `4f65789` (релизный срез 0.11.0; `offers-service/`, `offers-bot/`, `offers-app/` — только `backend`) |
+| самораздача | `manifest 7685465c…` / `main ac2f1069…` / `styles fcb9758f…`, сверено по https (`/plugins/sbe-offers/*`) **и** в `/registry.json` |
+| реестр (git-копия) | `sbe-apstore-registry` `03bd167`; `/registry.json` отдаёт `0.11.0`, `uploadedAt 2026-11-15T18:29:20Z` |
+| сервис `offers` | пересобран и пересоздан 2026-11-15 (`--force-recreate`), бэкап `offers-service.bak-20261115-2120`; бот **не менялся**, не пересобирался |
+| приложение | `/opt/mailers/www/app-offers/`, `assets/index-Ba6bkNrw.js`; старый `index-wlCTYUrx.js` удалён, старое имя отдаёт SPA-фолбэк; бэкап `app-offers.bak-20261115-2120` |
 
 | файл | sha256 | байт |
 |---|---|---|
@@ -55,22 +57,49 @@
 | `main.js` | `ac2f1069416b8349359b67f77e226efd77f33c5024db8bfb5528a9831d700ca0` | 259259 |
 | `styles.css` | `fcb9758f831986bdc8d6f2143836544007557e88d10c90ad6e0661969a2c8a4c` | 42295 |
 
-**Проверки (2026-11-15, перед фиксацией):** `gofmt`/`go vet`/
-`go test -count=1 ./...` зелёные; плагин `tsc` 0, `build` OK,
-`check_bundle_strings` **0** (новые иглы новости 0.11.0), `check_marker_registry`
-OK, `check_sections_conditions` 16/16, `check_sections_typing` 2/2,
-`check_window_rules` **21/21**, `check_docs_state` — MISS только там, где
-верно до коммита `main` (HEAD `backend` не пишется в AGENTS до этой правки);
-OpenAPI — схема и маршруты совпадают, `check_agent_engine` зелёный; бот
-`tsc` 0 / **208**, приложение `tsc` 0 / **72**, `build` OK, `size` код
-107 025 / картинки 192 618 Б из 204 800; `check_home_screen` **11/11**;
-стенд **535/0**.
+| файл приложения | sha256 |
+|---|---|
+| `index.html` | `6b87079b339c3c74fc65cc3f570f29006370758a41bce9a616433909ee6941ab` |
+| `assets/index-Ba6bkNrw.js` | `4a6d6d5e36fa3f79e3bc74997014e087b729d5266f39238722f2eb70c9117aa6` |
+| `vendor/telegram-web-app.js` | `baa788a6f686f4238db1b82ce8e76470930af7411b18b521ebb95a2c1480a267` |
 
-**Права и разделение функций бота (правило релиза, проверено на стенде
-2026-11-15):** `PUT /offers/{id}/client` и `/items` остались под
-`requirePerm("editor")` — без токена `401`, чужак `403`; ручки бота
-(`/bot/*`) без секрета — `401`. Новых ручек не заводилось, `sectionWindow`
-чистый клиент к уже существующим. Правок в боте, агенте и печати DOCX нет.
+**Живая сверка после раскатки (2026-11-15):**
+- все три гейта на месте по https: `/api/offers/form` → `401`,
+  `/api/offers/offers` → `401`, `/api/offers/bot/offers` → `401`;
+  `/app/session` с пустым телом → `400`;
+- сервис `health ok`; **миграция отработала**: колонка `window_config` есть в
+  `offers_form`, у обеих строк (`client`, `combat`) тип `array`;
+- `GET /form` отдаёт **11** элементов окна (5 зон + поля формы);
+- `PUT /offers/{id}/client` отвечает `{offer, missingRequired}`, и
+  `missingRequired` — массив (на живом КП 41 — 1 пустое обязательное);
+  без токена — `401`;
+- `index.html` ссылается на `assets/index-Ba6bkNrw.js`; три файла приложения
+  по https совпали с локальной сборкой.
+
+**Проверки перед фиксацией:** `gofmt`/`go vet`/`go test -count=1 ./...`
+зелёные; плагин `tsc` 0, `build` OK (срез `main` собрался **байт в байт** —
+хэши те же), `check_bundle_strings` **0**, `check_marker_registry` OK,
+`check_sections_conditions` 16/16, `check_sections_typing` 2/2,
+`check_window_rules` **21/21**, `check_docs_state` — **всё OK**; OpenAPI
+совпадает, `check_agent_engine` зелёный; бот `tsc` 0 / **208**, приложение
+`tsc` 0 / **72**, `build` OK, `size` код 107 025 / картинки 192 618 Б из
+204 800; `check_home_screen` **11/11**; стенд **535/0**.
+
+**Права и разделение функций бота (правило релиза):** проверено и на стенде,
+и **на живом сервисе** после раскатки: `PUT /offers/{id}/client` и `/items`
+под `requirePerm("editor")` — без токена `401`, чужому `403`; `/bot/*` без
+секрета `401`. Новых ручек не заводилось. Бот, агент и печать DOCX не
+трогались.
+
+**Грабли этой выкладки (новое, записать):**
+- **`JWT_SECRET` в контейнере `offers` нет вовсе**: сервис проверяет токены
+  ключом `<APP_ID>_SERVICE_SECRET`, то есть `OFFERS_SERVICE_SECRET`
+  (`offers-service/jwt.go:21`). Для живой проверки токен подписывается им;
+  `JWT_SECRET` — только legacy-фолбэк.
+- **Сервис не опубликован на порт хоста** (`127.0.0.1:3000` даёт `000`);
+  проверять либо через https-домен, либо контейнером в сети `mailers_internal`.
+- **Вложенные кавычки в `ssh "…"` ломаются PowerShell-ом** — проверки
+  писать файлом и запускать `bash /tmp/x.sh` (то же, что с heredoc).
 
 ### Шаг 7 — что именно сделано (2026-11-15)
 
@@ -82,6 +111,25 @@ OpenAPI — схема и маршруты совпадают, `check_agent_engi
 
 **Иглы новости выбраны так:** `появилась карточка `, `задаёт, какие разделы
 видит менеджер`, `только подсвечивает`, `вместо него заглушка и свёрнутый `.
+
+**Порядок выкладки, который пройден 2026-11-15 (полный цикл):**
+1. коммит `backend` `f373a44` → пуш;
+2. срез `main` `4f65789` (`git checkout <sha> -- main.js manifest.json
+   package.json styles.css src scripts AGENTS.md HANDOFF.md`; `offers-app/`
+   не в срез) → `tsc` + `build` совпали байт в байт → пуш;
+3. `git archive` двух серверных папок → `scp` → `tar xf` в `/tmp` → бэкап
+   `*.bak-20261115-2120` → `rsync -a --delete` → **`md5sum` совпали с
+   распакованным архивом** → `docker compose build offers` →
+   `up -d --force-recreate offers` (бот не менялся — не пересобирался);
+4. приложение: `scp` `dist/` → бэкап папки → `rm assets/*.js` → раскладка →
+   `sha256sum` локально и по https;
+5. самораздача: `kb-selfhost.sh sbe-offers` (суммы считает скрипт по файлам),
+   сверка по https и в `/registry.json`;
+6. реестр: `version` точечно в `www/registry.json` (бэкап
+   `registry.json.bak-20261115-2120`), `uploadedAt` — значением из
+   `/registry.json` в git-копию `sbe-apstore-registry` `03bd167`;
+7. живая сверка (гейты, миграция, форма ответа, файлы приложения);
+8. документация — этот блок.
 
 ### Шаг 1 — что именно сделано
 
@@ -1268,6 +1316,17 @@ docker run --rm --network sbe-offers_offersnet \
 
 **Доступ к серверу:** алиас `epyur` из `~/.ssh/config` (ключ
 `id_ed25519_20261103`).
+
+**Живая проверка после раскатки — где брать ключ и адрес (2026-11-15):**
+- контейнер `offers` **не публикует порт на хост** — `curl 127.0.0.1:3000`
+  отвечает `000`. Снаружи — `https://epyur.fvds.ru/api/offers/*`, изнутри —
+  контейнер в сети `mailers_internal` (имя её даёт
+  `docker inspect mailers-offers-1 -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'`).
+- токен подписывается **`OFFERS_SERVICE_SECRET`**, а не `JWT_SECRET`
+  (`jwt.go:21`: ключ = `<APP_ID>_SERVICE_SECRET`; `JWT_SECRET` — legacy).
+  Значение — `docker exec mailers-offers-1 printenv OFFERS_SERVICE_SECRET`.
+- `.env` на сервере root-only (600), читать его из-под обычного входа не
+  выйдет — брать значения из окружения контейнера.
 
 ## Открытые хвосты (на 0.9.23)
 

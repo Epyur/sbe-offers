@@ -30,11 +30,12 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.0** — **RELEASED 2026-11-15.** `backend` `9cd5064`,
-`main` `bfea7ea`; self-hosted `manifest 7685465c…` /
-`main ac2f1069…` / `styles fcb9758f…`, registry `sbe-apstore-registry`.
-Конфигуратор окна КП в приложении (шаги 1–7 плана). The service was rebuilt
-(migration `window_config`); the bot and the App are unchanged.
+Current version = **0.11.0** — **RELEASED 2026-11-15.** `backend` `f373a44`,
+`main` `4f65789` (release slice; `offers-service/`, `offers-bot/`,
+`offers-app/` live on `backend` only); self-hosted `manifest 7685465c…` /
+`main ac2f1069…` / `styles fcb9758f…`, registry `sbe-apstore-registry`
+`03bd167`. Service `offers` rebuilt and recreated (migration `window_config`);
+bot unchanged; App deployed as `assets/index-Ba6bkNrw.js`. Stand **535/0**.
 
 > **RELEASED — конфигуратор окна КП в приложении (0.11.0, 2026-11-15).**
 > **Семь шагов из семи сделаны.** Администратор задаёт
