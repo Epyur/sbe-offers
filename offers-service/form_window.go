@@ -241,9 +241,22 @@ func validateWindow(form OfferForm) string {
 	if len(form.Window) == 0 {
 		return ""
 	}
-	fields := make(map[string]bool, len(form.Placeholders))
+	fields := make(map[string]string, len(form.Placeholders))
 	for _, ph := range form.Placeholders {
-		fields[strings.TrimSpace(ph.ID)] = true
+		if id := strings.TrimSpace(ph.ID); id != "" {
+			fields[id] = ph.Label
+		}
+	}
+	// windowTitle — подпись элемента ДЛЯ ОТКАЗА: у зоны она из кода, у поля —
+	// из формы. Собрать `WindowItem` без `Label` значило бы ответить человеку
+	// «поле ""», и по такому отказу нельзя понять, какую строку править.
+	windowTitle := func(kind, id string) string {
+		if kind == windowKindField {
+			if label := strings.TrimSpace(fields[id]); label != "" {
+				return label
+			}
+		}
+		return WindowItem{Kind: kind, ID: id}.WindowTitle()
 	}
 	seen := make(map[string]bool, len(form.Window))
 	for _, item := range form.Window {
@@ -251,7 +264,7 @@ func validateWindow(form OfferForm) string {
 		id := strings.TrimSpace(item.ID)
 		switch kind {
 		case windowKindField:
-			if !fields[id] {
+			if _, ok := fields[id]; !ok {
 				return "в окне КП поле «" + id + "» не заведено в списке полей"
 			}
 		case windowKindZone:
@@ -260,7 +273,7 @@ func validateWindow(form OfferForm) string {
 			}
 			if item.Required && id != windowZoneClient {
 				return "в окне КП обязательной может быть только зона «Заказчик», а не «" +
-					WindowItem{Kind: kind, ID: id}.WindowTitle() + "»"
+					windowTitle(kind, id) + "»"
 			}
 		case "":
 			return "в окне КП пустой вид элемента (kind)"
@@ -268,7 +281,7 @@ func validateWindow(form OfferForm) string {
 			return "в окне КП неизвестный вид элемента: " + kind
 		}
 		if item.Required && !item.Visible {
-			return "в окне КП «" + WindowItem{Kind: kind, ID: id}.WindowTitle() +
+			return "в окне КП «" + windowTitle(kind, id) +
 				"» помечено обязательным, но скрыто: обязательное поле не может быть скрытым"
 		}
 		key := kind + "\x00" + id
