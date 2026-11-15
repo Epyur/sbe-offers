@@ -16,12 +16,13 @@ func TestLayoutLinksMarkerGroupedAndNumbered(t *testing.T) {
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
 <w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>{{ссылки}}</w:t></w:r></w:p>
 </w:body></w:document>`
-	layout := layoutDocxFromXML(t, doc)
 	refs := []skills.CardRef{
 		{Label: "Техлист системы", URL: "https://nav.tn.ru/pim/tl-sys.pdf", Owner: skills.RefOwnerSystem},
 		{Label: "Страница системы", URL: "https://nav.tn.ru/systems/a/", Owner: skills.RefOwnerSystem},
 		{Label: "СТО 1", URL: "https://nav.tn.ru/pim/sto.pdf", Owner: skills.RefOwnerSystem},
 	}
+	// Правила группировки теперь данные формы (2026-11-14): печать берёт их отсюда.
+	layout := layoutDocxFromXML(t, doc)
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: map[string]string{},
 		refs:   refs,

@@ -6,7 +6,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"mailers/offers/skills"
 )
+
+// LinkGroupRules — правила группировки ссылок формы: псевдоним пакета `skills`.
+//
+// Зачем псевдоним, а не импорт типа по месту: `OfferForm` — форма ХРАНЕНИЯ и
+// передачи в браузер, и её типы собираются в одном месте. Псевдоним говорит
+// ровно это: правила живут в `skills` (там же, где печать ссылок), а форма
+// лишь носит их.
+type LinkGroupRules = skills.LinkGroupRules
 
 // Placeholder — поле формы КП, которое администратор заводит в конфигураторе.
 type Placeholder struct {
@@ -163,7 +173,16 @@ type OfferForm struct {
 	// написанная администратором руками, разделы — бриф для модели.
 	Sections       []ContentSection `json:"sections,omitempty"`
 	RequiredFields []string         `json:"requiredFields"`
-	UpdatedAt      string           `json:"updatedAt"`
+	// LinkGroups — правила группировки ссылок раздела «Ссылки» (2026-11-14,
+	// дефект 0.10.2). До этой правки раскладка ссылок по группам и их порядок
+	// были зашиты в `skills/cardrefs.go`, и поменять её можно было только
+	// правкой кода. Теперь порядок групп, их заголовки и признаки попадания
+	// задаёт администратор в этой форме; печать читает правила отсюда.
+	//
+	// Пусто — правила по умолчанию (`skills.DefaultLinkGroupRules`), равные
+	// прежнему поведению: старая форма печатает документы как раньше.
+	LinkGroups LinkGroupRules `json:"linkGroups,omitempty"`
+	UpdatedAt  string         `json:"updatedAt"`
 	// HasLayout/LayoutName — загружен ли макет .docx (2026-11-05). Сами байты
 	// в JSON формы не отдаются: клиенту нужно знать, есть ли макет, а не
 	// тащить десятки килобайт в каждом ответе `/form`.
@@ -222,7 +241,12 @@ func validateForm(f OfferForm) string {
 			return "обязательное поле «" + req + "» не заведено в списке полей"
 		}
 	}
-	return validateSections(f.Sections)
+	if msg := validateSections(f.Sections); msg != "" {
+		return msg
+	}
+	// Правила ссылок проверяются только если заданы: пусто — правила по
+	// умолчанию, и старая форма остаётся действительной (2026-11-14).
+	return skills.ValidateLinkGroupRules(f.LinkGroups)
 }
 
 // validateSections — проверка содержательных разделов (2026-11-14).
@@ -319,6 +343,7 @@ func defaultForm(mode string) OfferForm {
 			{ID: "valid_until", Label: "Предложение действительно до"},
 			{ID: "conditions", Label: "Условия"},
 		},
+		LinkGroups: skills.DefaultLinkGroupRules(),
 		Blocks: []Block{
 			{
 				ID:           "cover",
@@ -412,8 +437,9 @@ func combatDefaultForm() OfferForm {
 	// акцент в разборе. Прежние поля (наша компания, объект, заказчик,
 	// менеджер) были невалидны: заказчика у внутренней справки нет.
 	return OfferForm{
-		Mode:  combatFormMode,
-		Title: "Боевой листок",
+		Mode:       combatFormMode,
+		Title:      "Боевой листок",
+		LinkGroups: skills.DefaultLinkGroupRules(),
 		Placeholders: []Placeholder{
 			{ID: combatHintField, Label: "Уточнение для разбора"},
 		},
@@ -441,14 +467,14 @@ func (s *Server) loadForm(ctx context.Context, mode string) (OfferForm, error) {
 		mode = clientFormMode
 	}
 	var form OfferForm
-	var placeholders, blocks, required []byte
+	var placeholders, blocks, required, sections, linkGroups []byte
 	var layoutDocx []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT id, mode, title, placeholders, blocks, required_fields,
+SELECT id, mode, title, placeholders, blocks, required_fields, sections, link_groups,
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), layout_docx, layout_name
 FROM offers_form WHERE mode = $1`, mode).
-		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &form.UpdatedAt,
-			&layoutDocx, &form.LayoutName)
+		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &sections, &linkGroups,
+			&form.UpdatedAt, &layoutDocx, &form.LayoutName)
 	if err != nil {
 		// Строки нет вовсе — форма не настроена, показываем поля по умолчанию.
 		// Пустые массивы в БД — это НАСТРОЕННАЯ пустая форма, и подменять её
@@ -459,6 +485,7 @@ FROM offers_form WHERE mode = $1`, mode).
 	form.Placeholders = []Placeholder{}
 	form.Blocks = []Block{}
 	form.RequiredFields = []string{}
+	form.Sections = []ContentSection{}
 	if len(placeholders) > 0 {
 		if err := json.Unmarshal(placeholders, &form.Placeholders); err != nil {
 			return form, err
@@ -472,6 +499,24 @@ FROM offers_form WHERE mode = $1`, mode).
 	if len(required) > 0 {
 		if err := json.Unmarshal(required, &form.RequiredFields); err != nil {
 			return form, err
+		}
+	}
+	if len(sections) > 0 {
+		if err := json.Unmarshal(sections, &form.Sections); err != nil {
+			return form, err
+		}
+	}
+	// Пустые правила — законное состояние: выводим умолчание, а не пустой
+	// срез. Иначе редактор показал бы «ни одной группы», и первое же
+	// сохранение формы стёрло бы прежнее поведение печати ссылок.
+	form.LinkGroups = skills.DefaultLinkGroupRules()
+	if len(linkGroups) > 0 {
+		var loaded LinkGroupRules
+		if err := json.Unmarshal(linkGroups, &loaded); err != nil {
+			return form, err
+		}
+		if len(loaded) > 0 {
+			form.LinkGroups = loaded
 		}
 	}
 	form.HasLayout = len(layoutDocx) > 0
@@ -575,6 +620,9 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	if form.RequiredFields == nil {
 		form.RequiredFields = []string{}
 	}
+	if form.Sections == nil {
+		form.Sections = []ContentSection{}
+	}
 	if msg := validateForm(form); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
 		return
@@ -595,14 +643,37 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
 	}
+	// Содержательные разделы (2026-11-14, дефект 0.10.2). Маршалится ВСЁ, что
+	// клиент прислал: раньше `sections` молча выпадало, и раздел исчезал после
+	// «Сохранить форму» — настройка терялась без ошибки (класс 0.1.18).
+	sections, err := json.Marshal(form.Sections)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
+	// Правила группировки ссылок (2026-11-14, дефект 0.10.2). Пусто — пишем
+	// умолчание, а не `[]`: форма «без правил» после сохранения должна вести
+	// себя так же, как до него, а не потерять группировку ссылок.
+	linkGroups := form.LinkGroups
+	if len(linkGroups) == 0 {
+		linkGroups = skills.DefaultLinkGroupRules()
+	}
+	linkGroupsJSON, err := json.Marshal(linkGroups)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+		return
+	}
+	form.LinkGroups = linkGroups
 
 	_, err = s.pool.Exec(r.Context(), `
-INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, updated_at)
-VALUES ($1, $2, $3, $4, $5, now())
+INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, sections, link_groups, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, now())
 ON CONFLICT (mode) DO UPDATE SET
 	title = EXCLUDED.title, placeholders = EXCLUDED.placeholders,
 	blocks = EXCLUDED.blocks, required_fields = EXCLUDED.required_fields,
-	updated_at = now()`, form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required)
+	sections = EXCLUDED.sections, link_groups = EXCLUDED.link_groups,
+	updated_at = now()`,
+		form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required, sections, linkGroupsJSON)
 	if err != nil {
 		dbError(w, "save form", err)
 		return

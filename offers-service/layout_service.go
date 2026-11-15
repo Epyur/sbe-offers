@@ -465,7 +465,7 @@ func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 	// Порядок групп — здесь, а не только в сборщике: lc.refs могли собрать
 	// раньше по другому правилу, а метка обязана печатать так же, как узел
 	// `links` (SortCardRefsGrouped не меняет вход).
-	refs = skills.SortCardRefsGrouped(refs)
+	refs = skills.SortCardRefsWith(refs, lc.linkGroups)
 	if len(refs) > maxLinkRefs {
 		refs = refs[:maxLinkRefs]
 	}
@@ -473,7 +473,7 @@ func renderLayoutCardLinks(lc layoutContext, row layoutServiceRow) string {
 	// `links`): метка макета и узел формы печатают ссылки одинаково. Номер
 	// начинается с единицы в каждой группе — свой numId из плана сборки.
 	var sb strings.Builder
-	for _, group := range skills.GroupCardRefsByGroup(refs) {
+	for _, group := range skills.GroupCardRefsWith(refs, lc.linkGroups) {
 		sb.WriteString(headingXMLOpts(group.Title, linkGroupHeadingLevel, paraOpts{Before: 6}))
 		numID := styleListNumbered
 		if plan := lc.numberingPlan(); plan != nil {

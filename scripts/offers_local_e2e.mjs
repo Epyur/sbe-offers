@@ -419,6 +419,83 @@ console.log('\n4. Форма КП');
   });
   ok('пустой заголовок → 400', emptyTitle.status === 400, `получили ${emptyTitle.status}`);
 
+  // Сторож дефекта 0.10.2: «Раздел» исчезал после «Сохранить форму».
+  // Проверка идёт через ручки, как ходит редактор: PUT, затем GET — то есть
+  // проверяет хранение, а не ответ на запись (сервер отвечает тем, что
+  // прислали, и потеря видна только на чтении).
+  const sectionForm = {
+    mode: 'client',
+    title: 'Форма с разделом',
+    placeholders: [{ id: 'client_name', label: 'Клиент' }],
+    blocks: [],
+    requiredFields: [],
+    sections: [{
+      id: 'proposal_systems',
+      title: 'Описание предлагаемых систем',
+      numbered: true,
+      critique: true,
+      subsections: [
+        { id: 'intro', title: 'Введение', instruction: 'Напиши вступление', condition: 'always' },
+        { id: 'each', title: 'Описание системы', instruction: 'Опиши систему', condition: 'has_systems', repeat: 'systems', maxWords: 250, level: 2 },
+      ],
+    }],
+  };
+  const savedSection = await call('PUT', '/form', { token: ownerToken, body: sectionForm });
+  ok('форма с разделом сохраняется', savedSection.status === 200, `status ${savedSection.status}`);
+  const readSection = await call('GET', '/form', { token: ownerToken });
+  const sections = readSection.json?.sections ?? [];
+  ok('раздел пережил сохранение', sections.length === 1 && sections[0]?.id === 'proposal_systems',
+    JSON.stringify(sections));
+  ok('подразделы раздела пережили сохранение',
+    (sections[0]?.subsections ?? []).length === 2
+    && sections[0].subsections[1]?.repeat === 'systems'
+    && sections[0].subsections[1]?.maxWords === 250,
+    JSON.stringify(sections[0]?.subsections));
+  const clearedSections = await call('PUT', '/form', { token: ownerToken, body: { ...sectionForm, sections: [] } });
+  ok('снятие разделов сохраняется', clearedSections.status === 200);
+  const afterClear = await call('GET', '/form', { token: ownerToken });
+  ok('разделы снялись', (afterClear.json?.sections ?? []).length === 0,
+    JSON.stringify(afterClear.json?.sections));
+
+  // Правила группировки ссылок (2026-11-14, дефект 0.10.2, пункт 4): данные
+  // формы, а не код. Проверяется хранение и порядок — то, что печать потом
+  // прочитает.
+  const groupRules = [
+    { id: 'certs', title: 'Сертификаты сначала', labelContains: ['сертификат'] },
+    { id: 'pages', title: 'Страницы', urlContains: ['/systems/'] },
+    { id: 'other', title: 'Прочее' },
+  ];
+  const savedRules = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...sectionForm, sections: [], linkGroups: groupRules },
+  });
+  ok('форма с правилами ссылок сохраняется', savedRules.status === 200, `status ${savedRules.status}`);
+  const readRules = await call('GET', '/form', { token: ownerToken });
+  const rules = readRules.json?.linkGroups ?? [];
+  ok('правила ссылок пережили сохранение',
+    rules.length === 3 && rules[0]?.id === 'certs' && rules[2]?.title === 'Прочее',
+    JSON.stringify(rules));
+  ok('порядок групп сохранился', rules.map((r) => r.id).join(',') === 'certs,pages,other',
+    rules.map((r) => r.id).join(','));
+
+  // Последняя группа обязана быть общей: иначе ссылка, не подошедшая правилам,
+  // пропала бы из документа молча.
+  const badRules = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...sectionForm, sections: [], linkGroups: [
+      { id: 'a', title: 'A' },
+      { id: 'b', title: 'B', labelContains: ['сто'] },
+    ] },
+  });
+  ok('последняя группа с признаками → 400', badRules.status === 400, `получили ${badRules.status}`);
+
+  // Пустые правила — законное состояние: форма читается с правилами по
+  // умолчанию, и старая форма остаётся действительной.
+  await call('PUT', '/form', { token: ownerToken, body: { ...sectionForm, sections: [], linkGroups: [] } });
+  const defaults = await call('GET', '/form', { token: ownerToken });
+  ok('пустые правила дают умолчание', (defaults.json?.linkGroups ?? []).length === 5,
+    JSON.stringify((defaults.json?.linkGroups ?? []).length));
+
   // вернуть форму по умолчанию для следующих шагов
   await call('PUT', '/form', {
     token: ownerToken,

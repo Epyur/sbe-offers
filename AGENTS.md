@@ -30,9 +30,31 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.10.2** — **RELEASED 2026-11-14.** `backend` `117655b`, `main` `d56ee02`;
-self-hosted `manifest b79e6ca3…` / `main 37bf429b…` / `styles 97afb22c…`,
-registry `sbe-apstore-registry` `5fea4b3`.
+Current version = **0.10.3** — released 2026-11-14 (points of the release, hashes
+and branch SHAs are filled in at the bottom of this block after the deploy).
+Previous release: 0.10.2 (`backend` `117655b`, `main` `d56ee02`).
+
+**0.10.3 (2026-11-14): четыре дефекта формы КП после 0.10.2.** Живое
+использование 0.10.2 дало «собрать КП пока не получится». Всё изменилось
+**в плагине и в `offers-service`**; бот, приложение и база не тронуты.
+
+- **Раздел не сохранялся** (блокер): в `offers_form` не было колонки
+  `sections`, `handleSaveForm` её не писал, `loadForm` не читал. Теперь есть —
+  миграция, запись, чтение; сторож `form_sections_schema_test.go` (миграции
+  прогоняются в память, без Postgres).
+- **«Разделы» выше предпросмотра** — предпросмотр показывает то, что задано
+  выше, а сверху теперь раздел.
+- **Группы формы сворачиваются**, все свёрнуты по умолчанию: один компонент
+  `src/ui/collapsible-group.ts`, `<button>` + `aria-expanded`; кнопки
+  сохранения — вне групп.
+- **Раскладка ссылок — данные формы**: `skills/linkgroups.go` (правила, умолчание
+  = прежнее поведение, проверка) + `offers_form.link_groups` + редактор
+  `src/ui/link-groups-editor.ts`. Группы, порядок и названия задаёт
+  администратор; **ИИ сюда не допускается** (решение пользователя).
+
+Подробности и грабли — блок «ALL FOUR FIXED 2026-11-14» ниже. Проверки:
+`go test` зелёный, плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0,
+OpenAPI 118/118, стенд **515/0**, бот 208, приложение 53.
 
 **0.10.2 (2026-11-14): содержательные разделы в «Форме КП».** Раздел тела ТКП
 теперь не фиксированная структура блока, а бриф для модели (`{ content: <id> }`):
@@ -333,11 +355,94 @@ from `offers-bot`. Do not start S5 without an explicit instruction. The step
 notes (S2–S7) and the five live defects of the first launch are in the
 archive, «Ревизия 2026-11-13».
 
-**Content sections — RELEASED in 0.10.2 (2026-11-14).**
-The two-placeholder model (`[attr]` values vs `{ content: <id> }` briefs), the
-per-subsection fan-out, printing through the Word master and rebuilding the
-table of contents from the printed headings are done and green (steps 1–7 of
-the plan).
+**Content sections — RELEASED in 0.10.2 (2026-11-14), but with an OPEN
+BLOCKER defect.** The two-placeholder model (`[attr]` values vs `{ content: <id> }`
+briefs), the per-subsection fan-out, printing through the Word master and
+rebuilding the table of contents from the printed headings are done and green
+(steps 1–7 of the plan). **The editor sends `sections`, but the server never
+saves or reads them — a section is lost on «Сохранить форму»** (see "OPEN
+DEFECTS" below; this is why a live КП could not be assembled).
+
+> **OPEN DEFECTS / TASKS after 0.10.2 (2026-11-14, NOT DONE).** Recorded for
+> the next context window; the user said «собрать КП пока не получится». The
+> full write-up with code locations — `docs/superpowers/plans/2026-11-14-sbe-offers-content-sections-START-HERE.md`,
+> section «ОТКРЫТЫЕ ДЕФЕКТЫ И ЗАДАЧИ 0.10.2». Priority order:
+> 1. **BLOCKER — the section does not persist.** `handleSaveForm`
+>    (`offers-service/form.go:560–609`) marshals only `placeholders`, `blocks`,
+>    `required_fields`; `loadForm` (`:439–480`) reads only those; and
+>    `offers_form` has **no `sections` column** (`main.go:381`, no `ALTER`).
+>    Fix: migration `ADD COLUMN IF NOT EXISTS sections JSONB NOT NULL DEFAULT
+>    '[]'`, marshal + write it in `handleSaveForm`, select + unmarshal it in
+>    `loadForm`, and a `TestFormSectionsRoundTrip` that is RED on today's code.
+> 2. The «Разделы» card must sit **above** the preview card in
+>    `form-editor.ts` (`render()`), not below it.
+> 3. **Every field group in the form is collapsible and collapsed by default**
+>    («Поля формы», «Блоки документа», «Разделы документа», …) — one accordion
+>    component, `aria-expanded`, the save/cancel buttons stay outside so they are
+>    reachable when all groups are collapsed.
+> 4. **Links grouping becomes configurable in the form, not in code.**
+>    `skills/cardrefs.go` hard-codes it: `cardRefGroupOf` (URL `/systems/`
+>    `/catalog/` `/catalogue/` → `page`; label «СТО» → `sto`; «узл» → `uzly`;
+>    «техлист»/«ТЛ » → `techlist`; else `cert`), `CardRefGroupTitle`,
+>    `cardRefGroupRank`. Store the rules on `OfferForm` (a new `linkGroups`
+>    field) and read them in `GroupCardRefsByGroup`. **Do not hand this to the
+>    AI** — the user's explicit decision: the administrator sets the grouping
+>    rules. Migrate forms to a default rule set equal to today's behaviour so
+>    existing documents do not change silently.
+
+> **ALL FOUR FIXED 2026-11-14 — released in 0.10.3.** Worked through in order.
+> 1. **Blocker closed.** `offers_form.sections JSONB NOT NULL DEFAULT '[]'` in
+>    `CREATE` **and** `ALTER` (`main.go`); `handleSaveForm` marshals + inserts +
+>    `ON CONFLICT … sections = EXCLUDED.sections`; `loadForm` selects and
+>    unmarshals it with `[]ContentSection{}` default. Proven RED first on the
+>    live stand (PUT echoed it, GET returned nothing), then GREEN on the same
+>    probe. Guard: `form_sections_schema_test.go` — runs the real migrations
+>    into memory (`runMigrations` with an injected `execFunc`, no Postgres) and
+>    asserts the column exists in both statements, that `form.Sections` is
+>    marshalled and read, and that the `INSERT`/`SELECT` list it. Stand section
+>    «4. Форма КП» gained 5 checks (save → read → subsections → clear).
+> 2. **Order fixed**: заголовок → поля → блоки → **разделы** → предпросмотр →
+>    макет → кнопки (`form-editor.ts`).
+> 3. **Accordions**: one component, `src/ui/collapsible-group.ts`
+>    (`renderCollapsibleGroup`), `<button>` + `aria-expanded` + `data:`-free
+>    state, all groups collapsed by default; save/cancel stay OUTSIDE. The
+>    «✨ Опишите блок словами» button and the «какой макет печатает» hint stay
+>    reachable while collapsed (counters/names in the group header).
+> 4. **Link grouping is data.** `skills/linkgroups.go`: `LinkGroupRule`
+>    (`id`, `title`, `urlContains`, `labelContains`), `DefaultLinkGroupRules()`
+>    == the old hard-coded behaviour, `ValidateLinkGroupRules` (empty = OK, the
+>    last group must have no criteria), `LinkGroupOf`/`LinkGroupTitle`/
+>    `GroupCardRefsWith`/`SortCardRefsWith`. Stored in
+>    `offers_form.link_groups JSONB NOT NULL DEFAULT '[]'`, marshalled in
+>    `handleSaveForm`, read in `loadForm` with the default when empty. The
+>    plugin editor is `src/ui/link-groups-editor.ts` (add / move up / move down
+>    / remove, the last group locked), one more accordion in the form editor.
+>    `groupOfRef` — one rule for grouping and sorting: **explicit** form rules
+>    win over the group mark baked into the cached refs; the default rules
+>    honour the mark (the address alone cannot tell узлы from техлисты — both
+>    live under `/pim/`).
+>
+> **Checks (2026-11-14):** `gofmt`/`go vet` clean, `go test -count=1 ./...`
+> green; plugin `tsc` 0, `build` OK, `check_bundle_strings` **0 missing**
+> (needle «Предпросмотр (как увидит клиент)» replaced — the header is now built
+> from the group title), `check_marker_registry` OK,
+> `check_sections_conditions` 16/16, OpenAPI 118/118, `check_agent_engine`
+> green, bot `tsc` 0 / **208**, app `tsc` 0 / **53**, stand **515/0**
+> (+10: 5 for sections, 5 for link rules). After the version bump the CUP news
+> was rewritten («Разделы в „Форме КП“ … сохраняются; карточки формы
+> сворачиваются; раскладку ссылок задаёт администратор») and the 0.10.2
+> needles were removed; `check_bundle_strings` 0. **Needle gotcha:** the news
+> starts with «ёлочки», which esbuild writes as `\xAB` — the needle is
+> «Разделы в » without them (same trap as 2026-11-02).
+>
+> **Gotchas hit again:** `Add-Content`/`Set-Content`/PowerShell pipelines wrote
+> the new `.go` file in cp866 and later in mojibake; the edit/write tools and
+> Python with `io.open(..., encoding='utf-8', newline='\n')` are the only safe
+> ways. `go test` caches results — when a fix «does not take», re-run with
+> `-count=1` before hunting a phantom.
+>
+> **Not verified:** opening the accordion/link-group UI in Obsidian by hand;
+> a live КП assembled with custom link rules (the stand runs `llm-stub`).
 
 - **Step 5a (TOC) is fixed.** The real cause was not the rebuild code: the test
   printed a section into `temple.docx`, which carried no `{ content: … }` marker
@@ -357,7 +462,8 @@ the plan).
   `conditionHoldsClient`, `sectionMarker`; no Obsidian/DOM, so a node script can
   run it) and `src/ui/sections-editor.ts` (section cards, subsection table,
   frame preview without calling the model, `{ content: <id> }` copy chip), wired
-  into `form-editor.ts`; `sections` round-trips through `OfferForm`/`saveForm`.
+  into `form-editor.ts`. **The editor puts `sections` into the `saveForm` payload,
+  but the server drops them — see the OPEN DEFECTS block above.**
 - **Step 7**: `markers.ts` group «Содержательные разделы»; `help.ts` paragraph on
   the two kinds of placeholder and style-in-master; `check_marker_registry.mjs`
   now knows the `content` key as a `section` kind and requires it.

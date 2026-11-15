@@ -93,18 +93,18 @@ func cardAllRefs(card SystemCard) []skills.CardRef {
 // Нумерация в каждой группе начинается с единицы: у каждого списка свой numId
 // из плана сборки (plan.newList), и Word не продолжает счёт предыдущей группы.
 // plan == nil (печать без плана) — сквозной номер бланка, как раньше.
-func renderLinkSection(node blockNode, refs []skills.CardRef, plan *numberingPlan) (string, bool) {
+func renderLinkSection(node blockNode, refs []skills.CardRef, rules skills.LinkGroupRules, plan *numberingPlan) (string, bool) {
 	if len(refs) == 0 {
 		return "", false
 	}
 	// Сортировка здесь, а не только в сборщике: ссылки могут прийти снаружи
 	// (renderOfferDocxFull), и порядок групп не должен зависеть от того, кто
 	// их передал. SortCardRefsGrouped не меняет вход.
-	refs = skills.SortCardRefsGrouped(refs)
+	refs = skills.SortCardRefsWith(refs, rules)
 	opts := paraOpts{Before: 12}
 	var sb strings.Builder
 	sb.WriteString(headingXMLOpts("Ссылки", node.Level, opts))
-	for _, group := range skills.GroupCardRefsByGroup(refs) {
+	for _, group := range skills.GroupCardRefsWith(refs, rules) {
 		// Заголовок группы — четвёртый уровень: это подраздел внутри «Ссылок»,
 		// и он не должен попадать в оглавление как раздел документа.
 		sb.WriteString(headingXMLOpts(group.Title, linkGroupHeadingLevel, paraOpts{Before: 6}))

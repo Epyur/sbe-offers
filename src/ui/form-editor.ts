@@ -7,6 +7,13 @@ import { renderFormPreview } from './form-preview';
 import { DescribeBlockModal, applyDescribedBlock } from './describe-block-modal';
 import { pickLayoutFile, renderLayoutCard } from './form-layout';
 import { renderSectionsEditor, SECTIONS_EDITOR_TEXTS } from './sections-editor';
+import { renderCollapsibleGroup } from './collapsible-group';
+import {
+  LINK_GROUPS_TEXTS,
+  defaultLinkGroupRules,
+  renderLinkGroupsEditor,
+  validateLinkGroupRules,
+} from './link-groups-editor';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 /**
@@ -48,13 +55,26 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   }));
   const required = new Set(form.requiredFields);
 
+  // Правила группировки ссылок (2026-11-14, дефект 0.10.2): данные формы, не
+  // код. Пусто с сервера — умолчание, чтобы старая форма открылась со знакомым
+  // набором групп.
+  const linkGroups = (form.linkGroups ?? defaultLinkGroupRules()).map((rule) => ({ ...rule }));
+
+  // Группы формы (2026-11-14, дефект 0.10.2): каждая карточка — сворачиваемая
+  // и по умолчанию свёрнута. Просьба пользователя. Один компонент на все
+  // группы (`collapsible-group.ts`) — пять своих копий разъехались бы.
+  // Кнопки «Сохранить/Отменить» остаются ВНЕ групп: иначе после сворачивания
+  // всего к ним не добраться.
   const titleRow = container.createDiv({ cls: 'tn-offers-card' });
   titleRow.createDiv({ cls: 'tn-offers-muted', text: 'Заголовок документа' });
   const titleInput = titleRow.createEl('input', { cls: 'tn-offers-input' });
   titleInput.value = form.title;
 
-  const fieldsCard = container.createDiv({ cls: 'tn-offers-card' });
-  fieldsCard.createDiv({ cls: 'tn-offers-muted', text: 'Поля формы (подставляются вместо {{поле}})' });
+  const fieldsGroup = renderCollapsibleGroup(container, {
+    title: 'Поля формы',
+    hint: 'подставляются вместо {{поле}}',
+  });
+  const fieldsCard = fieldsGroup.body;
   const fieldsList = fieldsCard.createDiv();
   const drawFields = (): void => {
     fieldsList.empty();
@@ -94,16 +114,57 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     drawFields();
   });
 
-  const blocksCard = container.createDiv({ cls: 'tn-offers-card' });
+  // Блоки документа: заголовок группы несёт счётчик и кнопку «Опишите блок
+  // словами» — она принадлежит блокам и должна быть видна, когда группа
+  // свёрнута: это вход в редактор, а не его содержимое.
+  const blockCount = blocks.length;
+  const blocksGroup = renderCollapsibleGroup(container, {
+    title: 'Блоки документа',
+    hint: blockCount > 0 ? `блоков: ${blockCount}` : 'блоков нет',
+  });
+  const blocksCard = blocksGroup.body;
   const blocksHeader = blocksCard.createDiv({ cls: 'tn-offers-row-between' });
-  blocksHeader.createDiv({ cls: 'tn-offers-muted', text: 'Блоки документа' });
   renderDraftHints(blocksCard, blocks);
 
   const editorWrap = blocksCard.createDiv();
-  const previewCard = container.createDiv({ cls: 'tn-offers-card tn-offers-preview-card' });
-  const previewHead = previewCard.createDiv({ cls: 'tn-offers-row-between' });
-  previewHead.createDiv({ cls: 'tn-offers-muted', text: 'Предпросмотр (как увидит клиент)' });
-  const previewBody = previewCard.createDiv({ cls: 'tn-offers-preview-body' });
+
+  // Содержательные разделы (2026-11-14, шаг 6). Блоки — вёрстка, написанная
+  // руками; раздел — бриф для модели. Настройка на метку `{ content: <id> }`.
+  //
+  // Порядок карточек (2026-11-14, дефект 0.10.2): разделы выше предпросмотра.
+  // Предпросмотр показывает, КАК напечатается то, что задано выше, — а задан
+  // раздел. Стоя ниже, он читался как продолжение предпросмотра, и человек
+  // искал настройку раздела после картинки готового документа.
+  //
+  // Макет без метки `{ content: <id> }` разделы не печатает. Счётчик в
+  // заголовке группы говорит, задан ли хоть один раздел.
+  const sectionsGroup = renderCollapsibleGroup(container, {
+    title: SECTIONS_EDITOR_TEXTS.groupTitle,
+    hint: sections.length > 0 ? `разделов: ${sections.length}` : 'разделов нет',
+  });
+  renderSectionsEditor(sectionsGroup.body, sections, {
+    // Предложение здесь не открыто: редактор формы задаёт правила, а не
+    // конкретный КП. Без предложения предпросмотр показывает форму рамки и
+    // условия словами; условия, зависящие от предложения, видны как «попадут».
+    onChange: () => {
+      /* Предпросмотр разделов живёт внутри самого редактора. */
+    },
+  });
+
+  // Группы ссылок (2026-11-14, дефект 0.10.2, пункт 4): правила раскладки
+  // ссылок в документе — настройка администратора, а не константа в коде.
+  const linkGroupsGroup = renderCollapsibleGroup(container, {
+    title: LINK_GROUPS_TEXTS.groupTitle,
+    hint: `${linkGroups.length} групп`,
+  });
+  renderLinkGroupsEditor(linkGroupsGroup.body, linkGroups);
+
+  const previewGroup = renderCollapsibleGroup(container, {
+    title: 'Предпросмотр',
+    hint: 'как увидит клиент',
+    cls: 'tn-offers-preview-card',
+  });
+  const previewBody = previewGroup.body.createDiv({ cls: 'tn-offers-preview-body' });
 
   /** Предпросмотр перерисовывается при каждой правке: смысл его в том, что
    *  человек видит последствие правки сразу, а не в готовом DOCX. */
@@ -139,27 +200,15 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     }).open();
   });
 
-  // Содержательные разделы (2026-11-14, шаг 6). Блоки — вёрстка, написанная
-  // руками; раздел — бриф для модели. Редактор разделов стоит рядом с блоками
-  // и рисует рамку, но модель не зовёт.
-  //
-  // Макет без метки `{ content: <id> }` разделы не печатает. Предупреждение
-  // нужно, чтобы человек не искал, почему «настройка есть, а документа нет».
-  const sectionsCard = container.createDiv({ cls: 'tn-offers-card' });
-  sectionsCard.createDiv({ cls: 'tn-offers-muted', text: SECTIONS_EDITOR_TEXTS.cardTitle });
-  renderSectionsEditor(sectionsCard.createDiv(), sections, {
-    // Предложение здесь не открыто: редактор формы задаёт правила, а не
-    // конкретный КП. Без предложения предпросмотр показывает форму рамки и
-    // условия словами; условия, зависящие от предложения, видны как «попадут».
-    onChange: () => {
-      /* Предпросмотр разделов живёт внутри самого редактора. */
-    },
-  });
-
   // Макет .docx (2026-11-05): если он загружен, документ печатается по нему,
-  // а блоки остаются в форме для возврата. Поэтому карточка стоит перед
-  // блоками и говорит прямо, что сейчас печатается.
-  renderLayoutCard(view, container, form, {
+  // а блоки остаются в форме для возврата. Своя группа с состоянием в
+  // заголовке: «какой макет сейчас печатает документ» — первое, что нужно
+  // знать, и это должно быть видно СВЁРНУТЫМ.
+  const layoutGroup = renderCollapsibleGroup(container, {
+    title: 'Макет документа .docx',
+    hint: form.hasLayout ? (form.layoutName || 'макет загружен') : 'макета нет',
+  });
+  renderLayoutCard(view, layoutGroup.body, form, {
     onChanged: () => {
       void load(view, container, mode);
     },
@@ -180,12 +229,22 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   });
 
   async function save(): Promise<void> {
+    // Правила ссылок проверяются до запроса: пустая группа или группа с
+    // признаками на последнем месте сделала бы печать непредсказуемой, и
+    // человек должен узнать это здесь, а не по готовому документу.
+    const rulesError = validateLinkGroupRules(linkGroups);
+    if (rulesError) {
+      new Notice(`Группы ссылок: ${rulesError}`);
+      linkGroupsGroup.setOpen(true);
+      return;
+    }
     const payload: OfferForm = {
       ...form,
       title: titleInput.value.trim() || (mode === 'combat' ? 'Боевой листок' : 'Коммерческое предложение'),
       placeholders,
       blocks,
       sections,
+      linkGroups,
       requiredFields: Array.from(required),
     };
     try {

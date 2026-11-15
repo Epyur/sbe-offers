@@ -359,12 +359,24 @@ func TagCardRefsOwner(refs []CardRef, owner string) []CardRef {
 //
 // Исходный срез не меняется: вызывающий держит его как кеш карточки.
 func SortCardRefsGrouped(refs []CardRef) []CardRef {
+	return SortCardRefsWith(refs, nil)
+}
+
+// SortCardRefsWith — тот же порядок, но по ПРАВИЛАМ формы (2026-11-14).
+//
+// Раньше здесь звались константы `cardRefGroupRank`, и поменять порядок групп
+// можно было только правкой кода. Теперь порядок — это порядок правил формы;
+// nil/пусто — правила по умолчанию, то есть прежнее поведение.
+func SortCardRefsWith(refs []CardRef, rules LinkGroupRules) []CardRef {
 	out := make([]CardRef, len(refs))
 	copy(out, refs)
+	if len(rules) == 0 {
+		rules = DefaultLinkGroupRules()
+	}
 	// Простая вставка: ссылок десятки, сортировка по ключу дешевле любых
 	// наворотов, а порядок стабилен при равных ключах.
 	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && cardRefGroupLess(out[j], out[j-1]); j-- {
+		for j := i; j > 0 && cardRefGroupLessWith(out[j], out[j-1], rules); j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
 	}
@@ -373,9 +385,17 @@ func SortCardRefsGrouped(refs []CardRef) []CardRef {
 
 // cardRefGroupLess — правило порядка двух ссылок в разделе.
 func cardRefGroupLess(a, b CardRef) bool {
-	ga, gb := a.effectiveGroup(), b.effectiveGroup()
+	return cardRefGroupLessWith(a, b, DefaultLinkGroupRules())
+}
+
+// cardRefGroupLessWith — правило порядка по правилам формы (2026-11-14).
+func cardRefGroupLessWith(a, b CardRef, rules LinkGroupRules) bool {
+	// Группа ссылки — так же, как её нарежет GroupCardRefsWith: сортировка и
+	// печать обязаны видеть одну и ту же группу, иначе ссылка встанет в один
+	// порядок, а напечатается в другой.
+	ga, gb := groupOfRef(a, rules), groupOfRef(b, rules)
 	if ga != gb {
-		return cardRefGroupRank(ga) < cardRefGroupRank(gb)
+		return linkGroupRankOf(ga, rules) < linkGroupRankOf(gb, rules)
 	}
 	// Внутри группы — владелец: у основной массы групп система раньше
 	// материала, у сертификатов наоборот.

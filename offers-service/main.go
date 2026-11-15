@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -363,6 +364,17 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any, maxBytes int64) e
 
 // migrate создаёт таблицы сервиса. Все миграции идемпотентны.
 func (s *Server) migrate(ctx context.Context) error {
+	return s.runMigrations(ctx, s.pool.Exec)
+}
+
+// execFunc — одно обращение к БД. Вынесено, чтобы миграции можно было прогнать
+// без PostgreSQL и проверить утверждения о схеме (какие колонки `offers_form`
+// обязаны существовать, см. form_sections_schema_test.go).
+type execFunc func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+
+// runMigrations выполняет операторы по порядку и останавливается на первой
+// ошибке: миграции зависимы, продолжать после сбоя бессмысленно.
+func (s *Server) runMigrations(ctx context.Context, exec execFunc) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS offers_catalog (
 			id          BIGSERIAL PRIMARY KEY,
@@ -385,6 +397,8 @@ func (s *Server) migrate(ctx context.Context) error {
 			placeholders    JSONB NOT NULL DEFAULT '[]',
 			blocks          JSONB NOT NULL DEFAULT '[]',
 			required_fields JSONB NOT NULL DEFAULT '[]',
+			sections        JSONB NOT NULL DEFAULT '[]',
+			link_groups     JSONB NOT NULL DEFAULT '[]',
 			updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
 		`CREATE TABLE IF NOT EXISTS offers_offer (
@@ -523,6 +537,18 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS layout_docx BYTEA`,
 		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS layout_name TEXT NOT NULL DEFAULT ''`,
 
+		// Содержательные разделы (2026-11-14, дефект 0.10.2). Поле было в модели
+		// формы и в проверке, но колонки не существовало: `handleSaveForm` его не
+		// маршалил, `loadForm` не читал, и созданный «Раздел» исчезал после
+		// «Сохранить форму» — тихая потеря данных, из-за которой КП не собирался.
+		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS sections JSONB NOT NULL DEFAULT '[]'`,
+
+		// Правила группировки ссылок (2026-11-14, дефект 0.10.2). Порядок групп,
+		// заголовки и признаки попадания задаёт администратор в форме, а не код.
+		// Пустой массив — правила по умолчанию: старые формы печатают ссылки как
+		// раньше, молча ничего не меняется.
+		`ALTER TABLE offers_form ADD COLUMN IF NOT EXISTS link_groups JSONB NOT NULL DEFAULT '[]'`,
+
 		// Вариации материала: один SKU — много ЕКН (толщина, цвет, размер).
 		// Уникальность по паре, а не по одному ЕКН: один и тот же материал
 		// может встретиться в двух таблицах, и это не дубль.
@@ -639,7 +665,7 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		`CREATE INDEX IF NOT EXISTS offers_agent_log_email ON offers_agent_log (lower(email))`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.pool.Exec(ctx, stmt); err != nil {
+		if _, err := exec(ctx, stmt); err != nil {
 			return err
 		}
 	}

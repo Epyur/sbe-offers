@@ -903,6 +903,81 @@
   display: none;
 }
 
+/* Сворачиваемые группы конфигуратора формы (2026-11-14, дефект 0.10.2).
+   Все группы свёрнуты по умолчанию: до правок человек проматывал семь
+   карточек подряд. Заголовок группы — кнопка (клавиатура и диктор), поэтому
+   сбрасываем вид кнопки Obsidian и оставляем её похожей на заголовок. */
+.tn-offers-group {
+  padding: 0;
+}
+
+.tn-offers-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--tn-radius);
+  background: transparent;
+  color: var(--content-primary-a-enabled);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tn-offers-group-head:hover {
+  background: var(--background-secondary-a-hover);
+}
+
+.tn-offers-group-head:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.tn-offers-group-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--content-secondary-enabled);
+  transition: transform 120ms ease;
+}
+
+.tn-offers-group.is-open .tn-offers-group-chevron {
+  transform: rotate(90deg);
+}
+
+.tn-offers-group-title {
+  font-weight: 600;
+}
+
+.tn-offers-group-hint {
+  margin-left: auto;
+  font-size: 0.9em;
+}
+
+.tn-offers-group-body {
+  padding: 0 12px 12px;
+}
+
+/* Редактор групп ссылок (2026-11-14, дефект 0.10.2, пункт 4): правила
+   раскладки ссылок — настройка формы. Карточка правила компактнее обычной
+   карточки: их бывает пять и больше. */
+.tn-offers-link-groups-hint {
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.tn-offers-link-group {
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.tn-offers-link-group-label {
+  flex: 0 0 auto;
+  min-width: 140px;
+  font-size: 0.9em;
+}
+
 /* Контекст КП: карточки систем из Базы знаний (2026-10-29) */
 .tn-offers-context-hint {
   margin-bottom: 12px;
@@ -1083,6 +1158,12 @@
 
 .tn-offers-preview-card {
   margin-top: 12px;
+}
+
+/* Группа предпросмотра: тело уже с отступом группы, поэтому внутренний
+   отступ карточки предпросмотра не удваиваем. */
+.tn-offers-preview-card .tn-offers-group-body {
+  padding-top: 4px;
 }
 
 .tn-offers-preview-page {
