@@ -35,6 +35,20 @@ self-hosted `manifest 8f42209b…` / `main 2a5cb6e6…` / `styles b15d618d…`,
 registry `sbe-apstore-registry` `0bb9bce`. Plugin-only release: service, bot and
 App untouched (no rebuild).
 
+> **IN PROGRESS — 0.11.0: конфигуратор окна КП в приложении (2026-11-15).**
+> **Спека и план написаны, код НЕ начат, версия не поднята, ничего не
+> задеплоено.** Администратор задаёт порядок, видимость и обязательность
+> полей формы **и** зон экрана приложения (`client`/`systems`/`items`/
+> `materials`/`sections`); настройка живёт в `offers_form.window_config
+> JSONB`; пусто = «как сейчас». Обязательность — **мягкая** (предупреждение,
+> сохранение проходит). Предпросмотр `prompt_text` вместо сырого промта
+> показывает заглушку текста и свёрнутый «Бриф для модели».
+> Читать: спека `docs/superpowers/specs/2026-11-15-sbe-offers-window-configurator-design.md`,
+> план `docs/superpowers/plans/2026-11-15-sbe-offers-window-configurator-plan.md`,
+> вход нового контекста `docs/superpowers/plans/2026-11-15-sbe-offers-window-START-HERE.md`.
+> Первый шаг — сервер (`WindowItem`, `effectiveWindow`, миграция,
+> `missingWindowFields`); форма данных держит всё остальное.
+
 **0.10.4 (2026-11-15): ввод названия раздела больше не обрывается на первой
 букве.** Жалоба пользователя: в «Разделах» заголовок набирался «не более чем по
 одной букве». Причина — обработчик `input` (`src/ui/sections-editor.ts`) звал
