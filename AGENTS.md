@@ -61,6 +61,8 @@ Code heads: `backend` `599000e`, `main` `301b136` (release slice of 0.11.1;
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
+Code heads: `backend` `7e94e88`, `main` `84c138d` (release slice of 0.11.3).
+
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
 > **(1) Бриф в Mini App.** Новая зона окна `brief` (`knownWindowZones`, подпись
