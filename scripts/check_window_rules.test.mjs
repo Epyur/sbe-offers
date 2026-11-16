@@ -71,7 +71,15 @@ test('подпись зоны — из кода, подпись поля — и�
   assert.equal(windowTitle({ kind: 'field', id: 'gone' }, placeholders), 'gone');
   // Неизвестная зона — свой id: её некому нарисовать, и это надо видеть.
   assert.equal(windowTitle(zone('unknown'), placeholders), 'unknown');
-  assert.deepEqual(Object.keys(ZONE_TITLES), ['client', 'systems', 'items', 'materials', 'sections']);
+  // Бриф (2026-11-15) — известная зона с подписью.
+  assert.equal(windowTitle(zone('brief'), placeholders), 'Бриф');
+  assert.deepEqual(Object.keys(ZONE_TITLES), ['client', 'systems', 'items', 'materials', 'sections', 'brief']);
+  // В окно «как сейчас» бриф НЕ входит: иначе он появился бы у всех сам.
+  assert.ok(!windowForEditor(undefined, placeholders).some((i) => i.id === 'brief'));
+  // А в записанном окне он рисуется и сохраняется — администратор включил сам.
+  const withBrief = windowForEditor([zone('items'), zone('brief')], placeholders);
+  assert.deepEqual(withBrief.map((i) => i.id), ['items', 'brief']);
+  assert.equal(windowProblem([zone('brief')], placeholders), '');
 });
 
 test('порядок и видимость записанного сохраняются', () => {

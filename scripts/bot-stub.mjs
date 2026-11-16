@@ -22,6 +22,33 @@ http
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    // Просьба приложения «продолжить в боте» (2026-11-15). Настоящий бот
+    // открывает диалог у себя; заглушке достаточно подтвердить приём: её роль —
+    // держать контракт `/internal/ask` за секретом сервиса, а тексты диалога
+    // проверяет тест бота (`src/ask.test.ts`).
+    if (req.method === 'POST' && req.url === '/internal/ask') {
+      if (!SECRET || req.headers['x-service-secret'] !== SECRET) {
+        send(403, { ok: false, error: 'forbidden' });
+        return;
+      }
+      const askChunks = [];
+      req.on('data', (c) => askChunks.push(c));
+      req.on('end', () => {
+        let action = '';
+        try {
+          action = String(JSON.parse(Buffer.concat(askChunks).toString('utf8')).action ?? '');
+        } catch {
+          send(400, { ok: false, error: 'invalid json' });
+          return;
+        }
+        if (action !== 'brief' && action !== 'positions') {
+          send(400, { ok: false, error: 'unknown action' });
+          return;
+        }
+        send(200, { ok: true, sent: action === 'brief' ? 'Открыли бриф в чате.' : 'Написали в чат.' });
+      });
+      return;
+    }
     if (req.method !== 'POST' || req.url !== '/internal/verify') {
       send(404, { ok: false, error: 'not found' });
       return;

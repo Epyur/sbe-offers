@@ -82,6 +82,24 @@ function b64url(input) {
 }
 
 /** JWT HS256 с app_id=offers, как выдаёт auth-service. */
+/**
+ * Подпись `initData` для стенда (2026-11-15): та же схема, что у Telegram и
+ * у `check_app_auth.mjs` — HMAC(WebAppData, token), затем HMAC по строкам
+ * `k=v`, отсортированным по ключу.
+ */
+function signInitData(fields, token) {
+  const pairs = Object.keys(fields)
+    .filter((k) => k !== 'hash')
+    .sort()
+    .map((k) => `${k}=${fields[k]}`);
+  const secret = createHmac('sha256', 'WebAppData').update(token).digest();
+  const hash = createHmac('sha256', secret).update(pairs.join('\n')).digest('hex');
+  // `URLSearchParams` пишет пробел как `+`, а сервис разбирает через
+  // `url.QueryUnescape`: плюс вернётся пробелом и JSON пользователя сломается
+  // («bad-user»). Телеграм кодирует плюс как `%2B` — делаем так же.
+  return new URLSearchParams({ ...fields, hash }).toString().replace(/\+/g, '%2B');
+}
+
 function makeJwt(email, appId = 'offers', ttlSec = 3600) {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const now = Math.floor(Date.now() / 1000);
@@ -3528,7 +3546,224 @@ await sectionNewDoc();
 await sectionAgent();
 await sectionAgentP6bis();
 await sectionAgentP5b();
+
+/**
+ * Бриф и «продолжить в боте» из приложения (2026-11-15).
+ *
+ * Проверяется то, что сделано в этой версии:
+ *   - зона `brief` известна серверу, но в окно «как сейчас» не входит;
+ *     при сохранённой настройке без брифа он дописывается НЕВИДИМЫМ;
+ *   - `POST /offers/{id}/brief/{topic}` — шаг диалога под JWT: пустой ответ
+ *     отвергается, чужой вопрос (устаревший экран) — 409, свой пишет бриф;
+ *   - `POST /app/ask` без подписи Telegram отвечает отказом и бота не зовёт.
+ */
+async function sectionBriefApp() {
+  console.log('\nБриф в приложении: зона, ответ на вопрос, продолжение в боте (2026-11-15)');
+
+  const created = await call('POST', '/offers', {
+    token: ownerToken,
+    body: {
+      client: { name: 'ООО Бриф', contact: 'Иван, +7 900' },
+      items: [{ name: 'Строка', unit: 'шт', qty: 1, price: 100 }],
+      formValues: {},
+      status: 'draft',
+    },
+  });
+  const offerId = created.json?.id;
+  ok('КП для брифа создано', typeof offerId === 'number' && offerId > 0, `status ${created.status}`);
+
+  // 1. Зона брифа: известна, но в умолчание не входит.
+  const baseForm = {
+    mode: 'client',
+    title: 'Форма для брифа',
+    placeholders: [{ id: 'client_name', label: 'Заказчик' }],
+    blocks: [],
+    requiredFields: [],
+  };
+  await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
+  const defaults = await call('GET', '/form', { token: ownerToken });
+  const defaultZones = (defaults.json?.window ?? []).filter((w) => w.kind === 'zone');
+  ok('окно «как сейчас» не содержит брифа',
+    !defaultZones.some((w) => w.id === 'brief'),
+    JSON.stringify(defaultZones.map((w) => w.id)));
+  ok('окно «как сейчас» — прежние пять зон',
+    defaultZones.map((w) => w.id).join(',') === 'client,systems,items,materials,sections',
+    JSON.stringify(defaultZones.map((w) => w.id)));
+
+  // 2. Сохранённая настройка без брифа получает его в конец невидимым.
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: [{ kind: 'zone', id: 'client', visible: true }] },
+  });
+  const appended = await call('GET', '/form', { token: ownerToken });
+  const briefItem = (appended.json?.window ?? []).find((w) => w.kind === 'zone' && w.id === 'brief');
+  ok('бриф дописан в сохранённое окно', briefItem !== undefined, JSON.stringify(appended.json?.window));
+  ok('дописанный бриф невидим', briefItem?.visible === false, JSON.stringify(briefItem));
+
+  // 3. Включённый администратором бриф сохраняется и отдаётся с флагом настройки.
+  const briefOn = await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      ...baseForm,
+      window: [
+        { kind: 'zone', id: 'client', visible: true },
+        { kind: 'zone', id: 'brief', visible: true },
+      ],
+    },
+  });
+  ok('бриф можно включить', briefOn.status === 200, `status ${briefOn.status} ${briefOn.text?.slice(0, 120)}`);
+  const briefRead = await call('GET', '/form', { token: ownerToken });
+  ok('включённый бриф читается обратно',
+    (briefRead.json?.window ?? []).some((w) => w.id === 'brief' && w.visible === true),
+    JSON.stringify(briefRead.json?.window));
+  ok('форма сообщает, что окно записано', briefRead.json?.windowStored === true,
+    JSON.stringify(briefRead.json?.windowStored));
+
+  // 4. Пустое окно снова = «как сейчас», флаг снят.
+  await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
+  const cleared = await call('GET', '/form', { token: ownerToken });
+  ok('пустое окно — настройки нет', cleared.json?.windowStored !== true,
+    JSON.stringify(cleared.json?.windowStored));
+
+  // 5. Бриф для приложения читается и правится.
+  const readBrief = await call('GET', `/offers/${offerId}/brief`, { token: ownerToken });
+  ok('бриф читается под JWT', readBrief.status === 200, `status ${readBrief.status}`);
+  ok('брифа ещё нет — статус absent', readBrief.json?.brief?.status === 'absent',
+    JSON.stringify(readBrief.json?.brief?.status));
+
+  const saved = await call('PUT', `/offers/${offerId}/brief`, {
+    token: ownerToken,
+    body: { payload: { object_name: 'Жилой дом на Охотской' } },
+  });
+  ok('бриф сохраняется той же ручкой, что у плагина', saved.status === 200, `status ${saved.status}`);
+
+  // 6. Шаг диалога: пустой ответ и чужой вопрос отвергаются.
+  const empty = await call('POST', `/offers/${offerId}/brief/object_name`, {
+    token: ownerToken,
+    body: { text: '   ' },
+  });
+  ok('пустой ответ на вопрос брифа → 400', empty.status === 400, `status ${empty.status}`);
+
+  // Первый ответ на бриф без начатого разговора: `last_topic` пуст, и ответ
+  // ДОЛЖЕН приниматься. Живой дефект стенда 2026-11-15: ручка отвечала 409
+  // «вопрос сменился» — «Объект» показывался, а записать его было нельзя.
+  const stuckAt = await call('POST', `/offers/${offerId}/brief/customer_goals`, {
+    token: ownerToken,
+    body: { text: 'закрыть кровлю' },
+  });
+  // На стенде модель — заглушка, поэтому шаг честно отвечает отказом
+  // (`unavailable`/502); важно, что НЕ 409: тема не считается устаревшей.
+  ok('первый ответ не отвергается как «вопрос сменился»', stuckAt.status !== 409,
+    `status ${stuckAt.status} ${stuckAt.text?.slice(0, 120)}`);
+
+  // 7. «Продолжить в боте» без подписи Telegram: отказ, бот не тревожится.
+  const noSig = await call('POST', '/app/ask', {
+    body: { initData: 'garbage', action: 'brief', kind: 'offer', id: offerId },
+  });
+  // Без токена бота сервис отвечает 503 «бот не настроен» (это настройка
+  // сервера, а не вина человека — `appSessionError`), поэтому годятся 4xx/503.
+  ok('«продолжить в боте» без подписи → отказ', (noSig.status >= 400 && noSig.status < 500) || noSig.status === 503,
+    `status ${noSig.status} ${noSig.text?.slice(0, 120)}`);
+  ok('«продолжить в боте» не отвечает успехом без Telegram', noSig.json?.ok !== true,
+    JSON.stringify(noSig.json));
+
+  const badAction = await call('POST', '/app/ask', {
+    body: { initData: 'x', action: 'docx', kind: 'offer', id: offerId },
+  });
+  ok('неизвестное действие → 400', badAction.status === 400, `status ${badAction.status}`);
+
+  // 8. Права: чужой сотрудник бриф не правит.
+  {
+    const foreign = await call('PUT', `/offers/${offerId}/brief`, {
+      token: makeJwt('stranger@tn.ru'),
+      body: { payload: { object_name: 'чужое' } },
+    });
+    ok('чужой не правит бриф', foreign.status === 403, `status ${foreign.status}`);
+  }
+
+  // 9. Положительный путь: подпись Telegram настоящая (стенд подписывает её
+  //    тем же токеном бота), чат привязан, КП своё — бот получает просьбу.
+  //    Без этого «продолжить в боте» проверялось бы только отказами.
+  // Токен бота стенд мог сбросить на предыдущих секциях («бот не настроен»),
+  // поэтому ставим его здесь заново: без него ручка честно отвечает 503.
+  await call('POST', '/bot/config', { token: ownerToken, body: { token: '123456789:GOOD' } });
+  const botCfg = await call('GET', '/bot/token', { headers: { 'X-Service-Secret': BOT_SECRET } });
+  const standToken = String(botCfg.json?.token ?? '');
+  // `linkedChatId` — чат `attach-<время>`, а не число, а подпись Telegram
+  // требует числовой `user.id`, ПРИВЯЗАННЫЙ к человеку. Вяжем свой числовой
+  // чат тем же путём, что бот: код на почту → подтверждение кодом.
+  // Код выдаёт админская ручка `POST /access/codes` (та же, что для бота:
+  // конкретный код в ответе — так устроен стенд), а `verify-code` вяжет chat.
+  const standChatId = 810181470;
+  let standLinked = false;
+  if (standToken.includes(':')) {
+    const issued = await call('POST', '/access/codes', {
+      token: ownerToken,
+      body: { email: 'owner@tn.ru' },
+    });
+    const standCode = String(issued.json?.code ?? '');
+    if (standCode !== '') {
+      const verified = await call('POST', '/bot/verify-code', {
+        headers: { 'X-Service-Secret': BOT_SECRET },
+        body: { chat_id: String(standChatId), email: 'owner@tn.ru', code: standCode },
+      });
+      standLinked = verified.status === 200;
+    }
+  }
+  if (standLinked) {
+    const initRaw = signInitData(
+      {
+        auth_date: String(Math.floor(Date.now() / 1000)),
+        query_id: 'AAH-stand-ask',
+        user: JSON.stringify({ id: standChatId, first_name: 'Стенд', username: 'stand' }),
+      },
+      standToken,
+    );
+    const asked = await call('POST', '/app/ask', {
+      body: { initData: initRaw, action: 'brief', kind: 'offer', id: offerId },
+    });
+    ok('«продолжить в боте» с настоящей подписью → 200', asked.status === 200,
+      `status ${asked.status} ${asked.text?.slice(0, 160)}`);
+    ok('бот подтвердил приём просьбы', asked.json?.ok === true && typeof asked.json?.sent === 'string',
+      JSON.stringify(asked.json));
+
+    const positionsAsk = await call('POST', '/app/ask', {
+      body: { initData: initRaw, action: 'positions', kind: 'offer', id: offerId },
+    });
+    ok('«прислать файл для позиций» тоже доходит до бота', positionsAsk.status === 200,
+      `status ${positionsAsk.status} ${positionsAsk.text?.slice(0, 160)}`);
+
+    const strangerInit = signInitData(
+      {
+        auth_date: String(Math.floor(Date.now() / 1000)),
+        query_id: 'AAH-stand-ask-2',
+        user: JSON.stringify({ id: standChatId + 1, first_name: 'Чужой', username: 'other' }),
+      },
+      standToken,
+    );
+    const strangerAsk = await call('POST', '/app/ask', {
+      body: { initData: strangerInit, action: 'brief', kind: 'offer', id: offerId },
+    });
+    ok('чужая подпись не отдаёт КП боту', strangerAsk.status === 401 || strangerAsk.status === 403,
+      `status ${strangerAsk.status} ${strangerAsk.text?.slice(0, 120)}`);
+  } else {
+    console.log('  ~ просьбы из приложения пропущены: нет токена бота или не удалось привязать чат');
+  }
+
+  // Секция ставит токен бота заново (см. выше), а раздел настроек проверяет
+  // соcтояние «до настройки токена не было» — возвращаем его как было.
+  // `DELETE /bot/config` убирает токен, и следующий прогон стенда повторяем.
+  await call('DELETE', '/bot/config', { token: ownerToken });
+
+  // Форму возвращаем к умолчанию, чтобы следующие секции не зависели от неё.
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: { mode: 'client', title: 'Коммерческое предложение', placeholders: [{ id: 'client_name', label: 'Заказчик' }], blocks: [], requiredFields: [], window: [] },
+  });
+}
+
 await sectionWindow();
+await sectionBriefApp();
 
 console.log(`\nИтого: ${passed} ок, ${failed} провалов`);
 process.exit(failed === 0 ? 0 : 1);

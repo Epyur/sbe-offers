@@ -19,8 +19,16 @@ export type WindowKind = 'field' | 'zone';
 /**
  * Зоны экрана КП. Порядок — порядок по умолчанию (прежнее поведение экрана):
  * Заказчик → Системы → Позиции → Материалы → Тексты разделов.
+ *
+ * `brief` (2026-11-15) — зона брифа. Она входит в набор, но НЕ в окно
+ * «как сейчас»: КП могло быть собрано без разговора в боте, и пустая карточка
+ * не должна появляться у всех сама. Администратор включает её галочкой
+ * (сервер дописывает новую зону в конец невидимой — решение §2.4 спеки).
  */
-export const KNOWN_ZONES = ['client', 'systems', 'items', 'materials', 'sections'] as const;
+export const KNOWN_ZONES = ['client', 'systems', 'items', 'materials', 'sections', 'brief'] as const;
+
+/** Зоны окна «как сейчас» — без брифа: набор сервера `legacyWindowZones`. */
+export const LEGACY_ZONES = ['client', 'systems', 'items', 'materials', 'sections'] as const;
 
 export type WindowZoneID = (typeof KNOWN_ZONES)[number];
 
@@ -31,6 +39,7 @@ export const ZONE_TITLES: Record<WindowZoneID, string> = {
   items: 'Позиции с ценами',
   materials: 'Материалы (описанием)',
   sections: 'Тексты разделов',
+  brief: 'Бриф',
 };
 
 /** Единственная зона, которую можно сделать обязательной (у неё есть поля). */
@@ -60,9 +69,12 @@ export function windowTitle(item: WindowItem, placeholders: Placeholder[]): stri
  * затем все поля формы. `Required` у полей берётся из формы (прежняя
  * галочка «обязательное»), у зон — снят: обязательной бывает только `client`,
  * и это отдельное решение администратора, а не унаследованное.
+ *
+ * Бриф (`LEGACY_ZONES` его не содержит) в умолчание не входит: новый раздел
+ * не появляется у всех сам (2026-11-15).
  */
 export function defaultWindow(placeholders: Placeholder[]): WindowItem[] {
-  const items: WindowItem[] = KNOWN_ZONES.map((zone) => ({
+  const items: WindowItem[] = LEGACY_ZONES.map((zone) => ({
     kind: 'zone',
     id: zone,
     visible: true,
