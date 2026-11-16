@@ -14,6 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  KNOWN_ZONES,
   ZONE_TITLES,
   appendNewFields,
   defaultWindow,
@@ -71,54 +72,27 @@ test('подпись зоны — из кода, подпись поля — и�
   assert.equal(windowTitle({ kind: 'field', id: 'gone' }, placeholders), 'gone');
   // Неизвестная зона — свой id: её некому нарисовать, и это надо видеть.
   assert.equal(windowTitle(zone('unknown'), placeholders), 'unknown');
-  // Бриф (0.11.2) — известная зона с подписью.
-  assert.equal(windowTitle(zone('brief'), placeholders), 'Бриф');
-  assert.deepEqual(Object.keys(ZONE_TITLES), ['client', 'systems', 'items', 'materials', 'sections', 'brief']);
+  // Бриф выведен из зон (0.11.3): вызывается из карточки раздела, а зона
+  // стала бы настройкой ни о чём.
+  assert.deepEqual(Object.keys(ZONE_TITLES), ['client', 'systems', 'items', 'materials', 'sections']);
 });
 
-// Сторож дефекта 0.11.1 «не вижу зоны бриф в настройках формы» (2026-11-16,
-// совещание gemini-4-argon + claude-5-opus). Редактор рисовал ровно то, что
-// пришло с сервера: если зоны не было в ответе, включить её было нечем.
-test('недостающие зоны дописываются в редактор невидимыми', () => {
-  // Живая payload 0.11.1: 5 зон + поля, брифа нет.
-  const saved = [
-    zone('client'),
-    zone('systems'),
-    zone('items'),
-    zone('materials'),
-    zone('sections'),
-    field('supplier_name', { visible: true }),
-  ];
-  const items = windowForEditor(saved, placeholders);
-  const brief = items.find((i) => i.kind === 'zone' && i.id === 'brief');
-  assert.ok(brief, 'зона brief обязана быть в редакторе, иначе её не включить');
-  assert.equal(brief.visible, false, 'дописанная зона невидима: раздел не появляется сам');
-});
-
-test('бриф встаёт сразу за Заказчиком, а не в конец', () => {
+// Сторож вывода зоны брифа (0.11.3). До 0.11.3 зона была в наборе и
+// дописывалась в редактор; после переноса вызова брифа в карточки разделов она
+// стала настройкой, которая ничего не делает.
+test('зоны брифа нет: её не дописывает ни умолчание, ни редактор', () => {
+  assert.ok(!KNOWN_ZONES.includes('brief'), 'brief не должен входить в KNOWN_ZONES');
   const items = windowForEditor([zone('client'), field('object_name')], placeholders);
-  const ids = items.map((i) => i.id);
-  assert.equal(ids[ids.indexOf('client') + 1], 'brief', `порядок: ${ids.join(',')}`);
+  assert.ok(!items.some((i) => i.kind === 'zone' && i.id === 'brief'));
 });
 
-test('окно без зон вообще тоже получает все зоны редактора', () => {
-  const items = windowForEditor([field('object_name')], placeholders);
+test('недостающие зоны дописываются в редактор невидимыми', () => {
+  // Редактор не должен рисовать ровно то, что пришло: если сервер старой
+  // сборки зону не прислал, включить её было бы нечем.
+  const items = windowForEditor([zone('client'), field('supplier_name', { visible: true })], placeholders);
   const zones = items.filter((i) => i.kind === 'zone').map((i) => i.id);
-  // Клиент уже был в присланном окне, поэтому бриф встаёт сразу за ним —
-  // та же логика якоря, что у сервера.
-  assert.deepEqual(zones, ['client', 'brief', 'systems', 'items', 'materials', 'sections']);
-});
-
-test('порядок и видимость записанного сохраняются', () => {
-  const items = windowForEditor([zone('sections'), zone('client', false), field('object_name')], placeholders);
-  // Записанный порядок двух первых зон не изменился. Бриф (0.11.2) встаёт за
-  // «Заказчиком» — это и есть якорь, так что третьим идёт он, а не поле.
-  assert.deepEqual(
-    items.map((i) => `${i.id}:${i.visible}`).slice(0, 3),
-    ['sections:true', 'client:false', 'brief:false'],
-  );
-  // Поле формы никуда не делось, просто стоит после дописанных зон.
-  assert.ok(items.some((i) => i.kind === 'field' && i.id === 'object_name' && i.visible === true));
+  assert.deepEqual(zones, ['client', 'systems', 'items', 'materials', 'sections']);
+  assert.ok(items.filter((i) => i.kind === 'zone' && i.id !== 'client').every((i) => i.visible === false));
 });
 
 test('проверка окна: неизвестная зона, поле-призрак, дубль', () => {

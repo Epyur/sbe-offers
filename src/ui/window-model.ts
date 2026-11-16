@@ -25,10 +25,10 @@ export type WindowKind = 'field' | 'zone';
  * не должна появляться у всех сама. Администратор включает её галочкой
  * (сервер дописывает новую зону в конец невидимой — решение §2.4 спеки).
  */
-export const KNOWN_ZONES = ['client', 'systems', 'items', 'materials', 'sections', 'brief'] as const;
+export const KNOWN_ZONES = ['client', 'systems', 'items', 'materials', 'sections'] as const;
 
-/** Зоны окна «как сейчас» — без брифа: набор сервера `legacyWindowZones`. */
-export const LEGACY_ZONES = ['client', 'systems', 'items', 'materials', 'sections'] as const;
+/** Зоны окна «как сейчас» — тот же набор, что `defaultZoneOrder` сервера. */
+export const LEGACY_ZONES = KNOWN_ZONES;
 
 export type WindowZoneID = (typeof KNOWN_ZONES)[number];
 
@@ -39,7 +39,6 @@ export const ZONE_TITLES: Record<WindowZoneID, string> = {
   items: 'Позиции с ценами',
   materials: 'Материалы (описанием)',
   sections: 'Тексты разделов',
-  brief: 'Бриф',
 };
 
 /** Единственная зона, которую можно сделать обязательной (у неё есть поля). */
@@ -147,9 +146,9 @@ export function appendMissingZones(items: WindowItem[], placeholders: Placeholde
   return appendNewFields(out, placeholders);
 }
 
-/** За какой зоной ставить новую: бриф — за «Заказчиком», остальные — в конец. */
-export function zoneAnchorAfter(zone: string): string {
-  return zone === 'brief' ? 'client' : '';
+/** Якорей больше нет (0.11.3): бриф выведен из зон, новые зоны идут в конец. */
+export function zoneAnchorAfter(_zone: string): string {
+  return '';
 }
 
 /**
