@@ -227,6 +227,10 @@ func main() {
 	mux.HandleFunc("PUT /api/offers/offers/{id}/sections/{key}", s.requirePerm("editor")(s.handleAcceptSection))
 	mux.HandleFunc("PUT /api/offers/offers/{id}/client", s.requirePerm("editor")(s.handlePatchOfferClient))
 	mux.HandleFunc("PUT /api/offers/offers/{id}/items", s.requirePerm("editor")(s.handlePatchOfferItems))
+	// Поля формы из приложения (0.11.3): PATCH, потому что form_values — общий
+	// склад с текстами разделов (copy.*) и брифом (brief.*); полная замена
+	// снесла бы их. Ключи этих слоёв ручка отвергает.
+	mux.HandleFunc("PATCH /api/offers/offers/{id}/form-values", s.requirePerm("editor")(s.handlePatchOfferFormValues))
 	mux.HandleFunc("DELETE /api/offers/offers/{id}", s.requirePerm("editor")(s.handleDeleteOffer))
 	mux.HandleFunc("POST /api/offers/offers/{id}/export", s.requirePerm("viewer")(s.handleExportDocx))
 	mux.HandleFunc("POST /api/offers/offers/{id}/link", s.requirePerm("viewer")(s.handleOfferLink))

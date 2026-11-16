@@ -37,11 +37,8 @@ func TestEffectiveWindowDefault(t *testing.T) {
 	for _, item := range got {
 		switch item.Kind {
 		case windowKindZone:
-			if item.ID != windowZoneBrief && !item.Visible {
+			if !item.Visible {
 				t.Errorf("зона %q по умолчанию должна быть видна", item.ID)
-			}
-			if item.ID == windowZoneBrief && item.Visible {
-				t.Errorf("зона %q по умолчанию должна быть НЕВИДИМА: новый раздел не появляется сам", item.ID)
 			}
 			zones = append(zones, item.ID)
 		case windowKindField:
@@ -121,15 +118,9 @@ func TestEffectiveWindowAppendsMissingHidden(t *testing.T) {
 			t.Errorf("дописанный элемент %s:%s должен быть невидимым", item.Kind, item.ID)
 		}
 	}
-	// Порядок: бриф встаёт сразу за своим якорем («Заказчик»), остальное
-	// дописывается после. До 0.11.2 бриф уходил в самый конец — под таблицей
-	// полей формы, — и включённая зона оказывалась внизу (дефект, найденный
-	// `claude-5-opus` 2026-11-16).
-	if got[1].ID != windowZoneBrief {
-		t.Errorf("бриф должен стоять сразу за Заказчиком, получено %q", got[1].ID)
-	}
-	if tail[1].ID != "systems" {
-		t.Errorf("после брифа первым дописанным должен быть systems, получено %q", tail[1].ID)
+	// Дописанные зоны идут в объявленном порядке (0.11.3: брифа среди них нет).
+	if tail[0].ID != "systems" {
+		t.Errorf("первым дописанным должен быть systems, получено %q", tail[0].ID)
 	}
 	last := tail[len(tail)-1]
 	if last.Kind != windowKindField || last.ID != "object_name" {
@@ -306,68 +297,5 @@ func TestHiddenWindowItemIsNotRequired(t *testing.T) {
 	offer := Offer{FormValues: map[string]string{}}
 	if got := missingWindowFields(form, offer); len(got) != 0 {
 		t.Fatalf("скрытое обязательное не должно требовать заполнения, получено %+v", got)
-	}
-}
-
-// TestBriefZoneIsOptIn — зона брифа известна серверу и ВХОДИТ в окно «как
-// сейчас» (0.11.2), но НЕВИДИМОЙ: раздел не появляется у всех сам, это по-
-// прежнему решение администратора. До 0.11.2 её не было в умолчании вовсе —
-// у новой формы включить зону было нечем (живая жалоба 2026-11-16).
-func TestBriefZoneIsOptIn(t *testing.T) {
-	if !knownWindowZone(windowZoneBrief) {
-		t.Fatal("зона brief должна быть известна серверу")
-	}
-	if title := (WindowItem{Kind: windowKindZone, ID: windowZoneBrief}).WindowTitle(); title != "Бриф" {
-		t.Errorf("подпись зоны brief = %q, ожидали «Бриф»", title)
-	}
-	var found *WindowItem
-	for _, item := range effectiveWindow(openTestForm()) {
-		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
-			copied := item
-			found = &copied
-		}
-	}
-	if found == nil {
-		t.Fatal("бриф обязан быть в окне по умолчанию, иначе его не включить")
-	}
-	if found.Visible {
-		t.Fatal("бриф по умолчанию невидим: раздел не появляется у всех сам")
-	}
-}
-
-// TestBriefZoneAppendedHidden — форма, сохранённая до появления брифа,
-// получает его в конец НЕВИДИМЫМ: администратор включит сам (§2.4 спеки).
-func TestBriefZoneAppendedHidden(t *testing.T) {
-	form := openTestForm()
-	form.Window = []WindowItem{
-		{Kind: windowKindZone, ID: "client", Visible: true},
-		{Kind: windowKindZone, ID: "systems", Visible: true},
-	}
-	var brief *WindowItem
-	for _, item := range effectiveWindow(form) {
-		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
-			copied := item
-			brief = &copied
-		}
-	}
-	if brief == nil {
-		t.Fatal("новая зона должна дописываться в окно, иначе редактор её не увидит")
-	}
-	if brief.Visible {
-		t.Fatal("дописанная зона должна быть невидимой до решения администратора")
-	}
-}
-
-// TestBriefZoneSaves — включённый бриф проходит проверку сохранения, а
-// обязательным его сделать нельзя: подсветки пустого брифа в окне нет.
-func TestBriefZoneSaves(t *testing.T) {
-	form := openTestForm()
-	form.Window = []WindowItem{{Kind: windowKindZone, ID: windowZoneBrief, Visible: true}}
-	if msg := validateWindow(form); msg != "" {
-		t.Fatalf("бриф в окне не проходит проверку: %s", msg)
-	}
-	form.Window = []WindowItem{{Kind: windowKindZone, ID: windowZoneBrief, Visible: true, Required: true}}
-	if msg := validateWindow(form); msg == "" {
-		t.Fatal("обязательный бриф должен отвергаться: его никто не проверяет")
 	}
 }

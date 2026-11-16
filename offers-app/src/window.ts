@@ -13,8 +13,13 @@
 import { apiRequest } from './api.ts';
 import type { OfferDto } from './offer.ts';
 
-/** Зоны экрана КП. Набор совпадает с `knownWindowZones` сервера. */
-export type WindowZoneId = 'client' | 'systems' | 'items' | 'materials' | 'sections' | 'brief';
+/**
+ * Зоны экрана КП. Набор совпадает с `knownWindowZones` сервера.
+ *
+ * `brief` выведен из зон в 0.11.3: пользователь попросил вызывать бриф из
+ * карточки каждого раздела, и отдельный блок стал настройкой ни о чём.
+ */
+export type WindowZoneId = 'client' | 'systems' | 'items' | 'materials' | 'sections';
 
 /**
  * Порядок зон «как сейчас» — с него начинается любой экран (сервер, шаг 1).
@@ -26,7 +31,7 @@ export type WindowZoneId = 'client' | 'systems' | 'items' | 'materials' | 'secti
  */
 export const DEFAULT_ZONES: readonly WindowZoneId[] = ['client', 'systems', 'items', 'materials', 'sections'];
 
-const KNOWN_ZONES: readonly string[] = [...DEFAULT_ZONES, 'brief'];
+const KNOWN_ZONES: readonly string[] = [...DEFAULT_ZONES];
 
 /** Подпись зоны для человека. Язык экрана один, поэтому подпись живёт здесь. */
 export const ZONE_TITLES: Record<WindowZoneId, string> = {
@@ -35,7 +40,6 @@ export const ZONE_TITLES: Record<WindowZoneId, string> = {
   items: 'Позиции с ценами',
   materials: 'Материалы (описанием)',
   sections: 'Тексты разделов',
-  brief: 'Бриф',
 };
 
 /**
@@ -109,13 +113,89 @@ export function zoneOf(id: string): WindowZoneId | null {
  * показывает все зоны и строку «настройку окна прочитать не удалось»
  * (шаг 3). Поэтому здесь `null` означает именно «не прочитали», а не «пусто».
  */
-export async function loadOfferWindow(): Promise<WindowZoneId[] | null> {
+export async function loadOfferWindow(): Promise<OfferFormWindowDto | null> {
   try {
-    const form = await apiRequest<OfferFormWindowDto>('/form?mode=client');
-    return visibleZones(form);
+    // Возвращаем ФОРМУ ЦЕЛИКОМ, а не список зон (0.11.3): до этого поля формы
+    // терялись прямо здесь — `visibleZones` отдавала только зоны, и до рендера
+    // `kind:"field"` просто не доходил. Именно поэтому «поля не видны в
+    // приложении» не лечилось правкой экрана.
+    return await apiRequest<OfferFormWindowDto>('/form?mode=client');
   } catch {
     return null;
   }
+}
+
+/** Один элемент экрана КП: зона или поле формы — в порядке окна. */
+export type ScreenItem =
+  | { kind: 'zone'; id: WindowZoneId }
+  | { kind: 'field'; id: string; label: string };
+
+/**
+ * ЭКРАН КП — одним проходом по окну (0.11.3).
+ *
+ * До 0.11.3 здесь был `visibleZones`, и поля формы отбрасывались насовсем
+ * (`if (item.kind !== 'zone') continue`) — в приложении их не было ВООБЩЕ, хотя
+ * сервер их отдавал. Разбор 2026-11-16 (пять моделей сошлись) показал, что
+ * причина не в настройке, а в отсутствующем рендере.
+ *
+ * Правила:
+ *   - порядок — ровно как в окне: администратор может поставить поле МЕЖДУ
+ *     зонами, и отдельный блок полей этот порядок бы сломал;
+ *   - скрытое не возвращается;
+ *   - незнакомая зона пропускается (её некому нарисовать);
+ *   - поле без подписи в окне не рисуется: подпись — из формы, а поле, которого
+ *     в форме нет, — «осиротевшая» ссылка (класс «настройка ни о чём»);
+ *   - дубли отбрасываются.
+ */
+export function screenItems(form: OfferFormWindowDto | undefined | null): ScreenItem[] {
+  const items = form?.window ?? [];
+  const out: ScreenItem[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.visible === false) continue;
+    if (item.kind === 'zone') {
+      const zone = zoneOf(item.id);
+      if (zone === null) continue;
+      const key = `zone:${zone}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ kind: 'zone', id: zone });
+      continue;
+    }
+    if (item.kind === 'field') {
+      const id = item.id.trim();
+      if (id === '') continue;
+      const key = `field:${id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Подпись приходит из формы (`label` в элементе окна уже проставлен
+      // сервером); без неё рисовать нечего — показывать id человеку нельзя.
+      const label = item.label?.trim() ?? '';
+      if (label === '') continue;
+      out.push({ kind: 'field', id, label });
+    }
+  }
+  if (out.length === 0 && !hasWindowSettings(form)) {
+    return DEFAULT_ZONES.map((zone) => ({ kind: 'zone' as const, id: zone }));
+  }
+  return out;
+}
+
+/**
+ * Элементы окна, которые сервер прислал видимыми, а нарисовать нечем.
+ *
+ * Сторож из совещания 2026-11-16 (`claude-5-opus`): исходный дефект «поля
+ * отданы, но не нарисованы» ловился бы в тот же день. Пустой список — норма.
+ */
+export function unrenderedItems(form: OfferFormWindowDto | undefined | null): string[] {
+  const shown = new Set(screenItems(form).map((item) => `${item.kind}:${item.id}`));
+  const out: string[] = [];
+  for (const item of form?.window ?? []) {
+    if (item.visible === false) continue;
+    if (item.kind === 'zone' && zoneOf(item.id) === null) out.push(`zone:${item.id}`);
+    if (item.kind === 'field' && !shown.has(`field:${item.id}`)) out.push(`field:${item.id}`);
+  }
+  return out;
 }
 
 /** Зоны для экрана: не прочиталось — все в прежнем порядке. */

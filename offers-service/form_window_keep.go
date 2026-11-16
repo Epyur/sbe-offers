@@ -55,7 +55,7 @@ func mergeStoredZones(incoming, stored []WindowItem) []WindowItem {
 			// и так допишет её невидимой на чтении.
 			continue
 		}
-		out = insertAfterAnchor(out, *kept, zone)
+		out = insertStoredZone(out, *kept)
 	}
 	return out
 }
@@ -83,13 +83,11 @@ func keepKnownZonesFromDB(ctx context.Context, s *Server, mode string, incoming 
 	return mergeStoredZones(incoming, stored)
 }
 
-// insertAfterAnchor ставит восстановленную зону рядом с её якорем (как
-// `appendMissingZones`), а без якоря — в конец.
-func insertAfterAnchor(items []WindowItem, item WindowItem, zone string) []WindowItem {
-	if anchor := zoneAnchorAfter(zone); anchor != "" {
-		if at := indexOfZone(items, anchor); at >= 0 {
-			return append(items[:at+1], append([]WindowItem{item}, items[at+1:]...)...)
-		}
-	}
+// insertStoredZone ставит восстановленную зону в конец.
+//
+// До 0.11.3 здесь был якорь для брифа («сразу за Заказчиком»); с 0.11.3 зоны
+// брифа нет, якорей нет ни у одной зоны, поэтому правило одно — в конец: так
+// восстановленная зона не сдвигает порядок, который задал администратор.
+func insertStoredZone(items []WindowItem, item WindowItem) []WindowItem {
 	return append(items, item)
 }

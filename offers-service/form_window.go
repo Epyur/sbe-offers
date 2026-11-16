@@ -42,14 +42,22 @@ const windowZoneClient = "client"
 // администратор: новая зона в старом окне дописывается невидимой.
 var knownWindowZones = []string{
 	windowZoneClient,
-	windowZoneBrief,
 	"systems",
 	"items",
 	"materials",
 	"sections",
 }
 
-// windowZoneBrief — зона брифа в приложении.
+// windowZoneBrief — ЗОНА брифа, выведенная из окна (0.11.3).
+//
+// 0.11.1–0.11.2 держали бриф отдельным блоком экрана, и это оказалось
+// неверным: менеджер стоит в разделе («Преимущества»), видит слабый текст и
+// хочет дополнить контекст, не уходя наверх. Пользователь попросил перенести
+// вызов брифа в карточку каждого раздела (2026-11-16), и зона стала настройкой,
+// которая ничего не делает, — то есть дефектом по правилу проекта.
+//
+// Константа оставлена: по ней вычищаются старые окна (`dropLegacyZones`), и по
+// ней на чтении понимается, что элемент устарел, а не испорчен.
 const windowZoneBrief = "brief"
 
 // defaultZoneOrder — порядок зон в окне «как сейчас»: прежние пять, затем
@@ -62,7 +70,6 @@ var defaultZoneOrder = []string{
 	"items",
 	"materials",
 	"sections",
-	windowZoneBrief,
 }
 
 // legacyWindowZones — набор зон ДО появления брифа. Остался для чтения
@@ -83,7 +90,6 @@ var windowZoneTitles = map[string]string{
 	"items":          "Позиции с ценами",
 	"materials":      "Материалы (описанием)",
 	"sections":       "Тексты разделов",
-	windowZoneBrief:  "Бриф",
 }
 
 // WindowItem — один элемент окна КП в приложении (2026-11-15).
@@ -131,8 +137,12 @@ func (w WindowItem) WindowTitle() string {
 // пользователя §2.4 спеки: форма, сохранённая до появления зоны, не покажет
 // её случайно).
 func effectiveWindow(form OfferForm) []WindowItem {
-	saved := make([]WindowItem, 0, len(form.Window))
-	for _, item := range form.Window {
+	// 0.11.3: зона брифа выведена из окна. Окно, сохранённое в 0.11.2, несёт
+	// `zone:brief` — вычищаем на чтении, чтобы в редакторе не осталось строки,
+	// которой в приложении соответствует пустота.
+	cleaned := dropLegacyZones(form.Window)
+	saved := make([]WindowItem, 0, len(cleaned))
+	for _, item := range cleaned {
 		item.Kind = strings.TrimSpace(item.Kind)
 		item.ID = strings.TrimSpace(item.ID)
 		if item.Kind != windowKindField && item.Kind != windowKindZone {
@@ -187,12 +197,11 @@ func defaultWindow(form OfferForm) []WindowItem {
 	return items
 }
 
-// appendMissingZones дописывает недостающие зоны невидимыми.
+// appendMissingZones дописывает недостающие зоны невидимыми — в конец.
 //
-// Место вставки — не «в самый конец»: 0.11.1 дописывала бриф после всех полей
-// формы, и включённая зона оказывалась под таблицей полей (`claude-5-opus`,
-// 2026-11-16). Правило: зона встаёт сразу за своей «якорной» зоной
-// (`zoneAnchorAfter`), а без якоря — в конец.
+// До 0.11.3 у зоны брифа был якорь («сразу за Заказчиком»). С 0.11.3 бриф не
+// зона, а вызов из карточки раздела, поэтому якорь ушёл вместе с зоной;
+// функция оставлена как единая точка дописывания (её зовёт `normalizeWindow`).
 func appendMissingZones(items []WindowItem, seen map[string]bool) []WindowItem {
 	for _, zone := range knownWindowZones {
 		key := windowKindZone + "\x00" + zone
@@ -200,28 +209,33 @@ func appendMissingZones(items []WindowItem, seen map[string]bool) []WindowItem {
 			continue
 		}
 		seen[key] = true
-		item := WindowItem{Kind: windowKindZone, ID: zone, Visible: false}
-		anchor := zoneAnchorAfter(zone)
-		if anchor != "" {
-			if at := indexOfZone(items, anchor); at >= 0 {
-				items = append(items[:at+1], append([]WindowItem{item}, items[at+1:]...)...)
-				continue
-			}
-		}
-		items = append(items, item)
+		items = append(items, WindowItem{Kind: windowKindZone, ID: zone, Visible: false})
 	}
 	return items
 }
 
-// zoneAnchorAfter — за какой зоной ставить новую.
+// dropLegacyZones вычищает из окна зоны, которых больше нет в наборе.
 //
-// Бриф описывает объект и ставится сразу за «Заказчиком»: внизу, после полей
-// формы, его не находят (живая жалоба «не вижу зоны бриф», 2026-11-16).
-func zoneAnchorAfter(zone string) string {
-	if zone == windowZoneBrief {
-		return windowZoneClient
+// Нужна ровно для одной: `zone:brief`. Окно, сохранённое в 0.11.2 (где бриф
+// был зоной), иначе осталось бы с элементом, который никто не рисует, — а это
+// и есть «настройка, которая ничего не делает». Вычищаем и на чтении, и перед
+// записью: старый плагин может прислать бриф обратно.
+//
+// Отдельная функция, а не общий «выкинуть всё неизвестное»: неизвестную зону
+// надо показывать в редакторе как ошибку (`validateWindow`), а устаревшую —
+// молча убирать, потому что она когда-то была законной.
+func dropLegacyZones(items []WindowItem) []WindowItem {
+	if len(items) == 0 {
+		return items
 	}
-	return ""
+	out := make([]WindowItem, 0, len(items))
+	for _, item := range items {
+		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // indexOfZone — позиция зоны в списке окна; -1, если её там нет.

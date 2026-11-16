@@ -3391,10 +3391,9 @@ async function sectionWindow() {
 
   const readWindow = await call('GET', '/form', { token: ownerToken });
   const window = readWindow.json?.window ?? [];
-  // Записанный порядок главный; бриф (0.11.2) дописывается якорем — сразу за
-  // «Заказчиком», потому что в сохранённом окне его не было.
+  // Записанный порядок главный; дописанные зоны — в конец (0.11.3).
   ok('порядок зон пережил сохранение',
-    window.slice(0, 4).map((w) => w.id).join(',') === 'items,client,brief,systems',
+    window.slice(0, 3).map((w) => w.id).join(',') === 'items,client,systems',
     JSON.stringify(window.map((w) => w.id)));
   ok('сохранённая зона осталась видимой',
     window[0]?.visible === true && window[1]?.required === true,
@@ -3407,11 +3406,11 @@ async function sectionWindow() {
     clearedWindow.status === 200 && readWindow.status === 200,
     `status ${clearedWindow.status}`);
   const afterClear = await call('GET', '/form', { token: ownerToken });
-  // 0.11.2: в умолчании прежние пять зон, затем бриф (невидимый): иначе
-  // включить его нечем ни в редакторе, ни в приложении.
-  ok('пустое окно отдаёт пять зон и бриф',
+  // 0.11.3: бриф выведен из зон (вызывается из карточки раздела), поэтому в
+  // умолчании ровно пять зон.
+  ok('пустое окно отдаёт прежние пять зон',
     (afterClear.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id).join(',')
-      === 'client,systems,items,materials,sections,brief',
+      === 'client,systems,items,materials,sections',
     JSON.stringify((afterClear.json?.window ?? []).map((w) => w.id)));
 
   // Неизвестная зона — ошибка, и текст обязан быть русским: это сообщение
@@ -3587,53 +3586,18 @@ async function sectionBriefApp() {
   await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
   const defaults = await call('GET', '/form', { token: ownerToken });
   const defaultZones = (defaults.json?.window ?? []).filter((w) => w.kind === 'zone');
-  // 0.11.2: бриф ВХОДИТ в окно «как сейчас» (иначе его не включить ни в
-  // редакторе, ни в приложении — живая жалоба 2026-11-16), но НЕВИДИМЫМ:
-  // раздел не появляется у всех сам. Порядок — прежние пять, затем бриф.
-  const briefZone = defaultZones.find((w) => w.id === 'brief');
-  ok('окно «как сейчас» содержит бриф', briefZone !== undefined,
+  // 0.11.3: бриф больше НЕ зона окна — он вызывается из карточки раздела.
+  // Если окно сохранено раньше с `zone:brief`, сервер вычищает её на чтении и
+  // не пишет на записи: иначе в редакторе осталась бы строка, которой в
+  // приложении ничего не соответствует.
+  ok('окно «как сейчас» не содержит брифа',
+    !defaultZones.some((w) => w.id === 'brief'),
     JSON.stringify(defaultZones.map((w) => w.id)));
-  ok('бриф в окне «как сейчас» невидим', briefZone?.visible === false,
-    JSON.stringify(briefZone));
-  ok('окно «как сейчас» — прежние пять зон, затем бриф',
-    defaultZones.map((w) => w.id).join(',') === 'client,systems,items,materials,sections,brief',
+  ok('окно «как сейчас» — прежние пять зон',
+    defaultZones.map((w) => w.id).join(',') === 'client,systems,items,materials,sections',
     JSON.stringify(defaultZones.map((w) => w.id)));
-  ok('все зоны умолчания, кроме брифа, видны',
-    defaultZones.filter((w) => w.id !== 'brief').every((w) => w.visible === true),
-    JSON.stringify(defaultZones));
 
-  // 2. Сохранённая настройка без брифа получает его в конец невидимым.
-  await call('PUT', '/form', {
-    token: ownerToken,
-    body: { ...baseForm, window: [{ kind: 'zone', id: 'client', visible: true }] },
-  });
-  const appended = await call('GET', '/form', { token: ownerToken });
-  const briefItem = (appended.json?.window ?? []).find((w) => w.kind === 'zone' && w.id === 'brief');
-  ok('бриф дописан в сохранённое окно', briefItem !== undefined, JSON.stringify(appended.json?.window));
-  ok('дописанный бриф невидим', briefItem?.visible === false, JSON.stringify(briefItem));
-
-  // 3. Включённый администратором бриф сохраняется и отдаётся с флагом настройки.
-  const briefOn = await call('PUT', '/form', {
-    token: ownerToken,
-    body: {
-      ...baseForm,
-      window: [
-        { kind: 'zone', id: 'client', visible: true },
-        { kind: 'zone', id: 'brief', visible: true },
-      ],
-    },
-  });
-  ok('бриф можно включить', briefOn.status === 200, `status ${briefOn.status} ${briefOn.text?.slice(0, 120)}`);
-  const briefRead = await call('GET', '/form', { token: ownerToken });
-  ok('включённый бриф читается обратно',
-    (briefRead.json?.window ?? []).some((w) => w.id === 'brief' && w.visible === true),
-    JSON.stringify(briefRead.json?.window));
-  ok('форма сообщает, что окно записано', briefRead.json?.windowStored === true,
-    JSON.stringify(briefRead.json?.windowStored));
-
-  // 3a. Защита записи (0.11.2, дефект найден `gemini-4-argon`): старый клиент
-  // не знает зоны brief и присылает окно без неё. Включённая зона НЕ должна
-  // откатываться — иначе «настройка не сохранилась» без единой ошибки.
+  // 2. Сохранённое окно с устаревшей зоной брифа: на чтении её нет.
   await call('PUT', '/form', {
     token: ownerToken,
     body: {
@@ -3641,42 +3605,57 @@ async function sectionBriefApp() {
       window: [
         { kind: 'zone', id: 'client', visible: true },
         { kind: 'zone', id: 'brief', visible: true },
+        { kind: 'zone', id: 'systems', visible: true },
       ],
     },
   });
-  // Тот же PUT, но БЕЗ brief — так выглядит запрос плагина 0.11.0.
-  const oldClientSave = await call('PUT', '/form', {
-    token: ownerToken,
-    body: { ...baseForm, window: [{ kind: 'zone', id: 'client', visible: true }] },
-  });
-  ok('сохранение старым клиентом проходит', oldClientSave.status === 200,
-    `status ${oldClientSave.status} ${oldClientSave.text?.slice(0, 120)}`);
-  const afterOldSave = await call('GET', '/form', { token: ownerToken });
-  const keptBrief = (afterOldSave.json?.window ?? []).find((w) => w.id === 'brief');
-  ok('включённая зона brief пережила сохранение без неё', keptBrief?.visible === true,
-    JSON.stringify(keptBrief));
-  ok('восстановленная зона стоит за Заказчиком',
-    (() => {
-      const ws = (afterOldSave.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id);
-      return ws.indexOf('brief') === ws.indexOf('client') + 1;
-    })(),
-    JSON.stringify((afterOldSave.json?.window ?? []).map((w) => w.id)));
+  const afterLegacy = await call('GET', '/form', { token: ownerToken });
+  const legacyZones = (afterLegacy.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id);
+  ok('устаревшая зона brief вычищена на чтении', !legacyZones.includes('brief'), JSON.stringify(legacyZones));
+  ok('вычистка не сдвинула порядок', legacyZones.join(',').startsWith('client,systems'), JSON.stringify(legacyZones));
 
-  // 3b. Явное «скрыть» от нового клиента уважается — защита не возвращает зону.
-  await call('PUT', '/form', {
+  // 3. Поля формы: своя ручка с ЧАСТИЧНЫМ слиянием (0.11.3).
+  // `form_values` делят поля, тексты разделов (`copy.*`) и бриф (`brief.*`),
+  // поэтому полная запись снесла бы их — проверяем, что не сносит.
+  // Formа в этом месте теста содержит только `client_name` (её сохраняла
+  // предыдущая проверка), поэтому пишем именно его: ручка отвергает поле, не
+  // заведённое в форме — это отдельная проверка ниже.
+  await call('PUT', `/offers/${offerId}/sections/intro`, {
     token: ownerToken,
-    body: {
-      ...baseForm,
-      window: [
-        { kind: 'zone', id: 'client', visible: true },
-        { kind: 'zone', id: 'brief', visible: false },
-      ],
-    },
+    body: { action: 'accept', text: 'Принятый текст вступления' },
   });
-  const afterHide = await call('GET', '/form', { token: ownerToken });
-  ok('явное «скрыть» сохраняется, а не откатывается защитой',
-    (afterHide.json?.window ?? []).find((w) => w.id === 'brief')?.visible === false,
-    JSON.stringify((afterHide.json?.window ?? []).find((w) => w.id === 'brief')));
+  const valuesSave = await call('PATCH', `/offers/${offerId}/form-values`, {
+    token: ownerToken,
+    body: { values: { client_name: 'ООО Ромашка' } },
+  });
+  ok('поля формы сохраняются своей ручкой', valuesSave.status === 200,
+    `status ${valuesSave.status} ${valuesSave.text?.slice(0, 160)}`);
+  const afterValues = await call('GET', `/offers/${offerId}`, { token: ownerToken });
+  ok('сохранённое поле видно в КП',
+    (afterValues.json?.formValues ?? {}).client_name === 'ООО Ромашка',
+    JSON.stringify((afterValues.json?.formValues ?? {}).client_name));
+  ok('правка поля не затёрла текст раздела',
+    String((afterValues.json?.formValues ?? {})['copy.intro'] ?? '') !== '',
+    JSON.stringify((afterValues.json?.formValues ?? {})['copy.intro']));
+
+  // Отказы: зарезервированные слои и поле вне формы.
+  const reserved = await call('PATCH', `/offers/${offerId}/form-values`, {
+    token: ownerToken,
+    body: { values: { 'copy.intro': 'подмена' } },
+  });
+  ok('поле copy.* ручка отвергает', reserved.status === 400, `status ${reserved.status}`);
+  ok('отказ объясняет, что слой свой', /своим путём/i.test(String(reserved.json?.error ?? '')),
+    String(reserved.json?.error ?? ''));
+  const ghost = await call('PATCH', `/offers/${offerId}/form-values`, {
+    token: ownerToken,
+    body: { values: { нет_такого_поля: 'x' } },
+  });
+  ok('поле вне формы отвергается', ghost.status === 400, `status ${ghost.status}`);
+  const emptyBody = await call('PATCH', `/offers/${offerId}/form-values`, {
+    token: ownerToken,
+    body: { values: {} },
+  });
+  ok('пустой набор → 400', emptyBody.status === 400, `status ${emptyBody.status}`);
 
   // 4. Пустое окно снова = «как сейчас», флаг снят.
   await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
@@ -3695,6 +3674,19 @@ async function sectionBriefApp() {
     body: { payload: { object_name: 'Жилой дом на Охотской' } },
   });
   ok('бриф сохраняется той же ручкой, что у плагина', saved.status === 200, `status ${saved.status}`);
+
+  // ГЛАВНОЕ: поля формы и бриф живут в одном `form_values`. Правка поля НЕ
+  // должна сносить бриф — иначе ручка полей тихо ломает контекст модели.
+  const valuesAfterBrief = await call('PATCH', `/offers/${offerId}/form-values`, {
+    token: ownerToken,
+    body: { values: { client_name: 'ООО Ромашка 2' } },
+  });
+  ok('правка поля после брифа проходит', valuesAfterBrief.status === 200,
+    `status ${valuesAfterBrief.status} ${valuesAfterBrief.text?.slice(0, 140)}`);
+  const briefAfterValues = await call('GET', `/offers/${offerId}/brief`, { token: ownerToken });
+  ok('правка поля не затёрла бриф',
+    (briefAfterValues.json?.brief?.payload?.object_name ?? '') === 'Жилой дом на Охотской',
+    JSON.stringify(briefAfterValues.json?.brief?.payload?.object_name));
 
   // 6. Шаг диалога: пустой ответ и чужой вопрос отвергаются.
   const empty = await call('POST', `/offers/${offerId}/brief/object_name`, {

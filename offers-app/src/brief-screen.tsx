@@ -49,7 +49,7 @@ type LoadState =
   | { kind: 'error'; text: string }
   | { kind: 'ready'; brief: BriefDto; turns: BriefTurnDto[] };
 
-export function BriefZone({ id }: { id: number }): JSX.Element {
+export function BriefContent({ id }: { id: number }): JSX.Element {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -186,6 +186,57 @@ export function BriefZone({ id }: { id: number }): JSX.Element {
         /* экран уже показывает ответ; тихая ошибка перечитывания не стирает его */
       });
   }
+}
+
+/**
+ * Шторка «Бриф» из карточки раздела (0.11.3).
+ *
+ * Пользователь попросил вызывать бриф ПО КАЖДОМУ разделу: он стоит в
+ * «Преимуществах», видит слабый текст и хочет дополнить контекст, не уходя
+ * наверх. Бриф при этом ОДИН на КП (решение 2026-11-16): четыре входа в один и
+ * тот же набор вопросов, а не четыре разных брифа.
+ *
+ * Заголовок честно говорит, что бриф общий и откуда его вызвали: иначе менеджер
+ * решит, что правит только этот раздел.
+ *
+ * Бриф спрашивает ТОЛЬКО незаполненное (так устроен `StepBrief` на сервере:
+ * `nextOpenTopic` берёт первую пустую тему), а после последнего ответа
+ * показывает сводку и предлагает просмотреть и поправить самому — это и есть
+ * просьба пользователя «предлагаем ознакомиться и указать, что скорректировать».
+ */
+export function BriefSheet({
+  id,
+  sectionLabel,
+  onClose,
+}: {
+  id: number;
+  /** Из какого раздела вызвали — для заголовка, не для фильтра данных. */
+  sectionLabel: string;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <div className="app-sheet-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="app-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Бриф КП"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="app-sheet-head">
+          <span className="app-sheet-title">Бриф КП</span>
+          <button className="app-link-button" type="button" onClick={onClose} aria-label="Закрыть бриф">
+            ✕
+          </button>
+        </div>
+        <p className="app-muted">
+          Общий контекст для всех разделов. Открыт из раздела «{sectionLabel}» — изменения учтутся при
+          следующей генерации.
+        </p>
+        <BriefContent id={id} />
+      </div>
+    </div>
+  );
 }
 
 /** Поле ответа на открытый вопрос: шаг диалога — тот же, что в боте. */

@@ -115,6 +115,38 @@ export async function saveClient(id: number, client: OfferClientDto): Promise<Wi
   return readWindowSave(res);
 }
 
+/**
+ * Поля формы — свои ручкой (0.11.3).
+ *
+ * `form_values` — общий склад: там же тексты разделов (`copy.*`) и бриф
+ * (`brief.*`). Поэтому отправляем ТОЛЬКО изменённые ключи и PATCH, а не
+ * полную замену: иначе правка «Условий» стёрла бы принятые тексты и бриф.
+ * Сервер сливает ключи в SQL, так что гонка с приёмом текста раздела не
+ * теряет ничью правку.
+ */
+export async function saveFormValues(
+  id: number,
+  values: Record<string, string>,
+): Promise<WindowSaveResponse> {
+  const res = await apiRequest<unknown>(`/offers/${id}/form-values`, {
+    method: 'PATCH',
+    body: { values },
+  });
+  return readWindowSave(res);
+}
+
+/** Какие ключи реально изменились — по ним и уходит запрос. */
+export function changedValues(
+  draft: Record<string, string>,
+  saved: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(draft)) {
+    if ((saved[key] ?? '') !== value) out[key] = value;
+  }
+  return out;
+}
+
 export async function saveItems(id: number, items: OfferItemDto[]): Promise<WindowSaveResponse> {
   const res = await apiRequest<unknown>(`/offers/${id}/items`, { method: 'PUT', body: { items } });
   return readWindowSave(res);

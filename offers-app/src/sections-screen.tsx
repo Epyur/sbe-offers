@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { ApiError } from './api.ts';
+import { BriefSheet } from './brief-screen.tsx';
 import {
   acceptSection,
   editSection,
@@ -103,6 +104,9 @@ function SectionCard({
   onError: (text: string) => void;
 }): JSX.Element {
   const [draft, setDraft] = useState(section.text);
+  // Бриф вызывается ИЗ РАЗДЕЛА (0.11.3, просьба пользователя): менеджер видит
+  // слабый текст и дополняет контекст, не уходя наверх за отдельным блоком.
+  const [briefOpen, setBriefOpen] = useState(false);
 
   useEffect(() => setDraft(section.text), [section.text]);
 
@@ -137,7 +141,11 @@ function SectionCard({
         aria-label={section.label}
         onChange={(e) => setDraft(e.target.value)}
       />
-      <div className="app-item-row">
+      {/* Два ряда (0.11.3, просьба пользователя): в один ряд четыре кнопки
+          не помещались, и «Пропустить» уезжала за экран. «Пропустить» убрана:
+          её смысл (принять пустой текст) не читался, а раздел без текста и так
+          не попадает в документ — достаточно очистить поле и нажать «Принять». */}
+      <div className="app-row-2">
         <button
           className="app-button app-button-ghost"
           type="button"
@@ -166,6 +174,11 @@ function SectionCard({
         >
           Выправить
         </button>
+      </div>
+      <div className="app-row-2">
+        <button className="app-button app-button-ghost" type="button" disabled={isBusy} onClick={() => setBriefOpen(true)}>
+          Бриф
+        </button>
         <button
           className="app-button"
           type="button"
@@ -179,21 +192,8 @@ function SectionCard({
         >
           {dirty || section.text === '' ? 'Принять' : 'Принято'}
         </button>
-        <button
-          className="app-link-button"
-          type="button"
-          disabled={isBusy}
-          onClick={() =>
-            run(async () => {
-              await acceptSection(id, section.key, '');
-              setDraft('');
-              onReplace({ ...section, text: '', warnings: [] });
-            })
-          }
-        >
-          Пропустить
-        </button>
       </div>
+      {briefOpen ? <BriefSheet id={id} sectionLabel={section.label} onClose={() => setBriefOpen(false)} /> : null}
     </div>
   );
 }

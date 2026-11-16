@@ -509,6 +509,55 @@ p.app-required {
  * Значение может быть многострочным (список болей), поэтому это колонка, а не
  * строка: длинная фраза в узком телефоне иначе растянет карточку вбок.
  */
+/*
+ * Два ряда кнопок в карточке раздела (0.11.3). В один ряд четыре кнопки не
+ * помещались, и «Пропустить» уезжала за правый край экрана — её и убрали.
+ * Равные колонки не дают кнопке раздуться от длинной подписи.
+ */
+.app-row-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/*
+ * Шторка брифа (0.11.3): бриф вызывается из карточки раздела, а не живёт
+ * отдельным блоком экрана. На узком телефоне это единственное место, где
+ * общий бриф доступен без прокрутки наверх.
+ */
+.app-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 10;
+}
+
+.app-sheet {
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: var(--app-radius) var(--app-radius) 0 0;
+  padding: var(--app-gap);
+  padding-bottom: max(var(--app-gap), env(safe-area-inset-bottom));
+}
+
+.app-sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.app-sheet-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
 .app-brief-fields {
   list-style: none;
   margin: 0 0 var(--app-gap);

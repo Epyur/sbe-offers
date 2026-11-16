@@ -29,7 +29,9 @@ import {
   removeMaterial,
   removeSystem,
   rowSum,
+  changedValues,
   saveClient,
+  saveFormValues,
   saveItems,
   searchMaterials,
   searchSystems,
@@ -42,16 +44,16 @@ import {
 } from './offer.ts';
 import { shortDate, statusLabel } from './lists.ts';
 import { SectionsZone } from './sections-screen.tsx';
-import { BriefZone } from './brief-screen.tsx';
 import { SendToChatButton } from './sendchat-button.tsx';
 import { askBot, askButtonText } from './ask.ts';
 import {
   loadOfferWindow,
   requiredOf,
-  visibleZones,
+  screenItems,
   zonesForScreen,
   type MissingField,
   type OfferFormWindowDto,
+  type ScreenItem,
   type WindowZoneId,
 } from './window.ts';
 
@@ -93,8 +95,8 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
       // Окно читается отдельным запросом: форма общая для всех КП, и её правка
       // не должна перезагружать карточку. Ошибка окна — `null`, не отказ.
       loadOfferWindow()
-        .then((zones) => ({ ok: true as const, zones }))
-        .catch(() => ({ ok: false as const, zones: null })),
+        .then((form) => ({ ok: form !== null, form }))
+        .catch(() => ({ ok: false as const, form: null })),
     ])
       .then(([offer, catalog, windowLoaded]) => {
         setState({
@@ -102,7 +104,7 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
           offer,
           catalog,
           // `zones === null` — не прочитали; иначе это настоящий список зон.
-          window: windowLoaded.zones === null && !windowLoaded.ok ? null : zonesToWindow(windowLoaded.zones),
+          window: windowLoaded.form,
           windowRead: windowLoaded.ok,
         });
         setMissing([]);
@@ -157,8 +159,11 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
   }
 
   const { offer, catalog, window, windowRead } = state;
-  // Зоны в порядке окна; невидимые не рисуются вовсе (шаг 2, `visibleZones`).
-  const zones = windowRead ? visibleZones(window) : [...zonesForScreen(null)];
+  // Экран одним проходом по окну: зоны И поля формы, в порядке окна (0.11.3).
+  // До 0.11.3 поля отбрасывались насовсем — их не было в приложении вовсе.
+  const items: ScreenItem[] = windowRead
+    ? screenItems(window)
+    : zonesForScreen(null).map((zone) => ({ kind: 'zone' as const, id: zone }));
   const showAllZones = !windowRead;
   // Подсветка мягкая: список незаполненного не блокирует сохранение.
   const softMissing = windowRead ? requiredOf(window, offer) : [];
@@ -182,34 +187,46 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
       ) : null}
       {missing.length === 0 ? null : <MissingNote items={missing} />}
 
-      {zones.map((zone) => (
-        <Zone
-          key={zone}
-          zone={zone}
-          offer={offer}
-          catalog={catalog}
-          busy={busy}
-          missing={softMissing}
-          id={id}
-          onSaveClient={(client) => apply(() => saveClient(id, client), 'Заказчик сохранён.')}
-          onSaveItems={(drafts) => apply(() => saveItems(id, drafts.map(draftToItem)), 'Позиции сохранены.')}
-          onAddSystem={(system) => {
-            apply(async () => readWindowSave(await addSystem(id, system)), `Система «${system.title}» добавлена.`);
-          }}
-          onRemoveSystem={(system) => {
-            apply(async () => readWindowSave(await removeSystem(id, system)), `Система «${system.title}» убрана.`);
-          }}
-          onAddMaterial={(material) => {
-            apply(
-              async () => readWindowSave(await addMaterial(id, material)),
-              `Материал «${material.title}» добавлен описанием.`,
-            );
-          }}
-          onRemoveMaterial={(material) => {
-            apply(async () => readWindowSave(await removeMaterial(id, material)), 'Материал убран.');
-          }}
-        />
-      ))}
+      {items.map((item) =>
+        item.kind === 'zone' ? (
+          <Zone
+            key={`zone:${item.id}`}
+            zone={item.id}
+            offer={offer}
+            catalog={catalog}
+            busy={busy}
+            missing={softMissing}
+            id={id}
+            onSaveClient={(client) => apply(() => saveClient(id, client), 'Заказчик сохранён.')}
+            onSaveItems={(drafts) => apply(() => saveItems(id, drafts.map(draftToItem)), 'Позиции сохранены.')}
+            onAddSystem={(system) => {
+              apply(async () => readWindowSave(await addSystem(id, system)), `Система «${system.title}» добавлена.`);
+            }}
+            onRemoveSystem={(system) => {
+              apply(async () => readWindowSave(await removeSystem(id, system)), `Система «${system.title}» убрана.`);
+            }}
+            onAddMaterial={(material) => {
+              apply(
+                async () => readWindowSave(await addMaterial(id, material)),
+                `Материал «${material.title}» добавлен описанием.`,
+              );
+            }}
+            onRemoveMaterial={(material) => {
+              apply(async () => readWindowSave(await removeMaterial(id, material)), 'Материал убран.');
+            }}
+          />
+        ) : (
+          <FormFieldZone
+            key={`field:${item.id}`}
+            fieldId={item.id}
+            label={item.label}
+            offer={offer}
+            busy={busy}
+            required={softMissing.some((m) => m.id === item.id)}
+            onSave={(values) => apply(() => saveFormValues(id, values), 'Поле сохранено.')}
+          />
+        ),
+      )}
 
       <SendToChatButton kind="offer" id={id} />
 
@@ -220,12 +237,6 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
       </p>
     </section>
   );
-}
-
-/** Обратное собирание окна из списка зон — для экрана (форма нужна `requiredOf`). */
-function zonesToWindow(zones: WindowZoneId[] | null): OfferFormWindowDto | null {
-  if (zones === null) return null;
-  return { window: zones.map((zone) => ({ kind: 'zone', id: zone, visible: true })) };
 }
 
 /** Строка «Не заполнено обязательное: …» — мягкое предупреждение, не блок. */
@@ -278,8 +289,6 @@ function Zone(props: ZoneProps): JSX.Element | null {
       );
     case 'items':
       return <ItemsZone offer={offer} busy={busy} onSave={props.onSaveItems} />;
-    case 'brief':
-      return <BriefZone id={id} />;
     case 'materials':
       return (
         <MaterialsZone
@@ -294,6 +303,87 @@ function Zone(props: ZoneProps): JSX.Element | null {
     default:
       return null;
   }
+}
+
+/**
+ * Поле формы в карточке КП (0.11.3).
+ *
+ * Поля формы раньше не рисовались вовсе: `visibleZones` их отбрасывала, а
+ * `FieldsZone`, обещанный комментарием, не был написан. Разбор 2026-11-16
+ * (пять моделей) дал одно правило: экран собирается ОДНИМ проходом по окну, и
+ * поле — такой же элемент окна, как зона. Отдельный блок полей сломал бы
+ * порядок, который администратор задал (поле между зонами — законно).
+ *
+ * Ценные поля «Заказчик» (название и контакт) сюда не попадают: они живут в
+ * `offer.client` и правятся зоной `client` (решение пользователя 2026-11-16:
+ * «считать частью зоны»). Если такое поле стоит в окне отдельной строкой,
+ * компонент его не рисует — иначе на экране было бы два поля на одно значение.
+ *
+ * Сохранение — только изменённые ключи (`changedValues` → PATCH
+ * `/form-values`): `form_values` делят поля, тексты разделов и бриф, и полная
+ * запись снесла бы их.
+ */
+const CLIENT_FIELDS = new Set(['client_name', 'client_contact']);
+
+function FormFieldZone({
+  fieldId,
+  label,
+  offer,
+  busy,
+  required,
+  onSave,
+}: {
+  fieldId: string;
+  label: string;
+  offer: OfferDto;
+  busy: boolean;
+  /** Окно пометило поле обязательным, а оно пустое — мягкая подсветка. */
+  required: boolean;
+  onSave: (values: Record<string, string>) => void;
+}): JSX.Element | null {
+  const saved = offer.formValues ?? {};
+  const [draft, setDraft] = useState(saved[fieldId] ?? '');
+
+  useEffect(() => {
+    setDraft(saved[fieldId] ?? '');
+  }, [saved, fieldId]);
+
+  if (CLIENT_FIELDS.has(fieldId)) {
+    // Значение правится зоной «Заказчик»; отдельная строка была бы дублем.
+    return null;
+  }
+
+  const dirty = draft !== (saved[fieldId] ?? '');
+  const multiline = fieldId === 'conditions';
+  return (
+    <div className={required ? 'app-card app-required' : 'app-card'}>
+      <h2 className="app-h2">{label}</h2>
+      {multiline ? (
+        <textarea
+          className="app-textarea"
+          rows={3}
+          value={draft}
+          aria-label={label}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+      ) : (
+        <input
+          className="app-input"
+          value={draft}
+          aria-label={label}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+      )}
+      <button
+        className="app-button"
+        type="button"
+        disabled={busy || !dirty}
+        onClick={() => onSave(changedValues({ [fieldId]: draft }, saved))}
+      >
+        {dirty ? 'Сохранить поле' : 'Сохранено'}
+      </button>
+    </div>
+  );
 }
 
 function ClientZone({

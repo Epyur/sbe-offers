@@ -1821,6 +1821,54 @@ paths:
           description: Применённые позиции и обновлённое предложение
         '400':
           description: Нет строк или материал не найден
+  /api/offers/offers/{id}/form-values:
+    patch:
+      summary: Правка полей формы из приложения (частичное слияние)
+      description: |
+        `form_values` — общий склад трёх слоёв: поля формы (`object_name`, …),
+        тексты разделов (`copy.*`) и бриф (`brief.*`). Ручка СЛИВАЕТ присланные
+        ключи с тем, что лежит в базе (JSONB `||`), а не заменяет объект: полная
+        запись снесла бы тексты разделов и бриф.
+
+        Ключи `copy.*` и `brief.*` отвергаются (400) — они пишутся своими путями.
+        Поле, не заведённое в форме КП, тоже отвергается. Отсутствие ключа —
+        «не менять»; пустая строка — законное значение (поле очистили).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                values:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Ключ поля формы → новое значение
+      responses:
+        '200':
+          description: Документ после записи и незаполненные обязательные
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offer:
+                    type: object
+                  missingRequired:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          description: Нет полей, зарезервированный слой или поле вне формы
+        '403':
+          description: Правит не владелец и не admin
+        '404':
+          description: Предложение не найдено
+
   /api/offers/offers/{id}/brief:
     get:
       summary: Бриф предложения

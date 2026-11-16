@@ -106,12 +106,18 @@ await page.route('**/api/offers/**', (route) => {
   }
   if (url.includes('/form')) {
     if (briefScreen) {
+      // Смешанное окно (0.11.3): зона → поле → зона → поле. Именно этот
+      // порядок ломался бы, если поля рисовать отдельным блоком.
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           window: [
-            { kind: 'zone', id: 'brief', visible: true },
+            { kind: 'zone', id: 'client', visible: true },
+            { kind: 'field', id: 'object_name', label: 'Объект', visible: true },
+            { kind: 'zone', id: 'sections', visible: true },
+            { kind: 'field', id: 'conditions', label: 'Условия', visible: true },
+            { kind: 'field', id: 'hidden_one', label: 'Скрытое', visible: false },
             { kind: 'zone', id: 'items', visible: true },
           ],
         }),
@@ -201,41 +207,35 @@ const zoneTitles = (await page.locator('.app-card h2').allTextContents()).map((s
 check('карточка КП: рисуются зоны из окна', zoneTitles.join('|') === 'Позиции|Заказчик', zoneTitles.join('|'));
 check('карточка КП: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 
-// Блок «Бриф» и разбор файла (2026-11-15): зона брифа — отдельная настройка,
-// поэтому её показ проверяется на своём окне. Ответы ручек уже стоят выше.
-//
-// Перезагрузка, а не смена хэша: `#/offer/1` уже открыт, и `Page.goto` с тем же
-// адресом React не перемонтирует карточку — окно не перечиталось бы (тест на
-// этом и упал: карточка брифа не появилась).
+// Поля формы и порядок окна (0.11.3). До 0.11.3 поля не рисовались вовсе:
+// visibleZones отбрасывала kind:"field", а FieldsZone не существовал.
+// Сторож из совещания 2026-11-16: проверяем, что поле ОТДАНО и НАРИСОВАНО,
+// и что порядок «зона → поле → зона → поле» сохранён.
 briefScreen = true;
+
 await page.reload({ waitUntil: 'networkidle' });
-const briefCard = page.locator('.app-card', { hasText: 'Бриф' });
-check('блок брифа: карточка нарисована', (await briefCard.count()) >= 1);
+
+const order = await page.evaluate(() => {
+  const nodes = Array.from(document.querySelectorAll('main .app-card, main .app-section'));
+  return nodes.map((n) => (n.querySelector('.app-h2')?.textContent ?? n.textContent ?? '').trim().slice(0, 40));
+});
+check('экран: поле «Объект» нарисовано', (await page.getByLabel('Объект').count()) === 1);
+check('экран: поле «Условия» нарисовано', (await page.getByLabel('Условия').count()) === 1);
+check('экран: скрытое поле не нарисовано', (await page.getByLabel('Скрытое').count()) === 0);
 check(
-  'блок брифа: «Заполнено 2 из 14 тем»',
-  ((await briefCard.locator('h2').first().textContent()) ?? '').includes('Заполнено 2 из 14'),
+  'экран: порядок «зона → поле → зона → поле» сохранён',
+  (() => {
+    const text = order.join('|');
+    const z = text.indexOf('Заказчик');
+    const f1 = text.indexOf('Объект');
+    const z2 = text.indexOf('Тексты разделов');
+    const f2 = text.indexOf('Условия');
+    return z >= 0 && f1 > z && z2 > f1 && f2 > z2;
+  })(),
+  order.join(' | '),
 );
-check(
-  'блок брифа: значение темы показано',
-  ((await briefCard.textContent()) ?? '').includes('Дом на Охотской'),
-);
-check(
-  'блок брифа: открытый вопрос — поле ответа',
-  (await briefCard.locator('.app-brief-answer textarea').count()) === 1,
-);
-check(
-  'блок брифа: история разговора свёрнута',
-  (await briefCard.locator('.app-brief-turns summary').count()) === 1,
-);
-check(
-  'позиции: кнопка «Прислать файл для разбора»',
-  (await page.locator('button', { hasText: 'Прислать файл для разбора' }).count()) === 1,
-);
-check(
-  'блок брифа: кнопка «Продолжить бриф в боте»',
-  (await page.locator('button', { hasText: 'Продолжить бриф в боте' }).count()) === 1,
-);
-check('блок брифа: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
+check('блок брифа как зоны больше не рисуется', (await page.locator('.app-brief-fields').count()) === 0);
+check('экран: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 
 await page.goto(base, { waitUntil: 'networkidle' });
 check('открытие без хэша — приветствие', (await page.locator('.app-section-tile').count()) === 4);

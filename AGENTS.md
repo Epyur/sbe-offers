@@ -30,14 +30,25 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.2** — ready 2026-11-16, deployment notes in
-`HANDOFF.md`. Fixes «не вижу зоны Бриф» (defect of 0.11.1, found in live use).
-Three layers changed together: `defaultWindow` now includes `brief` (invisible,
-last in `defaultZoneOrder`), missing zones are appended **by anchor** (brief right
-after `client`, not at the end), and saving from an old client no longer wipes a
-zone the admin enabled (`mergeStoredZones`). Plugin: `windowForEditor` appends
-missing zones too, and the window editor finally renders its group headers
-(`zonesTitle`/`fieldsTitle` were declared but never drawn).
+Current version = **0.11.3** — ready 2026-11-16. Fields of the offer form are
+rendered in the Mini App at last, the brief moved into each section card, and the
+`brief` window zone is gone.
+
+> **Read before touching the offer screen:** the screen is built in ONE pass over
+> the window (`screenItems` in `offers-app/src/window.ts`) — zones AND form fields,
+> in the administrator's order. There is no `FieldsZone` and there must not be one:
+> the configurator allows mixing a field between zones, and a separate fields block
+> would break that order. Fields save through `PATCH /offers/{id}/form-values`
+> (partial merge); `PUT /client` would wipe `copy.*` and `brief.*` that share
+> `form_values`. Client name/contact are part of the `client` zone, not separate
+> fields (user decision 2026-11-16).
+
+> **Council write-ups (how these two defects were found):**
+> `C:\Obsidian\mailers\docs\superpowers\specs\2026-11-16-sbe-offers-brief-zone-postmortem.md`
+> and `...-form-fields-council.md` — the second one also carries the ALGORITHM for
+> bringing in other models (round 1: codex+astra+glm in parallel with the full fact
+> pack; round 2: opus+gemini only on a contradiction; verify every claim before
+> showing it).
 
 Code heads: `backend` `599000e`, `main` `301b136` (release slice of 0.11.1;
 0.11.2 slice follows the same procedure).

@@ -729,6 +729,10 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	// откатывалась (класс 0.1.18). Здесь: если в базе зона ВКЛЮЧЕНА, а клиент
 	// её не прислал вовсе, сохраняем состояние из базы, а не теряем его.
 	window = keepKnownZonesFromDB(r.Context(), s, form.Mode, window)
+	// 0.11.3: бриф больше не зона окна. Старый плагин (0.11.1/0.11.2) может
+	// прислать `zone:brief` — не сохраняем её и не отказываем в записи: отказ
+	// заблокировал бы сохранение формы человеку, который ничего не сделал не так.
+	window = dropLegacyZones(window)
 	windowJSON, err := json.Marshal(window)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})

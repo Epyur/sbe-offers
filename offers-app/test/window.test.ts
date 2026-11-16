@@ -9,6 +9,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  screenItems,
+  unrenderedItems,
   DEFAULT_ZONES,
   loadOfferWindow,
   requiredOf,
@@ -135,4 +137,47 @@ test('обязательность: пустое окно — ничего не 
 test('пустой список остаётся массивом, а не null', () => {
   assert.ok(Array.isArray(requiredOf({ window: [] }, { client: { name: '', contact: '' }, formValues: {} })));
   assert.ok(Array.isArray(visibleZones({ window: [zone('client', false)] })));
+});
+// ── Сторожа дефекта «поля формы отданы, но не нарисованы» (0.11.3) ──────────
+// Разбор 2026-11-16: visibleZones отбрасывала kind:"field" безусловно, поэтому
+// полей не было в приложении вовсе. Все модели совещания сошлись: экран
+// собирается ОДНИМ проходом по окну, поля — такие же элементы, как зоны.
+
+const fld = (id, label, visible = true) => ({ kind: 'field', id, label, visible });
+
+test('экран собирается одним проходом: зоны и поля в порядке окна', () => {
+  const form = {
+    window: [zone('client'), fld('object_name', 'Объект'), zone('systems')],
+  };
+  assert.deepEqual(
+    screenItems(form).map((i) => `${i.kind}:${i.id}`),
+    ['zone:client', 'field:object_name', 'zone:systems'],
+  );
+});
+
+test('поле между зонами сохраняет своё место, а не уезжает в конец', () => {
+  const form = {
+    window: [zone('client'), fld('object_name', 'Объект'), zone('systems'), fld('conditions', 'Условия')],
+  };
+  const ids = screenItems(form).map((i) => i.id);
+  assert.deepEqual(ids, ['client', 'object_name', 'systems', 'conditions']);
+});
+
+test('скрытое поле не рисуется, а поле без подписи не рисуется вовсе', () => {
+  const form = {
+    window: [zone('client'), fld('hidden_one', 'Скрытое', false), fld('no_label', '')],
+  };
+  assert.deepEqual(screenItems(form).map((i) => i.id), ['client']);
+});
+
+test('зона brief выведена: она не возвращается экраном', () => {
+  assert.deepEqual(zoneOf('brief'), null);
+  const form = { window: [{ kind: 'zone', id: 'brief', visible: true }, zone('client')] };
+  assert.deepEqual(screenItems(form).map((i) => i.id), ['client']);
+});
+
+test('сторож: сервер прислал видимое, а нарисовать нечем — видно списком', () => {
+  const form = { window: [zone('client'), { kind: 'zone', id: 'unknown_zone', visible: true }] };
+  assert.deepEqual(unrenderedItems(form), ['zone:unknown_zone']);
+  assert.deepEqual(unrenderedItems({ window: [zone('client'), fld('object_name', 'Объект')] }), []);
 });
