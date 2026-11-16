@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,7 @@ func TestCombatDocxUsesLayoutMarker(t *testing.T) {
 	layout := layoutDocxFromXML(t, wordDoc(
 		`<w:p><w:r><w:t>Фирменный бланк</w:t></w:r></w:p>`+
 			`<w:p><w:r><w:t>{{сравнение}}</w:t></w:r></w:p>`))
-	data, err := renderCombatDocx(layout, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), layout, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка по макету упала: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestCombatDocxLayoutWithoutMarker(t *testing.T) {
 	our, competitor := combatTestCards()
 	sheet := CombatSheet{Number: "010/2026", Title: "Макет без метки"}
 	layout := layoutDocxFromXML(t, wordDoc(`<w:p><w:r><w:t>Только бланк</w:t></w:r></w:p>`))
-	data, err := renderCombatDocx(layout, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), layout, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка упала: %v", err)
 	}

@@ -259,6 +259,24 @@ func subsectionTitleLevel(sub ContentSubsection) int {
 	return 2
 }
 
+// sectionMaxWords — предел длины текста подраздела с учётом брифа.
+//
+// Одна функция на оба пути (форма КП и боевой листок): правило «явный предел в
+// инструкции важнее настройки» не должно зависеть от того, кто пишет бриф.
+func sectionMaxWords(call sectionCall) int {
+	maxWords := call.sub.MaxWords
+	if maxWords <= 0 {
+		maxWords = genDefaultMaxWords
+	}
+	if requested := skills.RequestedWords(call.sub.Instruction); requested > 0 {
+		maxWords = requested
+		if maxWords > 800 {
+			maxWords = 800
+		}
+	}
+	return maxWords
+}
+
 // sectionPromptText — промт одного подраздела: бриф администратора и данные.
 //
 // Тот же конвейер, что у блоков формы (skills.RenderBlockSystem +
@@ -273,15 +291,10 @@ func sectionPromptText(instruction string, call sectionCall, maxWords int, offer
 	if strings.TrimSpace(instruction) == "" {
 		return "", ""
 	}
-	if maxWords <= 0 {
-		maxWords = genDefaultMaxWords
-	}
-	if requested := skills.RequestedWords(instruction); requested > 0 {
-		maxWords = requested
-		if maxWords > 800 {
-			maxWords = 800
-		}
-	}
+	// Явный предел в брифе важнее настройки; `maxWords` оставлен аргументом
+	// ради совместимости вызовов (его значение — умолчание `call.sub.MaxWords`).
+	_ = maxWords
+	maxWords = sectionMaxWords(call)
 	if call.system != nil {
 		cards = []SystemCard{*call.system}
 	}
@@ -344,6 +357,11 @@ type sectionGen struct {
 	refs      []skills.CardRef
 	complete  Completer
 	report    *buildReport
+	// brief — подмена брифа подраздела (2026-11-16). nil — бриф из формы
+	// (`sectionBriefWithContract`); боевой листок подставляет свой, потому что
+	// у него ДВЕ стороны сравнения и контракт ответа обязан назвать роли.
+	// Правило и разбор ответа при этом те же: вторая копия разошлась бы.
+	brief func(instruction string, call sectionCall) string
 	// mu — запись в values: вызовы идут параллельно (sections.go), и обычная
 	// запись в карту из двух горутин роняет процесс («concurrent map writes»).
 	mu sync.Mutex
@@ -370,6 +388,9 @@ func (g *sectionGen) text(section ContentSection, call sectionCall) string {
 	started := time.Now()
 	system, user := sectionPromptText(call.sub.Instruction, call, call.sub.MaxWords,
 		g.offer, g.cards, g.cards, g.refs)
+	if g.brief != nil {
+		system = skills.RenderBlockSystem(g.brief(call.sub.Instruction, call), "", sectionMaxWords(call))
+	}
 	raw, err := g.complete.Complete(context.Background(), system, user, documentTextMaxTokens())
 	logModelCall("sect:"+key, "", len(call.sub.Instruction), started, err)
 	if err != nil || strings.TrimSpace(raw) == "" {

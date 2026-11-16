@@ -94,7 +94,7 @@ func (s *Server) renderCombatDocxCached(ctx context.Context, layout []byte, shee
 		log.Printf("боевой листок %s: файл из кэша", sheet.Number)
 		return cached, nil
 	}
-	data, err := renderCombatDocx(layout, sheet, ourCards, competitorCards, images)
+	data, err := s.renderCombatDocx(ctx, layout, sheet, ourCards, competitorCards, images)
 	if err != nil {
 		return nil, err
 	}

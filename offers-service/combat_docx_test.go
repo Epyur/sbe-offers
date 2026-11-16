@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestRenderCombatDocxBasics(t *testing.T) {
 		CompetitorNotes: []CombatNoteRef{{NoteID: 20, Title: "Продукт конкурента"}},
 		FormValues:      map[string]string{"object_name": "ЖК Поэма", "conclusion": "Берём нашу систему"},
 	}
-	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка упала: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestRenderCombatDocxNoPlaceholdersFromEmptyFields(t *testing.T) {
 	// Пустые поля формы не должны ронять сборку — их просто нечем подставить.
 	our, competitor := combatTestCards()
 	sheet := CombatSheet{Number: "001/2026", Title: "Сравнение", FormValues: map[string]string{}}
-	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), nil, sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	if err != nil {
 		t.Fatalf("сборка упала на пустых полях: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestRenderCombatDocxEmptyCompetitors(t *testing.T) {
 	// Конкурентов не выбрали — документ всё равно собирается.
 	our, _ := combatTestCards()
 	sheet := CombatSheet{Number: "002/2026", Title: "Без конкурентов"}
-	data, err := renderCombatDocx(nil, sheet, []SystemCard{our}, nil, nil)
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), nil, sheet, []SystemCard{our}, nil, nil)
 	if err != nil {
 		t.Fatalf("сборка без конкурентов упала: %v", err)
 	}

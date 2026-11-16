@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"mailers/offers/skills"
@@ -41,21 +42,20 @@ func docxFileNameFor(title, number string) string {
 // одной из сторон.
 // renderCombatDocx собирает DOCX боевого листка.
 //
-// Содержание боевого листка ОДНО И ТО ЖЕ и местом его задаёт только макет
-// (2026-11-11, решение пользователя): формы с блоками и полями у листка больше
-// нет. Порядок всегда такой:
-//
-//  1. перечень продуктов — наш и продукты конкурентов;
-//  2. сравнение — общее по всем и по каждому продукту отдельно (модель, с
-//     учётом уточнения менеджера).
+// Содержание боевого листка (2026-11-16, шаг 2a плана
+// 2026-11-16-sbe-offers-combat-sections-and-agent-tools-plan.md): заголовок,
+// перечень продуктов, затем СОДЕРЖАТЕЛЬНЫЕ РАЗДЕЛЫ формы листка
+// (`mode='combat'`) — тот же конвейер, что у КП (`combat_sections.go`).
+// Разделов нет или все пусты — прежний вид: общий текст сравнения и карточки.
+// Так документ никогда не остаётся без сравнения, а настраиваемость появилась
+// без второй печати.
 //
 // Макет (.docx на фирменном бланке) вставляется меткой `{{сравнение}}`: там, где
 // она стоит, печатается весь листок. Без макета — тот же листок печатается
-// встроенным оформлением, чтобы файл никогда не был пустым.
-//
-// `form` больше не несёт содержание: из неё нужен только загруженный макет.
-func renderCombatDocx(layout []byte, sheet CombatSheet, ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
-	body, refs, links, media, err := buildCombatBody(sheet, ourCards, competitorCards, images)
+// встроенным оформлением.
+func (s *Server) renderCombatDocx(ctx context.Context, layout []byte, sheet CombatSheet,
+	ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
+	body, refs, links, media, err := s.buildCombatBody(ctx, sheet, ourCards, competitorCards, images)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func renderCombatDocx(layout []byte, sheet CombatSheet, ourCards, competitorCard
 // buildCombatBody собирает XML тела листка и всё, что нужно упаковке:
 // ссылки, сборщик и медиа. Отдельно от упаковки — потому что одна и та же
 // сборка идёт и в макет (через метку), и во встроенный вид.
-func buildCombatBody(sheet CombatSheet, ourCards, competitorCards []SystemCard,
+func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCards, competitorCards []SystemCard,
 	images ImageSource) (string, []skills.CardRef, *layoutRuntime, *docxMedia, error) {
 	// Синтетическое «предложение» — только чтобы конвейер увидел служебные поля
 	// (номер, дата) и связал их с карточками. Позиций у листка нет.
@@ -92,12 +92,17 @@ func buildCombatBody(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 	var sb strings.Builder
 	sb.WriteString(headingXML("Боевой листок № "+sheet.Number, 1))
 	// Перечень продуктов — первым, как просил пользователь: сначала кто с кем
-	// сравнивается, потом само сравнение.
+	// сравнивается, потом самое сравнение.
 	sb.WriteString(headingXML("Продукты сравнения", 2))
 	sb.WriteString(combatProductList(ourCards, competitorCards))
-	// Сравнение пишет модель. Ошибка модели не гасит документ: перечень продуктов
-	// уже есть, и менеджеру нужен хотя бы он.
-	sb.WriteString(renderCombatComparison(rc, sheet, ourCards, competitorCards))
+	// Сравнение: сначала разделы формы листка (настраиваемые подразделы), а если
+	// их нет или они пусты — прежний вид. Ошибка модели в разделе не гасит
+	// документ: перечень продуктов уже есть, и запасной вид тоже.
+	if sections, ok := s.renderCombatSections(ctx, sheet, ourCards, competitorCards, refs, images, media, links); ok {
+		sb.WriteString(sections)
+	} else {
+		sb.WriteString(renderCombatComparison(rc, sheet, ourCards, competitorCards))
+	}
 
 	return sb.String(), refs, links, media, nil
 }
