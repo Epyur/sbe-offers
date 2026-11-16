@@ -6,6 +6,43 @@
 
 ## 0.11.3 — поля формы и бриф из раздела (2026-11-16)
 
+### Три точки сходятся (0.11.3, сверено 2026-11-16)
+
+| | значение |
+|---|---|
+| версия | **0.11.3 — ВЫПУЩЕНА 2026-11-16** |
+| `backend` | код `7e94e88`, доки `a9e133a` |
+| `main` | код `84c138d`, доки `df62354` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
+| самораздача | `manifest dde77069…` / `main e5a4cf3c…` / `styles 1892c6ed…`, сверено по https и в `/registry.json` |
+| реестр (git-копия) | `sbe-apstore-registry` `2f2b7f9`; `/registry.json` отдаёт `0.11.3`, `uploadedAt 2026-11-16T10:13:33Z` |
+| сервис `offers` | пересобран и пересоздан, бэкап `offers-service.bak-20261116-1311` |
+| бот `offers-bot` | пересобран и пересоздан, бэкап `offers-bot.bak-20261116-1311` |
+| приложение | `assets/index-CLXiABYA.js`; старый `index-Doc76L1a.js` удалён, бэкап `app-offers.bak-20261116-1313` |
+| реестр на сервере | `www/registry.json`, бэкап `registry.json.bak-20261116-1313` |
+
+| файл | sha256 | байт |
+|---|---|---|
+| `manifest.json` | `dde77069d2b5a694d6917a1e0194eb78e074b4821469320f326c7afd98d2a90f` | 470 |
+| `main.js` | `e5a4cf3c12785fb2f2cdf9c8590862dd268b1b8900275650cfbece56f5ad7393` | 263530 |
+| `styles.css` | `1892c6ed2d735a82653359fef4e457a21ca142c5906e225e64e56ff3d2cdee41` | 42796 |
+
+| файл приложения | sha256 |
+|---|---|
+| `index.html` | `e0ded2e81c6f94da0ee5aabf7a028c0722e6b9f9f73d54469534ecdb9066350a` |
+| `assets/index-CLXiABYA.js` | `ae4f25f3e313934839ec2721d3be8939ca94aaff8af0aeaddcdc8d9c6c8eb3f2` |
+| `vendor/telegram-web-app.js` | `baa788a6f686f4238db1b82ce8e76470930af7411b18b521ebb95a2c1480a267` |
+
+**Живая сверка (2026-11-16):** `GET /form` отдаёт 11 элементов — 5 зон + 6 полей,
+зоны `brief` нет; `PATCH /offers/{id}/form-values` без токена → `401`; гейты
+`/form`, `/offers`, `/bot/offers`, `/offers/{id}/brief` → `401`; `health ok`;
+самораздача и файлы приложения по https совпали с локальной сборкой; md5 сервиса
+и бота против архива — **311 файлов**.
+
+**Грабля выкладки:** `Set-Content` в PowerShell пишет BOM, и `bash` на сервере
+падает на `﻿#!/bin/bash` — сам скрипт при этом дорабатывает до конца. Проверять
+вывод, а не код возврата; писать скрипты через `Set-Content -Encoding ascii`.
+
+## 0.11.2 — «не вижу зоны Бриф» (2026-11-16)
 Вторая жалоба подряд: «не вижу полей формы в приложении; бриф не видно».
 Совещание пяти моделей (`gpt-5.3-codex`, `gpt-6-astra`, `glm-5.2` в первом
 проходе, `claude-5-opus` и `gemini-4-argon` во втором) — разбор и выведенный

@@ -50,8 +50,6 @@ rendered in the Mini App at last, the brief moved into each section card, and th
 > pack; round 2: opus+gemini only on a contradiction; verify every claim before
 > showing it).
 
-Code heads: `backend` `599000e`, `main` `301b136` (release slice of 0.11.1;
-0.11.2 slice follows the same procedure).
 
 > **Postmortem of this defect — read before touching the window again:**
 > `C:\Obsidian\mailers\docs\superpowers\specs\2026-11-16-sbe-offers-brief-zone-postmortem.md`.
@@ -61,7 +59,8 @@ Code heads: `backend` `599000e`, `main` `301b136` (release slice of 0.11.1;
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `7e94e88`, `main` `84c138d` (release slice of 0.11.3).
+Code heads: `backend` `7e94e88` (code; docs head `a9e133a`), `main` `84c138d`
+(release slice of 0.11.3; docs head `df62354`).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
