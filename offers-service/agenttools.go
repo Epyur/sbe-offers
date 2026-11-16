@@ -73,6 +73,20 @@ type agentEnv struct {
 	// «спросили, пришёл пустой набор».
 	visibleDocs      []AgentDoc
 	visibleDocsReady bool
+	// Attachments — файлы, приложенные человеком в этом ходе (шаг 4 плана
+	// 2026-11-16): бот пересылает их вместе с текстом, `parse_file` берёт имя и
+	// байты отсюда, а не из аргументов модели. Пусто — файлов в ходе нет.
+	Attachments []agentAttachment
+}
+
+// agentAttachment — приложенный файл хода: имя и байты.
+//
+// Имя — то, чем файл назвал человек: по нему выбирает формат agent-service
+// (расширение) и его же видит модель, чтобы не путать два файла в одном ходе.
+// Байты в модель не попадают: в контекст уходит только результат разбора.
+type agentAttachment struct {
+	Name string `json:"name"`
+	Data []byte `json:"-"`
 }
 
 // agentFile — готовый документ за ход.
@@ -121,11 +135,17 @@ func (env *agentEnv) noteFix(column string, rowID int64, before, after any) {
 // P5b (2026-11-14): `get_emails` и `read_email` — письма, но видимые ТОЛЬКО
 // через привязку карточки скана к продукту. Видимость письма — не «есть PDF»
 // и не совпадение названия, а `product_refs` карточки (agentmail.go).
+//
+// Шаг 4 (2026-11-16): `fetch_url` и `parse_file` — инструменты sbe-agent через
+// `/internal/agent/*` (agentservice_client.go). Ссылку называет менеджер,
+// файлы — только приложенные в ходе (`agentEnv.Attachments`); граница в коде.
 func (s *Server) agentTools() map[string]agentToolSpec {
 	tools := []agentToolSpec{
 		s.toolGetOurProducts(),
 		s.toolReadCard(),
 		s.toolSearchCompetitors(),
+		s.toolFetchURL(),
+		s.toolParseFile(),
 		s.toolGetDocuments(),
 		s.toolGetDocumentLink(),
 		s.toolReadDocumentFile(),
@@ -151,6 +171,7 @@ func (s *Server) agentTools() map[string]agentToolSpec {
 func (s *Server) agentToolDescriptors() []map[string]any {
 	order := []string{
 		"get_our_products", "read_card", "search_competitors",
+		"fetch_url", "parse_file",
 		"get_documents", "get_document_link", "read_document_file",
 		"get_emails", "read_email",
 		"create_offer", "set_system", "set_material",

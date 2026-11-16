@@ -98,6 +98,22 @@ function reply(system, user) {
   //
   // «Подбери аналог» — карточка материала (read_card по материалу — живой
   // дефект 0.9.22) и поиск конкурентов.
+  // Шаг 4 плана 2026-11-16: «прочитай ссылку» → fetch_url, «прочитай файл» →
+  // parse_file. Проверяются РАНЬШЕ общих сценариев: у них свой единственный
+  // инструмент и свой финальный текст, и общий адресат (`get_our_products`) до
+  // этих сценариев доходить не должен.
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /прочитай ссылку/i.test(user)) {
+    if (/\[Результат тула fetch_url/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'Ссылка прочитана, в ней таблица реестра.' });
+    }
+    return JSON.stringify({ type: 'tool_call', tool: 'fetch_url', arguments: { url: 'https://example.com/reestr' } });
+  }
+  if (/Ты — помощник менеджера отдела продаж/.test(system) && /прочитай файл/i.test(user)) {
+    if (/\[Результат тула parse_file/.test(user)) {
+      return JSON.stringify({ type: 'final', text: 'Файл прочитан: в протоколе прочность 25 МПа.' });
+    }
+    return JSON.stringify({ type: 'tool_call', tool: 'parse_file', arguments: {} });
+  }
   if (/Ты — помощник менеджера отдела продаж/.test(system) && /подбери аналог/i.test(user)) {
     if (/\[Результат тула read_card/.test(user)) {
       return JSON.stringify({ type: 'tool_call', tool: 'search_competitors', arguments: { query: 'мембрана' } });

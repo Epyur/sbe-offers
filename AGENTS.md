@@ -950,7 +950,10 @@ override, menu, both lists, the bot's own list rendering).
 `OFFERS_APP_NAME`, `OFFERS_OWNER_EMAIL`, `OFFERS_SERVICE_SECRET`,
 `OFFERS_BOT_SECRET`, `AUTH_SERVICE_URL`, `S3_ENDPOINT`/`S3_ACCESS_KEY`/
 `S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`, `KB_SERVICE_URL`,
-`LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`.
+`LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`, `AGENT_SERVICE_URL` (default
+`http://agent:3000`), `AGENT_INTERNAL_SECRET` (secret of the agent-service
+`/internal/agent/*` routes — **not** `AGENT_SERVICE_SECRET`; empty means «not
+configured» and the tools refuse instead of returning empty).
 Bot: `TELEGRAM_SOCKS_PROXY`, `OFFERS_API_URL`, `OFFERS_BOT_SECRET`,
 `OFFERS_BOT_RATE_LIMIT`, `VERIFY_PORT`, `OFFERS_APP_URL` (optional — the Mini
 App address for the `web_app` buttons; empty means the production
@@ -1490,16 +1493,23 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 | `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
 | `mailer_client.go` | internal `/internal/mailer/agent/*` client (P5b): `MAILER_SERVICE_URL`, `MAILER_INTERNAL_SECRET`, refusal when not configured |
 | `agentmail.go` | the two email tools (P5b): `get_emails` intersects the mailer with the visible documents set (per-turn cache in `agentEnv`), `read_email` resolves each scan's `file_key` through that same set; `foldText`, `visibleScanCards`, `docsMatchProduct`, `emailView` live here |
-| `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
+| `agentservice_client.go` | internal `/internal/agent/{fetch,file/parse,render}` client (step 3 of the 2026-11-16 plan): `AGENT_SERVICE_URL`, `AGENT_INTERNAL_SECRET`, refusal when not configured. **No second network path**: SSRF, limits and docx/xlsx/pdf parsing stay in `agent-service` |
+| `agenttools_step4_test.go` | the step-4 tools and the code boundary: 17 names, refusal without the service, `parse_file` needs an attachment, compact HTML view, base64 attachments |
+| `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat, `attachments` in the turn body |
+| `offers-bot/src/flow/agentfile.ts` | приложенный файл в режиме помощника: файл запоминается в сессии до ближайшего текста, ход его забирает и очищает, предел 16 МБ |
 
-**Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15):
+**Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15; **after step 4 of
+the 2026-11-16 plan — 17**):
 `get_our_products`, `read_card` (**any** note), `search_competitors`,
+`fetch_url`, `parse_file`,
 `get_documents`, `get_document_link`, `read_document_file`, `get_emails`,
 `read_email`, `create_offer`,
 `set_system`, `set_material`, `create_combat_sheet`, `set_combat_side`,
 `build_docx`, `build_combat_docx`. **Not** in the list: YouGile,
 rules/skills/presentation, any write to YouGile. Emails are read-only and only
 for letters whose signed-scan card carries `product_refs` (`agentmail.go`).
+`fetch_url` reads only an address the manager named, `parse_file` only a file
+attached to the turn (`agentEnv.Attachments`); both are boundaries in CODE.
 
 **Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
 (`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
@@ -1768,6 +1778,62 @@ node ../scripts/check_agent_engine.mjs
   результат — текст про «нет привязанных писем»);
 - сообщить: файлы, коды выхода и числа, что не проверено, что ждёт от
   мейлер-агента (фикстура), нужные строки compose.
+
+## План 2026-11-16 — боевой листок на разделах + агент (файлы/интернет) + схемы
+
+План: `C:\Obsidian\mailers\docs\superpowers\plans\2026-11-16-sbe-offers-combat-sections-and-agent-tools-plan.md`,
+вход: `...-START-HERE.md`, спека: `...-design.md` (§3.2, §7).
+Версия плагина не меняется до шага 7; всё, что ниже, живёт на `backend`.
+
+**Шаг 1 (sbe-agent) — готов и запушен 2026-11-16.** Три внутренние ручки
+`/internal/agent/{fetch,file/parse,render}` под `X-Service-Secret`
+(`AGENT_INTERNAL_SECRET`), `render` — только mermaid→PNG. Коммиты
+`sbe-agent` `e32aadd` (код) и `f1e178e` (v0.5.6 + новость ЦУП),
+`sbe-core` `f89a71a` (compose + `.env.example`). Подробности —
+`sbe-agent/agent-service/AGENTS.md` и `sbe-agent/AGENTS.md`.
+
+**Шаг 3 (клиент agent-service) — сделан 2026-11-16, не коммичен.**
+`offers-service/agentservice_client.go`: `AGENT_SERVICE_URL` (default
+`http://agent:3000`), `AGENT_INTERNAL_SECRET`, `configured()`,
+`Fetch`/`ParseFile`/`Render`; `configured()==false` → `errAgentServiceNotConfigured`
+(отказ, не пустой ответ); ошибки сервиса — текстом с кодом и причиной;
+`data:null` толерантно. Тесты `agentservice_client_test.go` — 4 проверки
+(секрет уходит на все три ручки, отказ без окружения, текст ошибки сервиса,
+разбор ответа).
+
+**Шаг 4 (инструменты `fetch_url` / `parse_file`) — сделан 2026-11-16,
+не коммичен.** В `agentTools()` теперь **17** имён, в `agentToolDescriptors`
+порядок обновлён. `agenttools_impl.go`: `toolFetchURL` (адрес называет человек,
+метод — белый список, SSRF — в agent-service; `compactFetchView` режет HTML до
+SCRIPTS/LINKS/TEXT, JSON — до 12 КБ), `toolParseFile` (файл — только из
+`agentEnv.Attachments`, имя не угадывается; несколько файлов — по `name`).
+`agentEnv.Attachments` + `agentRequest.Attachments` + `botAgentMessageRequest
+.attachments[{name,base64}]` → `decodeAgentAttachments` (пусто/битое/больше
+16 МБ — 400 всего хода, а не молчаливый пропуск). Промт: две строки под «Что
+важно помнить». Бот: `flow/agentfile.ts` (файл в сессии до ближайшего текста,
+ход забирает и очищает, предел 16 МБ; `agentfile.test.ts` — 3 проверки),
+`poller.ts` (файл при включённом помощнике не идёт в состав КП), `api
+.agentMessage(..., attachments)`. Стенд: `scripts/agent-stub.mjs` (форма
+настоящих ручек, секрет сверяется), `docker-compose.local.yml` (+`agent-stub`,
++`AGENT_SERVICE_URL`/`AGENT_INTERNAL_SECRET` в `offers`), `llm-stub.mjs`
+(сценарии «прочитай ссылку»/«прочитай файл»), `offers_local_e2e.mjs` —
+секция «Агент читает файл и ссылку» (9 проверок).
+
+**Проверки шага 3–4 (2026-11-16):** `gofmt -l` пусто, `go vet` 0,
+`go test -count=1 ./...` зелёный (новые 4 + 5 проверок); бот `tsc` 0,
+`node --test` **215/215** (+3), `build` OK; OpenAPI **121/121**; стенд
+**565/0** (+9). Грабля стенда: заглушки монтируют `scripts/` только для
+чтения, а Node читает `.mjs` один раз при старте — после правки `llm-stub.mjs`
+нужен `docker restart offers-local-llm-stub`, иначе сценарии не видны.
+
+**Не проверено:** живой вызов ручек agent-service (секрет на бою не задан,
+раскатка — по команде), живой ход помощника с настоящей моделью и Telegram,
+характеристики настоящего mermaid-рендера (стенд отдаёт PNG 1×1).
+
+**Дальше по плану:** 2a/2b/2c (разделы листка), 3e (устойчивые факты листка),
+4m (Mini App не доносит файл/ссылку — зафиксировать), 5 (вид `diagram`:
+mermaid→PNG, видимый fallback), 6 (предпросмотр/маркеры/справка), 7
+фиксация (версия из `manifest.json`).
 
 ## Next iterations (backlog)
 

@@ -102,6 +102,19 @@ services:
       - ./scripts:/app:ro
     networks: [offersnet]
 
+  # Заглушка agent-service (2026-11-16, шаги 3–4 плана sbe-offers): ручки
+  # /internal/agent/{fetch,file/parse,render} в форме настоящего sbe-agent.
+  agent-stub:
+    image: node:22-alpine
+    container_name: offers-local-agent-stub
+    working_dir: /app
+    command: node agent-stub.mjs
+    environment:
+      AGENT_STUB_PORT: "3000"
+      AGENT_INTERNAL_SECRET: test-agent-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
   offers:
     build: ./offers-service
     container_name: offers-local-app
@@ -135,6 +148,10 @@ services:
       # видимость письма. На стенде — documents-stub.
       DOCUMENTS_SERVICE_URL: http://documents-stub:3000
       DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
+      # Агент-сервис (2026-11-16, шаги 3–4 плана sbe-offers): чтение ссылки и
+      # разбор приложенного файла. Заглушка — agent-stub.
+      AGENT_SERVICE_URL: http://agent-stub:3000
+      AGENT_INTERNAL_SECRET: test-agent-internal-secret
     depends_on:
       db:
         condition: service_healthy
@@ -147,6 +164,8 @@ services:
       mailer-stub:
         condition: service_started
       documents-stub:
+        condition: service_started
+      agent-stub:
         condition: service_started
     ports:
       - "18080:3000"

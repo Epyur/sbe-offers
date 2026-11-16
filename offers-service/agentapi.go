@@ -16,6 +16,7 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -28,6 +29,16 @@ type botAgentMessageRequest struct {
 	Text    string `json:"text"`
 	OfferID int64  `json:"offer_id"`
 	SheetID int64  `json:"sheet_id"`
+	// Attachments — файлы, приложенные человеком (шаг 4 плана 2026-11-16).
+	// Бот передаёт их base64: другого транспорта в ходе нет, а `parse_file`
+	// разбирает именно то, что человек прислал, без угадывания пути.
+	Attachments []botAgentAttachment `json:"attachments,omitempty"`
+}
+
+// botAgentAttachment — приложенный файл в теле хода (имя + base64).
+type botAgentAttachment struct {
+	Name   string `json:"name"`
+	Base64 string `json:"base64"`
 }
 
 // botAgentFile — готовый файл в ответе бота (base64, потому что JSON).
@@ -58,12 +69,18 @@ func (s *Server) handleBotAgentMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	attachments, err := decodeAgentAttachments(req.Attachments)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 	turn, err := s.runAgentTurn(r.Context(), agentRequest{
-		Email:   email,
-		ChatID:  req.ChatID,
-		Text:    text,
-		OfferID: req.OfferID,
-		SheetID: req.SheetID,
+		Email:       email,
+		ChatID:      req.ChatID,
+		Text:        text,
+		OfferID:     req.OfferID,
+		SheetID:     req.SheetID,
+		Attachments: attachments,
 	}, nil)
 	if err != nil {
 		log.Printf("агент: ход не выполнен: %v", err)
@@ -90,6 +107,38 @@ func (s *Server) handleBotAgentHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}})
+}
+
+// decodeAgentAttachments — base64 → байты с проверкой имени и предела.
+//
+// Предел файла — 16 МБ: больше бот в Telegram не перешлёт без отдельного
+// разговора, а разбирать «накопительную» пачку в ходе агента не нужно.
+// Ошибка — отказ всего хода, а не «пропустим молча»: человек должен узнать,
+// что файл не дошёл, вместо того чтобы получить ответ «в файле ничего нет».
+func decodeAgentAttachments(raw []botAgentAttachment) ([]agentAttachment, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	const maxAgentAttachmentBytes = 16 << 20
+	out := make([]agentAttachment, 0, len(raw))
+	for _, item := range raw {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			return nil, fmt.Errorf("приложенный файл без имени")
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(item.Base64))
+		if err != nil {
+			return nil, fmt.Errorf("приложенный файл «%s» повреждён", name)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("приложенный файл «%s» пуст", name)
+		}
+		if len(data) > maxAgentAttachmentBytes {
+			return nil, fmt.Errorf("приложенный файл «%s» слишком большой (предел 16 МБ)", name)
+		}
+		out = append(out, agentAttachment{Name: name, Data: data})
+	}
+	return out, nil
 }
 
 // parseOptionalID — необязательный числовой параметр из query.

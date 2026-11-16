@@ -327,6 +327,283 @@ func (s *Server) toolReadDocumentFile() agentToolSpec {
 	}
 }
 
+// ============================ интернет и файлы пользователя ============================
+
+// compactFetchView — компактное представление ответа фетча для контекста модели.
+//
+// Зачем не сырой HTML. Страница весит сотни килобайт; в транскрипт модели
+// уходит только полезное: адреса подключённых скриптов и ссылок (там и находятся
+// AJAX-эндпоинты реестров), текстовый хвост и первые килобайты как есть. Иначе
+// модель читает CSS и `<head>` вместо данных (живой случай 2026-08-27, nsopb).
+//
+// JSON отдаётся как есть, но с пределом: модель должна увидеть счётчики
+// (`recordsTotal`/`recordsFiltered`) целыми.
+func compactFetchView(result AgentFetchResult) string {
+	text := result.Text
+	isHTML := strings.Contains(strings.ToLower(result.ContentType), "html") ||
+		strings.HasPrefix(strings.TrimSpace(text), "<!DOCTYPE") ||
+		strings.HasPrefix(strings.TrimSpace(text), "<html")
+	if !isHTML {
+		return truncateText(text, compactFetchJSONChars)
+	}
+	var b strings.Builder
+	b.WriteString("SCRIPTS:\n")
+	for _, src := range htmlAttrValues(text, "script", "src") {
+		b.WriteString("  " + src + "\n")
+	}
+	b.WriteString("LINKS:\n")
+	for _, href := range htmlAttrValues(text, "a", "href") {
+		b.WriteString("  " + href + "\n")
+	}
+	b.WriteString("TEXT:\n")
+	b.WriteString(truncateText(stripHTMLTags(text), compactFetchTextChars))
+	return b.String()
+}
+
+// compactFetchJSONChars / compactFetchTextChars — пределы компактного вида.
+// Числа выбраны по замеру: 12 КБ JSON и 6 КБ текста дают модель понять, что
+// перед ней, не раздувая транскрипт (больше 30 КБ данных инструмента движок всё
+// равно режет).
+const (
+	compactFetchJSONChars = 12000
+	compactFetchTextChars = 6000
+)
+
+// truncateText — обрезка с честной пометкой.
+func truncateText(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "… (ответ обрезан)"
+}
+
+// htmlAttrValues — значения атрибута у тегов без внешнего HTML-парсера.
+//
+// Регулярка на HTML — плохой инструмент, но здесь задача узкая: по списку
+// значений `<script src>` и `<a href>` модель находит API-ручку. Полноценный
+// парсер (golang.org/x/net/html) — новая зависимость ради подсказки.
+func htmlAttrValues(text, tag, attr string) []string {
+	out := make([]string, 0, 16)
+	lowerTag := strings.ToLower("<" + tag)
+	for i := 0; i < len(text); {
+		at := strings.Index(strings.ToLower(text[i:]), lowerTag)
+		if at < 0 {
+			break
+		}
+		start := i + at
+		end := strings.Index(text[start:], ">")
+		if end < 0 {
+			break
+		}
+		tagText := strings.ToLower(text[start : start+end])
+		if v, ok := attrValue(tagText, attr); ok && v != "" && !strings.HasPrefix(v, "javascript:") {
+			out = append(out, v)
+		}
+		i = start + end + 1
+		if len(out) >= 80 {
+			break
+		}
+	}
+	return out
+}
+
+// attrValue — значение атрибута из строки тега (кавычки одинарные/двойные и без).
+func attrValue(tagText, attr string) (string, bool) {
+	at := strings.Index(tagText, attr)
+	if at < 0 {
+		return "", false
+	}
+	rest := tagText[at+len(attr):]
+	rest = strings.TrimLeft(rest, " \t\r\n")
+	if !strings.HasPrefix(rest, "=") {
+		return "", false
+	}
+	rest = strings.TrimLeft(rest[1:], " \t\r\n")
+	if rest == "" {
+		return "", false
+	}
+	switch rest[0] {
+	case '"', '\'':
+		quote := rest[0]
+		if end := strings.IndexByte(rest[1:], quote); end >= 0 {
+			return rest[1 : 1+end], true
+		}
+		return "", false
+	default:
+		end := strings.IndexAny(rest, " \t\r\n>")
+		if end < 0 {
+			return rest, true
+		}
+		return strings.TrimRight(rest[:end], "/"), true
+	}
+}
+
+// stripHTMLTags — текст страницы без тегов и скриптов (грубо, для подсказки).
+func stripHTMLTags(text string) string {
+	var b strings.Builder
+	inTag := false
+	for _, r := range text {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+			b.WriteRune(' ')
+		case !inTag:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// toolFetchURL — «получи данные по ссылке, которую дал менеджер».
+//
+// Граница в КОДЕ, а не в промте (правило 2026-09-07 и спека §3.3): адрес
+// приходит только от человека в ходе, методы — белый список, SSRF-защита —
+// в agent-service (второго пути в сеть здесь нет). Неверная ссылка — отказ с
+// пояснением, а не молчаливый пустой ответ.
+func (s *Server) toolFetchURL() agentToolSpec {
+	return agentToolSpec{
+		Name: "fetch_url",
+		Description: "Скачивает страницу или API по ссылке, которую дал менеджер, и отдаёт компактный вид: " +
+			"для HTML — адреса скриптов и ссылок плюс текст, для JSON — сам JSON, для остального — текст. " +
+			"Только http/https и только адрес, названный менеджером; локальные адреса недоступны без исключений.",
+		InputSchema: objectSchema(
+			[]string{"url"},
+			map[string]any{
+				"url":        stringProp("Ссылка (http/https), которую назвал менеджер"),
+				"method":     stringProp("HTTP-метод: GET (по умолчанию), POST, PUT, PATCH, DELETE"),
+				"body":       stringProp("Тело запроса для POST/PUT/PATCH"),
+				"timeout_ms": intProp("Таймаут в миллисекундах, по умолчанию 30000 (максимум 120000)"),
+			},
+		),
+		Run: func(ctx context.Context, env *agentEnv, args map[string]any) (agentToolResult, error) {
+			rawURL := argString(args, "url")
+			if rawURL == "" {
+				return errTool("нужен аргумент url — ссылка, которую назвал менеджер")
+			}
+			client := NewAgentServiceClient()
+			if !client.configured() {
+				return errTool("сервис агента не настроен: чтение ссылок через помощника недоступно")
+			}
+			result, err := client.Fetch(ctx, AgentFetchRequest{
+				Method:    argString(args, "method"),
+				URL:       rawURL,
+				Body:      argString(args, "body"),
+				TimeoutMs: int(argInt(args, "timeout_ms")),
+			})
+			if err != nil {
+				return errTool("по ссылке не удалось прочитать: %v", err)
+			}
+			view := compactFetchView(result)
+			return agentToolResult{
+				OK:      true,
+				Summary: fmt.Sprintf("Страница прочитана: HTTP %d, символов %d.", result.Status, len(view)),
+				Data: map[string]any{
+					"status":       result.Status,
+					"content_type": result.ContentType,
+					"view":         view,
+				},
+			}, nil
+		},
+	}
+}
+
+// toolParseFile — прочитать приложенный менеджером файл.
+//
+// Имя файла НЕ угадывается: берётся вложение хода (`agentEnv.Attachments`), а
+// если их несколько — тот, чьё имя названо в аргументе `name`. Так модель не
+// придумывает путь и не спрашивает «приложите ещё раз» (живой класс дефектов
+// sbe-agent 0.2.4). Если вложений нет — честный отказ: читать нечего.
+func (s *Server) toolParseFile() agentToolSpec {
+	return agentToolSpec{
+		Name: "parse_file",
+		Description: "Читает файл, который менеджер приложил в этот чат (Word, Excel, PDF, JSON) и отдаёт текст. " +
+			"Имя угадывать не надо: если файл один — он и разбирается; если их несколько — назови name. " +
+			"Скан без текстового слоя (PDF без OCR) вернёт пустой текст — так и скажи менеджеру.",
+		InputSchema: objectSchema(
+			[]string{},
+			map[string]any{
+				"name": stringProp("Имя приложенного файла (нужно, только если приложений несколько)"),
+			},
+		),
+		Run: func(ctx context.Context, env *agentEnv, args map[string]any) (agentToolResult, error) {
+			attachment, ok, errMsg := pickAttachment(env.Attachments, argString(args, "name"))
+			if errMsg != "" {
+				return errTool("%s", errMsg)
+			}
+			_ = ok
+			client := NewAgentServiceClient()
+			if !client.configured() {
+				return errTool("сервис агента не настроен: разбор файлов через помощника недоступен")
+			}
+			result, err := client.ParseFile(ctx, attachment.Name, attachment.Data)
+			if err != nil {
+				return errTool("файл «%s» не удалось разобрать: %v", attachment.Name, err)
+			}
+			return parseFileResult(attachment.Name, result), nil
+		},
+	}
+}
+
+// pickAttachment — какое вложение разбирать. Файл, который человек приложил,
+// называется именем, а не индексом: так модель не пришлёт порядковый номер,
+// которого в реальности нет. Возвращает текст отказа отдельно, чтобы Run не
+// терял причину.
+func pickAttachment(attachments []agentAttachment, name string) (agentAttachment, bool, string) {
+	if len(attachments) == 0 {
+		return agentAttachment{}, false, "к этому сообщению файл не приложен — ничего разбирать"
+	}
+	if len(attachments) == 1 && strings.TrimSpace(name) == "" {
+		return attachments[0], true, ""
+	}
+	want := foldText(name)
+	for _, attachment := range attachments {
+		if foldText(attachment.Name) == want || strings.Contains(foldText(attachment.Name), want) {
+			return attachment, true, ""
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		return agentAttachment{}, false, "приложено несколько файлов — назови name нужного"
+	}
+	names := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		names = append(names, attachment.Name)
+	}
+	return agentAttachment{}, false, fmt.Sprintf("файла «%s» нет среди приложенных: %s", name, strings.Join(names, ", "))
+}
+
+// parseFileResult — сводка разбора для модели: текст/листы/данные по виду файла.
+func parseFileResult(name string, result AgentParseResult) agentToolResult {
+	switch result.Kind {
+	case "xlsx":
+		return agentToolResult{
+			OK:      true,
+			Summary: fmt.Sprintf("Файл «%s» разобран: листов %d.", name, len(result.Sheets)),
+			Data:    map[string]any{"kind": result.Kind, "sheets": result.Sheets},
+		}
+	case "json":
+		return agentToolResult{
+			OK:      true,
+			Summary: fmt.Sprintf("Файл «%s» разобран: JSON.", name),
+			Data:    map[string]any{"kind": result.Kind, "data": result.Data},
+		}
+	default:
+		if strings.TrimSpace(result.Text) == "" {
+			return agentToolResult{
+				OK:      true,
+				Summary: fmt.Sprintf("В файле «%s» нет текстового слоя (скан) — прочитать нечего.", name),
+				Data:    map[string]any{"kind": result.Kind, "text": ""},
+			}
+		}
+		return agentToolResult{
+			OK:      true,
+			Summary: fmt.Sprintf("Файл «%s» разобран, символов %d.", name, len(result.Text)),
+			Data:    map[string]any{"kind": result.Kind, "text": result.Text},
+		}
+	}
+}
+
 // ============================ конкуренты и боевой листок ============================
 
 // toolSearchCompetitors — поиск продуктов конкурентов в Базе знаний.

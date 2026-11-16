@@ -18,6 +18,7 @@ import type { BotDeps } from '../routes.ts';
 import type { ChatSession } from '../session.ts';
 import { sendDocument } from '../telegram.ts';
 import * as api from '../api.ts';
+import { takeAgentFile } from './agentfile.ts';
 
 /** Что открыто у человека в приложении: помощник включён и о каком документе речь. */
 export interface AgentSession extends ChatSession {
@@ -122,12 +123,21 @@ export async function handleAgentText(
     : undefined;
 
   let outcome: AgentOutcome;
+  const taken = takeAgentFile(ctx.session);
   try {
-    const reply = await api.agentMessage(ctx.chatId, trimmed, agentDocument(ctx.session));
+    const reply = await api.agentMessage(
+      ctx.chatId,
+      trimmed,
+      agentDocument(ctx.session),
+      taken.file ? [taken.file] : [],
+    );
     outcome = agentOutcome(reply);
   } catch (e) {
     outcome = { text: `Помощник не смог ответить: ${(e as Error).message}`, files: [] };
   }
+  // Файл, который человек приложил, потреблён этим ходом: следующий вопрос
+  // уже про другое, и держать старое вложение значило бы разбирать его молча.
+  if (taken.file) await ctx.deps.save(ctx.chatId, taken.session);
 
   // Сначала ответ: человек ждёт текста важнее, чем файла.
   if (statusId && ctx.deps.edit) {

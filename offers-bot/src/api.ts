@@ -765,12 +765,14 @@ export async function agentMessage(
   chatId: string,
   text: string,
   doc: { offerId?: number; sheetId?: number } = {},
+  attachments: AgentFile[] = [],
 ): Promise<AgentReply> {
   const res = await call<AgentReply>('POST', '/bot/agent/message', {
     chat_id: chatId,
     text,
     offer_id: doc.offerId ?? 0,
     sheet_id: doc.sheetId ?? 0,
+    ...(attachments.length > 0 ? { attachments } : {}),
   }, LONG_TIMEOUT_MS);
   return { answer: res.answer ?? '', files: res.files ?? [] };
 }

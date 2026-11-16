@@ -53,6 +53,10 @@ type agentRequest struct {
 	// может работать и без привязанного документа, например «найди мембрану»).
 	OfferID int64
 	SheetID int64
+	// Attachments — файлы, приложенные человеком (шаг 4 плана 2026-11-16).
+	// Их читает `parse_file`: путь не угадывается, разбирается то, что человек
+	// реально прислал.
+	Attachments []agentAttachment
 }
 
 // runAgentTurn исполняет один ход агента и пишет его в журнал.
@@ -62,7 +66,7 @@ type agentRequest struct {
 // этого, журнал не держит (дизайн §«The manager-analysis journal»).
 func (s *Server) runAgentTurn(ctx context.Context, req agentRequest, envelope *agentEnvelope) (agentTurn, error) {
 	started := time.Now()
-	env := &agentEnv{Ctx: ctx, Server: s, Email: req.Email, ChatID: req.ChatID}
+	env := &agentEnv{Ctx: ctx, Server: s, Email: req.Email, ChatID: req.ChatID, Attachments: req.Attachments}
 	tools := s.agentTools()
 	logEntry := agentLogEntry{
 		ChatID:   req.ChatID,

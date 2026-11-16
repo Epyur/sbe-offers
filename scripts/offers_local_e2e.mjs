@@ -3352,6 +3352,72 @@ async function sectionAgentP5b() {
 }
 
 /**
+ * Агент читает ссылку и приложенный файл (2026-11-16, шаги 3–4 плана
+ * 2026-11-16-sbe-offers-combat-sections-and-agent-tools-plan.md).
+ *
+ * Проверяется то, что видит менеджер: «дал ссылку — помощник прочитал»,
+ * «приложил файл — помощник разобрал». Внутри — инструменты `fetch_url` и
+ * `parse_file` через клиент agent-service (`agentservice_client.go`) и
+ * заглушку `agent-stub.mjs` в форме настоящих ручек sbe-agent. Без
+ * `AGENT_SERVICE_URL` секция печатает «пропущено», а не падает.
+ */
+async function sectionAgentTools() {
+  console.log('\nАгент читает файл и ссылку (шаги 3–4 плана 2026-11-16)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999004';
+  const botHeaders = { 'X-Service-Secret': BOT_SECRET };
+
+  const linkTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'прочитай ссылку https://example.com/reestr' },
+  });
+  ok('ход «прочитай ссылку» отвечает 200', linkTurn.status === 200,
+    `код ${linkTurn.status} ${linkTurn.text?.slice(0, 160)}`);
+  ok('ответ по ссылке не пустой', typeof linkTurn.json?.answer === 'string' && linkTurn.json.answer.length > 0,
+    JSON.stringify(linkTurn.json)?.slice(0, 160));
+
+  const linkLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const linkRow = (linkLog.json?.items ?? []).find((r) => String(r.userText ?? '').includes('прочитай ссылку'));
+  const fetchTool = (linkRow?.tools ?? []).find((t) => t.name === 'fetch_url');
+  ok('агент вызвал fetch_url', Boolean(fetchTool), JSON.stringify(linkRow?.tools ?? []).slice(0, 240));
+  ok('страница по ссылке прочитана', fetchTool?.ok === true, JSON.stringify(fetchTool)?.slice(0, 240));
+  // Журнал хранит имя, аргументы и СВОДКУ, а компактный вид уходит модели в
+  // data: проверяем, что текст страницы действительно был в выдаче инструмента —
+  // по сводке, где число символов компактного вида, и по тому, что фетч не
+  // вернул отказ.
+  const fetchSummary = String(fetchTool?.summary ?? '');
+  const fetchChars = Number((fetchSummary.match(/символов (\d+)/) ?? [])[1] ?? 0);
+  ok('компактный вид нёс текст страницы, а не пустоту', fetchChars > 20,
+    `${fetchSummary || JSON.stringify(fetchTool)?.slice(0, 240)}`);
+
+  const fileTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: {
+      chat_id: chatId,
+      text: 'прочитай файл и скажи главное',
+      attachments: [{ name: 'протокол.docx', base64: Buffer.from('PK\x03\x04stub-docx').toString('base64') }],
+    },
+  });
+  ok('ход с приложенным файлом отвечает 200', fileTurn.status === 200,
+    `код ${fileTurn.status} ${fileTurn.text?.slice(0, 160)}`);
+
+  const fileLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const fileRow = (fileLog.json?.items ?? []).find((r) => String(r.userText ?? '').includes('прочитай файл'));
+  const parseTool = (fileRow?.tools ?? []).find((t) => t.name === 'parse_file');
+  ok('агент вызвал parse_file', Boolean(parseTool), JSON.stringify(fileRow?.tools ?? []).slice(0, 240));
+  ok('приложенный файл разобран', parseTool?.ok === true, JSON.stringify(parseTool)?.slice(0, 240));
+  ok('разбор вернул текст файла, а не отказ',
+    /символов|прочитан/i.test(String(parseTool?.summary ?? '')), String(parseTool?.summary ?? ''));
+
+  // Предел вложения: битый base64 отклоняется до хода моделью — человек должен
+  // узнать, что файл не дошёл, а не получить «в файле пусто».
+  const broken = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'прочитай файл', attachments: [{ name: 'a.pdf', base64: '%%%' }] },
+  });
+  ok('битое вложение отклонено 400', broken.status === 400, `код ${broken.status} ${broken.text?.slice(0, 160)}`);
+}
+
+/**
  * Окно КП в приложении (2026-11-15, шаг 6 конфигуратора окна).
  *
  * Проверяется то, что увидит администратор и менеджер, а не внутреннее
@@ -3549,6 +3615,7 @@ await sectionNewDoc();
 await sectionAgent();
 await sectionAgentP6bis();
 await sectionAgentP5b();
+await sectionAgentTools();
 
 /**
  * Бриф и «продолжить в боте» из приложения (2026-11-15).

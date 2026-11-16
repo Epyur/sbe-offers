@@ -18,6 +18,8 @@ import { restoreSession, type ChatSession } from './session.ts';
 import { routeCallback, routeDocument, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
 import { sendMessage, editMessage } from './telegram.ts';
 import { setAskDeps } from './verify-server.ts';
+import { agentOn } from './flow/agent.ts';
+import { agentFileAcceptedText, attachAgentFile, MAX_AGENT_FILE_BYTES } from './flow/agentfile.ts';
 import * as api from './api.ts';
 
 /**
@@ -80,19 +82,35 @@ async function handleUpdate(deps: BotDeps, state: RouterState, update: TelegramU
     await handleWebAppData(deps, String(message.chat.id), message.web_app_data.data);
     return;
   }
-  if (message?.chat && message.document) {
+if (message?.chat && message.document) {
     // Файл: скачиваем через тот же SOCKS, что и getUpdates, и отдаём в
-    // маршруты. Скачивание здесь, потому что путь файла и прокси должны
-    // жить в одном месте (telegram.ts).
+    // маршрутизацию. Подтверждение нужно, чтобы не потерять файл при сбое
+    // связи в самом начале (telegram.ts).
     const chatId = String(message.chat.id);
     let data: Buffer;
     try {
       data = await downloadDocument(message.document.file_id);
     } catch (e) {
-      await deps.send(chatId, `Не удалось забрать файл: ${(e as Error).message}`);
+      await deps.send(chatId, `Не удалось скачать файл: ${(e as Error).message}`);
       return;
     }
-    await routeDocument(deps, chatId, message.document.file_name ?? 'файл', data, state);
+    const fileName = message.document.file_name ?? 'файл';
+    // Помощник включён (шаг 4 плана 2026-11-16): файл — вопрос к помощнику, а
+    // не состав КП. Кладём его в сессию до ближайшего текста, иначе человеку
+    // пришлось бы писать вопрос дважды.
+    const current = await deps.session(chatId);
+    if (agentOn(current)) {
+      if (data.length > MAX_AGENT_FILE_BYTES) {
+        await deps.send(chatId, 'Файл больше 16 МБ — помощник такой не разберёт. Пришлите меньший.');
+        return;
+      }
+      const withFile = attachAgentFile(current, fileName, data);
+      deps.save(chatId, withFile);
+      const pending = withFile.agentFile;
+      if (pending) await deps.send(chatId, agentFileAcceptedText(pending));
+      return;
+    }
+await routeDocument(deps, chatId, fileName, data, state);
     return;
   }
   if (message?.text && message.chat) {
