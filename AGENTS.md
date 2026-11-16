@@ -39,6 +39,9 @@ zone the admin enabled (`mergeStoredZones`). Plugin: `windowForEditor` appends
 missing zones too, and the window editor finally renders its group headers
 (`zonesTitle`/`fieldsTitle` were declared but never drawn).
 
+Code heads: `backend` `599000e`, `main` `301b136` (release slice of 0.11.1;
+0.11.2 slice follows the same procedure).
+
 > **Postmortem of this defect — read before touching the window again:**
 > `C:\Obsidian\mailers\docs\superpowers\specs\2026-11-16-sbe-offers-brief-zone-postmortem.md`.
 > It records the three-way review (`gemini-4-argon` → `claude-5-opus`), what each
