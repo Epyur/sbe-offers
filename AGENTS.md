@@ -30,12 +30,14 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.1** — **READY 2026-11-15, NOT DEPLOYED.** Plugin only in
-version + CUP news + help + `brief` zone in the window editor; `backend` carries
-the new server and bot code (`appbrief.go`, `appask.go`, bot `flow/ask.ts` /
-`flow/askrun.ts`, `/internal/ask`). Build: `manifest e284ce67…`,
-`main 41b09bd6…`, `styles fcb9758f…`. Stand **557/0**. Release numbers are in
-`HANDOFF.md`, «0.11.1 — блок Брифа».
+Current version = **0.11.1** — **RELEASED 2026-11-16.** `backend` `395bce8`,
+`main` `301b136` (release slice; `offers-service/`, `offers-bot/`, `offers-app/`
+live on `backend` only); self-hosted `manifest e284ce67…` / `main 41b09bd6…` /
+`styles fcb9758f…`, registry `sbe-apstore-registry` `ea8bf8a`. Service `offers`
+and bot `offers-bot` rebuilt and recreated 2026-11-16 (new `appbrief.go`,
+`appask.go`, bot `flow/ask.ts` / `flow/askrun.ts`, `/internal/ask`); App deployed
+as `assets/index-Doc76L1a.js`. Stand **557/0**. Release points — `HANDOFF.md`,
+«Три точки сходятся (0.11.1)».
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
