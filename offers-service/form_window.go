@@ -31,7 +31,28 @@ const windowZoneClient = "client"
 //
 // Порядок здесь — порядок по умолчанию (прежнее поведение экрана):
 // Заказчик → Системы → Позиции → Материалы → Тексты разделов.
+//
+// `brief` (2026-11-15) — зона брифа: что бот выяснил про объект. В окно по
+// умолчанию она НЕ входит: брифа могло не быть вовсе (КП собрано в плагине),
+// и показывать пустую карточку менеджеру без нужды нельзя. Администратор
+// включает её сам — поэтому форма, сохранённая до появления зоны, ведёт себя
+// как раньше (`legacyWindowZones`).
 var knownWindowZones = []string{
+	windowZoneClient,
+	"systems",
+	"items",
+	"materials",
+	"sections",
+	windowZoneBrief,
+}
+
+// windowZoneBrief — зона брифа в приложении.
+const windowZoneBrief = "brief"
+
+// legacyWindowZones — набор зон ДО появления брифа. Ровно он входит в окно
+// «как сейчас»: новый раздел не должен появляться у всех без решения
+// администратора (то же правило, что «хвост дописывается невидимым»).
+var legacyWindowZones = []string{
 	windowZoneClient,
 	"systems",
 	"items",
@@ -47,6 +68,7 @@ var windowZoneTitles = map[string]string{
 	"items":          "Позиции с ценами",
 	"materials":      "Материалы (описанием)",
 	"sections":       "Тексты разделов",
+	windowZoneBrief:  "Бриф",
 }
 
 // WindowItem — один элемент окна КП в приложении (2026-11-15).
@@ -113,13 +135,18 @@ func effectiveWindow(form OfferForm) []WindowItem {
 }
 
 // defaultWindow — «как сейчас»: зоны в прежнем порядке, затем поля формы.
+//
+// Бриф (`windowZoneBrief`) сюда НЕ входит намеренно: старая форма не должна
+// показать новый раздел сама (2026-11-15). Администратор включает его в окне.
+// `defaultWindow` вызывается только когда настройки нет вовсе, поэтому
+// `windowLegacy` для этого случая не нужен.
 func defaultWindow(form OfferForm) []WindowItem {
 	required := make(map[string]bool, len(form.RequiredFields))
 	for _, id := range form.RequiredFields {
 		required[id] = true
 	}
-	items := make([]WindowItem, 0, len(knownWindowZones)+len(form.Placeholders))
-	for _, zone := range knownWindowZones {
+	items := make([]WindowItem, 0, len(legacyWindowZones)+len(form.Placeholders))
+	for _, zone := range legacyWindowZones {
 		items = append(items, WindowItem{Kind: windowKindZone, ID: zone, Visible: true})
 	}
 	for _, ph := range form.Placeholders {

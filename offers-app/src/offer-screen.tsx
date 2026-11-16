@@ -42,7 +42,9 @@ import {
 } from './offer.ts';
 import { shortDate, statusLabel } from './lists.ts';
 import { SectionsZone } from './sections-screen.tsx';
+import { BriefZone } from './brief-screen.tsx';
 import { SendToChatButton } from './sendchat-button.tsx';
+import { askBot, askButtonText } from './ask.ts';
 import {
   loadOfferWindow,
   requiredOf,
@@ -276,6 +278,8 @@ function Zone(props: ZoneProps): JSX.Element | null {
       );
     case 'items':
       return <ItemsZone offer={offer} busy={busy} onSave={props.onSaveItems} />;
+    case 'brief':
+      return <BriefZone id={id} />;
     case 'materials':
       return (
         <MaterialsZone
@@ -478,6 +482,8 @@ function ItemsZone({
 }): JSX.Element {
   const [drafts, setDrafts] = useState<ItemDraft[]>(() => (offer.items ?? []).map(itemDraftOf));
   const [problem, setProblem] = useState('');
+  const [fileNote, setFileNote] = useState('');
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     setDrafts((offer.items ?? []).map(itemDraftOf));
@@ -495,9 +501,34 @@ function ItemsZone({
     if (text === '') onSave(drafts);
   };
 
+  // Разбор файла делает бот (двухшагово: «что понял» → подтверждение), и в
+  // приложении такого пути нет вовсе. Кнопка просит бота открыть этот шаг в
+  // чате; человек присылает .xlsx туда, и позиции приходят в то же КП.
+  const askForFile = (): void => {
+    setAsking(true);
+    setFileNote('');
+    askBot('positions', offer.id)
+      .then((res) => setFileNote(res.problem === '' ? res.sent : res.problem))
+      .finally(() => setAsking(false));
+  };
+
   return (
     <div className="app-card">
       <h2 className="app-h2">Позиции</h2>
+      <div className="app-item-row">
+        <button className="app-button app-button-ghost" type="button" disabled={asking} onClick={askForFile}>
+          {asking ? '⌛ Пишем в чат…' : askButtonText('positions')}
+        </button>
+      </div>
+      <p className="app-muted">
+        Файл .xlsx (наименование, количество, цена) разбирает бот: он покажет, что понял, и
+        спросит подтверждение — само ничего не запишется.
+      </p>
+      {fileNote === '' ? null : (
+        <p className="app-note" role="status">
+          {fileNote}
+        </p>
+      )}
       {drafts.length === 0 ? (
         <p className="app-muted">Позиций пока нет. Добавьте строку — цена вводится вручную.</p>
       ) : null}

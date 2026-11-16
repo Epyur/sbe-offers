@@ -73,6 +73,11 @@ await page.addInitScript(() => {
   install();
 });
 
+// Режим ответа (2026-11-15): вторая половина проверки смотрит бриф, поэтому
+// окно и ответ брифа переключаются флагом, а не ВТОРЫМ обработчиком маршрута:
+// page.route дописывает стопкой, и первый ответил бы раньше второго.
+let briefScreen = false;
+
 await page.route('**/api/offers/**', (route) => {
   const url = route.request().url();
   if (url.includes('/app/session')) {
@@ -84,7 +89,34 @@ await page.route('**/api/offers/**', (route) => {
   }
   // Окно КП (2026-11-15): только две зоны из пяти, в обратном порядке —
   // экран обязан нарисовать ровно их (проверка шага 3 ниже).
+  if (url.includes('/brief')) {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        brief: {
+          offerId: 1,
+          status: 'open',
+          lastTopic: 'object_name',
+          payload: { object_name: 'Дом на Охотской', customer_pains: ['дорого', 'долго'] },
+        },
+        turns: [{ id: 1, role: 'manager', text: 'Дом на Охотской', topic: 'object_name', createdAt: '' }],
+      }),
+    });
+  }
   if (url.includes('/form')) {
+    if (briefScreen) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          window: [
+            { kind: 'zone', id: 'brief', visible: true },
+            { kind: 'zone', id: 'items', visible: true },
+          ],
+        }),
+      });
+    }
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -168,6 +200,42 @@ await page.goto(`${base}#/offer/1`, { waitUntil: 'networkidle' });
 const zoneTitles = (await page.locator('.app-card h2').allTextContents()).map((s) => s.trim());
 check('карточка КП: рисуются зоны из окна', zoneTitles.join('|') === 'Позиции|Заказчик', zoneTitles.join('|'));
 check('карточка КП: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+// Блок «Бриф» и разбор файла (2026-11-15): зона брифа — отдельная настройка,
+// поэтому её показ проверяется на своём окне. Ответы ручек уже стоят выше.
+//
+// Перезагрузка, а не смена хэша: `#/offer/1` уже открыт, и `Page.goto` с тем же
+// адресом React не перемонтирует карточку — окно не перечиталось бы (тест на
+// этом и упал: карточка брифа не появилась).
+briefScreen = true;
+await page.reload({ waitUntil: 'networkidle' });
+const briefCard = page.locator('.app-card', { hasText: 'Бриф' });
+check('блок брифа: карточка нарисована', (await briefCard.count()) >= 1);
+check(
+  'блок брифа: «Заполнено 2 из 14 тем»',
+  ((await briefCard.locator('h2').first().textContent()) ?? '').includes('Заполнено 2 из 14'),
+);
+check(
+  'блок брифа: значение темы показано',
+  ((await briefCard.textContent()) ?? '').includes('Дом на Охотской'),
+);
+check(
+  'блок брифа: открытый вопрос — поле ответа',
+  (await briefCard.locator('.app-brief-answer textarea').count()) === 1,
+);
+check(
+  'блок брифа: история разговора свёрнута',
+  (await briefCard.locator('.app-brief-turns summary').count()) === 1,
+);
+check(
+  'позиции: кнопка «Прислать файл для разбора»',
+  (await page.locator('button', { hasText: 'Прислать файл для разбора' }).count()) === 1,
+);
+check(
+  'блок брифа: кнопка «Продолжить бриф в боте»',
+  (await page.locator('button', { hasText: 'Продолжить бриф в боте' }).count()) === 1,
+);
+check('блок брифа: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
 
 await page.goto(base, { waitUntil: 'networkidle' });
 check('открытие без хэша — приветствие', (await page.locator('.app-section-tile').count()) === 4);

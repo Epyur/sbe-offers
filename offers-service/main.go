@@ -235,6 +235,14 @@ func main() {
 	// внутри ручки, потому что роль editor не даёт правки чужого КП.
 	mux.HandleFunc("GET /api/offers/offers/{id}/brief", s.requirePerm("viewer")(s.handleGetBrief))
 	mux.HandleFunc("PUT /api/offers/offers/{id}/brief", s.requirePerm("editor")(s.handleSaveBrief))
+	// Бриф в приложении (2026-11-15): те же данные, что у плагина, плюс шаг
+	// диалога под JWT — в боте он живёт за секретом сервиса, а приложение
+	// секрета не знает и знать не должно. Пишет владелец КП или admin.
+	mux.HandleFunc("POST /api/offers/offers/{id}/brief/{topic}", s.requirePerm("editor")(s.handleAppBriefAnswer))
+	// «Продолжить в боте» (2026-11-15): просьба боту написать в чат человека.
+	// Подпись Telegram проверяется в ручке — JWT здесь не нужен, как у
+	// `/app/answer`: чат берётся из подписи, а не из тела.
+	mux.HandleFunc("POST /api/offers/app/ask", s.handleAppAsk)
 
 	mux.HandleFunc("GET /api/offers/access/list", s.requirePerm("admin")(s.handleListAccess))
 	mux.HandleFunc("POST /api/offers/access/role", s.requirePerm("admin")(s.handleSetAccessRole))

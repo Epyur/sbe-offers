@@ -9,6 +9,8 @@
  */
 import http from 'node:http';
 import { sendDocument, verifyToken } from './telegram.ts';
+import { runAsk } from './flow/askrun.ts';
+import type { BotDeps } from './routes.ts';
 
 const PORT = Number(process.env.VERIFY_PORT ?? 3000);
 const SECRET = process.env.OFFERS_BOT_SECRET ?? '';
@@ -121,10 +123,63 @@ async function handleAnswer(req: http.IncomingMessage, res: http.ServerResponse)
   }
 }
 
+/**
+ * Просьба из приложения «продолжить в боте» (2026-11-15).
+ *
+ * Сервис проверяет подпись Telegram и присылает сюда `action`, `offer_id` и
+ * `chat_id`, взятый ИЗ ПОДПИСИ. Бот открывает нужный диалог через
+ * существующие обработчики (`runAsk`), поэтому второй путь к брифу или к
+ * разбору позиций не заводится.
+ *
+ * Поллеру нужны `BotDeps` (сессии, отправка, восстановление входа), а они
+ * живут в поллере: он отдаёт свои через `setAskDeps`. Не пришли (поллер не
+ * стартовал) — честный отказ, а не молчание.
+ */
+let askDeps: BotDeps | null = null;
+
+/** Подключить зависимости поллера: без них просьбы из приложения не работают. */
+export function setAskDeps(deps: BotDeps): void {
+  askDeps = deps;
+}
+
+async function handleAsk(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!SECRET || req.headers['x-service-secret'] !== SECRET) {
+    send(res, 403, { ok: false, error: 'forbidden' });
+    return;
+  }
+  const body = await readBody(req);
+  if (body === null) {
+    send(res, 413, { ok: false, error: 'request too large' });
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    send(res, 400, { ok: false, error: 'invalid json' });
+    return;
+  }
+  if (askDeps === null) {
+    send(res, 503, { ok: false, error: 'бот ещё не готов: попробуйте через минуту' });
+    return;
+  }
+  try {
+    const result = await runAsk(askDeps, parsed);
+    send(res, 200, { ok: true, sent: result.sent });
+  } catch (e) {
+    // Ошибку отдаём текстом: приложение показывает её человеку.
+    send(res, 502, { ok: false, error: (e as Error).message });
+  }
+}
+
 export function startVerifyServer(): http.Server {
   const server = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/internal/answer') {
       void handleAnswer(req, res);
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/internal/ask') {
+      void handleAsk(req, res);
       return;
     }
     if (req.method !== 'POST' || req.url !== '/internal/verify') {

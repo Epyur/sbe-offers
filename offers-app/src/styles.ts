@@ -503,6 +503,67 @@ p.app-required {
   object-fit: cover;
   background: var(--tg-bg);
 }
+
+/*
+ * Блок «Бриф» (2026-11-15): темы читаются как список «подпись — значение».
+ * Значение может быть многострочным (список болей), поэтому это колонка, а не
+ * строка: длинная фраза в узком телефоне иначе растянет карточку вбок.
+ */
+.app-brief-fields {
+  list-style: none;
+  margin: 0 0 var(--app-gap);
+  padding: 0;
+}
+
+.app-brief-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-top: 1px solid var(--tg-hint);
+}
+
+.app-brief-field:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.app-brief-label {
+  font-size: 12px;
+  color: var(--tg-hint);
+}
+
+.app-brief-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-brief-answer {
+  margin-bottom: var(--app-gap);
+}
+
+.app-brief-turns {
+  margin-top: var(--app-gap);
+}
+
+.app-brief-turns summary {
+  color: var(--tg-link);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.app-brief-turns-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 14px;
+}
+
+.app-brief-turn {
+  padding: 4px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 `;
 
 /** Идемпотентно: повторный вызов (StrictMode) не плодит второй <style>. */

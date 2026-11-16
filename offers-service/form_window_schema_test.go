@@ -61,4 +61,10 @@ func TestFormWindowInSaveAndLoad(t *testing.T) {
 	if !regexp.MustCompile(`(?s)SELECT [^` + "`" + `]*\bwindow_config\b`).MatchString(load) {
 		t.Error("SELECT в loadForm не читает колонку window_config")
 	}
+	// WindowStored (2026-11-15): флаг «настройка была записана» ставится на
+	// чтении. Без него клиент не отличает «настройки нет» от «всё скрыли», и
+	// показывает бриф, которого никто не включал (класс 0.10.2).
+	if !strings.Contains(load, "form.WindowStored = len(form.Window) > 0") {
+		t.Error("loadForm не заполняет WindowStored: клиент не отличит умолчание от настройки")
+	}
 }

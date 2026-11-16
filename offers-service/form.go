@@ -186,8 +186,13 @@ type OfferForm struct {
 	// обязательность полей формы и зон экрана. Пусто — «как сейчас»
 	// (`effectiveWindow` строит нынешнее поведение), и старая форма не
 	// меняет ни экран, ни проверку обязательности.
-	Window    []WindowItem `json:"window,omitempty"`
-	UpdatedAt string       `json:"updatedAt"`
+	Window []WindowItem `json:"window,omitempty"`
+	// WindowStored (2026-11-15) — окно БЫЛО записано в базе. Сервер отдаёт
+	// окно всегда (`effectiveWindow`), а этому полю верить нельзя для отличия
+	// «настройки нет» от «администратор всё скрыл» (форма с полями всегда даёт
+	// окно). Поэтому флаг ставится на чтении из базы и в базу не пишется.
+	WindowStored bool   `json:"windowStored,omitempty"`
+	UpdatedAt    string `json:"updatedAt"`
 	// HasLayout/LayoutName — загружен ли макет .docx (2026-11-05). Сами байты
 	// в JSON формы не отдаются: клиенту нужно знать, есть ли макет, а не
 	// тащить десятки килобайт в каждом ответе `/form`.
@@ -351,6 +356,25 @@ func defaultForm(mode string) OfferForm {
 			{ID: "object_address", Label: "Адрес объекта"},
 			{ID: "valid_until", Label: "Предложение действительно до"},
 			{ID: "conditions", Label: "Условия"},
+			// Поля брифа (2026-11-15). Бриф живёт отдельно (`offers_brief`), но
+			// `briefFormValues` переносит его в значения формы под этими id — и
+			// только форма знает, какие поля существуют. Без них модель не видит
+			// ответов менеджера, а окно не может их показать: на живом КП
+			// 003/2026 заполненный бриф дошёл до модели пустым, и она написала
+			// «[НУЖНО: …]» (та же ловушка, что описана в `brief.go`).
+			{ID: "brief.object_name", Label: "Объект (бриф)"},
+			{ID: "brief.object_purpose", Label: "Назначение объекта (бриф)"},
+			{ID: "brief.object_area", Label: "Площадь (бриф)"},
+			{ID: "brief.customer_address", Label: "Адресат КП (бриф)"},
+			{ID: "brief.planned_systems", Label: "Системы (бриф)"},
+			{ID: "brief.customer_goals", Label: "Задачи клиента (бриф)"},
+			{ID: "brief.customer_pains", Label: "Боли (бриф)"},
+			{ID: "brief.project_risks", Label: "Риски (бриф)"},
+			{ID: "brief.decision_maker", Label: "Кто решает (бриф)"},
+			{ID: "brief.timeline", Label: "Сроки (бриф)"},
+			{ID: "brief.budget_signal", Label: "Бюджет (бриф)"},
+			{ID: "brief.why_us", Label: "Почему мы (бриф)"},
+			{ID: "brief.notes", Label: "Прочее (бриф)"},
 		},
 		LinkGroups: skills.DefaultLinkGroupRules(),
 		Blocks: []Block{
@@ -539,6 +563,9 @@ FROM offers_form WHERE mode = $1`, mode).
 			return form, err
 		}
 	}
+	// Пустое окно в базе — настройки нет, и клиенту это надо знать: зоны берутся
+	// по умолчанию, а флаг говорит, что показ брифа никто не выбирал (2026-11-15).
+	form.WindowStored = len(form.Window) > 0
 	form.Window = effectiveWindow(form)
 	return form, nil
 }

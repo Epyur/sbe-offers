@@ -14,12 +14,19 @@ import { apiRequest } from './api.ts';
 import type { OfferDto } from './offer.ts';
 
 /** Зоны экрана КП. Набор совпадает с `knownWindowZones` сервера. */
-export type WindowZoneId = 'client' | 'systems' | 'items' | 'materials' | 'sections';
+export type WindowZoneId = 'client' | 'systems' | 'items' | 'materials' | 'sections' | 'brief';
 
-/** Порядок зон «как сейчас» — с него начинается любой экран (сервер, шаг 1). */
+/**
+ * Порядок зон «как сейчас» — с него начинается любой экран (сервер, шаг 1).
+ *
+ * Брифа здесь нет намеренно (2026-11-15): КП могло быть собрано в плагине без
+ * разговора, и пустая карточка брифа не должна появляться у всех сама.
+ * Администратор включает зону в конфигураторе окна — сервер дописывает её в
+ * конец невидимой.
+ */
 export const DEFAULT_ZONES: readonly WindowZoneId[] = ['client', 'systems', 'items', 'materials', 'sections'];
 
-const KNOWN_ZONES: readonly string[] = DEFAULT_ZONES;
+const KNOWN_ZONES: readonly string[] = [...DEFAULT_ZONES, 'brief'];
 
 /** Подпись зоны для человека. Язык экрана один, поэтому подпись живёт здесь. */
 export const ZONE_TITLES: Record<WindowZoneId, string> = {
@@ -28,6 +35,7 @@ export const ZONE_TITLES: Record<WindowZoneId, string> = {
   items: 'Позиции с ценами',
   materials: 'Материалы (описанием)',
   sections: 'Тексты разделов',
+  brief: 'Бриф',
 };
 
 /**

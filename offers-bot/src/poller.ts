@@ -17,6 +17,7 @@ import { deliverDocx, parseWebAppData, unknownRequestText } from './webapp.ts';
 import { restoreSession, type ChatSession } from './session.ts';
 import { routeCallback, routeDocument, routeText, newRouterState, type BotDeps, type RouterState } from './routes.ts';
 import { sendMessage, editMessage } from './telegram.ts';
+import { setAskDeps } from './verify-server.ts';
 import * as api from './api.ts';
 
 /**
@@ -131,6 +132,9 @@ export async function runPoller(): Promise<void> {
   let lastSentError = '';
   const state = newRouterState();
   const deps = makeDeps(state);
+  // Просьбы из приложения («продолжить в боте») обслуживает тот же набор
+  // зависимостей, что и поллер: одна сессия чата, одна отправка (2026-11-15).
+  setAskDeps(deps);
   /** Очередь обработки: обновления идут одним порядком, но не ждут сети. */
   let chain = Promise.resolve();
   console.log('offers-bot: поллер запущен');

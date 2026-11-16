@@ -47,8 +47,8 @@ func TestEffectiveWindowDefault(t *testing.T) {
 			fields = append(fields, item.ID)
 		}
 	}
-	if strings.Join(zones, ",") != strings.Join(knownWindowZones, ",") {
-		t.Fatalf("порядок зон по умолчанию %v, ожидали %v", zones, knownWindowZones)
+	if strings.Join(zones, ",") != strings.Join(legacyWindowZones, ",") {
+		t.Fatalf("порядок зон по умолчанию %v, ожидали %v", zones, legacyWindowZones)
 	}
 	if strings.Join(fields, ",") != "client_name,client_contact,object_name" {
 		t.Fatalf("поля по умолчанию %v", fields)
@@ -296,5 +296,59 @@ func TestHiddenWindowItemIsNotRequired(t *testing.T) {
 	offer := Offer{FormValues: map[string]string{}}
 	if got := missingWindowFields(form, offer); len(got) != 0 {
 		t.Fatalf("скрытое обязательное не должно требовать заполнения, получено %+v", got)
+	}
+}
+
+// TestBriefZoneIsOptIn — зона брифа (2026-11-15) известна серверу, но в окно
+// «как сейчас» НЕ входит: КП могло быть собрано в плагине, и пустой бриф не
+// должен появляться у всех без решения администратора.
+func TestBriefZoneIsOptIn(t *testing.T) {
+	if !knownWindowZone(windowZoneBrief) {
+		t.Fatal("зона brief должна быть известна серверу")
+	}
+	if title := (WindowItem{Kind: windowKindZone, ID: windowZoneBrief}).WindowTitle(); title != "Бриф" {
+		t.Errorf("подпись зоны brief = %q, ожидали «Бриф»", title)
+	}
+	for _, item := range effectiveWindow(openTestForm()) {
+		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
+			t.Fatalf("пустое окно не должно показывать бриф: %+v", item)
+		}
+	}
+}
+
+// TestBriefZoneAppendedHidden — форма, сохранённая до появления брифа,
+// получает его в конец НЕВИДИМЫМ: администратор включит сам (§2.4 спеки).
+func TestBriefZoneAppendedHidden(t *testing.T) {
+	form := openTestForm()
+	form.Window = []WindowItem{
+		{Kind: windowKindZone, ID: "client", Visible: true},
+		{Kind: windowKindZone, ID: "systems", Visible: true},
+	}
+	var brief *WindowItem
+	for _, item := range effectiveWindow(form) {
+		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
+			copied := item
+			brief = &copied
+		}
+	}
+	if brief == nil {
+		t.Fatal("новая зона должна дописываться в окно, иначе редактор её не увидит")
+	}
+	if brief.Visible {
+		t.Fatal("дописанная зона должна быть невидимой до решения администратора")
+	}
+}
+
+// TestBriefZoneSaves — включённый бриф проходит проверку сохранения, а
+// обязательным его сделать нельзя: подсветки пустого брифа в окне нет.
+func TestBriefZoneSaves(t *testing.T) {
+	form := openTestForm()
+	form.Window = []WindowItem{{Kind: windowKindZone, ID: windowZoneBrief, Visible: true}}
+	if msg := validateWindow(form); msg != "" {
+		t.Fatalf("бриф в окне не проходит проверку: %s", msg)
+	}
+	form.Window = []WindowItem{{Kind: windowKindZone, ID: windowZoneBrief, Visible: true, Required: true}}
+	if msg := validateWindow(form); msg == "" {
+		t.Fatal("обязательный бриф должен отвергаться: его никто не проверяет")
 	}
 }

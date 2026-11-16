@@ -30,7 +30,34 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.0** — **RELEASED 2026-11-15.** `backend` `f373a44`,
+Current version = **0.11.1** — **READY 2026-11-15, NOT DEPLOYED.** Plugin only in
+version + CUP news + help + `brief` zone in the window editor; `backend` carries
+the new server and bot code (`appbrief.go`, `appask.go`, bot `flow/ask.ts` /
+`flow/askrun.ts`, `/internal/ask`). Build: `manifest e284ce67…`,
+`main 41b09bd6…`, `styles fcb9758f…`. Stand **557/0**. Release numbers are in
+`HANDOFF.md`, «0.11.1 — блок Брифа».
+
+> **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
+> разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
+> **(1) Бриф в Mini App.** Новая зона окна `brief` (`knownWindowZones`, подпись
+> «Бриф»): темы брифа с «Заполнено N из 14 тем» (`offers-app/src/brief.ts` +
+> `brief-screen.tsx`), ответ на открытый вопрос прямо в приложении
+> (`POST /offers/{id}/brief/{topic}` — тот же `StepBrief`, что в боте, но под
+> JWT), ручная правка тех же полей и свёрнутая история разговора. **Зона по
+> умолчанию выключена**: `defaultWindow` строится по `legacyWindowZones` (пять
+> прежних), а `normalizeWindow` дописывает бриф в конец **невидимым** — старая
+> форма не показывает новый раздел сама. **(2) Повторить бриф в боте.**
+> Кнопка «✏️ Продолжить бриф в боте» → `POST /app/ask {action:'brief'}`:
+> сервис проверяет `initData`, берёт `chat_id` из подписи и зовёт бота
+> `/internal/ask`; бот открывает тот же диалог (`beginBrief`). **(3) Файл для
+> разбора позиций.** В зоне «Позиции» кнопка «📎 Прислать файл для разбора» →
+> `action:'positions'`: бот пишет «пришлите .xlsx», файл разбирается обычным
+> `routeDocument`/`handleBotAttach` (двухшагово, с подтверждением). Почему
+> через бота: `Telegram.WebApp.sendData` у inline-кнопки не работает (0.9.27),
+> а разбора таблиц и подтверждения в приложении нет вовсе. Подробности и
+> грабли — `HANDOFF.md`, «0.11.1 — блок Брифа».
+
+**Previous version 0.11.0 — RELEASED 2026-11-15.** `backend` `f373a44`,
 `main` `4f65789` (release slice; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only); self-hosted `manifest 7685465c…` /
 `main ac2f1069…` / `styles fcb9758f…`, registry `sbe-apstore-registry`

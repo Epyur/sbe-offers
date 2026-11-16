@@ -1888,6 +1888,121 @@ paths:
         '404':
           description: Предложение не найдено
 
+  /api/offers/offers/{id}/brief/{topic}:
+    post:
+      summary: Ответ на вопрос брифа из приложения
+      description: |
+        Тот же шаг диалога, что в боте (`StepBrief`), но под JWT: приложение не
+        знает сервисного секрета и знать не должно. `topic` — тема, на которую
+        отвечают; если она уже сменилась (устаревший экран), ответ отвергается
+        409, чтобы слова не попали не в то поле.
+
+        Ошибка модели (`unavailable`, `retry`) НЕ пишет в бриф: ответ уходит
+        текстом, набранное не стирается. Права — владелец КП или admin.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: topic
+          in: path
+          required: true
+          description: Тема брифа (например `object_name`)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  description: Ответ менеджера
+      responses:
+        '200':
+          description: Шаг брифа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brief:
+                    type: object
+                  reply:
+                    type: string
+                  done:
+                    type: boolean
+                  nextTopic:
+                    type: string
+                  retry:
+                    type: boolean
+                  unavailable:
+                    type: boolean
+                  progress:
+                    type: string
+        '400':
+          description: Пустой ответ или тело не JSON
+        '403':
+          description: Правит не владелец и не admin
+        '409':
+          description: Вопрос уже сменился — обновите бриф
+        '502':
+          description: Бриф не ответил (ошибка модели)
+
+  /api/offers/app/ask:
+    post:
+      summary: Попросить бота открыть диалог по КП (продолжить в боте)
+      description: |
+        Приложение отдаёт подпись Telegram, сервис проверяет её и просит бота
+        написать в чат человека — `chat_id` берётся ИЗ ПОДПИСИ, не из тела.
+        Действия:
+
+        - `brief` — продолжить бриф этого КП в чате;
+        - `positions` — попросить файл для разбора позиций.
+
+        Путь без `sendData`: приложение КП открывается inline-кнопкой, а
+        `sendData` работает только у кнопки клавиатуры.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData, action, kind, id]
+              properties:
+                initData:
+                  type: string
+                action:
+                  type: string
+                  enum: [brief, positions]
+                kind:
+                  type: string
+                  enum: [offer]
+                id:
+                  type: integer
+      responses:
+        '200':
+          description: Бот написал в чат
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  sent:
+                    type: string
+        '400':
+          description: Действие не указано или тело не JSON
+        '401':
+          description: Подпись неверна или устарела
+        '403':
+          description: Человек не в боте (`not_linked`) или это не его КП
+        '404':
+          description: Предложение не найдено
+        '502':
+          description: Бот не принял просьбу (текст в `error`)
   /api/offers/access/list:
     get:
       summary: Кто вошёл в бота (admin)
