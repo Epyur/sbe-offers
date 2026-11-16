@@ -30,14 +30,33 @@ const windowZoneClient = "client"
 // knownWindowZones — фиксированный набор зон экрана КП в приложении.
 //
 // Порядок здесь — порядок по умолчанию (прежнее поведение экрана):
-// Заказчик → Системы → Позиции → Материалы → Тексты разделов.
+// Заказчик → Системы → Позиции → Материалы → Тексты разделов, затем бриф.
 //
-// `brief` (2026-11-15) — зона брифа: что бот выяснил про объект. В окно по
-// умолчанию она НЕ входит: брифа могло не быть вовсе (КП собрано в плагине),
-// и показывать пустую карточку менеджеру без нужды нельзя. Администратор
-// включает её сам — поэтому форма, сохранённая до появления зоны, ведёт себя
-// как раньше (`legacyWindowZones`).
+// `brief` (2026-11-15) — зона брифа: что бот выяснил про объект. До 0.11.2 её
+// не было в умолчании, и это оказалось дефектом: у формы с сохранённым окном
+// зона дописывалась 12-м элементом — ПОСЛЕ полей формы, — а у формы без окна
+// не появлялась вовсе (defaultWindow строился по `legacyWindowZones`). Теперь
+// зона есть везде, но её ПОРЯДОК по умолчанию — сразу за «Заказчиком»
+// (`defaultZoneOrder`): карточка брифа описывает объект и должна стоять рядом
+// с заказчиком, а не под таблицей полей. Видимость по-прежнему решает
+// администратор: новая зона в старом окне дописывается невидимой.
 var knownWindowZones = []string{
+	windowZoneClient,
+	windowZoneBrief,
+	"systems",
+	"items",
+	"materials",
+	"sections",
+}
+
+// windowZoneBrief — зона брифа в приложении.
+const windowZoneBrief = "brief"
+
+// defaultZoneOrder — порядок зон в окне «как сейчас»: прежние пять, затем
+// бриф. Отличается от `knownWindowZones` ровно тем, что бриф идёт последним:
+// окно, которое администратор никогда не трогал, не должно менять вид
+// (бриф там всё равно невидим), а в редакторе новая строка видна в конце.
+var defaultZoneOrder = []string{
 	windowZoneClient,
 	"systems",
 	"items",
@@ -46,12 +65,8 @@ var knownWindowZones = []string{
 	windowZoneBrief,
 }
 
-// windowZoneBrief — зона брифа в приложении.
-const windowZoneBrief = "brief"
-
-// legacyWindowZones — набор зон ДО появления брифа. Ровно он входит в окно
-// «как сейчас»: новый раздел не должен появляться у всех без решения
-// администратора (то же правило, что «хвост дописывается невидимым»).
+// legacyWindowZones — набор зон ДО появления брифа. Остался для чтения
+// старого состояния и для сторожа: в умолчание бриф теперь входит.
 var legacyWindowZones = []string{
 	windowZoneClient,
 	"systems",
@@ -136,18 +151,26 @@ func effectiveWindow(form OfferForm) []WindowItem {
 
 // defaultWindow — «как сейчас»: зоны в прежнем порядке, затем поля формы.
 //
-// Бриф (`windowZoneBrief`) сюда НЕ входит намеренно: старая форма не должна
-// показать новый раздел сама (2026-11-15). Администратор включает его в окне.
-// `defaultWindow` вызывается только когда настройки нет вовсе, поэтому
-// `windowLegacy` для этого случая не нужен.
+// С 0.11.2 бриф ВХОДИТ в умолчание — но в конце (`defaultZoneOrder`), и
+// видимым он от этого не становится: у формы без настройки окно вообще не
+// было настройкой, и показывать в нём новый раздел никто не просил. Зато он
+// появляется в редакторе плагина: до 0.11.2 его не было НИГДЕ у формы без
+// сохранённого окна, и включить зону было нечем (живая жалоба 2026-11-16).
 func defaultWindow(form OfferForm) []WindowItem {
 	required := make(map[string]bool, len(form.RequiredFields))
 	for _, id := range form.RequiredFields {
 		required[id] = true
 	}
-	items := make([]WindowItem, 0, len(legacyWindowZones)+len(form.Placeholders))
-	for _, zone := range legacyWindowZones {
+	items := make([]WindowItem, 0, len(defaultZoneOrder)+len(form.Placeholders))
+	for _, zone := range defaultZoneOrder {
 		items = append(items, WindowItem{Kind: windowKindZone, ID: zone, Visible: true})
+	}
+	// Бриф в умолчании невидим: зона известна, но раздел не появляется у всех
+	// сам (решение 0.11.0 §2.4 сохраняется — меняется только место в списке).
+	for i := range items {
+		if items[i].Kind == windowKindZone && items[i].ID == windowZoneBrief {
+			items[i].Visible = false
+		}
 	}
 	for _, ph := range form.Placeholders {
 		if strings.TrimSpace(ph.ID) == "" {
@@ -162,6 +185,53 @@ func defaultWindow(form OfferForm) []WindowItem {
 		})
 	}
 	return items
+}
+
+// appendMissingZones дописывает недостающие зоны невидимыми.
+//
+// Место вставки — не «в самый конец»: 0.11.1 дописывала бриф после всех полей
+// формы, и включённая зона оказывалась под таблицей полей (`claude-5-opus`,
+// 2026-11-16). Правило: зона встаёт сразу за своей «якорной» зоной
+// (`zoneAnchorAfter`), а без якоря — в конец.
+func appendMissingZones(items []WindowItem, seen map[string]bool) []WindowItem {
+	for _, zone := range knownWindowZones {
+		key := windowKindZone + "\x00" + zone
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		item := WindowItem{Kind: windowKindZone, ID: zone, Visible: false}
+		anchor := zoneAnchorAfter(zone)
+		if anchor != "" {
+			if at := indexOfZone(items, anchor); at >= 0 {
+				items = append(items[:at+1], append([]WindowItem{item}, items[at+1:]...)...)
+				continue
+			}
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// zoneAnchorAfter — за какой зоной ставить новую.
+//
+// Бриф описывает объект и ставится сразу за «Заказчиком»: внизу, после полей
+// формы, его не находят (живая жалоба «не вижу зоны бриф», 2026-11-16).
+func zoneAnchorAfter(zone string) string {
+	if zone == windowZoneBrief {
+		return windowZoneClient
+	}
+	return ""
+}
+
+// indexOfZone — позиция зоны в списке окна; -1, если её там нет.
+func indexOfZone(items []WindowItem, id string) int {
+	for i, item := range items {
+		if item.Kind == windowKindZone && item.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // normalizeWindow — единственное место, где сходятся «что записано» и «что
@@ -225,14 +295,7 @@ func normalizeWindow(saved []WindowItem, form OfferForm) []WindowItem {
 		items = append(items, item)
 	}
 
-	for _, zone := range knownWindowZones {
-		key := windowKindZone + "\x00" + zone
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		items = append(items, WindowItem{Kind: windowKindZone, ID: zone, Visible: false})
-	}
+	items = appendMissingZones(items, seen)
 	for _, ph := range form.Placeholders {
 		id := strings.TrimSpace(ph.ID)
 		if id == "" {

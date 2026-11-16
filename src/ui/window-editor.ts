@@ -85,7 +85,25 @@ export function renderWindowEditor(
     if (items.length === 0) {
       list.createDiv({ cls: 'tn-offers-muted', text: WINDOW_EDITOR_TEXTS.emptyFields });
     }
-    items.forEach((item, index) => renderItemCard(list, items, item, index, placeholders, redraw, deps));
+    // Разделы экрана и поля формы — двумя подписанными блоками (2026-11-16).
+    // Подписи были объявлены с 0.11.0, но не рисовались: список шёл сплошным,
+    // и при 12 строках новая зона в конце сливалась с полями — отсюда живая
+    // жалоба «не вижу зоны бриф». Заголовок остаётся и у пустой половины:
+    // человек должен видеть, где заканчиваются разделы.
+    const zones = items.filter((item) => item.kind === 'zone');
+    const fields = items.filter((item) => item.kind === 'field');
+    if (zones.length > 0) {
+      list.createDiv({ cls: 'tn-offers-window-group', text: WINDOW_EDITOR_TEXTS.zonesTitle });
+      zones.forEach((item) => {
+        const index = items.indexOf(item);
+        renderItemCard(list, items, item, index, placeholders, redraw, deps);
+      });
+    }
+    list.createDiv({ cls: 'tn-offers-window-group', text: WINDOW_EDITOR_TEXTS.fieldsTitle });
+    fields.forEach((item) => {
+      const index = items.indexOf(item);
+      renderItemCard(list, items, item, index, placeholders, redraw, deps);
+    });
     redrawPreview();
   };
 

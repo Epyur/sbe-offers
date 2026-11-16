@@ -722,6 +722,13 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	if window == nil {
 		window = []WindowItem{}
 	}
+	// Защита от старого клиента (0.11.2, после совещания 2026-11-16): плагин
+	// 0.11.0 не знает зоны `brief` и при сохранении присылал окно без неё, а
+	// `window_config = EXCLUDED.window_config` затирал включённую зону — и
+	// следующее чтение снова дописывало её НЕВИДИМОЙ. Настройка молча
+	// откатывалась (класс 0.1.18). Здесь: если в базе зона ВКЛЮЧЕНА, а клиент
+	// её не прислал вовсе, сохраняем состояние из базы, а не теряем его.
+	window = keepKnownZonesFromDB(r.Context(), s, form.Mode, window)
 	windowJSON, err := json.Marshal(window)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})

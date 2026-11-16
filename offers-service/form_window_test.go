@@ -25,9 +25,10 @@ func openTestForm() OfferForm {
 	}
 }
 
-// TestEffectiveWindowDefault — пустое окно даёт нынешнее поведение: пять зон в
-// прежнем порядке, затем все поля формы, все видимые, обязательность из
-// `required_fields`.
+// TestEffectiveWindowDefault — пустое окно даёт нынешнее поведение: зоны в
+// порядке `defaultZoneOrder` (прежние пять, затем бриф), затем все поля формы.
+// Бриф известен и присутствует, но НЕВИДИМ: раздел не появляется у всех сам
+// (0.11.2: он должен быть хотя бы в списке редактора, иначе включить нечем).
 func TestEffectiveWindowDefault(t *testing.T) {
 	form := openTestForm()
 	got := effectiveWindow(form)
@@ -36,8 +37,11 @@ func TestEffectiveWindowDefault(t *testing.T) {
 	for _, item := range got {
 		switch item.Kind {
 		case windowKindZone:
-			if !item.Visible {
+			if item.ID != windowZoneBrief && !item.Visible {
 				t.Errorf("зона %q по умолчанию должна быть видна", item.ID)
+			}
+			if item.ID == windowZoneBrief && item.Visible {
+				t.Errorf("зона %q по умолчанию должна быть НЕВИДИМА: новый раздел не появляется сам", item.ID)
 			}
 			zones = append(zones, item.ID)
 		case windowKindField:
@@ -47,8 +51,8 @@ func TestEffectiveWindowDefault(t *testing.T) {
 			fields = append(fields, item.ID)
 		}
 	}
-	if strings.Join(zones, ",") != strings.Join(legacyWindowZones, ",") {
-		t.Fatalf("порядок зон по умолчанию %v, ожидали %v", zones, legacyWindowZones)
+	if strings.Join(zones, ",") != strings.Join(defaultZoneOrder, ",") {
+		t.Fatalf("порядок зон по умолчанию %v, ожидали %v", zones, defaultZoneOrder)
 	}
 	if strings.Join(fields, ",") != "client_name,client_contact,object_name" {
 		t.Fatalf("поля по умолчанию %v", fields)
@@ -117,9 +121,15 @@ func TestEffectiveWindowAppendsMissingHidden(t *testing.T) {
 			t.Errorf("дописанный элемент %s:%s должен быть невидимым", item.Kind, item.ID)
 		}
 	}
-	// Порядок хвоста: сначала зоны в объявленном порядке, затем поля формы.
-	if tail[0].ID != "systems" {
-		t.Errorf("первым дописанным должен быть systems, получено %q", tail[0].ID)
+	// Порядок: бриф встаёт сразу за своим якорем («Заказчик»), остальное
+	// дописывается после. До 0.11.2 бриф уходил в самый конец — под таблицей
+	// полей формы, — и включённая зона оказывалась внизу (дефект, найденный
+	// `claude-5-opus` 2026-11-16).
+	if got[1].ID != windowZoneBrief {
+		t.Errorf("бриф должен стоять сразу за Заказчиком, получено %q", got[1].ID)
+	}
+	if tail[1].ID != "systems" {
+		t.Errorf("после брифа первым дописанным должен быть systems, получено %q", tail[1].ID)
 	}
 	last := tail[len(tail)-1]
 	if last.Kind != windowKindField || last.ID != "object_name" {
@@ -299,9 +309,10 @@ func TestHiddenWindowItemIsNotRequired(t *testing.T) {
 	}
 }
 
-// TestBriefZoneIsOptIn — зона брифа (2026-11-15) известна серверу, но в окно
-// «как сейчас» НЕ входит: КП могло быть собрано в плагине, и пустой бриф не
-// должен появляться у всех без решения администратора.
+// TestBriefZoneIsOptIn — зона брифа известна серверу и ВХОДИТ в окно «как
+// сейчас» (0.11.2), но НЕВИДИМОЙ: раздел не появляется у всех сам, это по-
+// прежнему решение администратора. До 0.11.2 её не было в умолчании вовсе —
+// у новой формы включить зону было нечем (живая жалоба 2026-11-16).
 func TestBriefZoneIsOptIn(t *testing.T) {
 	if !knownWindowZone(windowZoneBrief) {
 		t.Fatal("зона brief должна быть известна серверу")
@@ -309,10 +320,18 @@ func TestBriefZoneIsOptIn(t *testing.T) {
 	if title := (WindowItem{Kind: windowKindZone, ID: windowZoneBrief}).WindowTitle(); title != "Бриф" {
 		t.Errorf("подпись зоны brief = %q, ожидали «Бриф»", title)
 	}
+	var found *WindowItem
 	for _, item := range effectiveWindow(openTestForm()) {
 		if item.Kind == windowKindZone && item.ID == windowZoneBrief {
-			t.Fatalf("пустое окно не должно показывать бриф: %+v", item)
+			copied := item
+			found = &copied
 		}
+	}
+	if found == nil {
+		t.Fatal("бриф обязан быть в окне по умолчанию, иначе его не включить")
+	}
+	if found.Visible {
+		t.Fatal("бриф по умолчанию невидим: раздел не появляется у всех сам")
 	}
 }
 

@@ -96,21 +96,60 @@ export function defaultWindow(placeholders: Placeholder[]): WindowItem[] {
  * Рабочий список для редактора.
  *
  * Пусто с сервера — «как сейчас» (`defaultWindow`): старая форма открывается
- * со знакомым порядком, а не пустым списком. Нормализация — серверная работа
- * (`effectiveWindow`), и повторять её здесь значило бы держать две правды;
- * клиент добивает только то, без чего редактор не нарисует строку (подпись
- * поля из формы — единственный источник).
+ * со знакомым порядком, а не пустым списком.
+ *
+ * С 0.11.2 здесь же дописываются НЕДОСТАЮЩИЕ ЗОНЫ (невидимыми), как это делает
+ * серверный `normalizeWindow`. Причина — живая жалоба «не вижу зоны бриф в
+ * настройках формы» (2026-11-16): редактор рисовал ровно присланное, а бриф
+ * мог не прийти с сервера (старая сборка сервиса, старая форма без окна) — и
+ * включить зону было нечем. Две правды не боятся, если правило одно: набор
+ * берётся из `KNOWN_ZONES`, а сервер проверяет то же самое на записи.
+ *
+ * Порядок дописывания — с якорем: бриф встаёт сразу за «Заказчиком», а не в
+ * конец (внизу, под полями формы, его не находят).
  */
 export function windowForEditor(saved: WindowItem[] | undefined, placeholders: Placeholder[]): WindowItem[] {
   const source = saved ?? [];
   if (source.length === 0) return defaultWindow(placeholders);
-  return source.map((item) => ({
-    kind: item.kind === 'field' ? 'field' : 'zone',
+  const items = source.map((item) => ({
+    kind: item.kind === 'field' ? ('field' as const) : ('zone' as const),
     id: item.id,
     ...(item.kind === 'field' ? { label: windowTitle(item, placeholders) } : {}),
     visible: item.visible !== false,
     required: item.required === true,
   }));
+  return appendMissingZones(items, placeholders);
+}
+
+/**
+ * Дописать недостающие зоны невидимыми, с якорем.
+ *
+ * Повторяет серверное правило один в один (`appendMissingZones` +
+ * `zoneAnchorAfter` в `offers-service/form_window.go`): незнакомая зона — в
+ * конец, бриф — сразу за «Заказчиком».
+ */
+export function appendMissingZones(items: WindowItem[], placeholders: Placeholder[]): WindowItem[] {
+  const seen = new Set(items.filter((i) => i.kind === 'zone').map((i) => i.id));
+  let out = [...items];
+  for (const zone of KNOWN_ZONES) {
+    if (seen.has(zone)) continue;
+    const item: WindowItem = { kind: 'zone', id: zone, visible: false, required: false };
+    const anchor = zoneAnchorAfter(zone);
+    const at = anchor === '' ? -1 : out.findIndex((i) => i.kind === 'zone' && i.id === anchor);
+    if (at >= 0) {
+      out = [...out.slice(0, at + 1), item, ...out.slice(at + 1)];
+    } else {
+      out = [...out, item];
+    }
+  }
+  // Новые ПОЛЯ формы — тоже в конец, видимыми (правило `appendNewFields`
+  // осталось прежним: поле завели — оно должно быть видно).
+  return appendNewFields(out, placeholders);
+}
+
+/** За какой зоной ставить новую: бриф — за «Заказчиком», остальные — в конец. */
+export function zoneAnchorAfter(zone: string): string {
+  return zone === 'brief' ? 'client' : '';
 }
 
 /**

@@ -30,14 +30,22 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.1** — **RELEASED 2026-11-16.** `backend` `395bce8`,
-`main` `301b136` (release slice; `offers-service/`, `offers-bot/`, `offers-app/`
-live on `backend` only); self-hosted `manifest e284ce67…` / `main 41b09bd6…` /
-`styles fcb9758f…`, registry `sbe-apstore-registry` `ea8bf8a`. Service `offers`
-and bot `offers-bot` rebuilt and recreated 2026-11-16 (new `appbrief.go`,
-`appask.go`, bot `flow/ask.ts` / `flow/askrun.ts`, `/internal/ask`); App deployed
-as `assets/index-Doc76L1a.js`. Stand **557/0**. Release points — `HANDOFF.md`,
-«Три точки сходятся (0.11.1)».
+Current version = **0.11.2** — ready 2026-11-16, deployment notes in
+`HANDOFF.md`. Fixes «не вижу зоны Бриф» (defect of 0.11.1, found in live use).
+Three layers changed together: `defaultWindow` now includes `brief` (invisible,
+last in `defaultZoneOrder`), missing zones are appended **by anchor** (brief right
+after `client`, not at the end), and saving from an old client no longer wipes a
+zone the admin enabled (`mergeStoredZones`). Plugin: `windowForEditor` appends
+missing zones too, and the window editor finally renders its group headers
+(`zonesTitle`/`fieldsTitle` were declared but never drawn).
+
+> **Postmortem of this defect — read before touching the window again:**
+> `C:\Obsidian\mailers\docs\superpowers\specs\2026-11-16-sbe-offers-brief-zone-postmortem.md`.
+> It records the three-way review (`gemini-4-argon` → `claude-5-opus`), what each
+> found, which claim was wrong and how it was checked against live data.
+
+Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
+brief from the app, file parsing in «Позиции»).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
