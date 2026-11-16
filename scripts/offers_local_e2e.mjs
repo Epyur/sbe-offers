@@ -3391,8 +3391,10 @@ async function sectionWindow() {
 
   const readWindow = await call('GET', '/form', { token: ownerToken });
   const window = readWindow.json?.window ?? [];
+  // Записанный порядок главный; бриф (0.11.2) дописывается якорем — сразу за
+  // «Заказчиком», потому что в сохранённом окне его не было.
   ok('порядок зон пережил сохранение',
-    window.slice(0, 3).map((w) => w.id).join(',') === 'items,client,systems',
+    window.slice(0, 4).map((w) => w.id).join(',') === 'items,client,brief,systems',
     JSON.stringify(window.map((w) => w.id)));
   ok('сохранённая зона осталась видимой',
     window[0]?.visible === true && window[1]?.required === true,
@@ -3405,9 +3407,11 @@ async function sectionWindow() {
     clearedWindow.status === 200 && readWindow.status === 200,
     `status ${clearedWindow.status}`);
   const afterClear = await call('GET', '/form', { token: ownerToken });
-  ok('пустое окно отдаёт все пять зон в прежнем порядке',
+  // 0.11.2: в умолчании прежние пять зон, затем бриф (невидимый): иначе
+  // включить его нечем ни в редакторе, ни в приложении.
+  ok('пустое окно отдаёт пять зон и бриф',
     (afterClear.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id).join(',')
-      === 'client,systems,items,materials,sections',
+      === 'client,systems,items,materials,sections,brief',
     JSON.stringify((afterClear.json?.window ?? []).map((w) => w.id)));
 
   // Неизвестная зона — ошибка, и текст обязан быть русским: это сообщение
@@ -3583,12 +3587,20 @@ async function sectionBriefApp() {
   await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });
   const defaults = await call('GET', '/form', { token: ownerToken });
   const defaultZones = (defaults.json?.window ?? []).filter((w) => w.kind === 'zone');
-  ok('окно «как сейчас» не содержит брифа',
-    !defaultZones.some((w) => w.id === 'brief'),
+  // 0.11.2: бриф ВХОДИТ в окно «как сейчас» (иначе его не включить ни в
+  // редакторе, ни в приложении — живая жалоба 2026-11-16), но НЕВИДИМЫМ:
+  // раздел не появляется у всех сам. Порядок — прежние пять, затем бриф.
+  const briefZone = defaultZones.find((w) => w.id === 'brief');
+  ok('окно «как сейчас» содержит бриф', briefZone !== undefined,
     JSON.stringify(defaultZones.map((w) => w.id)));
-  ok('окно «как сейчас» — прежние пять зон',
-    defaultZones.map((w) => w.id).join(',') === 'client,systems,items,materials,sections',
+  ok('бриф в окне «как сейчас» невидим', briefZone?.visible === false,
+    JSON.stringify(briefZone));
+  ok('окно «как сейчас» — прежние пять зон, затем бриф',
+    defaultZones.map((w) => w.id).join(',') === 'client,systems,items,materials,sections,brief',
     JSON.stringify(defaultZones.map((w) => w.id)));
+  ok('все зоны умолчания, кроме брифа, видны',
+    defaultZones.filter((w) => w.id !== 'brief').every((w) => w.visible === true),
+    JSON.stringify(defaultZones));
 
   // 2. Сохранённая настройка без брифа получает его в конец невидимым.
   await call('PUT', '/form', {
@@ -3618,6 +3630,53 @@ async function sectionBriefApp() {
     JSON.stringify(briefRead.json?.window));
   ok('форма сообщает, что окно записано', briefRead.json?.windowStored === true,
     JSON.stringify(briefRead.json?.windowStored));
+
+  // 3a. Защита записи (0.11.2, дефект найден `gemini-4-argon`): старый клиент
+  // не знает зоны brief и присылает окно без неё. Включённая зона НЕ должна
+  // откатываться — иначе «настройка не сохранилась» без единой ошибки.
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      ...baseForm,
+      window: [
+        { kind: 'zone', id: 'client', visible: true },
+        { kind: 'zone', id: 'brief', visible: true },
+      ],
+    },
+  });
+  // Тот же PUT, но БЕЗ brief — так выглядит запрос плагина 0.11.0.
+  const oldClientSave = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...baseForm, window: [{ kind: 'zone', id: 'client', visible: true }] },
+  });
+  ok('сохранение старым клиентом проходит', oldClientSave.status === 200,
+    `status ${oldClientSave.status} ${oldClientSave.text?.slice(0, 120)}`);
+  const afterOldSave = await call('GET', '/form', { token: ownerToken });
+  const keptBrief = (afterOldSave.json?.window ?? []).find((w) => w.id === 'brief');
+  ok('включённая зона brief пережила сохранение без неё', keptBrief?.visible === true,
+    JSON.stringify(keptBrief));
+  ok('восстановленная зона стоит за Заказчиком',
+    (() => {
+      const ws = (afterOldSave.json?.window ?? []).filter((w) => w.kind === 'zone').map((w) => w.id);
+      return ws.indexOf('brief') === ws.indexOf('client') + 1;
+    })(),
+    JSON.stringify((afterOldSave.json?.window ?? []).map((w) => w.id)));
+
+  // 3b. Явное «скрыть» от нового клиента уважается — защита не возвращает зону.
+  await call('PUT', '/form', {
+    token: ownerToken,
+    body: {
+      ...baseForm,
+      window: [
+        { kind: 'zone', id: 'client', visible: true },
+        { kind: 'zone', id: 'brief', visible: false },
+      ],
+    },
+  });
+  const afterHide = await call('GET', '/form', { token: ownerToken });
+  ok('явное «скрыть» сохраняется, а не откатывается защитой',
+    (afterHide.json?.window ?? []).find((w) => w.id === 'brief')?.visible === false,
+    JSON.stringify((afterHide.json?.window ?? []).find((w) => w.id === 'brief')));
 
   // 4. Пустое окно снова = «как сейчас», флаг снят.
   await call('PUT', '/form', { token: ownerToken, body: { ...baseForm, window: [] } });

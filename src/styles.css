@@ -447,6 +447,20 @@
   margin-bottom: 6px;
 }
 
+/* Подпись блока списка: «Разделы экрана» / «Поля формы» (2026-11-16).
+   Без неё 12 строк идут сплошняком, и новая зона в конце сливается с полями —
+   живая жалоба «не вижу зоны бриф». */
+.tn-offers-window-group {
+  font-size: 0.85em;
+  font-weight: 600;
+  opacity: 0.75;
+  margin: 10px 0 4px;
+}
+
+.tn-offers-window-group:first-child {
+  margin-top: 0;
+}
+
 .tn-offers-window-item.is-hidden {
   opacity: 0.6;
 }

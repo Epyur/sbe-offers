@@ -71,23 +71,54 @@ test('подпись зоны — из кода, подпись поля — и�
   assert.equal(windowTitle({ kind: 'field', id: 'gone' }, placeholders), 'gone');
   // Неизвестная зона — свой id: её некому нарисовать, и это надо видеть.
   assert.equal(windowTitle(zone('unknown'), placeholders), 'unknown');
-  // Бриф (2026-11-15) — известная зона с подписью.
+  // Бриф (0.11.2) — известная зона с подписью.
   assert.equal(windowTitle(zone('brief'), placeholders), 'Бриф');
   assert.deepEqual(Object.keys(ZONE_TITLES), ['client', 'systems', 'items', 'materials', 'sections', 'brief']);
-  // В окно «как сейчас» бриф НЕ входит: иначе он появился бы у всех сам.
-  assert.ok(!windowForEditor(undefined, placeholders).some((i) => i.id === 'brief'));
-  // А в записанном окне он рисуется и сохраняется — администратор включил сам.
-  const withBrief = windowForEditor([zone('items'), zone('brief')], placeholders);
-  assert.deepEqual(withBrief.map((i) => i.id), ['items', 'brief']);
-  assert.equal(windowProblem([zone('brief')], placeholders), '');
+});
+
+// Сторож дефекта 0.11.1 «не вижу зоны бриф в настройках формы» (2026-11-16,
+// совещание gemini-4-argon + claude-5-opus). Редактор рисовал ровно то, что
+// пришло с сервера: если зоны не было в ответе, включить её было нечем.
+test('недостающие зоны дописываются в редактор невидимыми', () => {
+  // Живая payload 0.11.1: 5 зон + поля, брифа нет.
+  const saved = [
+    zone('client'),
+    zone('systems'),
+    zone('items'),
+    zone('materials'),
+    zone('sections'),
+    field('supplier_name', { visible: true }),
+  ];
+  const items = windowForEditor(saved, placeholders);
+  const brief = items.find((i) => i.kind === 'zone' && i.id === 'brief');
+  assert.ok(brief, 'зона brief обязана быть в редакторе, иначе её не включить');
+  assert.equal(brief.visible, false, 'дописанная зона невидима: раздел не появляется сам');
+});
+
+test('бриф встаёт сразу за Заказчиком, а не в конец', () => {
+  const items = windowForEditor([zone('client'), field('object_name')], placeholders);
+  const ids = items.map((i) => i.id);
+  assert.equal(ids[ids.indexOf('client') + 1], 'brief', `порядок: ${ids.join(',')}`);
+});
+
+test('окно без зон вообще тоже получает все зоны редактора', () => {
+  const items = windowForEditor([field('object_name')], placeholders);
+  const zones = items.filter((i) => i.kind === 'zone').map((i) => i.id);
+  // Клиент уже был в присланном окне, поэтому бриф встаёт сразу за ним —
+  // та же логика якоря, что у сервера.
+  assert.deepEqual(zones, ['client', 'brief', 'systems', 'items', 'materials', 'sections']);
 });
 
 test('порядок и видимость записанного сохраняются', () => {
   const items = windowForEditor([zone('sections'), zone('client', false), field('object_name')], placeholders);
+  // Записанный порядок двух первых зон не изменился. Бриф (0.11.2) встаёт за
+  // «Заказчиком» — это и есть якорь, так что третьим идёт он, а не поле.
   assert.deepEqual(
-    items.map((i) => `${i.id}:${i.visible}`),
-    ['sections:true', 'client:false', 'object_name:true'],
+    items.map((i) => `${i.id}:${i.visible}`).slice(0, 3),
+    ['sections:true', 'client:false', 'brief:false'],
   );
+  // Поле формы никуда не делось, просто стоит после дописанных зон.
+  assert.ok(items.some((i) => i.kind === 'field' && i.id === 'object_name' && i.visible === true));
 });
 
 test('проверка окна: неизвестная зона, поле-призрак, дубль', () => {
