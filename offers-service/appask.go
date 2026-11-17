@@ -40,8 +40,9 @@ import (
 // askAction — что попросить у бота. Значения совпадают с тем, что читает
 // `/internal/ask` в боте: одно слово на одно действие.
 const (
-	askActionBrief     = "brief"
-	askActionPositions = "positions"
+	askActionBrief          = "brief"
+	askActionPositions      = "positions"
+	askActionCompetitorFile = "competitor-file"
 )
 
 // appAskRequest — тело POST /api/offers/app/ask.
@@ -50,6 +51,31 @@ type appAskRequest struct {
 	Action   string `json:"action"`
 	Kind     string `json:"kind"`
 	ID       int64  `json:"id"`
+}
+
+// appAskProblem — проверка формы просьбы до любой работы: какое действие с
+// каким документом бывает. Пустая строка — просьба понятна.
+//
+// Пары проверяются здесь, а не в ветках ниже, потому что «brief для листка» и
+// «competitor-file для КП» — не ошибка пользователя, а несогласованный клиент:
+// ответ должен быть один и понятный.
+func appAskProblem(req appAskRequest) string {
+	if req.ID <= 0 {
+		return "документ не указан"
+	}
+	switch req.Kind {
+	case "offer":
+		if req.Action != askActionBrief && req.Action != askActionPositions {
+			return "действие не указано"
+		}
+	case "sheet":
+		if req.Action != askActionCompetitorFile {
+			return "для боевого листка бывает только действие competitor-file"
+		}
+	default:
+		return "неизвестный вид документа"
+	}
+	return ""
 }
 
 // handleAppAsk — попросить бота продолжить разговор в чате.
@@ -63,12 +89,8 @@ func (s *Server) handleAppAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
-	if req.Action != askActionBrief && req.Action != askActionPositions {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "действие не указано"})
-		return
-	}
-	if req.Kind != "offer" || req.ID <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "документ не указан"})
+	if msg := appAskProblem(req); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": msg})
 		return
 	}
 
@@ -99,17 +121,11 @@ func (s *Server) handleAppAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	offer, err := s.loadOffer(r.Context(), req.ID)
+	payload, err := s.appAskPayload(w, r, req, email)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
 		return
 	}
-	if !strings.EqualFold(offer.OwnerEmail, email) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
-		return
-	}
-
-	notice, err := s.askBot(r.Context(), chatID, req.Action, offer)
+	notice, err := s.askBot(r.Context(), chatID, payload)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":  err.Error(),
@@ -120,21 +136,67 @@ func (s *Server) handleAppAsk(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sent": notice})
 }
 
+// appAskPayload — собрать то, что уйдёт боту: документ, проверка владельца и
+// поля просьбы. Отдельно от `handleAppAsk`, потому что у двух документов
+// разные правила доступа: КП — только своё (`offer.OwnerEmail`), листок —
+// автор ИЛИ admin (правило 2026-11-12: читают все, правят автор и admin).
+//
+// Ошибку пишем здесь же (гонять статус наружу значило бы держать второй список
+// кодов в одном обработчике).
+func (s *Server) appAskPayload(w http.ResponseWriter, r *http.Request, req appAskRequest, email string) (map[string]any, error) {
+	if req.Kind == "sheet" {
+		sheet, err := s.loadCombatSheet(r.Context(), req.ID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "боевой листок не найден"})
+			return nil, err
+		}
+		role, _ := s.effectiveRole(r.Context(), appIDFromEnv(), email)
+		if !botCanEditCombat(sheet, email) && !isAdminRole(role) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "это листок коллеги — присылать файл по конкуренту может только автор",
+			})
+			return nil, errors.New("not owner")
+		}
+		return map[string]any{
+			"kind":         "sheet",
+			"action":       askActionCompetitorFile,
+			"sheet_id":     sheet.ID,
+			"sheet_number": sheet.Number,
+		}, nil
+	}
+	offer, err := s.loadOffer(r.Context(), req.ID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "предложение не найдено"})
+		return nil, err
+	}
+	if !strings.EqualFold(offer.OwnerEmail, email) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "это не ваше предложение"})
+		return nil, errors.New("not owner")
+	}
+	return map[string]any{
+		"kind":         "offer",
+		"action":       req.Action,
+		"offer_id":     offer.ID,
+		"offer_number": offer.Number,
+	}, nil
+}
+
 // askBot — отдать боту просьбу и вернуть, что он напишет в чат.
 //
 // Путь только через бота: у сервиса нет доступа к api.telegram.org (СОКС —
 // у бота), и заводить второй канал значило бы второй токен и второй путь.
-func (s *Server) askBot(ctx context.Context, chatID, action string, offer Offer) (string, error) {
+// Поля просьбы собирает `appAskPayload`: у КП и листка они разные, а `chat_id`
+// дописывается здесь — он из подписи, не из тела.
+func (s *Server) askBot(ctx context.Context, chatID string, fields map[string]any) (string, error) {
 	base := strings.TrimRight(getEnv("OFFERS_BOT_URL"), "/")
 	if base == "" {
 		base = "http://offers-bot:3000"
 	}
-	payload, err := json.Marshal(map[string]any{
-		"chat_id":      chatID,
-		"action":       action,
-		"offer_id":     offer.ID,
-		"offer_number": offer.Number,
-	})
+	reqBody := map[string]any{"chat_id": chatID}
+	for key, value := range fields {
+		reqBody[key] = value
+	}
+	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", err
 	}

@@ -8,10 +8,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canEdit,
+  COMBAT_SEARCH_LIMIT,
   hintOf,
   nextOffset,
   sheetLabelOf,
+  shouldSearchSide,
+  sideSearchResults,
   sidesCount,
+  sourceLabel,
   type CombatPage,
   type CombatSheetDto,
 } from '../src/combat.ts';
@@ -61,4 +65,47 @@ test('следующая страница — только когда серве
   assert.equal(nextOffset(page), 1);
   assert.equal(nextOffset({ ...page, hasMore: false }), null);
   assert.equal(nextOffset({ ...page, items: [] }), null);
+});
+
+test('пустое поле поиска — не поиск (2026-11-17)', () => {
+  assert.equal(shouldSearchSide(''), false);
+  assert.equal(shouldSearchSide('   '), false);
+  assert.equal(shouldSearchSide('\n\t '), false);
+  assert.equal(shouldSearchSide('мем'), true);
+  assert.equal(shouldSearchSide('  ПВХ мембрана '), true);
+});
+
+test('список подсказки — не больше пяти строк', () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({ noteId: i + 1, title: `Продукт ${i + 1}` }));
+  const shown = sideSearchResults(many);
+  assert.equal(shown.length, COMBAT_SEARCH_LIMIT);
+  assert.equal(shown.length, 5);
+  assert.equal(shown[0]?.noteId, 1);
+  assert.equal(shown[4]?.noteId, 5);
+  assert.equal(sideSearchResults([]).length, 0);
+  assert.equal(sideSearchResults(undefined).length, 0);
+  assert.equal(sideSearchResults(null).length, 0);
+});
+
+test('конкурент из файла или ссылки тоже называет листок (2026-11-17)', () => {
+  const onlyText: CombatSheetDto = {
+    ...sheet,
+    ourNotes: [],
+    competitorNotes: [],
+    textCompetitors: [{ key: 'url:https://a.ru/', title: 'ПВХ мембрана конкурента', text: 'текст', source: 'url' }],
+  };
+  assert.equal(sheetLabelOf(onlyText), 'ПВХ мембрана конкурента');
+  // Карточка Базы знаний остаётся главнее: порядок подписи не меняется.
+  const both: CombatSheetDto = {
+    ...onlyText,
+    competitorNotes: [{ noteId: 9001, title: 'PLASTFOIL CLASSIC' }],
+  };
+  assert.equal(sheetLabelOf(both), 'PLASTFOIL CLASSIC');
+});
+
+test('источник конкурента подписан словами', () => {
+  assert.equal(sourceLabel('url'), 'из ссылки');
+  assert.equal(sourceLabel('file'), 'из файла');
+  assert.equal(sourceLabel(''), '');
+  assert.equal(sourceLabel('что-то'), '');
 });

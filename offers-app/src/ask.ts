@@ -1,22 +1,26 @@
 /**
- * «Продолжить в боте» из приложения (2026-11-15).
+ * «Продолжить в боте» из приложения (2026-11-15; листок — 2026-11-17).
  *
- * Две кнопки в карточке КП отдают работу Telegram:
+ * Кнопки в приложении отдают работу Telegram:
  *   - в зоне брифа — «✏️ Продолжить бриф в боте»: бот задаёт вопросы по одному,
  *     и разговор идёт там, где человеку удобно отвечать голосом;
  *   - в зоне позиций — «📎 Прислать файл для разбора»: файл .xlsx разбирается
- *     ботом (двухшагово, «что я понял» → подтверждение), а приложение такого
- *     пути не имеет вовсе.
+ *     ботом (двухшагово, «что я понял» → подтверждение);
+ *   - в блоке конкурентов боевого листка — «📎 Прислать файл по конкуренту»:
+ *     файл читает сервис и добавляет конкурента в листок.
  *
- * Почему через бота, а не напрямую: приложение КП открывается inline-кнопкой,
- * а `Telegram.WebApp.sendData` работает только у кнопки клавиатуры (дефект
- * 2026-09.28). Поэтому сервис просит бота написать в чат — `chat_id` берётся
- * из подписи `initData`, а не из тела.
+ * Почему через бота, а не напрямую: приложение открывается inline-кнопкой, а
+ * `Telegram.WebApp.sendData` работает только у кнопки клавиатуры (дефект
+ * 0.9.28). Поэтому сервис просит бота написать в чат — `chat_id` берётся из
+ * подписи `initData`, а не из тела.
  */
 import { ApiError, apiRequest } from './api.ts';
 import { inTelegram, initData } from './tg.ts';
 
-export type AskAction = 'brief' | 'positions';
+export type AskAction = 'brief' | 'positions' | 'competitor-file';
+
+/** Документ, о котором просит приложение (значения совпадают с сервисом). */
+export type AskKind = 'offer' | 'sheet';
 
 export interface AskOutcome {
   /** Пустая строка — бот написал в чат. */
@@ -31,7 +35,7 @@ export function askPreflight(): string {
     return 'Продолжить в боте можно только из Telegram: откройте приложение из бота.';
   }
   if (initData() === '') {
-    return 'Это окно открыто без ключа Telegram. Откройте КП из бота и нажмите кнопку ещё раз.';
+    return 'Это окно открыто без ключа Telegram. Откройте документ из бота и нажмите кнопку ещё раз.';
   }
   return '';
 }
@@ -41,7 +45,7 @@ export function askPreflight(): string {
  * в карточке и видит строку «что написали в чат» (класс 0.9.27 — молчаливое
  * закрытие без результата).
  */
-export async function askBot(action: AskAction, id: number): Promise<AskOutcome> {
+export async function askBot(action: AskAction, kind: AskKind, id: number): Promise<AskOutcome> {
   const problem = askPreflight();
   if (problem !== '') return { problem, sent: '' };
   if (!Number.isInteger(id) || id <= 0) {
@@ -50,7 +54,7 @@ export async function askBot(action: AskAction, id: number): Promise<AskOutcome>
   try {
     const answer = await apiRequest<{ ok?: boolean; sent?: string }>('/app/ask', {
       method: 'POST',
-      body: { initData: initData(), action, kind: 'offer', id },
+      body: { initData: initData(), action, kind, id },
     });
     return { problem: '', sent: answer?.sent ?? 'Бот написал в чат.' };
   } catch (e: unknown) {
@@ -72,5 +76,12 @@ function askFailure(e: unknown): string {
 
 /** Подпись кнопки: человек должен понимать, что сейчас откроется чат. */
 export function askButtonText(action: AskAction): string {
-  return action === 'brief' ? '✏️ Продолжить бриф в боте' : '📎 Прислать файл для разбора';
+  switch (action) {
+    case 'brief':
+      return '✏️ Продолжить бриф в боте';
+    case 'positions':
+      return '📎 Прислать файл для разбора';
+    case 'competitor-file':
+      return '📎 Прислать файл по конкуренту';
+  }
 }

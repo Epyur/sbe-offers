@@ -427,6 +427,28 @@ export async function routeDocument(
     await deps.send(chatId, AUTH_PROMPT);
     return;
   }
+  // Файл по конкуренту листка (2026-11-17): ожидание поставлено просьбой из
+  // приложения. Стоит ПЕРВОЙ веткой: иначе .xlsx ушёл бы в разбор позиций, а
+  // .pdf — в «нет КП для файла». Ожидание одноразовое — снимаем до отправки,
+  // чтобы вторая присылка не легла в тот же листок молча.
+  const sheetFile = session.sheetFile;
+  if (sheetFile && sheetFile.sheetId > 0) {
+    await deps.save(chatId, { ...session, sheetFile: undefined });
+    const label = sheetFile.number === '' ? `#${sheetFile.sheetId}` : sheetFile.number;
+    try {
+      await api.addCombatTextFromFile(sheetFile.sheetId, chatId, fileName, data);
+      await deps.send(
+        chatId,
+        `✅ Конкурент «${fileName}» добавлен в боевой листок ${label}. ` +
+          'Прочитанный текст пойдёт в сравнение при сборке документа. ' +
+          'Откройте листок в приложении кнопкой «📱 Открыть приложение» — он уже там.',
+        MAIN_KEYBOARD,
+      );
+    } catch (e) {
+      await deps.send(chatId, `Файл по конкуренту не принят: ${(e as Error).message}`, MAIN_KEYBOARD);
+    }
+    return;
+  }
   const offerId = offerIdForFile(session);
   if (!offerId) {
     // Боевой листок открыт — файл по конкуренту принимает ПОМОЩНИК (2026-11-17,

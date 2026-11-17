@@ -209,6 +209,12 @@ func main() {
 		s.handleCombatCompetitorSide(w, r, false)
 	}))
 	mux.HandleFunc("PUT /api/offers/combat/{id}/hint", s.requirePerm("viewer")(s.handleCombatHintUpdate))
+	// Конкуренты из файла и ссылки (2026-11-17). Пишутся своей ручкой, а не
+	// полным сохранением листка: клиент, не знающий про такой вид записи, не
+	// должен стирать его пачкой. Гейт — тот же, что у сторон: вошёл + автор
+	// или admin (проверяется внутри `combatSheetForEditor`).
+	mux.HandleFunc("POST /api/offers/combat/{id}/competitor-from-url", s.requirePerm("viewer")(s.handleCombatCompetitorFromURL))
+	mux.HandleFunc("DELETE /api/offers/combat/{id}/competitor-text", s.requirePerm("viewer")(s.handleCombatCompetitorTextDelete))
 
 	mux.HandleFunc("GET /api/offers/offers", s.requirePerm("viewer")(s.handleListOffers))
 	mux.HandleFunc("GET /api/offers/offers/{id}", s.requirePerm("viewer")(s.handleGetOffer))
@@ -319,6 +325,9 @@ func main() {
 	mux.HandleFunc("GET /api/offers/bot/combat/analogues", s.requireServiceSecret(s.handleBotCombatAnalogues))
 	// Уточнение для разбора (2026-11-11): единственная настройка боевого листка.
 	mux.HandleFunc("PUT /api/offers/bot/combat/{id}/hint", s.requireServiceSecret(s.handleBotCombatHint))
+	// Конкурент из файла (2026-11-17): Telegram-файл принимает бот и отдаёт
+	// байты сюда, разбор — тот же `agent-service`, что у помощника.
+	mux.HandleFunc("POST /api/offers/bot/combat/{id}/competitor-file", s.requireServiceSecret(s.handleBotCombatCompetitorFile))
 
 	// Агент КП (2026-11-14, шаг P6): собирает документы за менеджера теми же
 	// функциями, что кнопки. Бот отдаёт текст и chat_id, получает ответ и файлы.
@@ -640,11 +649,17 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 			offer_id         BIGINT NULL,
 			our_notes        JSONB NOT NULL DEFAULT '[]',
 			competitor_notes JSONB NOT NULL DEFAULT '[]',
+			text_competitors JSONB NOT NULL DEFAULT '[]',
 			form_values      JSONB NOT NULL DEFAULT '{}',
 			status           TEXT NOT NULL DEFAULT 'draft',
 			created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		// Конкуренты из файла/ссылки (2026-11-17): запись со своим текстом, без
+		// карточки Базы знаний. Отдельная колонка, а не поле в `competitor_notes`:
+		// у карточки БЗ не бывает текста, у текстового конкурента — `noteId`, и
+		// это различие должно быть видно в типе, а не в проверке условия.
+		`ALTER TABLE offers_combat_sheet ADD COLUMN IF NOT EXISTS text_competitors JSONB NOT NULL DEFAULT '[]'`,
 		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_owner ON offers_combat_sheet (lower(owner_email))`,
 		// Поиск в списках (2026-11-13, шаг S2). `text_pattern_ops` нужен
 		// потому, что база живёт с локалью, отличной от C: только с ним

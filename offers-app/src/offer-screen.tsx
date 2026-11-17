@@ -597,7 +597,7 @@ function ItemsZone({
   const askForFile = (): void => {
     setAsking(true);
     setFileNote('');
-    askBot('positions', offer.id)
+    askBot('positions', 'offer', offer.id)
       .then((res) => setFileNote(res.problem === '' ? res.sent : res.problem))
       .finally(() => setAsking(false));
   };

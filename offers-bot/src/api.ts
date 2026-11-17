@@ -580,12 +580,22 @@ export interface CombatSheet {
   offerId: number;
   ourNotes: CombatNoteRef[];
   competitorNotes: CombatNoteRef[];
+  /** Конкуренты из файла и ссылки (2026-11-17): без карточки Базы знаний. */
+  textCompetitors?: CombatTextRef[];
   formValues: Record<string, string>;
   status: string;
   createdAt: string;
   updatedAt: string;
   /** Подпись для списка: продукт листка (2026-11-12, считает сервер). */
   displayName?: string;
+}
+
+/** Конкурент, прочитанный из файла или ссылки (2026-11-17). */
+export interface CombatTextRef {
+  key: string;
+  title: string;
+  text: string;
+  source: string;
 }
 
 /**
@@ -725,6 +735,26 @@ export async function combatAnalogues(
   noteId: number,
 ): Promise<{ cards: CombatSystemItem[]; competitor?: { noteId: number; title: string }; error?: string }> {
   return call('GET', `/bot/combat/analogues?noteId=${encodeURIComponent(String(noteId))}`);
+}
+
+/**
+ * Конкурент из файла в боевой листок (2026-11-17).
+ *
+ * Файл приходит в бота вложением, а разбирает его сервис (`agent-service`).
+ * Base64 — единственный путь: у бота нет доступа к файловому хранилищу сервиса,
+ * а отдельная ручка загрузки повторяла бы разбор помощника.
+ */
+export async function addCombatTextFromFile(
+  id: number,
+  chatId: string,
+  name: string,
+  data: Buffer,
+): Promise<CombatSheet> {
+  return call('POST', `/bot/combat/${id}/competitor-file`, {
+    chat_id: chatId,
+    name,
+    base64: data.toString('base64'),
+  });
 }
 
 /** DOCX боевого листка: та же печать, что в плагине. */

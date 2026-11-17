@@ -68,7 +68,7 @@ export function BriefContent({ id }: { id: number }): JSX.Element {
   const askContinue = (): void => {
     setBusy(true);
     setAskNote('');
-    askBot('brief', id)
+    askBot('brief', 'offer', id)
       .then((res) => setAskNote(res.problem === '' ? res.sent : res.problem))
       .finally(() => setBusy(false));
   };

@@ -21,7 +21,7 @@ import { getOffer } from '../api.ts';
 import { apply, startPositions, type CallbackCtx } from '../callbacks.ts';
 import { newDraft } from './build.ts';
 import { beginBrief } from './writer.ts';
-import { askIntroText, parseAskRequest } from './ask.ts';
+import { askIntroText, askKeyboard, parseAskRequest, type SheetAskRequest } from './ask.ts';
 
 export interface AskResult {
   /** Что сервис отдаёт приложению: приложение показывает это человеку. */
@@ -38,7 +38,10 @@ export interface AskResult {
 export async function runAsk(deps: BotDeps, raw: unknown): Promise<AskResult> {
   const request = parseAskRequest(raw);
   if (request === null) {
-    throw new Error('просьба непонятна: нужны action, offer_id и chat_id');
+    throw new Error('просьба непонятна: нужны action, chat_id и документ (offer_id или sheet_id)');
+  }
+  if (request.kind === 'sheet') {
+    return runSheetAsk(deps, request);
   }
   const session = await deps.session(request.chatId);
   const offer = await getOffer(request.offerId, request.chatId);
@@ -84,4 +87,27 @@ export async function runAsk(deps: BotDeps, raw: unknown): Promise<AskResult> {
   }
   await startPositions(ctx);
   return { sent: 'Написали в чат: пришлите файл для разбора позиций.' };
+}
+
+/**
+ * Просьба «прислать файл по конкуренту» для боевого листка (2026-11-17).
+ *
+ * Диалога не открываем: листок уже открыт в приложении, от человека нужен
+ * только файл. Поэтому в сессии отмечается ОЖИДАНИЕ файла (`sheetFile`), а
+ * разбирает его `routeDocument` — до ветки КП, иначе .xlsx ушёл бы в разбор
+ * позиций.
+ *
+ * Владельца проверяет сервис (он знает автора листка) и повторно — ботовая
+ * ручка разбора (`/bot/combat/{id}/competitor-file`). Здесь второй проверки
+ * нет намеренно: `getSheet` для чужого листка не нужен, а вход уже под
+ * секретом сервиса.
+ */
+async function runSheetAsk(deps: BotDeps, request: SheetAskRequest): Promise<AskResult> {
+  const session = await deps.session(request.chatId);
+  await deps.save(request.chatId, {
+    ...session,
+    sheetFile: { sheetId: request.sheetId, number: request.sheetNumber },
+  });
+  await deps.send(request.chatId, askIntroText(request), askKeyboard(request));
+  return { sent: 'Написали в чат: пришлите файл по конкуренту.' };
 }

@@ -132,7 +132,17 @@ func (s *Server) readNoteCard(ctx context.Context, noteID int64) (SystemCard, []
 		return SystemCard{}, nil, err
 	}
 	summary := KBNoteSummary{ID: note.ID, Title: note.Title, Path: note.Path, Tags: note.Tags}
-	card := systemCardFromParsed(summary, note, skills.ParseSystemCard(note.ContentMD))
+	parsed := skills.ParseSystemCard(note.ContentMD)
+	// Название карточки зависит от её РОЛИ, а не от входа, которым её прочитали
+	// (2026-11-17, живой листок 017/2026). У заметок конкурентов первый H1 —
+	// предупреждение «Материал конкурента…», второй — продукт, поэтому общий
+	// `systemCardFromParsed` называл конкурента дисклеймером. Жалоба пришла
+	// именно из агентского пути (`read_card` / `set_combat_side`), но правило
+	// шире: роль заметки известна здесь, значит и название берётся здесь.
+	card := systemCardFromParsed(summary, note, parsed)
+	if cardRole(note.Tags) == "competitor" {
+		card = competitorCardFromParsed(summary, note, parsed)
+	}
 	if keyed := attachImageKeys(ctx, s.kb, []SystemCard{card}); len(keyed) == 1 {
 		card = keyed[0]
 	}
@@ -773,8 +783,15 @@ func (s *Server) toolSetCombatSide() agentToolSpec {
 			if msg := combatSideRoleError(side, cardRole(tags)); msg != "" {
 				return errTool("%s", msg)
 			}
+			// Название конкурента — из карточки, и только она (2026-11-17): у
+			// заметок конкурентов первый H1 — предупреждение, и агент писал его в
+			// листок вместо продукта (живой листок 017/2026).
+			title := card.Title
+			if side == combatSideCompetitor {
+				title = competitorRefTitle(card.Title, "")
+			}
 			remove := argBool(args, "remove")
-			sheet, err := env.writeCombatSide(ctx, sheetID, side, CombatNoteRef{NoteID: noteID, Title: card.Title}, remove)
+			sheet, err := env.writeCombatSide(ctx, sheetID, side, CombatNoteRef{NoteID: noteID, Title: title}, remove)
 			if err != nil {
 				return errTool("%v", err)
 			}

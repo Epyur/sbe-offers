@@ -106,7 +106,15 @@ export function combatIntro(number: string): string {
 /** Сводка по листку: что уже выбрано и чего ещё нет. */
 export function combatSheetMessage(sheet: CombatSheet, hint?: string): string {
   const our = sheet.ourNotes.map((n) => `• ${n.title}`);
-  const comp = sheet.competitorNotes.map((n) => `• ${n.title}`);
+  // Конкуренты из файла и ссылки (2026-11-17) стоят в том же списке: для
+  // менеджера это такие же конкуренты, и пропускать их значило бы показывать
+  // неполную сводку листка.
+  const comp = [
+    ...sheet.competitorNotes.map((n) => `• ${n.title}`),
+    ...(sheet.textCompetitors ?? []).map(
+      (n) => `• ${n.title} (${n.source === 'file' ? 'из файла' : 'из ссылки'})`,
+    ),
+  ];
   const parts = [`Боевой листок № ${sheet.number}`];
   parts.push(our.length > 0 ? `Наш продукт:\n${our.join('\n')}` : 'Наш продукт: пока не выбран.');
   parts.push(
@@ -385,5 +393,7 @@ export function sheetLabel(sheet: CombatSheet): string {
   if (our) return our.title;
   const comp = (sheet.competitorNotes ?? []).find((n) => n.title.trim() !== '');
   if (comp) return comp.title;
+  const text = (sheet.textCompetitors ?? []).find((n) => (n.title ?? '').trim() !== '');
+  if (text) return text.title;
   return sheet.number ? `пустой листок № ${sheet.number}` : 'пустой боевой листок';
 }

@@ -30,6 +30,43 @@ type CombatNoteRef struct {
 	Title  string `json:"title"`
 }
 
+// CombatTextRef — продукт конкурента ИЗ ФАЙЛА ИЛИ ССЫЛКИ (2026-11-17).
+//
+// Карточки Базы знаний у него нет и не будет: менеджер прочитал страницу
+// конкурента или прислал файл, и прочитанное живёт в самом листке. Отдельный
+// тип, а не поле в `CombatNoteRef`, — чтобы «карточка БЗ с текстом» и «текст с
+// noteId» были невыразимы: у записи БЗ нет `Key/Text/Source`, у текстовой нет
+// `NoteID`, и все места, где `noteId` служит тождеством, её просто не видят.
+//
+// `Key` — тождество внутри листка (`url:<адрес>` или `file:<имя>:<метка>`):
+// по нему запись удаляется и повторный тот же адрес заменяет текст, а не
+// плодит строки.
+type CombatTextRef struct {
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	Text   string `json:"text"`
+	Source string `json:"source"`
+}
+
+// Источники текстового конкурента — то, что видит человек в листке.
+const (
+	combatSourceURL  = "url"
+	combatSourceFile = "file"
+)
+
+// combatTextLimit — сколько текстовых конкурентов держит один листок.
+//
+// Предел есть по той же причине, что у фактов листка (`combatFactLimit`):
+// колонка уходит в ответ ручки и в сохранение целиком, а сохранение листка
+// принимает не больше 4 МиБ (`decodeJSON`). Упереться в этот предел значило бы
+// потерять весь листок, а не лишнего конкурента.
+const combatTextLimit = 12
+
+// combatTextTextChars — сколько знаков текста хранит одна запись. То же число,
+// что у фактов листка и у сжатого ответа сети (`compactFetchTextChars`):
+// «прочитано» и «записано» не должны расходиться.
+const combatTextTextChars = compactFetchTextChars
+
 // CombatSheet — боевой листок.
 type CombatSheet struct {
 	ID         int64  `json:"id"`
@@ -38,9 +75,13 @@ type CombatSheet struct {
 	Title      string `json:"title"`
 	// OfferID — КП, чей продукт защищаем. 0 — не привязан, наш продукт выбран
 	// руками из систем.
-	OfferID         int64             `json:"offerId"`
-	OurNotes        []CombatNoteRef   `json:"ourNotes"`
-	CompetitorNotes []CombatNoteRef   `json:"competitorNotes"`
+	OfferID         int64           `json:"offerId"`
+	OurNotes        []CombatNoteRef `json:"ourNotes"`
+	CompetitorNotes []CombatNoteRef `json:"competitorNotes"`
+	// TextCompetitors — конкуренты, прочитанные из файла или ссылки
+	// (2026-11-17). Печатаются вместе с `competitorNotes` в порядке добавления
+	// внутри своего списка.
+	TextCompetitors []CombatTextRef   `json:"textCompetitors"`
 	FormValues      map[string]string `json:"formValues"`
 	Status          string            `json:"status"`
 	CreatedAt       string            `json:"createdAt"`
@@ -68,6 +109,23 @@ func validateCombatSheet(c CombatSheet) string {
 	for _, n := range c.CompetitorNotes {
 		if n.NoteID <= 0 {
 			return "у продукта конкурента нет заметки Базы знаний"
+		}
+	}
+	// Текстовый конкурент живёт своей колонкой, поэтому требование `noteId` к
+	// нему не применяется — но название и текст у него обязаны быть: пустая
+	// запись в списке читается как продукт без описания.
+	if len(c.TextCompetitors) > combatTextLimit {
+		return fmt.Sprintf("конкурентов из файлов и ссылок не больше %d — удалите лишние", combatTextLimit)
+	}
+	for _, n := range c.TextCompetitors {
+		if strings.TrimSpace(n.Key) == "" {
+			return "у конкурента из файла или ссылки нет ключа"
+		}
+		if strings.TrimSpace(n.Title) == "" {
+			return "у конкурента из файла или ссылки нет названия"
+		}
+		if strings.TrimSpace(n.Text) == "" {
+			return "у конкурента из файла или ссылки нет текста"
 		}
 	}
 	return ""
@@ -105,29 +163,41 @@ FROM offers_combat_sheet WHERE number LIKE '%' || $1`, suffix).Scan(&maxNum)
 // loadCombatSheet читает боевой листок по id.
 func (s *Server) loadCombatSheet(ctx context.Context, id int64) (CombatSheet, error) {
 	var c CombatSheet
-	var our, comp, values []byte
+	var our, comp, texts, values []byte
 	err := s.pool.QueryRow(ctx, `
 SELECT id, number, owner_email, title, COALESCE(offer_id, 0), our_notes, competitor_notes,
-	form_values, status,
+	text_competitors, form_values, status,
 	to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
 FROM offers_combat_sheet WHERE id = $1`, id).
 		Scan(&c.ID, &c.Number, &c.OwnerEmail, &c.Title, &c.OfferID, &our, &comp,
-			&values, &c.Status, &c.CreatedAt, &c.UpdatedAt)
+			&texts, &values, &c.Status, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
 	c.OurNotes = []CombatNoteRef{}
 	c.CompetitorNotes = []CombatNoteRef{}
+	c.TextCompetitors = []CombatTextRef{}
 	c.FormValues = map[string]string{}
 	if len(our) > 0 {
 		_ = json.Unmarshal(our, &c.OurNotes)
+	}
+	if len(texts) > 0 {
+		_ = json.Unmarshal(texts, &c.TextCompetitors)
 	}
 	if len(comp) > 0 {
 		_ = json.Unmarshal(comp, &c.CompetitorNotes)
 	}
 	if len(values) > 0 {
 		_ = json.Unmarshal(values, &c.FormValues)
+	}
+	// Названия конкурентов, сохранённые дисклеймером, исправляются на чтении
+	// (2026-11-17): иначе испорченный листок так и показывал бы предупреждение
+	// вместо продукта, пока его не пересохранят.
+	if c.CompetitorNotes != nil {
+		if cards, _, err := s.loadCachedCompetitors(ctx); err == nil {
+			c = withRepairedCompetitorTitles(c, cards)
+		}
 	}
 	return c, nil
 }
@@ -266,6 +336,19 @@ func (s *Server) handleSaveCombat(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, status, map[string]any{"error": msg})
 			return
 		}
+		// Слияние нового списка (2026-11-17): «пусто = не трогали». Клиент,
+		// который про текстовых конкурентов не знает (плагин Obsidian, старая
+		// сборка приложения), присылает листок без них — и без этого правила
+		// сохранение стёрло бы их молча, вместе с прочитанным текстом.
+		if stored, lerr := s.loadCombatSheet(r.Context(), id); lerr == nil {
+			c.TextCompetitors = keepStoredTextCompetitors(c.TextCompetitors, stored.TextCompetitors)
+		}
+		// Колонки собраны ДО слияния — список текстовых конкурентов в них
+		// устарел. Одна строка здесь дешевле, чем потеря прочитанного текста.
+		if cols.texts, err = json.Marshal(c.TextCompetitors); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
+			return
+		}
 		if err := s.updateCombat(r.Context(), id, c, cols); err != nil {
 			dbError(w, "update combat", err)
 			return
@@ -285,6 +368,7 @@ func (s *Server) handleSaveCombat(w http.ResponseWriter, r *http.Request) {
 type combatCols struct {
 	our    []byte
 	comp   []byte
+	texts  []byte
 	values []byte
 	offer  any
 }
@@ -296,6 +380,9 @@ func combatColumns(c CombatSheet) (combatCols, error) {
 		return cols, err
 	}
 	if cols.comp, err = json.Marshal(c.CompetitorNotes); err != nil {
+		return cols, err
+	}
+	if cols.texts, err = json.Marshal(c.TextCompetitors); err != nil {
 		return cols, err
 	}
 	if cols.values, err = json.Marshal(c.FormValues); err != nil {
@@ -331,10 +418,10 @@ func (s *Server) createCombat(ctx context.Context, owner string, c CombatSheet, 
 	}
 	var id int64
 	err = s.pool.QueryRow(ctx, `
-INSERT INTO offers_combat_sheet (number, owner_email, title, offer_id, our_notes, competitor_notes, form_values, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+INSERT INTO offers_combat_sheet (number, owner_email, title, offer_id, our_notes, competitor_notes, text_competitors, form_values, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
 		number, strings.ToLower(owner), c.Title, cols.offer,
-		cols.our, cols.comp, cols.values, c.Status).Scan(&id)
+		cols.our, cols.comp, cols.texts, cols.values, c.Status).Scan(&id)
 	return id, err
 }
 
@@ -342,8 +429,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
 func (s *Server) updateCombat(ctx context.Context, id int64, c CombatSheet, cols combatCols) error {
 	_, err := s.pool.Exec(ctx, `
 UPDATE offers_combat_sheet SET title = $2, offer_id = $3, our_notes = $4, competitor_notes = $5,
-	form_values = $6, status = $7, updated_at = now()
-WHERE id = $1`, id, c.Title, cols.offer, cols.our, cols.comp, cols.values, c.Status)
+	text_competitors = $6, form_values = $7, status = $8, updated_at = now()
+WHERE id = $1`, id, c.Title, cols.offer, cols.our, cols.comp, cols.texts, cols.values, c.Status)
 	return err
 }
 
@@ -378,6 +465,9 @@ func normalizeCombat(c *CombatSheet) {
 	}
 	if c.CompetitorNotes == nil {
 		c.CompetitorNotes = []CombatNoteRef{}
+	}
+	if c.TextCompetitors == nil {
+		c.TextCompetitors = []CombatTextRef{}
 	}
 	if c.FormValues == nil {
 		c.FormValues = map[string]string{}
@@ -415,12 +505,7 @@ func (s *Server) handleExportCombat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("боевой листок: макет не прочитан: %v", err)
 		layout = nil
 	}
-	ourCards := s.resolveCombatCards(r.Context(), sheet.OurNotes, s.loadCachedSystemCards)
-	compCards := s.resolveCombatCards(r.Context(), sheet.CompetitorNotes,
-		func(ctx context.Context) ([]SystemCard, error) {
-			cards, _, err := s.loadCachedCompetitors(ctx)
-			return cards, err
-		})
+	ourCards, compCards := s.combatSideCards(r.Context(), sheet)
 	data, err := s.renderCombatDocxCached(r.Context(), layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

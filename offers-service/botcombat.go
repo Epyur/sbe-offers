@@ -411,6 +411,13 @@ func combatListLabel(sheet CombatSheet) string {
 	if title := firstNoteTitle(sheet.CompetitorNotes); title != "" {
 		return title
 	}
+	// Конкурент из файла или ссылки тоже называет листок (2026-11-17): иначе
+	// листок, где конкурент только такой, в списке был бы «пустым».
+	for _, ref := range sheet.TextCompetitors {
+		if title := strings.TrimSpace(ref.Title); title != "" {
+			return title
+		}
+	}
 	if num := strings.TrimSpace(sheet.Number); num != "" {
 		return "пустой листок № " + num
 	}
@@ -566,6 +573,11 @@ func (s *Server) handleBotCombatSide(w http.ResponseWriter, r *http.Request, sid
 		return
 	}
 	ref := CombatNoteRef{NoteID: req.NoteID, Title: strings.TrimSpace(req.Title)}
+	if side == combatSideCompetitor && add {
+		// Название конкурента даёт карточка, а не клиент (2026-11-17): подпись
+		// приходит из чужого разбора и один раз уже пришла дисклеймером.
+		ref.Title = s.combatCompetitorTitle(r.Context(), req.NoteID, ref.Title)
+	}
 	target := &sheet.OurNotes
 	if side == combatSideCompetitor {
 		target = &sheet.CompetitorNotes
@@ -711,12 +723,7 @@ func (s *Server) handleBotExportCombat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("боевой листок: макет не прочитан: %v", err)
 		layout = nil
 	}
-	ourCards := s.resolveCombatCards(r.Context(), sheet.OurNotes, s.loadCachedSystemCards)
-	compCards := s.resolveCombatCards(r.Context(), sheet.CompetitorNotes,
-		func(ctx context.Context) ([]SystemCard, error) {
-			cards, _, err := s.loadCachedCompetitors(ctx)
-			return cards, err
-		})
+	ourCards, compCards := s.combatSideCards(r.Context(), sheet)
 	data, err := s.renderCombatDocxCached(r.Context(), layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})

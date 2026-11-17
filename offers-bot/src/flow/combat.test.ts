@@ -63,6 +63,22 @@ describe('боевой листок: сводка', () => {
   it('приветствие несёт номер листка', () => {
     assert.match(combatIntro('007/2026'), /007\/2026/);
   });
+
+  it('конкурент из файла или ссылки виден в сводке с источником (2026-11-17)', () => {
+    const text = combatSheetMessage(
+      sheet({
+        ourNotes: [{ noteId: 10, title: 'Кровля' }],
+        competitorNotes: [],
+        textCompetitors: [
+          { key: 'url:https://a.ru/', title: 'ПВХ мембрана конкурента', text: 'текст', source: 'url' },
+          { key: 'file:скан:1', title: 'Смета соперника', text: 'текст', source: 'file' },
+        ],
+      }),
+    );
+    assert.match(text, /ПВХ мембрана конкурента \(из ссылки\)/);
+    assert.match(text, /Смета соперника \(из файла\)/);
+    assert.doesNotMatch(text, /Конкуренты: пока не добавлены/);
+  });
 });
 
 describe('боевой листок: выбор стороны', () => {

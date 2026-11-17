@@ -134,7 +134,12 @@ func (s *Server) combatSide(w http.ResponseWriter, r *http.Request, side string,
 	if !ok {
 		return
 	}
-	ref := CombatNoteRef{NoteID: req.NoteID, Title: strings.TrimSpace(req.Title)}
+	title := strings.TrimSpace(req.Title)
+	if side == combatSideCompetitor && add {
+		// Название конкурента даёт карточка, а не клиент (2026-11-17).
+		title = s.combatCompetitorTitle(r.Context(), req.NoteID, title)
+	}
+	ref := CombatNoteRef{NoteID: req.NoteID, Title: title}
 	target := &sheet.OurNotes
 	if side == combatSideCompetitor {
 		target = &sheet.CompetitorNotes

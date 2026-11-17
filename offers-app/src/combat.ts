@@ -28,11 +28,27 @@ export interface CombatSheetDto {
   offerId?: number;
   ourNotes: CombatRefDto[];
   competitorNotes: CombatRefDto[];
+  /** Конкуренты из файла и ссылки (2026-11-17): записи со своим текстом. */
+  textCompetitors?: CombatTextRefDto[];
   formValues: Record<string, string>;
   status: string;
   createdAt: string;
   updatedAt: string;
   displayName?: string;
+}
+
+/**
+ * Конкурент, прочитанный из файла или ссылки.
+ *
+ * Карточки Базы знаний у него нет: `key` — тождество записи, по нему запись
+ * удаляется. `source` — откуда прочитано (`url` | `file`): человек должен
+ * видеть происхождение, не открывая запись.
+ */
+export interface CombatTextRefDto {
+  key: string;
+  title: string;
+  text: string;
+  source: string;
 }
 
 /** Карточка в поиске стороны: `noteId` — ключ, `title` — что видит человек. */
@@ -97,6 +113,32 @@ export async function findAnalogues(noteId: number): Promise<CombatPickerItem[]>
   return res.cards ?? [];
 }
 
+/**
+ * Добавить конкурента из ссылки (2026-11-17).
+ *
+ * Страницу читает сервер (через agent-service) и кладёт в листок конкурента с
+ * текстом. Ответ — тот же листок, поэтому экран показывает его без перезагрузки.
+ */
+export async function addCompetitorFromUrl(id: number, url: string): Promise<CombatSheetDto> {
+  return apiRequest<CombatSheetDto>(`/combat/${id}/competitor-from-url`, {
+    method: 'POST',
+    body: { url: url.trim() },
+  });
+}
+
+/** Убрать конкурента из файла или ссылки: тождество — `key`, не позиция. */
+export async function removeTextCompetitor(id: number, key: string): Promise<CombatSheetDto> {
+  return apiRequest<CombatSheetDto>(`/combat/${id}/competitor-text`, {
+    method: 'DELETE',
+    body: { key },
+  });
+}
+
+/** Подпись источника конкурента для человека. */
+export function sourceLabel(source: string): string {
+  return source === 'file' ? 'из файла' : source === 'url' ? 'из ссылки' : '';
+}
+
 /** Уточнение листка: `form_values["hint"]` — единственная настройка. */
 export function hintOf(sheet: CombatSheetDto): string {
   return sheet.formValues?.hint ?? '';
@@ -125,6 +167,10 @@ export function sheetLabelOf(sheet: CombatSheetDto): string {
   if (ours) return ours.title;
   const theirs = sheet.competitorNotes?.find((ref) => ref.title.trim() !== '');
   if (theirs) return theirs.title;
+  // Конкурент из файла или ссылки тоже называет листок (2026-11-17): без этой
+  // строки листок, где конкурент только такой, показывался бы «пустым».
+  const text = sheet.textCompetitors?.find((ref) => (ref.title ?? '').trim() !== '');
+  if (text) return text.title;
   return sheet.number ? `пустой листок № ${sheet.number}` : 'пустой листок';
 }
 
@@ -132,4 +178,31 @@ export function sheetLabelOf(sheet: CombatSheetDto): string {
 export function nextOffset(page: CombatPage): number | null {
   if (!page.hasMore || page.items.length === 0) return null;
   return page.offset + page.items.length;
+}
+
+/**
+ * Сколько строк показывает подсказка поиска стороны.
+ *
+ * Просьба пользователя (2026-11-17): «если поле поиска пустое — невыбранные
+ * продукты не показывать; если вводится что-то — не более пяти». Пять строк
+ * читаются на телефоне без прокрутки, а полный список человек всё равно не
+ * просматривает в поиске.
+ */
+export const COMBAT_SEARCH_LIMIT = 5;
+
+/**
+ * Надо ли искать: пустое поле — не поиск.
+ *
+ * Раньше экран звал поиск и на пустом поле, и под ним вываливался весь кеш
+ * стороны (до двадцати строк чужих продуктов) — выбор начинался с чтения
+ * мусора. Пустое поле теперь означает «начните вводить название».
+ */
+export function shouldSearchSide(query: string): boolean {
+  return query.trim() !== '';
+}
+
+/** Выдача поиска стороны: не больше `COMBAT_SEARCH_LIMIT` строк. */
+export function sideSearchResults(items: readonly CombatPickerItem[] | undefined | null): CombatPickerItem[] {
+  if (!items || items.length === 0) return [];
+  return items.slice(0, COMBAT_SEARCH_LIMIT);
 }

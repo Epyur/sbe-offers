@@ -34,6 +34,8 @@ export interface SheetRow {
   title: string;
   ourNotes: Array<{ noteId: number; title: string }>;
   competitorNotes: Array<{ noteId: number; title: string }>;
+  /** Конкуренты из файла и ссылки (2026-11-17): у них нет `noteId`. */
+  textCompetitors?: Array<{ key: string; title: string; source: string }>;
   status: string;
   createdAt: string;
   displayName?: string;
@@ -85,6 +87,8 @@ export function sheetLabel(sheet: SheetRow): string {
   if (ours) return ours.title;
   const theirs = sheet.competitorNotes?.find((n) => (n.title ?? '').trim() !== '');
   if (theirs) return theirs.title;
+  const text = sheet.textCompetitors?.find((n) => (n.title ?? '').trim() !== '');
+  if (text) return text.title;
   const number = sheet.number?.trim() ?? '';
   return number === '' ? 'пустой листок' : `пустой листок № ${number}`;
 }

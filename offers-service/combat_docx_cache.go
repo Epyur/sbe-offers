@@ -49,7 +49,12 @@ import (
 // v6 (2026-11-17): встроенный вид листка (без макета) печатает раздел «Ссылки»
 // по нашим продуктам, а карточки несут и документы из приложения «Документы».
 // Вид документа сменился — файлы прежней сборки обязаны разойтись по хэшу.
-const combatDocxVersion = "v6"
+//
+// v7 (2026-11-17, источники конкурента): в листке появились конкуренты из файла
+// и ссылки — карточки без Базы знаний, со своим текстом. Хэш начал включать их
+// (`combatDocxHash`), но файлы, собранные до этого, собраны прежним набором
+// карточек, поэтому версия обязана смениться.
+const combatDocxVersion = "v7"
 
 // combatDocxHash — отпечаток того, из чего собирается документ листка.
 //
@@ -75,6 +80,16 @@ func combatDocxHash(sheet CombatSheet, layout []byte, version, formHash string) 
 	b.WriteString("\x1fcomp\x1f")
 	for _, ref := range sheet.CompetitorNotes {
 		b.WriteString(itoa(int(ref.NoteID)) + ":" + ref.Title + "\x1f")
+	}
+	// Конкуренты из файла/ссылки — содержание листка, а не карточка Базы знаний:
+	// правка их текста обязана пересобрать файл. Без этого «Прочитать» заново
+	// отдавал бы старый DOCX как свежий (класс грабель v3/v6).
+	if len(sheet.TextCompetitors) > 0 {
+		b.WriteString("\x1ftextcomp\x1f")
+		for _, ref := range sheet.TextCompetitors {
+			b.WriteString(ref.Key + "\x1f" + ref.Title + "\x1f" + ref.Source + "\x1f" +
+				hashShort(ref.Text) + "\x1f")
+		}
 	}
 	b.WriteString("\x1fhint\x1f" + strings.TrimSpace(combatHint(sheet)))
 	b.WriteString("\x1fform\x1f" + formHash)

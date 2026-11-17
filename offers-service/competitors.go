@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 
 	"mailers/offers/skills"
@@ -299,8 +300,78 @@ func competitorCardFromParsed(summary KBNoteSummary, note KBNote, parsed skills.
 	}
 	if title := strings.TrimSpace(summary.Title); title != "" && !isCompetitorDisclaimer(title) {
 		card.Title = title
+		return card
+	}
+	// Последний запасной источник — имя файла: путь заметки оканчивается им, а
+	// имя у конкурентов и есть название продукта. Без этого шага заметка, где
+	// кроме дисклеймера заголовка нет, снова называлась бы предупреждением
+	// (2026-11-17, живой листок 017/2026).
+	if base := strings.TrimSpace(strings.TrimSuffix(path.Base(note.Path), ".md")); base != "" {
+		card.Title = base
 	}
 	return card
+}
+
+// competitorRefTitle — название продукта конкурента для стороны листка.
+//
+// Источник названия — карточка Базы знаний; дисклеймер названием не бывает.
+// Подпись клиента — только запасной путь, когда карточку прочитать не удалось
+// (База знаний выключена или заметки нет). Пустая строка означает «названия
+// нет»: лучше пусто, чем предупреждение вместо продукта.
+func competitorRefTitle(cardTitle, clientTitle string) string {
+	for _, candidate := range []string{cardTitle, clientTitle} {
+		if title := strings.TrimSpace(candidate); title != "" && !isCompetitorDisclaimer(title) {
+			return title
+		}
+	}
+	return ""
+}
+
+// combatCompetitorTitle — название стороны `competitor` на входе ручки.
+//
+// Клиент присылает подпись из списка выбора, но подписи доверять нельзя: она
+// приходит из чужого разбора и один раз уже пришла дисклеймером (живой листок
+// 017/2026, заметка 6654). Правильное название знает карточка, поэтому при
+// пустой или служебной подписи сервер читает её сам. Ради одной лишней ручки
+// Базы знаний на добавление конкурента это дешевле, чем второй такой листок.
+func (s *Server) combatCompetitorTitle(ctx context.Context, noteID int64, clientTitle string) string {
+	clientTitle = strings.TrimSpace(clientTitle)
+	if clientTitle != "" && !isCompetitorDisclaimer(clientTitle) {
+		return clientTitle
+	}
+	cardTitle := ""
+	if card, _, err := s.readNoteCard(ctx, noteID); err == nil {
+		cardTitle = card.Title
+	}
+	return competitorRefTitle(cardTitle, clientTitle)
+}
+
+// withRepairedCompetitorTitles — исправляет уже сохранённые листки на чтении.
+//
+// Листки, собранные до правки, хранят дисклеймер как название конкурента
+// (017/2026). Правим их в ОТВЕТЕ, а не молчаливым UPDATE в базе: запись уйдёт
+// при следующем сохранении листка. Заметка, которой нет в кеше конкурентов,
+// остаётся как есть — выдумывать название нельзя.
+func withRepairedCompetitorTitles(sheet CombatSheet, cards []SystemCard) CombatSheet {
+	if len(sheet.CompetitorNotes) == 0 || len(cards) == 0 {
+		return sheet
+	}
+	byNote := make(map[int64]SystemCard, len(cards))
+	for _, card := range cards {
+		byNote[card.NoteID] = card
+	}
+	for i, ref := range sheet.CompetitorNotes {
+		title := strings.TrimSpace(ref.Title)
+		if title != "" && !isCompetitorDisclaimer(title) {
+			continue
+		}
+		if card, ok := byNote[ref.NoteID]; ok {
+			if fixed := competitorRefTitle(card.Title, ""); fixed != "" {
+				sheet.CompetitorNotes[i].Title = fixed
+			}
+		}
+	}
+	return sheet
 }
 
 // isCompetitorJournal — заметка-журнал индексации, а не продукт.

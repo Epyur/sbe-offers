@@ -190,12 +190,7 @@ func (s *Server) answerDocxCtx(ctx context.Context, req appAnswerRequest, email 
 			log.Printf("app answer: макет боевого листка не прочитан: %v", err)
 			layout = nil
 		}
-		ourCards := s.resolveCombatCards(ctx, sheet.OurNotes, s.loadCachedSystemCards)
-		compCards := s.resolveCombatCards(ctx, sheet.CompetitorNotes,
-			func(ctx context.Context) ([]SystemCard, error) {
-				cards, _, err := s.loadCachedCompetitors(ctx)
-				return cards, err
-			})
+		ourCards, compCards := s.combatSideCards(ctx, sheet)
 		data, err := s.renderCombatDocxCached(ctx, layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 		if err != nil {
 			return nil, "", http.StatusBadRequest, err.Error()

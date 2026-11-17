@@ -224,5 +224,11 @@ func combatSearchText(sheet CombatSheet) string {
 	for _, ref := range sheet.CompetitorNotes {
 		parts = append(parts, ref.Title)
 	}
+	// Конкуренты из файла и ссылки тоже стороны листка (2026-11-17): искать
+	// листок по имени такого конкурента — то же право менеджера, что и по
+	// карточке Базы знаний.
+	for _, ref := range sheet.TextCompetitors {
+		parts = append(parts, ref.Title)
+	}
 	return joinStrings(parts)
 }

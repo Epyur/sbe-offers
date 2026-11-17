@@ -1313,6 +1313,67 @@ paths:
           description: Листок после записи
         '403':
           description: Чужой листок
+  /api/offers/combat/{id}/competitor-from-url:
+    post:
+      summary: Конкурент из ссылки (2026-11-17)
+      description: |
+        Сервер читает страницу через `agent-service` (`/internal/agent/fetch`)
+        и кладёт в листок конкурента с текстом — без карточки Базы знаний.
+        Границы: только `http`/`https`, метод всегда `GET`, ответ обязан быть
+        2xx, пустой текст — отказ. Текст обрезается 6000 знаками, текстовых
+        конкурентов не больше 12. Тот же адрес заменяет запись, а не плодит
+        вторую. Правит только автор или admin.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  example: https://plastfoil.ru/catalog/
+      responses:
+        '200':
+          description: Листок после добавления
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+        '400':
+          description: Адрес не подходит или страница не прочитана
+        '403':
+          description: Чужой листок
+  /api/offers/combat/{id}/competitor-text:
+    delete:
+      summary: Убрать конкурента из файла или ссылки (2026-11-17)
+      description: |
+        Удаление по тождеству `key` (например `url:https://…`), а не по позиции:
+        позиция съезжает от параллельной правки. Отдельная ручка, чтобы клиент,
+        не знающий про текстовых конкурентов, не мог стереть их полным
+        сохранением листка.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Листок после удаления
+        '400':
+          description: Ключ не указан
+        '403':
+          description: Чужой листок
   /api/offers/combat/{id}:
     get:
       summary: Боевой листок по id
@@ -3094,6 +3155,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CombatSheet'
+  /api/offers/bot/combat/{id}/competitor-file:
+    post:
+      summary: Конкурент из файла в боевой листок (бот, 2026-11-17)
+      description: |
+        Файл приходит в бота вложением, бот отдаёт байты (base64) сюда, сервис
+        разбирает их через `agent-service` (`/internal/agent/file/parse`) и
+        добавляет конкурента с текстом — без карточки Базы знаний. Пустой текст
+        (скан без слоя) — отказ. Правит только автор листка.
+      security:
+        - serviceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chat_id, name, base64]
+              properties:
+                chat_id:
+                  type: string
+                name:
+                  type: string
+                base64:
+                  type: string
+                  format: byte
+      responses:
+        '200':
+          description: Обновлённый листок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CombatSheet'
+        '400':
+          description: Файл не прочитан или в нём нет текста
+        '403':
+          description: Чужой листок
   /api/offers/bot/combat/{id}/competitor:
     post:
       summary: Добавить продукт конкурента в боевой листок (бот)
@@ -3953,6 +4052,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CombatNoteRef'
+        textCompetitors:
+          type: array
+          description: |
+            Конкуренты, прочитанные из файла или ссылки (2026-11-17). Карточки
+            Базы знаний у них нет: текст живёт в самом листке. Полное сохранение
+            листка их не стирает: пустой список означает «не трогали».
+          items:
+            $ref: '#/components/schemas/CombatTextRef'
         formValues:
           type: object
           additionalProperties:
@@ -3973,6 +4080,22 @@ components:
           format: int64
         title:
           type: string
+    CombatTextRef:
+      type: object
+      description: |
+        Конкурент из файла или ссылки (2026-11-17): прочитанное название и текст,
+        без карточки Базы знаний. `key` — тождество записи (`url:<адрес>` или
+        `file:<имя>:<метка>`), по нему удаление и замена.
+      properties:
+        key:
+          type: string
+        title:
+          type: string
+        text:
+          type: string
+        source:
+          type: string
+          enum: [url, file]
     CombatSideRequest:
       type: object
       description: |

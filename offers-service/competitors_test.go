@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,8 @@ type folderKBStub struct {
 	tagLists int
 	// noteTags — теги ПОЛНОЙ заметки (json-теги в /api/kb/notes/{id}).
 	noteTags map[int64][]KBTag
+	// notePaths — путь заметки, если он важен (запасное название — имя файла).
+	notePaths map[int64]string
 }
 
 // tagsJSON — массив тегов для подстановки в JSON заглушки.
@@ -142,9 +145,15 @@ func (s *folderKBStub) handler() http.Handler {
 		tail := strings.TrimPrefix(r.URL.Path, "/api/kb/notes/")
 		id := atoi10(tail)
 		body := s.bodies[id]
+		bodyJSON := `{"id":` + itoa(int(id)) + `,"content_md":` + jsonString(body) +
+			`,"tags":` + tagsJSON(s.noteTags[id])
+		if p := s.notePaths[id]; p != "" {
+			bodyJSON += `,"path":` + jsonString(p) + `,"title":` + jsonString(strings.TrimSuffix(path.Base(p), ".md"))
+		}
+		bodyJSON += `}`
 		// Настоящий kb-service отдаёт теги только в ПОЛНОЙ заметке, а не в
 		// строке списка (2026-11-11) — заглушка повторяет это поведение.
-		_, _ = w.Write([]byte(`{"id":` + itoa(int(id)) + `,"content_md":` + jsonString(body) + `,"tags":` + tagsJSON(s.noteTags[id]) + `}`))
+		_, _ = w.Write([]byte(bodyJSON))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Вложения и прочее — пусто.
