@@ -30,10 +30,36 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.6** — ready 2026-11-17. The combat sheet has ONE settings
-window (base prompt, link markers, layout), and its links now include documents from
-the documents app (`## Иные документы`, S3 files) — on top of 0.11.5 (base prompt as a
-form setting, card characteristics in the prompt, one link list in mention order).
+Current version = **0.11.7** — ready 2026-11-17. The combat sheet takes competitors
+from three sources (KB search, a file via the bot, a URL read server-side), the
+«Аналоги» block moved under the search as «Подобрать», and two live defects are
+closed: the competitor's name is no longer the disclaimer, and the side search
+shows nothing until the manager types.
+
+> **0.11.7 (2026-11-17) — источники конкурента, дисклеймер вместо названия, поиск по пяти строкам.**
+> Три просьбы пользователя по боевому листку в мини-приложении плюс дефект,
+> найденный по живой базе. **(1) Источники конкурента:** в блоке «Конкуренты»
+> переключатель **База знаний / Файл / URL**; в Базе знаний прежний поиск и под
+> ним кнопка **«Подобрать»** (бывший отдельный блок «Аналоги» убран); файл
+> принимает бот, ссылку читает сервер. Конкурент из файла/ссылки живёт в **своей
+> колонке** `offers_combat_sheet.text_competitors` (`{key,title,text,source}`),
+> без карточки Базы знаний, и печатается одной функцией `combatSideCards`
+> (`combat_text.go`) во всех трёх путях выгрузки. **(2) Дисклеймер вместо
+> названия:** живой листок 017/2026 хранил `{"title":"Материал конкурента…",
+> "noteId":6654}` — агентский путь `readNoteCard`/`systemCardFromParsed` брал
+> первый H1 заметки. Теперь карточка конкурента собирается
+> `competitorCardFromParsed` независимо от двери чтения, вход ручек стороны
+> берёт название из карточки (`combatCompetitorTitle`), а старые листки чинятся
+> **на чтении** (`withRepairedCompetitorTitles`). **(3) Поиск стороны:** пустое
+> поле не ищет вовсе, при вводе не больше пяти строк (`shouldSearchSide`,
+> `sideSearchResults`, `COMBAT_SEARCH_LIMIT`). `combatDocxVersion` → **v7**
+> (текстовые конкуренты входят в хэш файла). Полная запись решений и находок
+> моделей — `../docs/superpowers/specs/2026-11-17-sbe-offers-combat-competitor-sources-council.md`.
+> Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI
+> **124/124**, плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
+> `check_marker_registry` OK / `check_sections_conditions` 16/16, бот **219**,
+> приложение **89**, стенд **не прогонялся** (Docker выключен). Точки выпуска и
+> живая сверка — `HANDOFF.md`, «0.11.7».
 
 > **0.11.6 (2026-11-17) — настройки боевого листка в одном окне, ссылки с документами.**
 > Просьба пользователя по живому листку: кнопку «📄 Макет боевого листка» убрать,
@@ -891,6 +917,29 @@ renamed accordingly.
   Competitor cards come from the tag **and** the **whole subtree** of the
   «материалы и системы конкурентов» folder.
 
+**Competitors from a file or a link (2026-11-17) — the sheet's OWN column.**
+`offers_combat_sheet.text_competitors JSONB` keeps `{key,title,text,source}`
+(`source` = `url` | `file`): a page read through `agent-service` or a file the
+bot accepted, stored as text, **without a KB card**. Why a separate column and
+not a field in `CombatNoteRef`: `noteId` is the identity in nine places
+(`appendNoteRef`, `removeNoteRef`, `resolveCombatCards`,
+`withRepairedCompetitorTitles`, `combatDocxHash`, both section handles,
+`combatSide`, `toolSetCombatSide`, `validateCombatSheet`) — a second key inside
+the same type means every one of them must pick a branch, and a forgotten branch
+silently merges records. A separate column makes the illegal state impossible.
+Printing goes through ONE function, `combatSideCards` (`combat_text.go`), called
+from all three render paths (JWT export, bot export, «отправить в чат»);
+synthesized cards get `SKU: "text:<hash>"` — see the gotcha below.
+Routes: `POST /combat/{id}/competitor-from-url`, `DELETE /combat/{id}/competitor-text`
+(body `{key}`), `POST /bot/combat/{id}/competitor-file` (service secret, base64).
+In the Mini App the competitor block has a source switch **База знаний / Файл /
+URL**: KB keeps the search (≤5 rows, empty field does not search) plus the
+**«Подобрать»** button (the old separate «Аналоги» block moved here and was
+removed); «Файл» asks the bot (`/app/ask`, `kind:"sheet"`,
+`action:"competitor-file"`); «URL» reads the page server-side. The plugin
+(Obsidian) and the bot show the sheet's KB sides only — they do not lose text
+competitors (see the merge rule) but they do not display them either.
+
 ## Architecture
 
 ```
@@ -1547,6 +1596,59 @@ measurements) are in the archive.
   («Журнал материалов конкурентов», tag `journal`) must be filtered out
   (`isCompetitorJournal`): it lives in the folder root and would otherwise be
   the first row of «Все продукты».
+  **2026-11-17 — the same complaint came back from another door.** Live sheet
+  017/2026 stored `competitor_notes = [{"title":"Материал конкурента…","noteId":6654}]`
+  while 016/2026 had the same note as «PIRRO®Membrane»: the agent added the side
+  through `readNoteCard` → `systemCardFromParsed`, which takes `parsed.Title`
+  (the FIRST H1). Now (a) `readNoteCard` builds a competitor card with
+  `competitorCardFromParsed` (the title depends on the note's ROLE, not on the
+  door it was read through), (b) at the side-write boundary the server takes a
+  competitor's title from the card itself (`combatCompetitorTitle`,
+  `competitorRefTitle` in `competitors.go`) and refuses to store a disclaimer or
+  an empty one, (c) already-broken sheets are repaired ON READ
+  (`withRepairedCompetitorTitles` from `loadCombatSheet`, titles from the
+  competitors cache — no silent UPDATE, the next save persists it), and
+  (d) `competitorCardFromParsed` falls back to the note's file name when the
+  body has no second H1. Guards: `combat_titles_test.go` (the reverted
+  `readNoteCard` prints the disclaimer — verified red).
+- **The side search shows nothing until the manager types** (2026-11-17, user
+  request). Both combat-sheet blocks («Наш продукт» and «Конкуренты») use ONE
+  component (`SideSearch` in `offers-app/src/combat-screen.tsx`), and its rule
+  is in `offers-app/src/combat.ts`: `shouldSearchSide` (empty field — no request
+  at all, only the hint «начните вводить название») and `sideSearchResults`
+  (`COMBAT_SEARCH_LIMIT = 5`, the server is asked with `limit=5`). An empty
+  query used to return the whole cache and the manager started by reading a
+  page of foreign products. Tests: `offers-app/test/combat.test.ts`.
+- **A card without a KB note needs a non-empty SKU, or it vanishes / overwrites**
+  (2026-11-17, `claude-5-opus` + `gemini-4-argon`, both confirmed in code).
+  Text competitors have `noteId == 0`; `Ref.Empty()` (`model/offer.go:60`) is
+  `SKU == "" && NoteID <= 0`, and `RefList.Add` **drops** such a ref, so
+  `combatSectionOffer` would silently lose it and `systemCacheHandle`
+  (`docx_text.go:87`) would return `"0"` for ALL of them — one `.sys0` cache key,
+  sections overwriting each other's text. That is why `textCompetitorSKU`
+  hashes the key into `text-<hash>`: unique cache key, `FindSystem` finds it,
+  `containsCard` does not merge two competitors. Guard:
+  `TestTextCompetitorCardsGetDifferentCodes`.
+- **Full sheet save does not know about the new column** (2026-11-17). `PUT
+  /combat/{id}` (plugin, old app builds) marshals `competitor_notes`,
+  `form_values`, `title` — and, since this release, `text_competitors` too. But a
+  client that has never heard of `text_competitors` sends nothing, so the rule
+  is «empty means untouched»: `keepStoredTextCompetitors` keeps the stored list,
+  and DELETION is its own route (`DELETE /combat/{id}/competitor-text`) — never
+  the full save. Without this, opening a sheet in Obsidian and pressing
+  «Сохранить» erased everything read from files and links.
+  Guard: `TestKeepStoredTextCompetitorsOnSave`.
+- **Reading a URL: the method and the status are part of the check**
+  (2026-11-17). `POST /combat/{id}/competitor-from-url` takes ONLY `url` from
+  the body: the method is `GET` in code (the `agent-service` client passes
+  `Method`/`Headers` through, so a client-supplied method would be a hole), the
+  scheme is `http`/`https` only, the length is capped, and a non-2xx answer is a
+  REFUSAL — otherwise a «404» page became the competitor's description. An empty
+  text is a refusal too (same rule as `newCombatFact`). `/internal/agent/fetch`
+  returns RAW HTML (checked live 2026-11-17), so the page is cleaned here
+  (`combatPageTitleAndText`: `<script>`/`<style>` dropped, `<title>` → name,
+  entities decoded). Guards: `TestFetchURLProblemRules`,
+  `TestCombatPageTitleAndText`.
 - **An empty list in a JSON response must be an ARRAY, never `null`**
   (2026-11-11, live crash «Cannot read properties of null (reading 'length')»
   right after uploading a layout). Go's `encoding/json` writes a nil slice as
