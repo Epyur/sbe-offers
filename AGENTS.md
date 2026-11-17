@@ -1156,6 +1156,21 @@ docker cp offers-service/offers-stand offers-local-app:/mailers-offers
 docker restart offers-local-app
 ```
 
+**If that container cannot reach the Go module proxy** (2026-11-18: `lookup
+proxy.golang.org … i/o timeout` — the image is fresh and its module cache is
+empty), build on the host instead and copy the LINUX binary:
+
+```
+$env:CGO_ENABLED='0'; $env:GOOS='linux'; $env:GOARCH='amd64'; go build -o offers-stand .
+docker cp offers-service/offers-stand offers-local-app:/mailers-offers
+docker restart offers-local-app
+docker exec offers-local-app sh -c "grep -c competitor-from-url /mailers-offers"
+```
+
+The last line is the real proof the container runs the NEW code — a `docker cp`
+that silently wrote to a wrong path leaves the old binary in place, and the stand
+then "passes" against yesterday's service.
+
 Before a stand run, drop the systems cache — it hides `kb-stub` edits:
 `docker exec offers-local-db psql -U offers -d offers -c "delete from
 offers_context where mode='systems'"` and restart `offers-local-kb-stub`.
