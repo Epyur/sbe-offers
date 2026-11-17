@@ -55,12 +55,12 @@ OK; бот `tsc` 0 / **217**, приложение `tsc` 0 / **85**; стенд 
 | | значение |
 |---|---|
 | версия | **0.11.6 — ВЫПУЩЕНА 2026-11-17** |
-| `backend` | код `__BACKEND_SHA__` (доки — следующим коммитом) |
-| `main` | код `__MAIN_SHA__` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
-| самораздача | `manifest __MANIFEST8__…` / `main __MAINJS8__…` / `styles __STYLES8__…`, сверено по https |
-| реестр на сервере | `__REGISTRY__` |
-| реестр (git-копия) | `sbe-apstore-registry` `__REGISTRY_SHA__` |
-| сервис `offers` | `__DEPLOY__` |
+| `backend` | код `5e8b56d` (доки — следующим коммитом) |
+| `main` | код `9c8ae86` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
+| самораздача | `manifest a4c13bce…` / `main 5c8ee357…` / `styles 50bad65b…`, сверено по https (`/plugins/sbe-offers/*`) |
+| реестр на сервере | `/opt/mailers/www/registry.json` → `0.11.6`, `uploadedAt 2026-11-17T18:12:28Z`, бэкап `registry.json.bak-20261117-2112` |
+| реестр (git-копия) | `sbe-apstore-registry` **`458d42b`** (`0.11.6`, тот же `uploadedAt`) |
+| сервис `offers` | пересобран и пересоздан (`21:10:44 MSK`), бэкап `offers-service.bak-20261117-2107`, md5 **289 файлов**, CR-текстов **0** |
 | бот `offers-bot` | код не менялся, не пересобирался |
 | приложение | код не менялся, не пересобиралось |
 
@@ -69,6 +69,19 @@ OK; бот `tsc` 0 / **217**, приложение `tsc` 0 / **85**; стенд 
 | `manifest.json` | `a4c13bce1cf9843040a78144e6eaba86ef144f9dbebf101d644f74cebe650fef` | 470 |
 | `main.js` | `5c8ee3576e044cf9bfdab15f934e083a587f0334bb5510edd278a7c953ff00dc` | 287923 |
 | `styles.css` | `50bad65b9218725772c0c3cc1153b3ed15f31172aee27c6eac558d2fcaa4eeac` | 43246 |
+
+**Живые ручки после выкладки (2026-11-17, сверено на боевом):** health `200`
+`{"status":"ok"}`; `/form?mode=combat`, `/offers`, `/combat`, `/bot/offers` без
+токена — `401`; в бинаре контейнера есть новый код (`grep -c layoutLinks
+/mailers-offers` → 3); три файла самораздачи по https совпали с локальной
+сборкой; `/registry.json` отдаёт `0.11.6` с теми же хэшами.
+
+**Грабли этой выкладки (новое, записать):** **`git archive` на Windows
+применяет `core.autocrlf`** — первый тар принёс `CRLF` в 16 текстовых файлов
+(go.mod, go.sum, openapi.yaml, swagger, Dockerfile), и после `rsync` на сервере
+было `CR_TEXT=16`. Лечится `git -c core.autocrlf=false archive …`: повторная
+выкладка дала `MD5_OK`, `CR_TEXT=0`. Файлы с `\r` остались только бинарные
+(docx/xlsx/png) — это норма.
 
 > **0.11.5 (2026-11-17, вечер) — базовый промт в форме, характеристики в промпте,
 > ссылки одним списком.** Четыре правки по живым жалобам на листок 017/2026:
