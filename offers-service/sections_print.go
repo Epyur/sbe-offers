@@ -242,9 +242,17 @@ func stripFactNotes(text string) string {
 		text = rest[end+1:]
 	}
 	out := b.String()
-	// Следы удаления: пробел перед пунктуацией и двойные пробелы.
+	// Следы удаления: пробел перед пунктуацией, двойные пробелы и ШОВ из двух
+	// знаков. Шов виден в готовом документе: «камеры, [НУЖНО: …], иначе» после
+	// чистки давало «камеры,, иначе», а «по техлистам: [НУЖНО: цифры].» —
+	// «по техлистам:.» (живой листок 017/2026). Чистим только знаки, а не слова:
+	// выдумывать за модель текст нельзя.
 	out = reSpaceBeforePunct.ReplaceAllString(out, "$1")
+	out = reSeamDoubled.ReplaceAllString(out, "$1")
+	out = reSeamBeforeDot.ReplaceAllString(out, ".")
+	out = reSeamDoubleDot.ReplaceAllString(out, ".")
 	out = reMultiSpace.ReplaceAllString(out, " ")
+	out = strings.TrimLeft(out, ",;: ")
 	return strings.TrimSpace(out)
 }
 

@@ -180,10 +180,17 @@ func ParseSystemCard(markdown string) SystemCard {
 	return card
 }
 
-// PromptText — текст карточки для промпта модели: описание и состав.
+// PromptText — текст карточки для промпта модели: описание, состав и
+// характеристики.
 //
-// Служебные данные (путь, uuid, теги, таблица характеристик) сюда не идут:
-// модели нужно то, о чём писать, а не метаданные заметки.
+// Служебные данные (путь, uuid, теги) сюда не идут: модели нужно то, о чём
+// писать, а не метаданные заметки. Таблица характеристик — НАОБОРОТ, идёт
+// (2026-11-17): числа продукта живут только в ней, и пока она не попадала в
+// промпт, боевой листок писал по нашему продукту «не указано» в каждой строке
+// сравнения, хотя характеристики в карточке есть (живой листок 017/2026; тот же
+// дефект был в 016/2026). У конкурента числа при этом были — их приносил
+// помощник фактом из интернета, и сравнение выходило проигрышным на пустом
+// месте.
 func (c SystemCard) PromptText() string {
 	var b strings.Builder
 	if c.Title != "" {
@@ -196,6 +203,14 @@ func (c SystemCard) PromptText() string {
 		b.WriteString("\nСостав:\n")
 		for _, item := range c.Composition {
 			b.WriteString("- " + item + "\n")
+		}
+	}
+	if lines := SpecsPromptLines(c.Specifications); len(lines) > 0 {
+		// Подпись обязательна: без неё модель либо не замечает числа, либо
+		// считает их своим знанием и «дополняет» соседние строки.
+		b.WriteString("\nХарактеристики из карточки (числа бери только отсюда, не выдумывай):\n")
+		for _, line := range lines {
+			b.WriteString("- " + line + "\n")
 		}
 	}
 	// Ссылки — как факты, а не как текст для копирования: модели разрешено
@@ -212,6 +227,97 @@ func (c SystemCard) PromptText() string {
 // Empty — карточка без содержания: связывать её с системой бессмысленно.
 func (c SystemCard) Empty() bool {
 	return c.Title == "" && c.Description == "" && len(c.Composition) == 0
+}
+
+// SpecsPromptLines — строки таблицы характеристик в виде, читаемом моделью.
+//
+// Одна функция на промпт карточки и на прежний запасной вид листка
+// (`writeCardFacts`): две копии правила разошлись бы, и модель получала бы
+// разные числа в двух путях одного документа.
+//
+// Правила:
+//   - шапка таблицы не печатается — это подписи колонок, а не факт (узнаём по
+//     словам «показатель», «ед. изм.», «значение», «характеристика»…);
+//   - пустые ячейки пропускаются, остальные склеиваются через « — »;
+//   - строки режутся по SpecsLineLimit, число строк — SpecsRowsForPrompt:
+//     модели нужен класс продукта, а не сорок строк размеров и толщин.
+func SpecsPromptLines(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	start := 0
+	if specsRowIsHeader(rows[0]) {
+		start = 1
+	}
+	out := make([]string, 0, min(len(rows)-start, SpecsRowsForPrompt))
+	for _, row := range rows[start:] {
+		if len(out) >= SpecsRowsForPrompt {
+			break
+		}
+		cells := make([]string, 0, len(row))
+		for _, cell := range row {
+			if trimmed := strings.TrimSpace(cell); trimmed != "" {
+				cells = append(cells, trimmed)
+			}
+		}
+		if len(cells) == 0 {
+			continue
+		}
+		line := strings.TrimSpace(strings.Join(cells, " — "))
+		if line == "" {
+			continue
+		}
+		out = append(out, TrimPromptLine(line, SpecsLineLimit))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// SpecsRowsForPrompt — сколько строк характеристик отдавать модели.
+const SpecsRowsForPrompt = 15
+
+// SpecsLineLimit — предел длины одной строки характеристики в промпте.
+//
+// Достаточно для «показатель — значение — метод испытаний» и мало, чтобы строка
+// с перечнем ГОСТов съела окно модели.
+const SpecsLineLimit = 240
+
+// specsHeaderWords — слова, по которым первая строка таблицы узнаётся как шапка.
+var specsHeaderWords = []string{
+	"показател", "характеристик", "наименован", "параметр", "ед. изм", "значение",
+}
+
+// specsRowIsHeader — первая строка таблицы — подписи колонок, а не факт.
+func specsRowIsHeader(row []string) bool {
+	for _, cell := range row {
+		lower := strings.ToLower(strings.TrimSpace(cell))
+		if lower == "" {
+			continue
+		}
+		for _, word := range specsHeaderWords {
+			if strings.Contains(lower, word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TrimPromptLine — обрезка строки для промпта по рунам, не разрывая слово.
+// Тот же приём, что у `trimForPrompt` сервиса: многоточие показывает модели, что
+// строка продолжается.
+func TrimPromptLine(s string, limit int) string {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= limit || limit <= 0 {
+		return string(runes)
+	}
+	cut := string(runes[:limit])
+	if idx := strings.LastIndex(cut, " "); idx > limit/2 {
+		cut = cut[:idx]
+	}
+	return strings.TrimSpace(cut) + "…"
 }
 
 // cardBlock — блок заметки: заголовок и его содержимое.

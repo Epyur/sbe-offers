@@ -126,6 +126,45 @@ func TestCombatSectionsPrintSubsectionText(t *testing.T) {
 	}
 }
 
+// Промпт подраздела несёт ХАРАКТЕРИСТИКИ нашего продукта (2026-11-17, живой
+// листок 017/2026).
+//
+// Жалоба: помощник собрал конкурента из интернета, а по нашему материалу
+// большинство строк сравнения вышли «не указано», хотя числа есть в карточке
+// Базы знаний. Причина — промпт отдавал модели только описание и состав;
+// таблица характеристик в него не попадала. Сторож смотрит на то, что реально
+// видит модель (пользовательское сообщение вызова), а не на карточку в базе.
+func TestCombatSectionPromptCarriesSpecs(t *testing.T) {
+	sheet, our, competitor := combatSectionFixture()
+	our.Specifications = [][]string{
+		{"Показатель", "Ед. изм.", "Значение"},
+		{"Теплопроводность, λ10", "Вт/(м*К)", "не более 0.021"},
+	}
+	form := OfferForm{Sections: []ContentSection{{
+		ID:    "general",
+		Title: "Общее сравнение",
+		Subsections: []ContentSubsection{{
+			ID:          "specs",
+			Title:       "Сравнение характеристик",
+			Instruction: "Сравни технические характеристики ТАБЛИЦЕЙ",
+		}},
+	}}}
+	stub := &stubSectionCompleter{answers: map[string]string{
+		"Сравни технические характеристики": sectionParagraphAnswer("Сравнение."),
+	}}
+	renderCombatSectionsWithForm(sheet, our, competitor, form, stub)
+	if len(stub.asked) == 0 {
+		t.Fatal("модель не спросили")
+	}
+	prompt := stub.asked[0]
+	if !strings.Contains(prompt, "Теплопроводность, λ10 — Вт/(м*К) — не более 0.021") {
+		t.Fatalf("характеристики нашего продукта не дошли до модели:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Метод испытаний") {
+		t.Fatalf("шапка таблицы характеристик попала в промпт:\n%s", prompt)
+	}
+}
+
 // Повторяемый подраздел (repeat:"systems") обязан идти по КАЖДОМУ продукту
 // сравнения: у листка две стороны, и «выбранных систем КП» у него нет.
 func TestCombatSectionsRepeatCoversBothSides(t *testing.T) {
@@ -203,6 +242,16 @@ func TestCombatSectionHandleSeesCardEdit(t *testing.T) {
 	rehinted.FormValues = map[string]string{"hint": "новый акцент"}
 	if combatSectionHandle(rehinted, []SystemCard{our}, []SystemCard{competitor}, nil) == before {
 		t.Fatal("правка уточнения не изменила отпечаток содержания")
+	}
+	// Характеристики — тоже содержание: правка числа обязана переписать раздел,
+	// иначе сравнение осталось бы с прежними цифрами (2026-11-17).
+	specced := our
+	specced.Specifications = [][]string{
+		{"Показатель", "Значение"},
+		{"Плотность", "31 ± 2"},
+	}
+	if combatSectionHandle(sheet, []SystemCard{specced}, []SystemCard{competitor}, nil) == before {
+		t.Fatal("правка характеристик карточки не изменила отпечаток содержания")
 	}
 }
 

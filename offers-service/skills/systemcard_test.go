@@ -185,3 +185,60 @@ func TestSystemCardPromptText(t *testing.T) {
 		t.Error("состав не попал в текст для модели")
 	}
 }
+
+// Таблица характеристик идёт в промпт (2026-11-17, живой листок 017/2026).
+//
+// Числа продукта живут только в этой таблице. Пока она не попадала в промпт,
+// модель писала по нашему продукту «не указано» в каждой строке сравнения, хотя
+// в карточке значения есть; у конкурента числа были (приходили фактом из
+// интернета), и сравнение проигрывало на пустом месте.
+func TestSystemCardPromptTextIncludesSpecs(t *testing.T) {
+	card := SystemCard{
+		Title:       "ТН-ТЕСТ",
+		Description: "Описание.",
+		Specifications: [][]string{
+			{"Показатель", "Ед. изм.", "Значение", "Метод испытаний"},
+			{"Теплопроводность, λ10", "Вт/(м*К)", "не более 0.021", "ГОСТ Р 56590-2016"},
+		},
+	}
+	text := card.PromptText()
+	if !strings.Contains(text, "Теплопроводность, λ10 — Вт/(м*К) — не более 0.021") {
+		t.Fatalf("характеристика не попала в промпт:\n%s", text)
+	}
+	if !strings.Contains(text, "Характеристики из карточки") {
+		t.Fatalf("нет подписи к характеристикам:\n%s", text)
+	}
+	if strings.Contains(text, "Метод испытаний") {
+		t.Fatalf("шапка таблицы попала в промпт:\n%s", text)
+	}
+}
+
+// Границы строк характеристик: предел числа строк и длины, пустые ячейки.
+func TestSpecsPromptLines(t *testing.T) {
+	rows := [][]string{{"Показатель", "Значение"}}
+	for i := 0; i < 40; i++ {
+		rows = append(rows, []string{"П" + strings.Repeat("x", i%3), "1"})
+	}
+	if got := len(SpecsPromptLines(rows)); got != SpecsRowsForPrompt {
+		t.Fatalf("строк характеристик: %d, ожидалось %d", got, SpecsRowsForPrompt)
+	}
+	long := [][]string{
+		{"Показатель", "Значение"},
+		{"Длинная", strings.Repeat("я", 400), ""},
+	}
+	lines := SpecsPromptLines(long)
+	if len(lines) != 1 {
+		t.Fatalf("строки с длинным значением: %v", lines)
+	}
+	if runes := []rune(lines[0]); len(runes) > SpecsLineLimit+1 {
+		t.Fatalf("строка не обрезана: %d рун", len(runes))
+	}
+	if got := SpecsPromptLines(nil); got != nil {
+		t.Fatalf("пустая таблица должна давать nil: %v", got)
+	}
+	// Шапки нет — первая строка это факт, её терять нельзя.
+	noHeader := [][]string{{"Плотность", "31 ± 2"}}
+	if lines := SpecsPromptLines(noHeader); len(lines) != 1 || !strings.Contains(lines[0], "Плотность") {
+		t.Fatalf("первая строка без шапки потеряна: %v", lines)
+	}
+}

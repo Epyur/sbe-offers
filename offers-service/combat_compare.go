@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"strings"
+
+	"mailers/offers/skills"
 )
 
 // Сравнение боевого листка (2026-11-11).
@@ -84,8 +86,9 @@ func buildCombatComparePrompt(hint string, ourCards, competitorCards []SystemCar
 }
 
 // writeCardFacts пишет факты карточки для модели: описание, состав, ключевые
-// характеристики. Таблица характеристик режется: в живой карточке конкурента
-// сорок строк, и всю таблицу модель либо не дочитает, либо утонет в ней.
+// характеристики. Характеристики режет `skills.SpecsPromptLines` — то же
+// правило, что у промпта карточки: модель обязана видеть числа, иначе пишет
+// «не указано» там, где значение есть в карточке (живой листок 017/2026).
 func writeCardFacts(b *strings.Builder, card SystemCard) {
 	if desc := strings.TrimSpace(card.Description); desc != "" {
 		b.WriteString("  описание: ")
@@ -97,25 +100,12 @@ func writeCardFacts(b *strings.Builder, card SystemCard) {
 		b.WriteString(trimForPrompt(strings.Join(card.Composition, "; "), 800))
 		b.WriteString("\n")
 	}
-	for i, row := range card.Specifications {
-		// Первая строка — шапка таблицы, её модели не нужно.
-		if i == 0 || i > combatSpecRows {
-			continue
-		}
-		line := strings.Join(row, " — ")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
+	for _, line := range skills.SpecsPromptLines(card.Specifications) {
 		b.WriteString("  характеристики: ")
-		b.WriteString(trimForPrompt(line, 240))
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 }
-
-// combatSpecRows — сколько строк характеристик отдавать модели. Достаточно,
-// чтобы увидеть класс продукта, и мало, чтобы не тратить окно модели на
-// размеры и толщины.
-const combatSpecRows = 15
 
 // trimForPrompt режет текст по рунам, не разрывая слово.
 func trimForPrompt(s string, limit int) string {
