@@ -30,9 +30,37 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.4** — ready 2026-11-17. The combat sheet is assembled from
-sections like the offer, mermaid diagrams print as pictures with a visible fallback,
-and the bot assistant reads links and attached files.
+Current version = **0.11.5** — ready 2026-11-17. The base prompt of a document is a form
+setting (not code), a card's characteristics reach the model, and links print as one list
+in the order of mention (combat sheets print our links only).
+
+> **0.11.5 (2026-11-17, вечер) — базовый промт в форме, характеристики в промпте,
+> ссылки одним списком.** Четыре правки по живым жалобам на листок 017/2026.
+> **(1) Базовый промт — настройка формы.** `offers_form.base_prompt` (миграция),
+> поле `OfferForm.BasePrompt` + `BasePromptDefault`, правка в «Форме КП» и «Форме
+> боевого листка» (карточка «Базовый промт», кнопка «↩ Вернуть базовый текст»).
+> Раньше общая часть промта (`sectionAnswerContract`) жила в коде: подразделы
+> пишутся отдельными вызовами модели и друг друга не видят, поэтому требования
+> к согласованности («не называй продукты равноценными при разных значениях»)
+> должен задавать администратор. Свой промт входит в ключ кэша (`.bp<hash>`) и в
+> отпечаток содержания листка, поэтому правка переписывает разделы.
+> **(2) Характеристики карточки доходят до модели** (`skills.SpecsPromptLines`,
+> ≤60 строк / ≤6000 знаков; `SystemCard.PromptText` передаёт `Specifications`).
+> **(3) Ссылки — один список в порядке упоминания**, без групп; деление на типы и
+> редактор правил удалены. **(4) В боевом листке печатаются только наши ссылки.**
+> `combatDocxVersion` → **v5**, и хэш файла листка теперь включает форму
+> (`combatFormFingerprint`): правка промта/разделов пересобирает файл.
+> Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI **121/121**,
+> плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 / `check_marker_registry`
+> OK / `check_sections_conditions` 16/16, стенд **574/0**. **Выпущена и выложена
+> 2026-11-17:** `backend` `7b97098`, self-hosted `manifest 9c7fa4d1…` /
+> `main 6577e472…` / `styles 50bad65b…`, реестр `0.11.5`
+> (`uploadedAt 2026-11-17T16:29:56Z`). Живая пересборка 017/2026: заголовков
+> групп ссылок нет, в конце — две наши ссылки в порядке заметки, адреса
+> конкурента нет; характеристики на месте. Подробности — `HANDOFF.md`, «0.11.5».
+> **Стенд-грабля:** `auth-stub` обязан понимать список секретов через запятую —
+> у стенда два экземпляра сервиса (основной и «умный» двойник), и точное
+> сравнение с одним значением даёт `403 insufficient role` на каждой ручке.
 
 > **0.11.4 (2026-11-17) — sections in the combat sheet, diagrams, agent file/link
 > reading.** Three steps of the 2026-11-16 plan landed on `backend` and are released
@@ -1339,24 +1367,23 @@ measurements) are in the archive.
   The `{{ссылки: система}}` spelling behaves the same outside a repeat. A marker
   that silently does nothing is the worst outcome — a bare key must either
   print or be rejected, not be sent to the model.
-- **Links in the document are printed by GROUPS, as a NUMBERED list**
-  (2026-11-10, user request). Groups and their order: `page` (product page on
-  nav.tn.ru, systems before materials) → `sto` → `techlist` (systems before
-  materials) → `uzly` → `cert` (certificates/declarations/instructions and
-  anything else, **materials before systems**). Each group gets its own
-  `<w:numId>` from the numbering plan, so numbering restarts at 1 per group.
-  One classification rule lives in `skills/cardrefs.go` (`cardRefGroupOf`,
-  `SortCardRefsGrouped`, `GroupCardRefsByGroup`); `CardRef` now carries
-  `group` + `owner`, and `TagCardRefsOwner` sets the owner where the card is
-  known (`cardAllRefs`: `Refs`→system, `LinkedRefs`→material). Both the `links`
-  node (`renderLinkSection`) and the `{{ссылки}}` marker
-  (`renderLayoutCardLinks`) sort again before printing, so externally-supplied
-  refs are ordered too. **`applyHyperlinks` now locates the numbered item by its
-  text and wraps only its run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the
-  paragraph as a plain `hyperlinkXML` would silently drop the number.
-  Old caches without `group`/`owner` are classified on the fly
-  (`effectiveGroup`/`effectiveOwner`), so they print in the right groups without
-  a KB re-read.
+- **Links are printed as ONE numbered list, in the order of mention**
+  (2026-11-17, user's direct reversal of the 2026-11-10 grouping). «Нужно убрать
+  деление ссылок на типы, все ссылки (в том числе на иные документы) приводим в
+  порядке их упоминания в заметке. Ссылки на ресурсы конкурента не приводим».
+  So: `collectOfferRefs` does NOT sort (dedupe by URL only); `cardAllRefs` is
+  `card.Refs` (parse order of «## Ссылки») then `card.LinkedRefs` (composition
+  order); `renderLinkSection` and `renderLayoutCardLinks` print one list with one
+  `<w:numId>`, no group headings. The whole grouping machinery is DELETED
+  (`skills/cardrefs.go` group/owner code, `skills/linkgroups.go`, the
+  `link_groups` form field, the plugin's link-groups editor); the DB column
+  `offers_form.link_groups` stays unused so old data is not destroyed. **The
+  combat sheet prints OUR links only** — `buildCombatBody` no longer appends
+  `collectOfferRefs(competitorCards)`: a competitor's site in the reference list
+  reads as our recommendation to the customer.
+  **`applyHyperlinks` locates the numbered item by its text and wraps only its
+  run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the paragraph as a plain
+  `hyperlinkXML` would silently drop the number.
 - **Model text is printed as paragraphs, and its typography is normalised**
   (2026-11-10, user request: «вставлялся единым массивом», «пропуски точек,
   двойные пробелы»). `normalizeBodyTypography` (double spaces → one, no space
