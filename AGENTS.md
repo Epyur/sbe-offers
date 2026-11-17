@@ -169,8 +169,8 @@ shows nothing until the manager types.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `5e8b56d` (code), `main` `9c8ae86`
-(release slice of 0.11.6; `offers-service/`, `offers-bot/`, `offers-app/` live on
+Code heads: `backend` `2b0e748` (code), `main` `cd7c633`
+(release slice of 0.11.7; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
