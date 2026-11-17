@@ -429,6 +429,19 @@ export async function routeDocument(
   }
   const offerId = offerIdForFile(session);
   if (!offerId) {
+    // Боевой листок открыт — файл по конкуренту принимает ПОМОЩНИК (2026-11-17,
+    // живая жалоба «бот не предлагает загрузить документ по конкуренту»).
+    // Говорим об этом прямо, а не общим «нет КП для файла»: у листка нет
+    // `draft.offerId`, и старая строка уводила человека в тупик.
+    if (session.combat?.sheetId) {
+      await deps.send(
+        chatId,
+        'По конкуренту файл принимает помощник: нажмите «📎 Документ/ссылка конкурента» в листке, ' +
+          'а потом пришлите файл или ссылку. Прочитанное станет фактами листка.',
+        MAIN_KEYBOARD,
+      );
+      return;
+    }
     await deps.send(chatId, NO_OFFER_FOR_FILE, MAIN_KEYBOARD);
     return;
   }

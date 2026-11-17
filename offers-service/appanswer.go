@@ -63,9 +63,17 @@ type botAPIResult struct {
 	Description string `json:"description"`
 }
 
-// handleAppAnswer — собрать документ по подписи приложения и отправить его
-// в чат от имени человека.
-func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
+// handleAppAnswerAsync — собрать документ и отправить его в чат В ФОНЕ.
+//
+// Зачем (2026-11-17, живая жалоба). Первая сборка боевого листка на разделах
+// зовёт модель на каждый подраздел и растеризует схемы — это минуты. Mini App
+// живёт в WebView Telegram, и `fetch` из приложения не ждёт столько: приходит
+// «failed fetch», хотя сервер ещё собирает файл. Проверка подписи и доступа
+// быстрая — её делаем синхронно, а сборку+отправку уводим в горутину с
+// `context.WithoutCancel` (тот же приём, что у записи текстов, 0.9.30): запрос
+// приложения уже закрыт, но работы это не отменяет. Приложение получает
+// `{ok:true, sent:true}` сразу и закрывается; файл приходит в чат, когда готов.
+func (s *Server) handleAppAnswerAsync(w http.ResponseWriter, r *http.Request) {
 	var req appAnswerRequest
 	if err := decodeJSON(w, r, &req, answerInitDataMaxBytes); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
@@ -75,13 +83,11 @@ func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "документ не указан"})
 		return
 	}
-
 	botToken, _, err := s.loadBotConfig(r.Context())
 	if err != nil {
 		dbError(w, "app answer bot config", err)
 		return
 	}
-
 	now := time.Now()
 	user, err := verifyInitData(req.InitData, botToken, now, initDataTTL())
 	if err != nil {
@@ -93,7 +99,6 @@ func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, body)
 		return
 	}
-
 	chatID := strconv.FormatInt(user.ID, 10)
 	email, err := s.emailForChatID(r.Context(), chatID)
 	if err != nil {
@@ -106,30 +111,72 @@ func (s *Server) handleAppAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, fileName, status, problem := s.answerDocx(r, req, email)
-	if problem != "" {
-		writeJSON(w, status, map[string]any{"error": problem})
-		return
-	}
+	// Сразу отвечаем «принято»: приложение закроется, а файл придёт в чат.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sent": true, "async": true})
 
-	if err := s.deliverToChat(r.Context(), chatID, fileName, data); err != nil {
-		log.Printf("app answer: отправка в чат %s: %v", chatID, err)
-		// Отказ отдаём ТЕКСТОМ и с деталью, а не только кодом 502: приложение
-		// показывает `error` человеку и не закрывается.
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error":  err.Error(),
-			"detail": "Файл собран, но в чат не ушёл: " + err.Error(),
-		})
+	// Контекст НЕ привязан к запросу: ответ уже отдан, но работа продолжается.
+	bgCtx := context.WithoutCancel(r.Context())
+	go func(req appAnswerRequest, chatID, email string) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("app answer (async): паника при сборке %s %d: %v", req.Kind, req.ID, rec)
+			}
+		}()
+		data, fileName, status, problem := s.answerDocxCtx(bgCtx, req, email)
+		if problem != "" {
+			log.Printf("app answer (async): %s %d не собран (код %d): %s", req.Kind, req.ID, status, problem)
+			s.notifyChat(bgCtx, chatID, "Не удалось собрать файл: "+problem)
+			return
+		}
+		if err := s.deliverToChat(bgCtx, chatID, fileName, data); err != nil {
+			log.Printf("app answer (async): отправка в чат %s: %v", chatID, err)
+			s.notifyChat(bgCtx, chatID, "Файл собран, но в чат не ушёл: "+err.Error())
+			return
+		}
+		log.Printf("app answer (async): файл %q отправлен в чат %s (%d байт)", fileName, chatID, len(data))
+	}(req, chatID, email)
+}
+
+// notifyChat — короткое сообщение в чат от бота (без файла), чтобы человек не
+// остался в неведении, если файл не пришёл. Это ТЕКСТ, а не документ: у бота
+// есть отдельная ручка отправить текст — `POST /internal/answer` его не умеет,
+// он только файл. Поэтому шлём через тот же транспорт-файл нельзя; пишем в
+// журнал и в чат обычным сообщением бота через `OFFERS_BOT_URL`-ручку notify.
+func (s *Server) notifyChat(ctx context.Context, chatID, text string) {
+	base := strings.TrimRight(getEnv("OFFERS_BOT_URL"), "/")
+	if base == "" {
+		base = "http://offers-bot:3000"
+	}
+	payload, err := json.Marshal(map[string]any{"chat_id": chatID, "text": text})
+	if err != nil {
 		return
 	}
-	log.Printf("app answer: файл %q отправлен в чат %s (%d байт)", fileName, chatID, len(data))
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	reqCtx, cancel := context.WithTimeout(ctx, answerTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, base+"/internal/notify", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Secret", getEnv("OFFERS_BOT_SECRET"))
+	resp, err := (&http.Client{Timeout: answerTimeout}).Do(req)
+	if err != nil {
+		log.Printf("app answer (async): уведомление в чат %s не ушло: %v", chatID, err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // answerDocx готовит файл ТЕМИ ЖЕ путями, что бот: своих сборщиков здесь нет.
 func (s *Server) answerDocx(r *http.Request, req appAnswerRequest, email string) ([]byte, string, int, string) {
+	return s.answerDocxCtx(r.Context(), req, email)
+}
+
+// answerDocxCtx — то же, но на явном контексте: асинхронная отправка держит
+// `context.WithoutCancel`, а не контекст уже закрытого запроса.
+func (s *Server) answerDocxCtx(ctx context.Context, req appAnswerRequest, email string) ([]byte, string, int, string) {
 	if req.Kind == "combat" {
-		sheet, err := s.loadCombatSheet(r.Context(), req.ID)
+		sheet, err := s.loadCombatSheet(ctx, req.ID)
 		if err != nil {
 			return nil, "", http.StatusNotFound, "боевой листок не найден"
 		}
@@ -138,36 +185,46 @@ func (s *Server) answerDocx(r *http.Request, req appAnswerRequest, email string)
 		if !botCanReadCombat(sheet, email) {
 			return nil, "", http.StatusForbidden, "нет доступа к боевому листку"
 		}
-		layout, err := s.loadLayoutForMode(r.Context(), combatFormMode)
+		layout, err := s.loadLayoutForMode(ctx, combatFormMode)
 		if err != nil {
 			log.Printf("app answer: макет боевого листка не прочитан: %v", err)
 			layout = nil
 		}
-		ourCards := s.resolveCombatCards(r.Context(), sheet.OurNotes, s.loadCachedSystemCards)
-		compCards := s.resolveCombatCards(r.Context(), sheet.CompetitorNotes,
+		ourCards := s.resolveCombatCards(ctx, sheet.OurNotes, s.loadCachedSystemCards)
+		compCards := s.resolveCombatCards(ctx, sheet.CompetitorNotes,
 			func(ctx context.Context) ([]SystemCard, error) {
 				cards, _, err := s.loadCachedCompetitors(ctx)
 				return cards, err
 			})
-		data, err := s.renderCombatDocxCached(r.Context(), layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
+		data, err := s.renderCombatDocxCached(ctx, layout, sheet, ourCards, compCards, NewKBImageSource(s.kb))
 		if err != nil {
 			return nil, "", http.StatusBadRequest, err.Error()
 		}
 		return data, docxFileNameFor("Боевой листок", sheet.Number), http.StatusOK, ""
 	}
 
-	offer, err := s.loadOffer(r.Context(), req.ID)
+	offer, err := s.loadOffer(ctx, req.ID)
 	if err != nil {
 		return nil, "", http.StatusNotFound, "предложение не найдено"
 	}
 	if !strings.EqualFold(offer.OwnerEmail, email) {
 		return nil, "", http.StatusForbidden, "это не ваше предложение"
 	}
-	data, _, err := s.buildOfferDocx(r, offer)
+	data, _, err := s.buildOfferDocx(requestFromCtx(ctx), offer)
 	if err != nil {
 		return nil, "", http.StatusBadRequest, err.Error()
 	}
 	return data, docxFileName(offer), http.StatusOK, ""
+}
+
+// requestFromCtx — минимальный *http.Request на контексте.
+//
+// `renderOffer`/`buildOfferDocx` берут из запроса только `Context()` (и
+// `withWorkTimeout` перевешивает таймаут сам), поэтому для фоновой сборки
+// достаточно пустого запроса с нужным контекстом — без тела и пути.
+func requestFromCtx(ctx context.Context) *http.Request {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://offers-service/app/answer", nil)
+	return req
 }
 
 // deliverToChat — отдать файл боту: только у него есть путь в Telegram

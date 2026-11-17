@@ -33,7 +33,7 @@ func postAnswer(t *testing.T, s *Server, body string) *httptest.ResponseRecorder
 	req := httptest.NewRequest(http.MethodPost, "/api/offers/app/answer", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	s.handleAppAnswer(rec, req)
+	s.handleAppAnswerAsync(rec, req)
 	return rec
 }
 

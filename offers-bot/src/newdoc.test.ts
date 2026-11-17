@@ -327,6 +327,50 @@ describe('«Создать новый документ» (R2)', () => {
     assert.equal(state.sessions.get('42')?.newDoc, 'combat');
   });
 
+  it('боевой листок: выбранный продукт ложится в листок, а не в КП', async () => {
+    // Живой дефект 2026-11-17: «Отмечено: 1…» → «Записано в листок:» (пусто) →
+    // «Не удалось записать …: предложение не найдено». Диалог листка писал
+    // продукт путём КП (`addPickedOfferProducts`), у листка нет `draft.offerId`.
+    const { deps, state } = makeDeps();
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      const method = String((input as Request).method ?? 'GET');
+      calls.push(`${method} ${url}`);
+      const json = (body: unknown): Response =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/bot/suggest')) {
+        return json({ systems: [], materials: [{ noteId: 425, sku: 'MAT-ПРОЧ-ОБЩ-0425', name: 'Кровельная ПВХ-мембрана ECOPLAST' }] });
+      }
+      if (url.includes('/bot/combat') && method === 'POST') return json({ id: 55, number: '005/2026' });
+      if (url.includes('/bot/combat/55/our')) return json({ ok: true });
+      if (url.includes('/bot/combat')) return json({ id: 55, number: '005/2026' });
+      return json({ ok: true });
+    }) as typeof fetch;
+
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:combat', 'cb1', state);
+    await route.routeText(deps, '42', 'ECOPLAST', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'cb2', state);
+    sent.length = 0;
+    await settle();
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'cb3', state);
+    await settle();
+
+    const texts = [...sent.map((m) => m.text), ...edits.map((m) => m.text)].join('\n');
+    assert.ok(!/предложение не найдено/.test(texts), 'листок не должен падать «предложение не найдено»:\n' + texts);
+    assert.match(texts, /Записано в листок/, 'сводка «Записано в листок» должна прийти:\n' + texts);
+    assert.match(texts, /ECOPLAST/, 'в сводке должен быть записанный продукт:\n' + texts);
+    assert.ok(
+      calls.some((c) => c.includes('/bot/combat/55/our')),
+      'продукт должен уйти на НАШУ сторону листка (POST /bot/combat/55/our), вызовы:\n' + calls.join('\n'),
+    );
+    assert.ok(
+      !calls.some((c) => /POST .*\/bot\/offers\/\d+\/system/.test(c)),
+      'в листке не должно быть записи системой в КП',
+    );
+  });
+
   it('текст вне нового диалога не перехватывается', async () => {
     const { deps, state } = makeDeps();
     fakeService({ systems: 1 });

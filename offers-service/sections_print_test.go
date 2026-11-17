@@ -326,3 +326,45 @@ func firstTableRowXML(table string) string {
 	}
 	return table[start : start+end+len("</w:tr>")]
 }
+
+// Пометки модели «[НУЖНО: …]» не попадают в готовый текст (2026-11-17, живой
+// дефект 016/2026): промт просит модель помечать нехватку факта, но печатать
+// эту пометку читателю нельзя. Чистка — на разборе ответа, одна на все блоки.
+func TestFactNotesStripped(t *testing.T) {
+	answer, ok := parseSectionAnswer(`{"blocks":[
+		{"kind":"paragraph","text":"Гарантия подтверждается документами [НУЖНО: гарантийный срок из техлиста]. Покажем сертификаты."},
+		{"kind":"list","items":["Срок службы 50 лет","[НУЖНО: класс горения]"]},
+		{"kind":"table","rows":[["Параметр","Значение"],["Гарантия","[НУЖНО: срок]"]]}
+	]}`)
+	if !ok {
+		t.Fatal("ответ не разобран")
+	}
+	lc := serviceLayoutContext(nil)
+	markup := printSectionAnswer(answer, lc)
+	if strings.Contains(markup, "НУЖНО") {
+		t.Fatalf("пометка [НУЖНО] попала в печать:\n%s", markup)
+	}
+	if !strings.Contains(markup, "Покажем сертификаты.") {
+		t.Fatal("текст вокруг пометки потерян")
+	}
+	// Пустой от пометки пункт списка отброшен: в печати один пункт, не два.
+	if strings.Count(markup, "Срок службы 50 лет") != 1 || strings.Count(markup, "[") != strings.Count(markup, "]") {
+		t.Fatalf("список/таблица после чистки не в порядке:\n%s", markup)
+	}
+}
+
+// stripFactNotes — границы: посреди строки, без закрывающей скобки, без пометок.
+func TestStripFactNotes(t *testing.T) {
+	cases := map[string]string{
+		"Просто текст":                  "Просто текст",
+		"До [НУЖНО: чего-то] после":     "До после",
+		"Конец .":                       "Конец .",
+		"А [НУЖНО: x] и [НУЖНО: y] б":   "А и б",
+		"Хвост [НУЖНО: без закрывающей": "Хвост",
+	}
+	for in, want := range cases {
+		if got := stripFactNotes(in); got != want {
+			t.Fatalf("stripFactNotes(%q) = %q, ожидалось %q", in, got, want)
+		}
+	}
+}

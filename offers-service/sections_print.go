@@ -102,6 +102,12 @@ func encodeAnswerValue(value any) *sectionAnswer {
 }
 
 // normalizeSectionAnswer выбрасывает неизвестные и пустые блоки.
+//
+// Заодно убирает из текста пометки-заглушки модели вида `[НУЖНО: …]` (2026-11-17):
+// промт просит модель помечать нехватку факта, но печатать такую пометку в
+// готовом документе (хоть КП, хоть боевом листке) нельзя — она видна читателю
+// как недоделка. Убираем В ОДНОМ месте, на разборе ответа: второй такой проход
+// в печати разошёлся бы с первым (правило «одно решение в одном месте»).
 func normalizeSectionAnswer(answer *sectionAnswer) (sectionAnswer, bool) {
 	if answer == nil {
 		return sectionAnswer{}, false
@@ -114,12 +120,43 @@ func normalizeSectionAnswer(answer *sectionAnswer) (sectionAnswer, bool) {
 			continue
 		}
 		block.Kind = kind
+		stripFactNotesFromBlock(&block)
 		if blockIsEmpty(block) {
 			continue
 		}
 		kept = append(kept, block)
 	}
 	return sectionAnswer{Blocks: kept}, len(kept) > 0
+}
+
+// stripFactNotesFromBlock выкидывает `[НУЖНО: …]` из всех текстовых полей блока.
+//
+// Пустые после чистки список/строки таблицы отбрасываются тут же, чтобы блок не
+// остался с пустым пунктом или пустой строкой.
+func stripFactNotesFromBlock(block *sectionBlock) {
+	block.Text = stripFactNotes(block.Text)
+	block.Caption = stripFactNotes(block.Caption)
+	for i := range block.Items {
+		block.Items[i] = stripFactNotes(block.Items[i])
+	}
+	for r := range block.Rows {
+		for c := range block.Rows[r] {
+			block.Rows[r][c] = stripFactNotes(block.Rows[r][c])
+		}
+	}
+	if block.Kind == "list" {
+		block.Items = nonEmptyStrings(block.Items)
+	}
+	if block.Kind == "table" {
+		rows := make([][]string, 0, len(block.Rows))
+		for _, row := range block.Rows {
+			if len(nonEmptyStrings(row)) == 0 {
+				continue
+			}
+			rows = append(rows, row)
+		}
+		block.Rows = rows
+	}
 }
 
 // blockIsEmpty — блок, который нечего печатать.
@@ -174,6 +211,41 @@ func printSectionBlock(block sectionBlock, lc layoutContext) string {
 		return sectionDiagramXML(block, lc)
 	}
 	return ""
+}
+
+// stripFactNotes удаляет из строки пометки модели «[НУЖНО: …]».
+//
+// Пометка может стоять посреди предложения («… по вашему объекту [НУЖНО: …].»).
+// После удаления чистим два очевидных следа: лишний пробел перед знаком и
+// двойные пробелы. Пустой результат — пустая строка (блок/пункт отбросит
+// вызывающий). Разбор ручной, а не регуляркой по `\b` — кириллица (правило
+// AGENTS.md): ищем «[НУЖНО» и «]».
+func stripFactNotes(text string) string {
+	if !strings.Contains(text, "[НУЖНО") {
+		return text
+	}
+	var b strings.Builder
+	for {
+		start := strings.Index(text, "[НУЖНО")
+		if start < 0 {
+			b.WriteString(text)
+			break
+		}
+		b.WriteString(text[:start])
+		rest := text[start:]
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			// Незакрытая пометка: режем до конца — текст после неё всё равно
+			// часть пометки, которую модель не дописала.
+			break
+		}
+		text = rest[end+1:]
+	}
+	out := b.String()
+	// Следы удаления: пробел перед пунктуацией и двойные пробелы.
+	out = reSpaceBeforePunct.ReplaceAllString(out, "$1")
+	out = reMultiSpace.ReplaceAllString(out, " ")
+	return strings.TrimSpace(out)
 }
 
 // sectionHeadingXML — заголовок подраздела: стиль заголовка макета.

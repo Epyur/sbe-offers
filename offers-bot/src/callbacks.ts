@@ -99,6 +99,7 @@ import {
   type NewDocKind,
   type NewDocState,
 } from './flow/newdoc.ts';
+import { AGENT_KEYBOARD, enterAgent } from './flow/agent.ts';
 
 const PAGE_SIZE = 8;
 
@@ -784,6 +785,30 @@ async function addPickedCombatProduct(ctx: CallbackCtx, item: SuggestItem): Prom
   }
 }
 
+/**
+ * Записать НЕСКОЛЬКО отмеченных продуктов на нашу сторону листка (2026-11-17).
+ *
+ * Ошибка одной карточки не отменяет соседние — как у КП: их пишут по очереди,
+ * и человеку важно знать, какая именно не легла. Возвращает то, что записалось,
+ * для сводки «Записано в листок».
+ */
+async function addPickedCombatProducts(ctx: CallbackCtx, items: SuggestItem[]): Promise<NewDocAdded[]> {
+  const added: NewDocAdded[] = [];
+  for (const item of items) {
+    const ok = await addPickedCombatProduct(ctx, item);
+    if (ok) {
+      added.push({ kind: item.kind, title: item.title });
+      continue;
+    }
+    await ctx.deps.send(
+      ctx.chatId,
+      `Не удалось записать «${item.title}» в листок. ` +
+        'Можно выбрать её ещё раз или добавить позже в приложении.',
+    );
+  }
+  return added;
+}
+
 // --- Кнопки ------------------------------------------------------------
 
 export async function onNew(ctx: CallbackCtx): Promise<void> {
@@ -1265,7 +1290,15 @@ async function writeAndAsk(ctx: CallbackCtx, state: NewDocState): Promise<void> 
     await updateProgress(ctx, noteId, 'Не удалось создать документ — попробуйте начать заново.');
     return;
   }
-  const added = await addPickedOfferProducts(ctx, picked);
+  // Куда писать — решает ВИД документа (2026-11-17, живой дефект). Для боевого
+  // листка выбранное идёт на НАШУ сторону листка (`addPickedCombatProduct`), а
+  // не в КП: раньше оба вида шли через `addPickedOfferProducts`, у листка нет
+  // `draft.offerId`, и каждое добавление падало «предложение не найдено»,
+  // а «Записано в листок:» приходило пустым.
+  const added =
+    state.kind === 'combat'
+      ? await addPickedCombatProducts(ctx, picked)
+      : await addPickedOfferProducts(ctx, picked);
   const next: NewDocState = {
     ...state,
     step: 'more',
@@ -1841,6 +1874,35 @@ export async function onCombatHint(ctx: CallbackCtx): Promise<void> {
   await ctx.deps.send(ctx.chatId, combatAskHint(current), combatHintKeyboard(!!current.trim()));
 }
 
+/**
+ * «📎 Документ/ссылка конкурента» (2026-11-17): включить помощника в контексте
+ * ЭТОГО листка и попросить прислать файл или ссылку.
+ *
+ * Почему через помощника, а не своей ручкой загрузки: файл конкурента нужен
+ * как ИСТОЧНИК ФАКТОВ для разбора (`remember_sheet_fact`, шаг 3e) — тот же
+ * путь, что у ссылок и писем. Помощник уже умеет `fetch_url`/`parse_file` и
+ * пишет прочитанное в сам листок (`agentDocument` отдаёт `sheetId`). Второй
+ * загрузчик разошёлся бы с этим.
+ *
+ * `combat` в сессии остаётся — `enterAgent` его не трогает, значит после файла
+ * человек вернётся к тому же листку.
+ */
+export async function onCombatCompDoc(ctx: CallbackCtx): Promise<void> {
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
+    return;
+  }
+  apply(ctx, enterAgent(ctx.session));
+  await ctx.deps.send(
+    ctx.chatId,
+    '📎 Пришлите файл или ссылку по конкуренту — я прочитаю и запомню это у листка. ' +
+      'Прочитанное попадёт в разбор разделов. Для файла: PDF, DOCX, XLSX или текст. ' +
+      'Чтобы выйти из помощника — «🏠 В меню».',
+    AGENT_KEYBOARD,
+  );
+}
+
 /** «✖ Снять уточнение»: стереть акцент и вернуться к сводке. */
 export async function onCombatHintClear(ctx: CallbackCtx): Promise<void> {
   const combat = ctx.session.combat;
@@ -2116,6 +2178,7 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'cb:hint': onCombatHint,
   'cb:hintclear': onCombatHintClear,
   'cb:analog': onCombatAnalogues,
+  'cb:compdoc': onCombatCompDoc,
   'cb:pickall': onCombatPickAll,
   'cb:unpickall': onCombatDropAll,
   'cb:addpicked': onCombatAddPicked,

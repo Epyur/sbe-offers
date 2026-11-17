@@ -172,6 +172,49 @@ async function handleAsk(req: http.IncomingMessage, res: http.ServerResponse): P
   }
 }
 
+/**
+ * Сообщение в чат без файла (2026-11-17).
+ *
+ * Асинхронная отправка из приложения идёт в фоне: если сборка или доставка
+ * упала, человек уже закрыл окно, и узнает об этом только из чата. Сервис
+ * присылает сюда короткий текст — бот отправляет его обычным сообщением через
+ * депсы поллера (`askDeps.send`), тот же путь, что у остальных ответов.
+ */
+async function handleNotify(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!SECRET || req.headers['x-service-secret'] !== SECRET) {
+    send(res, 403, { ok: false, error: 'forbidden' });
+    return;
+  }
+  const body = await readBody(req);
+  if (body === null) {
+    send(res, 413, { ok: false, error: 'request too large' });
+    return;
+  }
+  let parsed: { chat_id?: unknown; text?: unknown };
+  try {
+    parsed = JSON.parse(body) as { chat_id?: unknown; text?: unknown };
+  } catch {
+    send(res, 400, { ok: false, error: 'invalid json' });
+    return;
+  }
+  const chatId = typeof parsed.chat_id === 'string' ? parsed.chat_id.trim() : '';
+  const text = typeof parsed.text === 'string' ? parsed.text : '';
+  if (!/^-?[0-9]+$/.test(chatId) || text.trim() === '') {
+    send(res, 400, { ok: false, error: 'нужны chat_id и text' });
+    return;
+  }
+  if (askDeps === null) {
+    send(res, 503, { ok: false, error: 'бот ещё не готов' });
+    return;
+  }
+  try {
+    await askDeps.send(chatId, text);
+    send(res, 200, { ok: true });
+  } catch (e) {
+    send(res, 502, { ok: false, error: (e as Error).message });
+  }
+}
+
 export function startVerifyServer(): http.Server {
   const server = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/internal/answer') {
@@ -180,6 +223,10 @@ export function startVerifyServer(): http.Server {
     }
     if (req.method === 'POST' && req.url === '/internal/ask') {
       void handleAsk(req, res);
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/internal/notify') {
+      void handleNotify(req, res);
       return;
     }
     if (req.method !== 'POST' || req.url !== '/internal/verify') {

@@ -132,8 +132,21 @@ func sectionDiagramXML(block sectionBlock, lc layoutContext) string {
 		}
 		return sectionDiagramFallback(number, block.Caption, reason)
 	}
-	cx, cy := sectionDiagramExtent(rendered.Width, rendered.Height)
-	drawing := lc.layout.media.add(rendered.PNG, "png", "image/png", cx, cy)
+	cxa, cya, readable := sectionDiagramExtent(rendered.Width, rendered.Height)
+	if !readable {
+		// Схема вышла нечитаемо вытянутой (2026-11-17, живой дефект 016/2026:
+		// 4271×132 → при 16 см ширины высота ~0,5 см, «полоска»). Вставлять
+		// такую полоску в документ — обманывать менеджера: он видит «схема
+		// есть», а прочесть нельзя. Печатаем видимую подсказку и сам код — что
+		// просить, чтобы схема стала вертикальной.
+		log.Printf("раздел: схема %d слишком вытянута (%dx%d) — печатаю подсказку вместо полоски",
+			number, rendered.Width, rendered.Height)
+		if lc.report != nil {
+			lc.report.addFailed()
+		}
+		return sectionDiagramUnreadable(number, block.Caption, rendered.Width, rendered.Height)
+	}
+	drawing := lc.layout.media.add(rendered.PNG, "png", "image/png", cxa, cya)
 	if drawing == "" {
 		return sectionDiagramFallback(number, block.Caption, "картинку не удалось вставить в документ")
 	}
@@ -148,14 +161,18 @@ func sectionDiagramXML(block sectionBlock, lc layoutContext) string {
 	return sb.String()
 }
 
-// sectionDiagramExtent — размеры схемы в EMU: ширина по тексту, высота по
-// пропорции PNG, слишком высокая — масштабируется по высоте листа.
+// sectionDiagramExtent — размеры схемы в EMU: ширина по тексту (≤16 см), высота
+// по пропорции PNG; слишком высокая — масштабируется по высоте листа (≤20 см).
 //
-// 1 см = 360000 EMU. Ширина — не шире 16 см (набор по ширине A4 с полями);
-// выше 20 см схема на страницу не влезает и уезжает обрезкой, поэтому при
-// превышении по высоте масштабируется по ней — обе стороны разом, пропорция
-// сохраняется (иначе схема растянется).
-func sectionDiagramExtent(widthPx, heightPx int) (int64, int64) {
+// 1 см = 360000 EMU. Пропорция сохраняется всегда — схема не растягивается.
+//
+// Третий результат — «читаемо ли». Если схема вышла полоской (ширина/высота
+// больше `maxDiagramAspect`), то при 16 см ширины высота получается в
+// миллиметры, и рисовать её бессмысленно: печать заменит её видимой подсказкой
+// (живой дефект 016/2026, 2026-11-17: 4271×132 → полоска 16 см × 0,5 см).
+const maxDiagramAspect = 5
+
+func sectionDiagramExtent(widthPx, heightPx int) (int64, int64, bool) {
 	const (
 		emuPerCm    = 360000
 		maxWidthCm  = 16
@@ -163,6 +180,12 @@ func sectionDiagramExtent(widthPx, heightPx int) (int64, int64) {
 	)
 	if widthPx <= 0 || heightPx <= 0 {
 		widthPx, heightPx = 4, 3
+	}
+	// Полоска: ширина во столько раз больше высоты, что на странице это
+	// нечитаемая линия. Читаемость — часть контракта схемы, не косметика.
+	// Сравнение «в ширинах» (без деления), чтобы порог был точным.
+	if heightPx <= 0 || widthPx > maxDiagramAspect*heightPx {
+		return 0, 0, false
 	}
 	cx := int64(maxWidthCm * emuPerCm)
 	cy := cx * int64(heightPx) / int64(widthPx)
@@ -176,7 +199,7 @@ func sectionDiagramExtent(widthPx, heightPx int) (int64, int64) {
 	if cx < 1 {
 		cx = 1
 	}
-	return cx, cy
+	return cx, cy, true
 }
 
 // sectionDiagramCaption — подпись под схемой: «Схема N — …».
@@ -238,5 +261,21 @@ func sectionDiagramFallback(number int, caption, reason string) string {
 	var sb strings.Builder
 	sb.WriteString(paragraphXMLOpts(sectionDiagramCaption(number, caption), "center", paraOpts{NoIndent: true}))
 	sb.WriteString(sectionParagraphXML("[Схема не отрисована: " + strings.TrimSpace(reason) + "]"))
+	return sb.String()
+}
+
+// sectionDiagramUnreadable — схема получилась нечитаемо вытянутой (2026-11-17).
+//
+// Печатаем подпись «Схема N — …», честную строку «Схема получилась слишком
+// вытянутой …» и подсказку, что поправить в инструкции раздела (меньше узлов,
+// короткие подписи, вертикальная схема). Полоску в 16×0,5 см не вставляем: она
+// занимает место, но её нельзя прочесть — это хуже честного сообщения.
+func sectionDiagramUnreadable(number int, caption string, widthPx, heightPx int) string {
+	var sb strings.Builder
+	sb.WriteString(paragraphXMLOpts(sectionDiagramCaption(number, caption), "center", paraOpts{NoIndent: true}))
+	sb.WriteString(sectionParagraphXML(
+		"[Схема получилась слишком вытянутой (" + itoa(widthPx) + "×" + itoa(heightPx) +
+			" px) — на странице она стала бы нечитаемой полоской, поэтому не напечатана. " +
+			"Упростите схему: меньше узлов, короткие подписи, вертикальная раскладка (flowchart TD с 3–5 узлами).]"))
 	return sb.String()
 }

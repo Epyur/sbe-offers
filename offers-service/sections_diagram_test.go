@@ -150,8 +150,11 @@ func TestSectionDiagramBrokenRenderVisiblyFallsBack(t *testing.T) {
 
 // Размеры: ширина ≤16 см, высота по пропорции; слишком высокая — по высоте.
 func TestSectionDiagramExtent(t *testing.T) {
-	// Широкая схема 1600×900: ширина 16 см, высота ~9 см.
-	cx, cy := sectionDiagramExtent(1600, 900)
+	// Широкая схема 1600×900: ширина 16 см, высота ~9 см, читаема.
+	cx, cy, readable := sectionDiagramExtent(1600, 900)
+	if !readable {
+		t.Fatal("схема 1600×900 должна быть читаемой")
+	}
 	if cx != 16*360000 {
 		t.Fatalf("ширина %d EMU, ожидалось 16 см", cx)
 	}
@@ -160,7 +163,10 @@ func TestSectionDiagramExtent(t *testing.T) {
 	}
 	// Очень высокая 400×4000: ужимается по высоте листа (20 см), ширина по
 	// пропорции и остаётся ≤16 см.
-	cx, cy = sectionDiagramExtent(400, 4000)
+	cx, cy, readable = sectionDiagramExtent(400, 4000)
+	if !readable {
+		t.Fatal("схема 400×4000 должна быть читаемой")
+	}
 	if cy != 20*360000 {
 		t.Fatalf("высота %d EMU, ожидалось 20 см при превышении", cy)
 	}
@@ -169,6 +175,34 @@ func TestSectionDiagramExtent(t *testing.T) {
 	}
 	if got := float64(cx) / float64(cy); got < 0.09 || got > 0.11 {
 		t.Fatalf("пропорция после масштаба %.3f, ожидалось 0.1", got)
+	}
+	// Полоска 4271×132 (живой дефект 016/2026): нечитаема — не размеры, а флаг.
+	if _, _, ok := sectionDiagramExtent(4271, 132); ok {
+		t.Fatal("полоска 4271×132 не должна считаться читаемой")
+	}
+	// Порог: ровно 5:1 ещё читаемо, 5,1:1 — уже нет.
+	if _, _, ok := sectionDiagramExtent(500, 100); !ok {
+		t.Fatal("5:1 должно быть читаемым (граница включительно)")
+	}
+	if _, _, ok := sectionDiagramExtent(510, 100); ok {
+		t.Fatal("5,1:1 не должно быть читаемым")
+	}
+}
+
+// Полоска печатается видимой подсказкой, а не картинкой-полоской.
+func TestSectionDiagramSliverPrintsHint(t *testing.T) {
+	stubDiagramRender(t, func(string) sectionDiagramRendered {
+		return sectionDiagramRendered{PNG: diagramPNG(t, 1600, 40), Width: 1600, Height: 40}
+	})
+	lc := sectionFrameContext(ContentSection{ID: "c"}, nil)
+	lc.layout = &layoutRuntime{media: newTemplateMedia()}
+	block := sectionBlock{Kind: "diagram", Lang: "mermaid", Code: "flowchart TD; A-->B", Caption: "Сравнение"}
+	out := printSectionBlock(block, lc)
+	if strings.Contains(out, "<w:drawing>") {
+		t.Fatal("полоска не должна вставляться картинкой")
+	}
+	if !strings.Contains(out, "слишком вытянутой") {
+		t.Fatalf("нет видимой подсказки о полоске:\n%s", out)
 	}
 }
 

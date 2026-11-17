@@ -309,7 +309,14 @@ describe('боевой листок: прочее', () => {
     // «Найти аналоги и сравнить» стоит в главном меню листка (2026-11-11):
     // раньше его видел только тот, кто уже выбрал конкурента в этой сессии.
     assert.deepEqual(ids, [
-      'cb:oursys', 'cb:comp', 'cb:analog', 'cb:hint', 'cb:doc', 'cb:done',
+      'cb:oursys', 'cb:comp', 'cb:analog', 'cb:compdoc', 'cb:hint', 'cb:doc', 'cb:done',
     ]);
+  });
+
+  it('в листке есть кнопка «документ/ссылка конкурента» (2026-11-17)', () => {
+    const kb = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string; text: string }>;
+    const btn = kb.find((b) => b.callback_data === 'cb:compdoc');
+    assert.ok(btn, 'кнопка cb:compdoc должна быть в меню листка');
+    assert.match(btn!.text, /конкурент/i);
   });
 });
