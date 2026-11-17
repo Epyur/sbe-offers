@@ -53,7 +53,7 @@ in the order of mention (combat sheets print our links only).
 > Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI **121/121**,
 > плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 / `check_marker_registry`
 > OK / `check_sections_conditions` 16/16, стенд **574/0**. **Выпущена и выложена
-> 2026-11-17:** `backend` `7b97098`, self-hosted `manifest 9c7fa4d1…` /
+> 2026-11-17:** `backend` `7b97098`, `main` `5a1719b`, self-hosted `manifest 9c7fa4d1…` /
 > `main 6577e472…` / `styles 50bad65b…`, реестр `0.11.5`
 > (`uploadedAt 2026-11-17T16:29:56Z`). Живая пересборка 017/2026: заголовков
 > групп ссылок нет, в конце — две наши ссылки в порядке заметки, адреса
