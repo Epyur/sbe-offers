@@ -58,7 +58,10 @@ shows nothing until the manager types.
 > Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI
 > **124/124**, плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
 > `check_marker_registry` OK / `check_sections_conditions` 16/16, бот **219**,
-> приложение **89**, стенд **не прогонялся** (Docker выключен). Точки выпуска и
+> приложение **89**, стенд **597/0** (+20: новая секция «Источники конкурента в
+> боевом листке» — гейты, отказ не-http адреса, ссылка через agent-stub,
+> замена по тому же адресу, «пусто = не трогали» при полном сохранении, файл
+> DOCX, отказ `.txt`, удаление по ключу, печать DOCX). Точки выпуска и
 > живая сверка — `HANDOFF.md`, «0.11.7».
 
 > **0.11.6 (2026-11-17) — настройки боевого листка в одном окне, ссылки с документами.**
@@ -169,7 +172,7 @@ shows nothing until the manager types.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `2b0e748` (code), `main` `cd7c633`
+Code heads: `backend` `9c07cba` (code), `main` `b6898e4`
 (release slice of 0.11.7; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
