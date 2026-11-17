@@ -96,7 +96,7 @@ and the bot assistant reads links and attached files.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `1b3c4be` (code), `main` `e991975`
+Code heads: `backend` `f226a05` (code), `main` `e991975`
 (release slice of 0.11.4; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
