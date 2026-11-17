@@ -85,6 +85,11 @@ func (s *Server) agentTranscript(req agentRequest) string {
 	}
 	if req.SheetID > 0 {
 		b.WriteString(fmt.Sprintf("Документ в работе: боевой листок id=%d.\n", req.SheetID))
+	} else {
+		// Без листка в работе факт запоминать не у чего: инструмент refuse'нёт,
+		// и модель должна знать это ДО вызова, а не узнавать по отказу.
+		b.WriteString("Боевого листка в работе нет: если решаю запомнить факт, сначала назови листок " +
+			"и попроси открыть его кнопкой ⚔️ — remember_sheet_fact здесь применить некуда.\n")
 	}
 	b.WriteString("[Пользователь] ")
 	b.WriteString(strings.TrimSpace(req.Text))
