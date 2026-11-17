@@ -57,9 +57,9 @@ func TestLinksPrintedInMentionOrder(t *testing.T) {
 
 // Ссылки конкурента в боевой листок не попадают: печатаются только наши.
 //
-// Печать идёт по макету с меткой `{{ссылки}}` — это путь, на котором ссылки
-// вообще доходят до документа (встроенный запасной вид печатает карточки и
-// ссылок не содержит).
+// Печать идёт по макету с меткой `{{ссылки}}` — это путь, на котором место
+// списка задаёт администратор; встроенный вид (без макета) дописывает раздел
+// «Ссылки» сам, и там ссылка конкурента тоже не должна появиться.
 func TestCombatSheetSkipsCompetitorLinks(t *testing.T) {
 	layout := layoutDocxFromXML(t, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>

@@ -124,6 +124,59 @@ func TestParseCardRefsURLWithSpacesAndQuotes(t *testing.T) {
 	}
 }
 
+// «## Иные документы» — документы карточки из приложения «Документы»
+// (2026-11-17). Живой пример — заметка 6363 «Теплоизоляционные плиты LOGICPIR
+// PROF Ф/Ф»: раздел несёт markdown-ссылки на файлы в хранилище S3, за строкой
+// ссылки стоит пояснение «— ДС ФЗ 123» и служебный комментарий `<!-- kb-doc:… -->`.
+//
+// Раньше раздел не читался вовсе: в листок и в КП не попадали ни декларация,
+// ни подписанное письмо, хотя ссылки на них есть в самой заметке.
+func TestParseCardRefsIncludesOtherDocuments(t *testing.T) {
+	md := "# Карточка системы\n\n## Ссылки\n\n" +
+		"- [Плиты LOGICPIR PROF Ф/Ф](https://nav.tn.ru/catalog/plity/)\n" +
+		"- [Техлист 8_01](https://nav.tn.ru/pim/tehlist.pdf)\n\n" +
+		"## Иные документы\n\n" +
+		"Документы этой карточки из приложения «Документы» — обновляются автоматически:\n" +
+		"- [Изделия теплоизоляционные LOGICPIR PROF Ф/Ф](https://epyur.fvds.ru/api/documents/file?key=documents%2Fa.pdf) — ДС ФЗ 123 <!-- kb-doc:1787653933895 -->\n" +
+		"- [ПМПИР/ТД/ПБ0007 подписанное письмо](https://epyur.fvds.ru/api/documents/file?key=documents%2Fb.pdf) — Подписанное письмо <!-- kb-doc:1792516541333 -->\n\n" +
+		"## Дополнительно\n\n" +
+		"- https://example.com/out-of-scope\n"
+	refs := ParseCardRefs(md)
+	if len(refs) != 4 {
+		t.Fatalf("ожидали 4 ссылки (2 из «Ссылки» + 2 из «Иные документы»), получили %d: %#v", len(refs), refs)
+	}
+	if refs[2].Label != "Изделия теплоизоляционные LOGICPIR PROF Ф/Ф" {
+		t.Fatalf("подпись документа потеряла хвост-пояснение: %q", refs[2].Label)
+	}
+	if !strings.Contains(refs[2].URL, "key=documents%2Fa.pdf") {
+		t.Fatalf("адрес документа разобран неверно: %q", refs[2].URL)
+	}
+	if refs[2].Kind != RefKindDoc {
+		t.Fatalf("документ из приложения «Документы» должен быть %q, а не %q", RefKindDoc, refs[2].Kind)
+	}
+	if refs[3].Label != "ПМПИР/ТД/ПБ0007 подписанное письмо" {
+		t.Fatalf("подпись второго документа: %q", refs[3].Label)
+	}
+	for _, ref := range refs {
+		if strings.Contains(ref.URL, "example.com") {
+			t.Fatalf("ссылка вне разделов ссылок попала в список: %#v", ref)
+		}
+	}
+}
+
+// «Иные документы» без markdown-подписи (голый адрес) — подпись тоже без
+// пояснения после тире: иначе в документе читается «файл.pdf — ДС ФЗ 123».
+func TestParseCardRefsOtherDocumentsBareURLDropsTrailingNote(t *testing.T) {
+	md := "## Иные документы\n\n- https://epyur.fvds.ru/api/documents/file?key=documents%2Fc.pdf — Сертификат <!-- kb-doc:1 -->\n"
+	refs := ParseCardRefs(md)
+	if len(refs) != 1 {
+		t.Fatalf("ожидали одну ссылку: %#v", refs)
+	}
+	if strings.Contains(refs[0].Label, "Сертификат") || strings.Contains(refs[0].Label, "kb-doc") {
+		t.Fatalf("пояснение после адреса осталось в подписи: %q", refs[0].Label)
+	}
+}
+
 func TestParseSystemCardKeepsRefs(t *testing.T) {
 	card := ParseSystemCard(cardRefsSample)
 	if len(card.Refs) != 3 {

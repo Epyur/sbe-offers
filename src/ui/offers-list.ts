@@ -51,7 +51,7 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
       back.addEventListener('click', () => {
         void load(view, container);
       });
-      renderFormEditor(view, container, 'client');
+      renderFormEditor(view, container);
     });
   }
   const reload = actions.createEl('button', { text: '↻ Обновить', cls: 'tn-btn tn-btn-ghost' });

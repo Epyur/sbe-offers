@@ -55,7 +55,7 @@ func docxFileNameFor(title, number string) string {
 // встроенным оформлением.
 func (s *Server) renderCombatDocx(ctx context.Context, layout []byte, sheet CombatSheet,
 	ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
-	body, refs, links, media, err := s.buildCombatBody(ctx, sheet, ourCards, competitorCards, images)
+	body, refs, links, media, err := s.buildCombatBody(ctx, sheet, ourCards, competitorCards, images, len(layout) > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +65,12 @@ func (s *Server) renderCombatDocx(ctx context.Context, layout []byte, sheet Comb
 // buildCombatBody собирает XML тела листка и всё, что нужно упаковке:
 // ссылки, сборщик и медиа. Отдельно от упаковки — потому что одна и та же
 // сборка идёт и в макет (через метку), и во встроенный вид.
+//
+// hasLayout — печать идёт по макету (2026-11-17). Тогда список ссылок в тело НЕ
+// дописывается: в макете его печатает метка `{{ссылки}}`, и второй список в
+// документе читался бы как ошибка.
 func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCards, competitorCards []SystemCard,
-	images ImageSource) (string, []skills.CardRef, *layoutRuntime, *docxMedia, error) {
+	images ImageSource, hasLayout bool) (string, []skills.CardRef, *layoutRuntime, *docxMedia, error) {
 	// Синтетическое «предложение» — только чтобы конвейер увидел служебные поля
 	// (номер, дата) и связал их с карточками. Позиций у листка нет.
 	offer := combatAsOffer(sheet)
@@ -111,6 +115,16 @@ func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCard
 		sb.WriteString(sections)
 	} else {
 		sb.WriteString(renderCombatComparison(rc, sheet, ourCards, competitorCards))
+	}
+
+	// Ссылки наших продуктов во встроенном виде (2026-11-17). Требование
+	// пользователя: в листок идут ВСЕ ссылки по нашим продуктам, включая
+	// документы из приложения «Документы» (файлы в S3). В макете место списка
+	// задаёт метка `{{ссылки}}` — там своей печати нет.
+	if !hasLayout {
+		if markup, printed := renderLinkSection(blockNode{Level: 2}, refs, links.numbering); printed {
+			sb.WriteString(markup)
+		}
 	}
 
 	return sb.String(), refs, links, media, nil

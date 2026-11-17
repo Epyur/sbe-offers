@@ -49,3 +49,30 @@ func TestUploadLayoutResponseReportsMode(t *testing.T) {
 		}
 	}
 }
+
+// Ответ загрузки говорит, есть ли в макете метки ссылок и сравнения
+// (2026-11-17). Без этого «включаем все ссылки в листок» зависело бы от
+// макета, а человек узнавал бы о пропущенной метке по пустому месту в готовом
+// документе (правило: метка, которая молча ничего не делает, — худший исход).
+func TestUploadLayoutResponseReportsMarkerPresence(t *testing.T) {
+	withLinks := layoutDocxFromXML(t, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>{{сравнение}} {{ссылки}}</w:t></w:r></w:p>
+</w:body></w:document>`)
+	payload := uploadLayoutResponse(combatFormMode, withLinks, "макет.docx")
+	if payload["layoutLinks"] != true {
+		t.Fatalf("метка {{ссылки}} есть, а ответ говорит %v", payload["layoutLinks"])
+	}
+	if payload["layoutComparison"] != true {
+		t.Fatalf("метка {{сравнение}} есть, а ответ говорит %v", payload["layoutComparison"])
+	}
+
+	withoutLinks := layoutDocxFromXML(t, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>{{сравнение}}</w:t></w:r></w:p>
+</w:body></w:document>`)
+	payload = uploadLayoutResponse(combatFormMode, withoutLinks, "макет.docx")
+	if payload["layoutLinks"] != false {
+		t.Fatalf("метки {{ссылки}} нет, а ответ говорит %v", payload["layoutLinks"])
+	}
+}

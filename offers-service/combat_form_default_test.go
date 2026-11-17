@@ -30,6 +30,18 @@ func TestCombatDefaultSectionsValid(t *testing.T) {
 	}
 }
 
+// Окно настроек листка сохраняет форму ЦЕЛИКОМ (2026-11-17): payload несёт
+// поле `window`, которое чтение собрало через `effectiveWindow`. Если такая
+// форма не проходит `validateForm`, кнопка «Сохранить настройки» отвечает
+// отказом, и правка промта зависела бы от окна, которого у листка нет.
+func TestCombatFormLoadedWindowIsValid(t *testing.T) {
+	form := combatDefaultForm()
+	form.Window = effectiveWindow(form)
+	if msg := validateForm(form); msg != "" {
+		t.Fatalf("форма листка с окном чтения не проходит проверку: %s", msg)
+	}
+}
+
 // Сравнение характеристик должно просить TABЛИЦУ: это контракт ответа
 // (`table` в `sectionAnswerContract`) и то, ради чего раздел заведён.
 func TestCombatDefaultSpecsAskForTable(t *testing.T) {

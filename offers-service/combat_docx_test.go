@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"mailers/offers/skills"
 )
 
 // Боевой листок: сборка DOCX (2026-11-08, вторая партия 0.8.3).
@@ -75,6 +77,69 @@ func TestRenderCombatDocxBasics(t *testing.T) {
 	}
 	if !strings.Contains(xml, "Описание конкурента") {
 		t.Fatal("нет описания конкурента в документе")
+	}
+}
+
+// Встроенный вид листка печатает ссылки наших продуктов (2026-11-17).
+//
+// Требование пользователя: «в боевой листок включаем все ссылки по нашим
+// продуктам, в том числе на документы в S3, на которые есть ссылка в заметке
+// Базы знаний». Без макета метку `{{ссылки}}` ставить некуда, поэтому встроенный
+// вид дописывает раздел сам — иначе настройка «ссылки включены» ничего бы не
+// значила для листка без макета.
+func TestCombatSheetBuiltInPrintsOurLinks(t *testing.T) {
+	our, competitor := combatTestCards()
+	our.Refs = []skills.CardRef{
+		{Label: "Страница нашего продукта", URL: "https://nav.tn.ru/systems/our/"},
+		{Label: "Декларация соответствия", URL: "https://epyur.fvds.ru/api/documents/file?key=documents%2Fd.pdf"},
+	}
+	competitor.Refs = []skills.CardRef{{Label: "Сайт конкурента", URL: "https://pirrogroup.ru/katalog"}}
+	sheet := CombatSheet{Number: "004/2026", Title: "Боевой листок"}
+
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), nil, sheet,
+		[]SystemCard{our}, []SystemCard{competitor}, nil)
+	if err != nil {
+		t.Fatalf("листок не собран: %v", err)
+	}
+	body := string(docxEntry(t, data, "word/document.xml"))
+	rels := relsPartOf(t, data)
+	for _, want := range []string{"Ссылки", "Страница нашего продукта", "Декларация соответствия"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("во встроенном виде нет %q:\n%s", want, body)
+		}
+	}
+	for _, url := range []string{"https://nav.tn.ru/systems/our/", "https://epyur.fvds.ru/api/documents/file?key=documents%2Fd.pdf"} {
+		if !strings.Contains(rels, url) {
+			t.Fatalf("адрес %q не попал в отношения (ссылка не кликабельна):\n%s", url, rels)
+		}
+	}
+	if strings.Contains(body, "Сайт конкурента") || strings.Contains(rels, "pirrogroup.ru") {
+		t.Fatalf("ссылка конкурента попала в листок:\n%s", body)
+	}
+}
+
+// Макет со своей меткой `{{ссылки}}` не должен получить второй список из
+// встроенного вида: документ с двумя разделами «Ссылки» читается как ошибка.
+func TestCombatSheetLayoutDoesNotDuplicateLinks(t *testing.T) {
+	layout := layoutDocxFromXML(t, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>{{сравнение}}</w:t></w:r></w:p>
+</w:body></w:document>`)
+	our, competitor := combatTestCards()
+	our.Refs = []skills.CardRef{{Label: "Страница нашего продукта", URL: "https://nav.tn.ru/systems/our/"}}
+	sheet := CombatSheet{Number: "005/2026", Title: "Боевой листок"}
+
+	data, err := combatNoForm((*Server).renderCombatDocx)(context.Background(), layout, sheet,
+		[]SystemCard{our}, []SystemCard{competitor}, nil)
+	if err != nil {
+		t.Fatalf("листок по макету не собран: %v", err)
+	}
+	body := string(docxEntry(t, data, "word/document.xml"))
+	if strings.Contains(body, "Страница нашего продукта") {
+		t.Fatalf("встроенный раздел ссылок продублирован в макете:\n%s", body)
+	}
+	if !strings.Contains(body, "Продукты сравнения") {
+		t.Fatalf("макет не получил тело листка:\n%s", body)
 	}
 }
 

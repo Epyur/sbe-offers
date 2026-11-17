@@ -66,10 +66,16 @@ var (
 	//
 	// Захват — до первой `)` после адреса: скобка в адресе markdown-ссылки
 	// обязана быть экранирована, а в живых ссылках её нет. Пробелы и кавычки
-	// (`filename="…"`) при этом спокойно входят в адрес. Строка должна
-	// кончаться скобкой — иначе это не markdown-ссылка, и решает запасной
-	// разбор.
-	reCardRefMarkdown = regexp.MustCompile(`\[([^\]]*)\]\((https?://[^)]+)\)\s*$`)
+	// (`filename="…"`) при этом спокойно входят в адрес.
+	//
+	// Конца строки в шаблоне НЕТ (2026-11-17): в разделе «Иные документы»
+	// приложения «Документы» после ссылки стоит пояснение и служебный
+	// комментарий (`… — ДС ФЗ 123 <!-- kb-doc:… -->`), и прежний якорь `$`
+	// заставлял строку проваливаться в «голый адрес» — подпись терялась.
+	reCardRefMarkdown = regexp.MustCompile(`\[([^\]]*)\]\((https?://[^)]+)\)`)
+	// reCardRefHTMLComment — служебный комментарий карточки. В документ он
+	// попасть не должен ни подписью, ни адресом.
+	reCardRefHTMLComment = regexp.MustCompile(`<!--[\s\S]*?-->`)
 )
 
 // FindURLs — адреса в произвольном тексте: индексы начал и концов.
@@ -82,12 +88,18 @@ func FindURLs(text string) [][]int {
 	return reCardRefURL.FindAllStringIndex(text, -1)
 }
 
-// ParseCardRefs вытаскивает ссылки из раздела «Ссылки» карточки.
+// ParseCardRefs вытаскивает ссылки из разделов «Ссылки» и «Иные документы»
+// карточки (2026-11-01, «Иные документы» — 2026-11-17).
 //
-// Берётся ТОЛЬКО этот раздел: в описании и в составе бывают ссылки на
-// материалы и стандарты, и печатать их в конце КП — не то, что просили.
-// Повторы по адресу схлопываются: живые карточки содержат один и тот же
-// адрес и подписанным, и голым.
+// «Иные документы» — блок приложения «Документы», который индексатор дописывает
+// в заметку: там ссылки на декларации, сертификаты и подписанные письма, чьи
+// файлы лежат в S3. Пока раздел не читался, эти документы не доходили ни до КП,
+// ни до боевого листка, хотя человек видел их в самой заметке.
+//
+// Остальные разделы (описание, состав) не берутся: там ссылки на материалы и
+// стандарты, и печатать их в конце документа — не то, что просили. Повторы по
+// адресу схлопываются: живые карточки содержат один и тот же адрес и
+// подписанным, и голым.
 func ParseCardRefs(markdown string) []CardRef {
 	lines := cardRefSectionLines(markdown)
 	if len(lines) == 0 {
@@ -106,8 +118,10 @@ func ParseCardRefs(markdown string) []CardRef {
 	return out
 }
 
-// cardRefSectionLines собирает строки раздела «Ссылки» (любого уровня,
-// регистр не важен). Раздел кончается на следующем заголовке.
+// cardRefSectionLines собирает строки разделов ссылок (любого уровня, регистр
+// не важен): «Ссылки» и «Иные документы». Раздел кончается на следующем
+// заголовке; порядок строк — порядок заметки, поэтому документы идут там, где
+// их видит человек.
 func cardRefSectionLines(markdown string) []string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	var out []string
@@ -116,7 +130,7 @@ func cardRefSectionLines(markdown string) []string {
 		trimmed := strings.TrimSpace(line)
 		if level, title, ok := parseCardHeading(trimmed); ok {
 			_ = level
-			inSection = strings.Contains(strings.ToLower(title), "ссылк")
+			inSection = cardRefSectionTitle(title)
 			continue
 		}
 		if inSection && trimmed != "" {
@@ -126,12 +140,21 @@ func cardRefSectionLines(markdown string) []string {
 	return out
 }
 
+// cardRefSectionTitle — заголовок раздела, который считается ссылками карточки.
+func cardRefSectionTitle(title string) bool {
+	lower := strings.ToLower(title)
+	return strings.Contains(lower, "ссылк") ||
+		strings.Contains(lower, "иные документы") ||
+		strings.Contains(lower, "иных документов")
+}
+
 // cardRefFromLine — одна ссылка из строки списка.
 //
 // Приоритет у markdown-вида: там подпись стоит рядом с адресом. Если строка
 // подписана «Страница системы: …» — берём подпись из неё. Голый адрес
 // подписывается сам собой.
 func cardRefFromLine(line string) (CardRef, bool) {
+	line = strings.TrimSpace(reCardRefHTMLComment.ReplaceAllString(line, ""))
 	if m := reCardRefMarkdown.FindStringSubmatch(line); m != nil {
 		return newCardRef(strings.TrimSpace(m[1]), m[2]), true
 	}
@@ -158,15 +181,32 @@ func newCardRef(label, url string) CardRef {
 // cardRefLabelFromText — подпись из строки вида «Страница системы: https://…».
 // Маркер списка и двоеточие снимаются; если перед адресом только пустота —
 // подписи нет.
+//
+// Пояснение после тире («— ДС ФЗ 123») подписью не считается (2026-11-17):
+// так выглядят строки раздела «Иные документы». В документе пояснение читалось
+// бы частью названия файла.
 func cardRefLabelFromText(line, url string) string {
 	prefix := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), url))
 	prefix = strings.TrimSpace(strings.TrimLeft(prefix, "-*+ "))
+	prefix = trimCardRefNote(prefix)
 	prefix = strings.TrimSuffix(prefix, ":")
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" || strings.HasPrefix(prefix, "http") {
 		return ""
 	}
 	return prefix
+}
+
+// trimCardRefNote снимает пояснение, которое человек дописал после ссылки.
+// Режем только по тире с пробелами — дефис внутри названия («V-SL 2 мм»)
+// остаётся частью подписи.
+func trimCardRefNote(text string) string {
+	for _, sep := range []string{" — ", " – "} {
+		if idx := strings.Index(text, sep); idx >= 0 {
+			return strings.TrimSpace(text[:idx])
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 // cardRefKind — страница корпоративного сайта или технический документ.
@@ -176,6 +216,11 @@ func cardRefLabelFromText(line, url string) string {
 func cardRefKind(label, url string) string {
 	lowerURL := strings.ToLower(url)
 	if strings.Contains(lowerURL, ".pdf") || strings.Contains(lowerURL, "/pim/") {
+		return RefKindDoc
+	}
+	// Документы приложения «Документы» (файлы в S3): адрес ведёт на файл, а не
+	// на страницу продукта (2026-11-17).
+	if strings.Contains(lowerURL, "/api/documents/") {
 		return RefKindDoc
 	}
 	lower := strings.ToLower(label)

@@ -72,15 +72,7 @@ UPDATE offers_form SET layout_docx = $2, layout_name = $3, updated_at = now() WH
 		dbError(w, "upload layout", err)
 		return
 	}
-	fields, prompts := describeLayout(body)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":          mode,
-		"hasLayout":     true,
-		"layoutName":    name,
-		"layoutFields":  fields,
-		"layoutPrompts": prompts,
-		"bytes":         len(body),
-	})
+	writeJSON(w, http.StatusOK, uploadLayoutResponse(mode, body, name))
 }
 
 // uploadLayoutResponse — ответ на загрузку макета.
@@ -98,7 +90,35 @@ func uploadLayoutResponse(mode string, body []byte, name string) map[string]any 
 		"layoutFields":  fields,
 		"layoutPrompts": prompts,
 		"bytes":         len(body),
+		// Метки листка (2026-11-17): без `{{ссылки}}` список ссылок в макете не
+		// напечатается, без `{{сравнение}}` — не напечатается сам листок. Человек
+		// обязан узнать об этом при загрузке, а не по пустому месту в документе.
+		"layoutLinks":      layoutMarkerFound(body, layoutTokenLinks),
+		"layoutComparison": layoutMarkerFound(body, layoutTokenComparison),
 	}
+}
+
+// layoutMarkerFound — есть ли в макете метка служебного вида (2026-11-17).
+//
+// В `describeLayout` служебные метки намеренно не попадают в списки полей и
+// промтов, поэтому «есть ли метка» спрашивается здесь, а не выводится из
+// ответа. Ошибка чтения макета — «метки нет»: загрузка уже записала файл, и
+// врать про найденную метку хуже, чем промолчать.
+func layoutMarkerFound(layout []byte, kind string) bool {
+	if len(layout) == 0 {
+		return false
+	}
+	files, _, err := readZipEntries(layout)
+	if err != nil {
+		return false
+	}
+	doc := string(files["word/document.xml"])
+	for _, token := range scanLayoutTokens(layoutPlainText(doc), nil) {
+		if token.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // handleDeleteLayout убирает макет: печать возвращается к блокам формы.
