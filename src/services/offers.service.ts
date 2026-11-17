@@ -138,6 +138,13 @@ export interface LayoutResponse {
   layoutFields: string[];
   /** Метки `{…}` — подсказки модели. */
   layoutPrompts: string[];
+  /**
+   * Есть ли в макете метки листка (2026-11-17): `{{ссылки}}` печатает список
+   * ссылок, `{{сравнение}}` — весь листок. Сервер отвечает ими с этого захода;
+   * старый ответ полей не несёт, и тогда работает прежняя проверка по спискам.
+   */
+  layoutLinks?: boolean;
+  layoutComparison?: boolean;
   bytes: number;
 }
 

@@ -8,7 +8,7 @@ import {
   type SystemCard,
 } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
-import { pickLayoutFile, renderLayoutCard } from './form-layout';
+import { renderCombatSettings } from './combat-settings';
 
 /** Сторона выбора в боевом листке: наш продукт или конкурент. */
 type CombatSide = 'our' | 'competitor';
@@ -46,35 +46,20 @@ function filterCandidates(items: CombatCandidate[], query: string): CombatCandid
 /**
  * Ключ уточнения для разбора в `formValues` листка (2026-11-11).
  *
- * Один ключ на плагин и бота: у боевого листка нет формы, и это единственное
- * значение, которое человек вводит руками. Совпадает с `combatHintField` в
- * offers-service.
+ * Один ключ на плагин и бота: у боевого листка из полей формы живой остаётся
+ * только уточнение, и это единственное значение, которое человек вводит руками.
+ * Совпадает с `combatHintField` в offers-service.
  */
 export const COMBAT_HINT_FIELD = 'hint';
 
 /**
- * Карточка макета боевого листка (2026-11-11).
+ * Карточка макета боевого листка и настройки листка (2026-11-17).
  *
- * У листка нет формы — только макет на фирменном бланке с меткой
- * `{{сравнение}}`. Читаем форму режима combat и отдаём карточку макета, привязанную
- * к этому режиму: загрузка не подменит макет КП.
+ * Раньше здесь стояла кнопка «📄 Макет боевого листка», которая открывала
+ * карточку макета с метками и образцом КП. Пользователь попросил убрать её и
+ * завести одно окно настроек: промт, ссылки, макет. Окно живёт отдельным
+ * экраном (`combat-settings.ts`), потому что у листка нет полей формы и блоков.
  */
-async function renderCombatLayoutCard(view: OffersView, container: HTMLElement): Promise<void> {
-  try {
-    const form = await view.plugin.offersService.getForm('combat');
-    renderLayoutCard(view, container, form, {
-      onChanged: () => {
-        container.empty();
-        void renderCombatLayoutCard(view, container);
-      },
-      onPickFile: pickLayoutFile,
-      mode: 'combat',
-    });
-  } catch (e: unknown) {
-    container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить макет: ${errorMessage(e)}` });
-  }
-}
-
 export function renderCombatView(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка боевых листков…' });
   void load(view, container);
@@ -89,21 +74,18 @@ async function load(view: OffersView, container: HTMLElement): Promise<void> {
       void openEditor(view, container, null);
     });
   }
-  // Формы у боевого листка НЕТ (2026-11-11, решение пользователя): содержание
-  // всегда одно — перечень продуктов и сравнение. Настраивается только МАКЕТ
-  // (.docx с меткой `{{сравнение}}`) — поэтому здесь только он, без
-  // конфигуратора блоков: тот выглядел настраиваемым, ни на что не влиял и
-  // сбивал с толку.
+  // Настройки боевого листка (2026-11-17, просьба пользователя): базовый промт,
+  // ссылки и макет в одном окне. Раньше здесь была кнопка «Макет боевого
+  // листка», и настройка промта жила в мёртвом пути общего редактора формы.
   if (view.admin) {
-    const layoutBtn = actions.createEl('button', { text: '📄 Макет боевого листка', cls: 'tn-btn tn-btn-ghost' });
-    layoutBtn.addEventListener('click', () => {
-      container.empty();
-      const back = container.createEl('button', { text: '← К списку', cls: 'tn-btn tn-btn-ghost' });
-      back.addEventListener('click', () => {
+    const settingsBtn = actions.createEl('button', {
+      text: '⚙️ Настройки боевого листка',
+      cls: 'tn-btn tn-btn-ghost',
+    });
+    settingsBtn.addEventListener('click', () => {
+      renderCombatSettings(view, container, () => {
         void load(view, container);
       });
-      const card = container.createDiv();
-      void renderCombatLayoutCard(view, card);
     });
   }
   const reload = actions.createEl('button', { text: '↻ Обновить', cls: 'tn-btn tn-btn-ghost' });

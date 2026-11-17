@@ -30,9 +30,28 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.5** — ready 2026-11-17. The base prompt of a document is a form
-setting (not code), a card's characteristics reach the model, and links print as one list
-in the order of mention (combat sheets print our links only).
+Current version = **0.11.6** — ready 2026-11-17. The combat sheet has ONE settings
+window (base prompt, link markers, layout), and its links now include documents from
+the documents app (`## Иные документы`, S3 files) — on top of 0.11.5 (base prompt as a
+form setting, card characteristics in the prompt, one link list in mention order).
+
+> **0.11.6 (2026-11-17) — настройки боевого листка в одном окне, ссылки с документами.**
+> Просьба пользователя по живому листку: кнопку «📄 Макет боевого листка» убрать,
+> а настройки собрать в одно окно. **(1) «⚙️ Настройки боевого листка»**
+> (`src/ui/combat-settings.ts`): базовый промт листка, метки `{{сравнение}}` и
+> `{{ссылки}}` с копированием по клику, макет — загрузить / скачать / удалить.
+> Мёртвый `mode='combat'` в общем редакторе формы удалён: у листка нет полей формы,
+> блоков и окна приложения. **(2) «## Иные документы» читаются** (`skills/cardrefs.go`):
+> документы приложения «Документы» (файлы в S3) попадают в карточку, а значит в КП и
+> в листок; пояснение «— ДС ФЗ 123» и `<!-- kb-doc:… -->` снимаются, порядок —
+> порядок заметки. **(3) Встроенный вид листка печатает раздел «Ссылки»** сам; по
+> макету его печатает метка `{{ссылки}}` (второй список в тело не дописывается).
+> **(4) Ответ загрузки называет найденные метки** (`layoutLinks`/`layoutComparison`),
+> чтобы пропущенная метка была видна сразу. `combatDocxVersion` → **v6**.
+> Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI **121/121**,
+> плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 / `check_marker_registry`
+> OK / `check_sections_conditions` 16/16, бот **217**, приложение **85**,
+> стенд **577/0**. Подробности и точки выпуска — `HANDOFF.md`, «0.11.6».
 
 > **0.11.5 (2026-11-17, вечер) — базовый промт в форме, характеристики в промпте,
 > ссылки одним списком.** Четыре правки по живым жалобам на листок 017/2026.
@@ -837,10 +856,20 @@ renamed accordingly.
   `KBClient.FolderIDByName`/`SubtreeFolderIDs`/`FolderNotes`, cached in
   `offers_context` under `mode='competitors'` and refreshed by an admin
   button. A competitor card's **title is the note heading**, never the first
-  body line. The combat form is the **same form editor as КП** under
-  `mode='combat'` (no second editor). DOCX export is done (`combat_docx.go`):
-  rendered from the combat form, our and competitor cards printed as two
-  sections.
+  body line. The combat form lives in `offers_form(mode='combat')`: content
+  sections (default set in code) plus the sheet's base prompt. **Its settings
+  window is «⚙️ Настройки боевого листка»** (2026-11-17, `combat-settings.ts`,
+  admin): the base prompt, the layout markers `{{сравнение}}` / `{{ссылки}}`
+  with click-to-copy, and the layout buttons (upload / download / delete). It is
+  NOT the КП form editor: the sheet has no form fields, blocks or app window, and
+  the `'combat'` branch of `form-editor.ts` was deleted — do not bring it back.
+  Sections are a code default (user decision 2026-11-17): no editor for them.
+  DOCX export is done (`combat_docx.go`): rendered from the combat form, our and
+  competitor cards printed as two sections. **Refs come from `## Ссылки` AND
+  `## Иные документы`** (documents app, S3 files — since 2026-11-17), one list in
+  mention order, our products only. `![[…pdf]]` attachments and `[[note]]` wiki
+  links are still NOT read. The built-in view (no layout) prints the links
+  section itself; with a layout the `{{ссылки}}` marker decides where it goes.
   **In the bot (2026-11-09, document-style picker since 2026-11-10)**: «⚔️
   Боевой листок» creates an empty sheet with a number. Sides are picked by
   **name search** as a **numbered text list** with number buttons, paging
@@ -1212,7 +1241,10 @@ measurements) are in the archive.
   returns `mode`, the plugin's Notice says which document took the file and
   warns on a mismatch, and the stand section «Макеты: у КП и у боевого листка —
   свои» proves both directions. **Any upload that writes into a per-mode or
-  per-entity row must say which row it wrote to.**
+  per-entity row must say which row it wrote to.** Since 2026-11-17 the answer
+  also names the sheet markers it found (`layoutLinks`, `layoutComparison`):
+  a layout missing `{{ссылки}}` would print no reference list at all, and that
+  must be visible at upload, not in the finished document.
 - **`up -d` without `--force-recreate` may not recreate the container.** Check
   `CREATED` in `docker ps`, not the word `Started` in compose output.
 - **Piping a remote script through `tail` returns `tail`'s exit code.**
@@ -1300,7 +1332,9 @@ measurements) are in the archive.
   the version, but NOT the card or section texts (on purpose: a card edit must
   not rebuild every sheet). So a fix that only changes what the model writes
   would still serve the old file from `offers_combat_docx` as "fresh". v3 was
-  set for exactly this (2026-11-17, second pass). The section-text cache has its
+  set for exactly this (2026-11-17, second pass); **v6** — when the built-in
+  view gained the links section and the cards started carrying documents-app
+  refs (2026-11-17, third pass). The section-text cache has its
   own freshness (`combatSectionHandle` includes `PromptText()`), so it rebuilds
   by itself — the file cache does not.
 - **Deleting a model's `[НУЖНО: …]` marker leaves a SEAM** (2026-11-17, live
@@ -1372,15 +1406,24 @@ measurements) are in the archive.
   деление ссылок на типы, все ссылки (в том числе на иные документы) приводим в
   порядке их упоминания в заметке. Ссылки на ресурсы конкурента не приводим».
   So: `collectOfferRefs` does NOT sort (dedupe by URL only); `cardAllRefs` is
-  `card.Refs` (parse order of «## Ссылки») then `card.LinkedRefs` (composition
-  order); `renderLinkSection` and `renderLayoutCardLinks` print one list with one
-  `<w:numId>`, no group headings. The whole grouping machinery is DELETED
+  `card.Refs` (parse order of «## Ссылки» then «## Иные документы» — documents
+  from the documents app, S3 files, since 2026-11-17) then `card.LinkedRefs`
+  (composition order); `renderLinkSection` and `renderLayoutCardLinks` print one
+  list with one `<w:numId>`, no group headings.
+  **A documents-app line carries a tail** — `… — ДС ФЗ 123 <!-- kb-doc:… -->` —
+  so the markdown regex must NOT be anchored at `$`, HTML comments are stripped,
+  and a bare URL's label is cut at « — » (`trimCardRefNote`). Live fragment and
+  guards: note 6363, `TestParseCardRefsIncludesOtherDocuments`.
+  The whole grouping machinery is DELETED
   (`skills/cardrefs.go` group/owner code, `skills/linkgroups.go`, the
   `link_groups` form field, the plugin's link-groups editor); the DB column
   `offers_form.link_groups` stays unused so old data is not destroyed. **The
   combat sheet prints OUR links only** — `buildCombatBody` no longer appends
   `collectOfferRefs(competitorCards)`: a competitor's site in the reference list
-  reads as our recommendation to the customer.
+  reads as our recommendation to the customer. **The built-in sheet view prints
+  the links section itself** (`buildCombatBody` with `hasLayout=false`); with a
+  layout the `{{ссылки}}` marker prints them, and the body is NOT appended —
+  otherwise the document would carry two lists.
   **`applyHyperlinks` locates the numbered item by its text and wraps only its
   run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the paragraph as a plain
   `hyperlinkXML` would silently drop the number.

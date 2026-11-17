@@ -1780,13 +1780,25 @@ console.log('\n18. Таблица менеджера и системы в КП (
     || /объект/i.test(briefStart.json?.reply ?? ''),
   JSON.stringify(briefStart.json?.brief?.lastTopic));
 
-  // Ссылки из карточки: stand-карточка содержит «## Ссылки».
+  // Ссылки из карточки: stand-карточка содержит «## Ссылки» и «## Иные документы».
+  // Кеш систем обновляем перед чтением: он живёт в базе стенда между прогонами,
+  // и без обновления проверка читала бы карточку прежней сборки (грабля 0.11.5).
+  const systemsRefresh = await call('POST', '/systems/refresh', { token: ownerToken });
+  ok('кеш систем перечитан → 200', systemsRefresh.status === 200,
+    `получили ${systemsRefresh.status} ${systemsRefresh.text?.slice(0, 160)}`);
   const systemsResp = await call('GET', '/systems', { token: ownerToken });
   const firstSystem = (systemsResp.json?.systems ?? [])[0];
   ok('карточка системы отдаёт ссылки', (firstSystem?.refs ?? []).length > 0,
     JSON.stringify(firstSystem?.refs));
   const refKinds = new Set((firstSystem?.refs ?? []).map((r) => r.kind));
   ok('среди ссылок есть страница или документ', refKinds.size > 0, [...refKinds].join(','));
+  // «Иные документы» (2026-11-17): документ из приложения «Документы» (файл в S3)
+  // обязан дойти до карточки, иначе его нет ни в КП, ни в боевом листке.
+  const docRef = (firstSystem?.refs ?? []).find((r) => String(r.url).includes('/api/documents/file'));
+  ok('документ из «Иных документов» доехал до карточки', Boolean(docRef), JSON.stringify(firstSystem?.refs));
+  ok('подпись документа без пояснения после тире',
+    !String(docRef?.label ?? '').includes('ДС ФЗ') && !String(docRef?.label ?? '').includes('kb-doc'),
+    JSON.stringify(docRef?.label));
 
   // Документ с новыми блоками: разрыв страницы, ссылки, картинка без файла.
   const blockForm = {

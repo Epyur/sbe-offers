@@ -1,6 +1,7 @@
 import { Modal, Notice, TFile } from 'obsidian';
 import type { OffersView } from './offers-view';
 import type { OfferForm } from '../types/offers';
+import type { LayoutResponse } from '../services/offers.service';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { MARKER_GROUPS } from './markers';
 
@@ -31,9 +32,12 @@ export interface LayoutCardDeps {
 export function renderLayoutCard(view: OffersView, container: HTMLElement, form: OfferForm, deps: LayoutCardDeps): void {
   const mode = deps.mode ?? 'client';
   const card = container.createDiv({ cls: 'tn-offers-card tn-offers-layout-card' });
-  card.createDiv({ cls: 'tn-offers-muted', text: 'Макет документа .docx (необязательно)' });
-
   const isCombat = mode === 'combat';
+  card.createDiv({
+    cls: 'tn-offers-muted',
+    text: isCombat ? 'Макет боевого листка (.docx, необязательно)' : 'Макет документа .docx (необязательно)',
+  });
+
   if (form.hasLayout) {
     const active = card.createDiv({ cls: 'tn-offers-warn' });
     active.createDiv({
@@ -47,8 +51,8 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
     card.createDiv({
       cls: 'tn-offers-muted',
       text: 'Без макета боевой листок печатается встроенным оформлением: перечень ' +
-        'продуктов, затем их сравнение. Загрузите макет с фирменным бланком и вставьте ' +
-        'метку {{сравнение}} — листок напечатается на вашем бланке.',
+        'продуктов, сравнение и ссылки наших продуктов. Загрузите макет с фирменным ' +
+        'бланком и вставьте в него метки {{сравнение}} и {{ссылки}}.',
     });
   } else {
     card.createDiv({
@@ -62,32 +66,38 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
 
   renderLayoutTokens(card, form);
 
-  // Начать с рабочего образца (2026-11-06, шаг E): требование пользователя —
-  // инструкция должна позволять начать с образца, а не со слов. Образец
-  // собирает сервис, поэтому он не разойдётся с разбором.
-  const guide = card.createDiv({ cls: 'tn-offers-muted' });
-  guide.createDiv({
-    text: 'Метки: [Поле] — значение, {промт} — текст модели, {{система}} — картинка ' +
-      'и состав одной таблицей, {{текст: система: description}} — сохранённый текст ' +
-      'системы, {{block:1}} — целый блок формы. Подробно — в разделе справки ' +
-      '«Макет .docx: как расставить метки».',
-  });
-  // Список готовых меток с копированием (2026-11-07): макет набирают в Word, и
-  // руками `{{текст: система: description}}` не набрать без ошибки. Копия в
-  // буфер — единственный способ, который там работает.
-  renderMarkerCopyList(guide, 'Метки для макета — нажмите, чтобы скопировать:');
-  const exampleBtn = guide.createEl('button', { text: '⬇ Скачать образец макета', cls: 'tn-btn tn-btn-ghost' });
-  exampleBtn.addEventListener('click', () => {
-    void (async () => {
-      try {
-        const data = await view.plugin.offersService.downloadExampleLayout();
-        const path = await view.app.vault.createBinary(uniqueVaultPath(view, 'образец-макета-КП.docx'), data);
-        new Notice(`Образец макета сохранён в вольт: ${path.path}`);
-      } catch (e: unknown) {
-        new Notice(`Не удалось скачать образец: ${errorMessage(e)}`);
-      }
-    })();
-  });
+  // Метки КП, инструкция и образец макета КП — только для КП (2026-11-17).
+  // Раньше карточка листка показывала их же: полный список меток КП и образец
+  // «образец-макета-КП.docx», хотя у листка две метки. Человек искал среди них
+  // свою и получал пустой документ.
+  if (!isCombat) {
+    // Начать с рабочего образца (2026-11-06, шаг E): требование пользователя —
+    // инструкция должна позволять начать с образца, а не со слов. Образец
+    // собирает сервис, поэтому он не разойдётся с разбором.
+    const guide = card.createDiv({ cls: 'tn-offers-muted' });
+    guide.createDiv({
+      text: 'Метки: [Поле] — значение, {промт} — текст модели, {{система}} — картинка ' +
+        'и состав одной таблицей, {{текст: система: description}} — сохранённый текст ' +
+        'системы, {{block:1}} — целый блок формы. Подробно — в разделе справки ' +
+        '«Макет .docx: как расставить метки».',
+    });
+    // Список готовых меток с копированием (2026-11-07): макет набирают в Word, и
+    // руками `{{текст: система: description}}` не набрать без ошибки. Копия в
+    // буфер — единственный способ, который там работает.
+    renderMarkerCopyList(guide, 'Метки для макета — нажмите, чтобы скопировать:');
+    const exampleBtn = guide.createEl('button', { text: '⬇ Скачать образец макета', cls: 'tn-btn tn-btn-ghost' });
+    exampleBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          const data = await view.plugin.offersService.downloadExampleLayout();
+          const path = await view.app.vault.createBinary(uniqueVaultPath(view, 'образец-макета-КП.docx'), data);
+          new Notice(`Образец макета сохранён в вольт: ${path.path}`);
+        } catch (e: unknown) {
+          new Notice(`Не удалось скачать образец: ${errorMessage(e)}`);
+        }
+      })();
+    });
+  }
 
   const actions = card.createDiv({ cls: 'tn-offers-row' });
   const upload = actions.createEl('button', {
@@ -108,12 +118,14 @@ export function renderLayoutCard(view: OffersView, container: HTMLElement, form:
         const target = res.mode && res.mode !== mode
           ? `ВНИМАНИЕ: файл записан как макет «${res.mode === 'combat' ? 'боевого листка' : 'КП'}»`
           : 'записан в этот документ';
+        // Метки листка (2026-11-17): без `{{ссылки}}` список ссылок в макете не
+        // напечатается, без `{{сравнение}}` — не напечатается сам листок.
+        // Сервер отвечает этими полями с этого захода; старый ответ их не
+        // несёт — тогда остаётся прежняя проверка по списку промтов.
         const mark = mode === 'combat'
-          ? (res.layoutPrompts.includes('сравнение') || res.layoutFields.includes('сравнение')
-            ? 'метка {{сравнение}} найдена'
-            : 'метки {{сравнение}} в макете нет — листок в неё не подставится')
+          ? combatLayoutMarks(res)
           : `полей ${res.layoutFields.length}, промтов ${res.layoutPrompts.length}`;
-        new Notice(`Макет «${res.layoutName}» — ${target}: ${mark}`, 10000);
+        new Notice(`Макет «${res.layoutName}» — ${target}: ${mark}`, 12000);
         deps.onChanged();
       } catch (e: unknown) {
         new Notice(`Не удалось загрузить макет: ${errorMessage(e)}`, 8000);
@@ -179,6 +191,34 @@ export function renderMarkerCopyList(container: HTMLElement, title: string): voi
       });
     }
   }
+}
+
+/**
+ * Что сказать о метках листка после загрузки макета (2026-11-17).
+ *
+ * У листка две метки, и обе нужны: `{{сравнение}}` печатает сам листок,
+ * `{{ссылки}}` — список ссылок наших продуктов. Молча загрузить макет без
+ * второй метки значило бы потерять ровно ту настройку, ради которой и заведено
+ * окно «Настройки боевого листка». Старый ответ сервера полей `layoutLinks`/
+ * `layoutComparison` не несёт — тогда работает прежняя проверка по списку
+ * промтов, чтобы совместимость не сломалась.
+ */
+function combatLayoutMarks(res: LayoutResponse): string {
+  const hasComparison =
+    res.layoutComparison ?? (res.layoutPrompts.includes('сравнение') || res.layoutFields.includes('сравнение'));
+  const parts = [
+    hasComparison
+      ? 'метка {{сравнение}} найдена'
+      : 'метки {{сравнение}} нет — листок в неё не подставится',
+  ];
+  if (res.layoutLinks !== undefined) {
+    parts.push(
+      res.layoutLinks
+        ? 'метка {{ссылки}} найдена'
+        : 'метки {{ссылки}} нет — список ссылок не напечатается',
+    );
+  }
+  return parts.join('; ');
 }
 
 /** Копирует метку в буфер и говорит об этом; ошибка не глотается. */

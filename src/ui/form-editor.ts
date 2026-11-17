@@ -16,31 +16,31 @@ import { errorMessage } from '../../../sbe-core/src/utils/errors';
  * Конфигуратор формы КП (раздел «⚙️ Форма КП», только admin): заголовок,
  * поля-плейсхолдеры, блоки документа и обязательные поля.
  *
- * `mode` (2026-11-08) — какой форме принадлежит редактор: `'client'` (КП) или
- * `'combat'` (боевой листок). Редактор ОДИН на оба документа: блоки,
- * подстановки и макет .docx у них одинаковой природы, и второй редактор
- * разошёлся бы с первым при первой же правке. Отличается только режим строки
- * в `offers_form` и подписи, которые показывает карточка документа.
+ * Редактор — только для КП (2026-11-17). Прежний параметр `mode` ушёл: у
+ * боевого листка своё окно настроек (`combat-settings.ts`) — промт, ссылки и
+ * макет, — а ветка `'combat'` здесь была мёртвым кодом: её никто не вызывал, и
+ * она показывала КП-группы (поля формы, блоки, окно приложения), которые на
+ * листок не влияют.
  */
-export function renderFormEditor(view: OffersView, container: HTMLElement, mode = 'client'): void {
+export function renderFormEditor(view: OffersView, container: HTMLElement): void {
   container.createDiv({ cls: 'tn-offers-muted', text: 'Загрузка формы…' });
-  void load(view, container, mode);
+  void load(view, container);
 }
 
-async function load(view: OffersView, container: HTMLElement, mode: string): Promise<void> {
+async function load(view: OffersView, container: HTMLElement): Promise<void> {
   let form: OfferForm;
   try {
-    form = await view.plugin.offersService.getForm(mode);
+    form = await view.plugin.offersService.getForm('client');
   } catch (e: unknown) {
     container.empty();
     container.createDiv({ cls: 'tn-offers-error', text: `Не удалось загрузить форму: ${errorMessage(e)}` });
     return;
   }
   container.empty();
-  render(view, container, form, mode);
+  render(view, container, form);
 }
 
-function render(view: OffersView, container: HTMLElement, form: OfferForm, mode: string): void {
+function render(view: OffersView, container: HTMLElement, form: OfferForm): void {
   const placeholders: Placeholder[] = form.placeholders.map((p) => ({ ...p }));
   const blocks = form.blocks.map((b) => ({ ...b, content: JSON.parse(JSON.stringify(b.content)) }));
   // Содержательные разделы (2026-11-14): на них ссылается метка `{ content: <id> }`.
@@ -191,7 +191,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   // возвращает). Здесь же правятся требования к согласованности разделов: сами
   // подразделы пишутся отдельными вызовами модели и друг друга не видят.
   const basePromptGroup = renderCollapsibleGroup(container, {
-    title: mode === 'combat' ? 'Базовый промт боевого листка' : 'Базовый промт документа',
+    title: 'Базовый промт документа',
     hint: basePromptInitial ? 'свой текст' : 'встроенный',
   });
   const basePromptArea = basePromptGroup.body.createEl('textarea', {
@@ -264,12 +264,9 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   });
   renderLayoutCard(view, layoutGroup.body, form, {
     onChanged: () => {
-      void load(view, container, mode);
+      void load(view, container);
     },
     onPickFile: pickLayoutFile,
-    // Режим нужен, чтобы макет боевого листка загружался в свою форму, а не
-    // подменял макет КП (2026-11-11).
-    mode,
   });
 
   const actions = container.createDiv({ cls: 'tn-offers-actions' });
@@ -279,7 +276,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   });
   const reloadBtn = actions.createEl('button', { text: '↻ Отменить правки', cls: 'tn-btn tn-btn-ghost' });
   reloadBtn.addEventListener('click', () => {
-    void load(view, container, mode);
+    void load(view, container);
   });
 
   async function save(): Promise<void> {
@@ -295,7 +292,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     }
     const payload: OfferForm = {
       ...form,
-      title: titleInput.value.trim() || (mode === 'combat' ? 'Боевой листок' : 'Коммерческое предложение'),
+      title: titleInput.value.trim() || 'Коммерческое предложение',
       placeholders,
       blocks,
       sections,
@@ -305,8 +302,8 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     };
     try {
       await view.plugin.offersService.saveForm(payload);
-      new Notice(mode === 'combat' ? 'Форма боевого листка сохранена' : 'Форма КП сохранена');
-      await load(view, container, mode);
+      new Notice('Форма КП сохранена');
+      await load(view, container);
     } catch (e: unknown) {
       new Notice(`Не удалось сохранить форму: ${errorMessage(e)}`);
     }
