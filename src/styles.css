@@ -414,23 +414,15 @@
   padding: 0 12px 12px;
 }
 
-/* Редактор групп ссылок (2026-11-14, дефект 0.10.2, пункт 4): правила
-   раскладки ссылок — настройка формы. Карточка правила компактнее обычной
-   карточки: их бывает пять и больше. */
-.tn-offers-link-groups-hint {
-  margin-bottom: 8px;
+/* Базовый промт документа (2026-11-17): текст правится в форме, поэтому поле
+   высокое и с моноширинным шрифтом — в нём инструкции и формат ответа. */
+.tn-offers-base-prompt {
+  width: 100%;
+  min-height: 220px;
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
   line-height: 1.45;
-}
-
-.tn-offers-link-group {
-  padding: 8px;
-  margin-bottom: 8px;
-}
-
-.tn-offers-link-group-label {
-  flex: 0 0 auto;
-  min-width: 140px;
-  font-size: 0.9em;
+  resize: vertical;
 }
 
 /* Редактор окна КП в приложении (2026-11-15, шаг 4). Строка окна компактнее

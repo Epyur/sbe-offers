@@ -234,7 +234,7 @@ func TestSectionFigureIsReference(t *testing.T) {
 	}
 	// В промте — только инструкция и контракт: ни base64, ни байтов картинки.
 	system, _ := sectionPromptText("Добавь рисунок", sectionCall{sub: section.Subsections[0]}, 0,
-		lc.offer, lc.cards(), lc.cards(), nil)
+		lc.offer, lc.cards(), lc.cards(), nil, "")
 	if strings.Contains(system, "base64") || strings.Contains(system, "iVBOR") {
 		t.Fatalf("в промт модели попали байты картинки")
 	}
@@ -245,19 +245,19 @@ func TestSectionFigureIsReference(t *testing.T) {
 func TestSectionCacheKeyPerSubsection(t *testing.T) {
 	intro := sectionCall{sub: ContentSubsection{ID: "intro", Instruction: "Вступление"}}
 	rebut := sectionCall{sub: ContentSubsection{ID: "rebut", Instruction: "Опровергни"}}
-	before := sectionCacheKey("proposal", intro, "1")
+	before := sectionCacheKey("proposal", intro, "1", "")
 	// Соседний подраздел изменил инструкцию (обе инструкции сменились): ключ
 	// вступления обязан остаться прежним.
 	introAgain := sectionCall{sub: ContentSubsection{ID: "intro", Instruction: "Вступление"}}
 	rebutChanged := sectionCall{sub: ContentSubsection{ID: "rebut", Instruction: "Опровергни подробнее"}}
-	if after := sectionCacheKey("proposal", introAgain, "1"); after != before {
+	if after := sectionCacheKey("proposal", introAgain, "1", ""); after != before {
 		t.Fatalf("правка соседнего подраздела сбросила вступление: %s → %s", before, after)
 	}
-	if sectionCacheKey("proposal", rebut, "1") == sectionCacheKey("proposal", rebutChanged, "1") {
+	if sectionCacheKey("proposal", rebut, "1", "") == sectionCacheKey("proposal", rebutChanged, "1", "") {
 		t.Fatal("правка собственной инструкции не сбросила кэш подраздела")
 	}
 	// Набор систем входит в ключ: добавили систему — текст пересобирается.
-	if sectionCacheKey("proposal", intro, "1") == sectionCacheKey("proposal", intro, "1+2") {
+	if sectionCacheKey("proposal", intro, "1", "") == sectionCacheKey("proposal", intro, "1+2", "") {
 		t.Fatal("смена набора систем не сбросила кэш")
 	}
 }

@@ -58,7 +58,7 @@ func (s *stubSectionCompleter) Complete(_ context.Context, system, user string, 
 func renderCombatSectionsWithForm(sheet CombatSheet, our, competitor SystemCard,
 	form OfferForm, stub *stubSectionCompleter) (string, int, int) {
 	gen, offer := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor},
-		collectOfferRefs([]SystemCard{our, competitor}))
+		collectOfferRefs([]SystemCard{our, competitor}), form.BasePrompt)
 	gen.complete = stub
 	cards := combatSectionCards([]SystemCard{our}, []SystemCard{competitor})
 	links := &layoutRuntime{numbering: newNumberingPlan(numberingAbstractDecimal)}
@@ -213,7 +213,7 @@ func TestCombatSectionsSkipEmpty(t *testing.T) {
 // Бриф листка называет стороны — иначе модель путает, чей продукт описывает.
 func TestCombatSectionBriefNamesSides(t *testing.T) {
 	_, our, competitor := combatSectionFixture()
-	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "срок службы", nil)
+	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "срок службы", nil, "")
 	for _, want := range []string{"Наш продукт:", our.Title, "Продукты конкурентов:", competitor.Title, "Не путай стороны"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("в брифе нет %q:\n%s", want, brief)
@@ -231,16 +231,16 @@ func TestCombatSectionBriefNamesSides(t *testing.T) {
 // остался бы в кэше от старой карточки — грабля 2026-11-08.
 func TestCombatSectionHandleSeesCardEdit(t *testing.T) {
 	sheet, our, competitor := combatSectionFixture()
-	before := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	before := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
 	edited := competitor
 	edited.Description = "Обновлённое описание конкурента"
-	after := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{edited}, nil)
+	after := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{edited}, nil, "")
 	if before == after {
 		t.Fatal("правка карточки конкурента не изменила отпечаток содержания: раздел отдаст старый текст")
 	}
 	rehinted := sheet
 	rehinted.FormValues = map[string]string{"hint": "новый акцент"}
-	if combatSectionHandle(rehinted, []SystemCard{our}, []SystemCard{competitor}, nil) == before {
+	if combatSectionHandle(rehinted, []SystemCard{our}, []SystemCard{competitor}, nil, "") == before {
 		t.Fatal("правка уточнения не изменила отпечаток содержания")
 	}
 	// Характеристики — тоже содержание: правка числа обязана переписать раздел,
@@ -250,7 +250,7 @@ func TestCombatSectionHandleSeesCardEdit(t *testing.T) {
 		{"Показатель", "Значение"},
 		{"Плотность", "31 ± 2"},
 	}
-	if combatSectionHandle(sheet, []SystemCard{specced}, []SystemCard{competitor}, nil) == before {
+	if combatSectionHandle(sheet, []SystemCard{specced}, []SystemCard{competitor}, nil, "") == before {
 		t.Fatal("правка характеристик карточки не изменила отпечаток содержания")
 	}
 }

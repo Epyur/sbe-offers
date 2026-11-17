@@ -674,10 +674,7 @@ func (rc renderCtx) layoutContext() layoutContext {
 		// попадают в оглавление (2026-11-14).
 		form:        rc.form,
 		sectionText: rc.sectionText,
-		// Правила группировки ссылок формы (2026-11-14, дефект 0.10.2): метка
-		// {{ссылки}} внутри блока печатает группы так же, как узел links.
-		linkGroups: formLinkGroups(rc.form),
-		report:     rc.report,
+		report:      rc.report,
 	}
 	// Сборщик картинок обязан доехать до метки системы: без него
 	// `layoutCardImageMarkup` видит `nil` и молчит, и `{{система}}` в блоке
@@ -768,7 +765,7 @@ func renderBlockContentCtx(block Block, rc renderCtx) (string, error) {
 			started = true
 			continue
 		case "links":
-			links, ok := renderLinkSection(node, rc.refs, formLinkGroups(rc.form), rc.numbering)
+			links, ok := renderLinkSection(node, rc.refs, rc.numbering)
 			if ok {
 				sb.WriteString(links)
 				started = true
@@ -911,7 +908,7 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 	// Сборщик ссылок тоже общий: метка `{{ссылки}}` внутри блока печатает
 	// настоящую гиперссылку, и её отношение нельзя потерять — документ со
 	// ссылкой на неизвестное отношение Word не открывает (2026-11-09).
-	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal), linkGroups: form.LinkGroups}
+	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal)}
 	rc := renderCtx{
 		values:        offer.FormValues,
 		service:       serviceValuesWithCards(offer, cards),
@@ -1005,8 +1002,6 @@ func renderOfferDocxWithTexts(form OfferForm, offer Offer, cards []SystemCard, i
 // отношение и Word его не открыл бы — 2026-11-09), и всё это уходит в пакет.
 func buildBodyWithLinks(body string, refs []skills.CardRef, rt *layoutRuntime, media *docxMedia) ([]byte, error) {
 	linked, linkRels := applyHyperlinks(body, refs)
-	// Порядок в списке ссылок задают правила формы (2026-11-14, дефект 0.10.2).
-	refs = skills.SortCardRefsWith(refs, rt.linkGroups)
 	for _, link := range rt.links {
 		linkRels = appendLinkOnce(linkRels, link)
 	}
@@ -1477,17 +1472,6 @@ func formFlagOn(values map[string]string, key string) bool {
 		return true
 	}
 	return false
-}
-
-// formLinkGroups — правила группировки ссылок формы (2026-11-14, дефект 0.10.2).
-//
-// Форма не передана (старые тесты, сборка без формы) — пусто, и печать берёт
-// правила по умолчанию: nil-функция здесь не ошибка вызывающего.
-func formLinkGroups(form func() OfferForm) skills.LinkGroupRules {
-	if form == nil {
-		return nil
-	}
-	return form().LinkGroups
 }
 
 // renderBriefSummary печатает сводку брифа: что известно про объект.

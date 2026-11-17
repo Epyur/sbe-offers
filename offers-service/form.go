@@ -6,17 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
-	"mailers/offers/skills"
 )
-
-// LinkGroupRules — правила группировки ссылок формы: псевдоним пакета `skills`.
-//
-// Зачем псевдоним, а не импорт типа по месту: `OfferForm` — форма ХРАНЕНИЯ и
-// передачи в браузер, и её типы собираются в одном месте. Псевдоним говорит
-// ровно это: правила живут в `skills` (там же, где печать ссылок), а форма
-// лишь носит их.
-type LinkGroupRules = skills.LinkGroupRules
 
 // Placeholder — поле формы КП, которое администратор заводит в конфигураторе.
 type Placeholder struct {
@@ -173,15 +163,19 @@ type OfferForm struct {
 	// написанная администратором руками, разделы — бриф для модели.
 	Sections       []ContentSection `json:"sections,omitempty"`
 	RequiredFields []string         `json:"requiredFields"`
-	// LinkGroups — правила группировки ссылок раздела «Ссылки» (2026-11-14,
-	// дефект 0.10.2). До этой правки раскладка ссылок по группам и их порядок
-	// были зашиты в `skills/cardrefs.go`, и поменять её можно было только
-	// правкой кода. Теперь порядок групп, их заголовки и признаки попадания
-	// задаёт администратор в этой форме; печать читает правила отсюда.
+	// BasePrompt — БАЗОВЫЙ ПРОМТ документа (2026-11-17, просьба пользователя):
+	// общая часть системного промта, которую видит модель при написании каждого
+	// подраздела. Раньше этот текст жил только в коде (`sectionAnswerContract`),
+	// и правка формулировок требовала выпуска плагина; теперь администратор
+	// правит его в форме — в том числе требования к согласованности разделов.
 	//
-	// Пусто — правила по умолчанию (`skills.DefaultLinkGroupRules`), равные
-	// прежнему поведению: старая форма печатает документы как раньше.
-	LinkGroups LinkGroupRules `json:"linkGroups,omitempty"`
+	// Пусто — встроенный текст (`sectionAnswerContract`), то есть прежнее
+	// поведение: старая форма печатает документы как раньше.
+	BasePrompt string `json:"basePrompt,omitempty"`
+	// BasePromptDefault — встроенный базовый промт (только на чтение): редактор
+	// показывает его, когда своё значение не задано, и по нему делает «вернуть
+	// базовый текст». В базу не пишется.
+	BasePromptDefault string `json:"basePromptDefault,omitempty"`
 	// Window — окно КП в приложении (2026-11-15): порядок, видимость и
 	// обязательность полей формы и зон экрана. Пусто — «как сейчас»
 	// (`effectiveWindow` строит нынешнее поведение), и старая форма не
@@ -258,10 +252,16 @@ func validateForm(f OfferForm) string {
 	if msg := validateWindow(f); msg != "" {
 		return msg
 	}
-	// Правила ссылок проверяются только если заданы: пусто — правила по
-	// умолчанию, и старая форма остаётся действительной (2026-11-14).
-	return skills.ValidateLinkGroupRules(f.LinkGroups)
+	// Базовый промт (2026-11-17): предел на всякий случай — это текст для
+	// модели, и гигантское значение съело бы окно на каждом подразделе.
+	if runes := len([]rune(f.BasePrompt)); runes > maxBasePromptRunes {
+		return "Базовый промт слишком длинный: " + itoa(runes) + " знаков, предел " + itoa(maxBasePromptRunes)
+	}
+	return ""
 }
+
+// maxBasePromptRunes — предел длины базового промта формы.
+const maxBasePromptRunes = 20000
 
 // validateSections — проверка содержательных разделов (2026-11-14).
 //
@@ -345,8 +345,9 @@ func defaultForm(mode string) OfferForm {
 		return combatDefaultForm()
 	}
 	return OfferForm{
-		Mode:  mode,
-		Title: "Коммерческое предложение",
+		Mode:              mode,
+		Title:             "Коммерческое предложение",
+		BasePromptDefault: sectionAnswerContract,
 		Placeholders: []Placeholder{
 			{ID: "supplier_name", Label: "Поставщик"},
 			{ID: "supplier_contacts", Label: "Контакты поставщика"},
@@ -376,7 +377,6 @@ func defaultForm(mode string) OfferForm {
 			{ID: "brief.why_us", Label: "Почему мы (бриф)"},
 			{ID: "brief.notes", Label: "Прочее (бриф)"},
 		},
-		LinkGroups: skills.DefaultLinkGroupRules(),
 		Blocks: []Block{
 			{
 				ID:           "cover",
@@ -480,15 +480,15 @@ func combatDefaultForm() OfferForm {
 	// макет .docx с меткой `{{сравнение}}`. Пустой список блоков честно говорит,
 	// что конфигуратор блоков здесь ни на что не влияет.
 	return OfferForm{
-		Mode:       combatFormMode,
-		Title:      "Боевой листок",
-		LinkGroups: skills.DefaultLinkGroupRules(),
+		Mode:  combatFormMode,
+		Title: "Боевой листок",
 		Placeholders: []Placeholder{
 			{ID: combatHintField, Label: "Уточнение для разбора"},
 		},
-		Blocks:         []Block{},
-		RequiredFields: []string{},
-		Sections:       combatDefaultSections(),
+		Blocks:            []Block{},
+		RequiredFields:    []string{},
+		Sections:          combatDefaultSections(),
+		BasePromptDefault: sectionAnswerContract,
 	}
 }
 
@@ -597,13 +597,13 @@ func (s *Server) loadForm(ctx context.Context, mode string) (OfferForm, error) {
 		mode = clientFormMode
 	}
 	var form OfferForm
-	var placeholders, blocks, required, sections, linkGroups, window []byte
+	var placeholders, blocks, required, sections, window []byte
 	var layoutDocx []byte
 	err := s.pool.QueryRow(ctx, `
-SELECT id, mode, title, placeholders, blocks, required_fields, sections, link_groups, window_config,
+SELECT id, mode, title, placeholders, blocks, required_fields, sections, window_config, base_prompt,
 	to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), layout_docx, layout_name
 FROM offers_form WHERE mode = $1`, mode).
-		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &sections, &linkGroups, &window,
+		Scan(&form.ID, &form.Mode, &form.Title, &placeholders, &blocks, &required, &sections, &window, &form.BasePrompt,
 			&form.UpdatedAt, &layoutDocx, &form.LayoutName)
 	if err != nil {
 		// Строки нет вовсе — форма не настроена, показываем поля по умолчанию.
@@ -639,16 +639,6 @@ FROM offers_form WHERE mode = $1`, mode).
 	// Пустые правила — законное состояние: выводим умолчание, а не пустой
 	// срез. Иначе редактор показал бы «ни одной группы», и первое же
 	// сохранение формы стёрло бы прежнее поведение печати ссылок.
-	form.LinkGroups = skills.DefaultLinkGroupRules()
-	if len(linkGroups) > 0 {
-		var loaded LinkGroupRules
-		if err := json.Unmarshal(linkGroups, &loaded); err != nil {
-			return form, err
-		}
-		if len(loaded) > 0 {
-			form.LinkGroups = loaded
-		}
-	}
 	form.HasLayout = len(layoutDocx) > 0
 	form.LayoutFields, form.LayoutPrompts = describeLayout(layoutDocx)
 	// Окно КП (2026-11-15): пусто — «как сейчас», иначе сохранённый порядок
@@ -664,6 +654,11 @@ FROM offers_form WHERE mode = $1`, mode).
 	// по умолчанию, а флаг говорит, что показ брифа никто не выбирал (2026-11-15).
 	form.WindowStored = len(form.Window) > 0
 	form.Window = effectiveWindow(form)
+	// Базовый промт (2026-11-17): своё значение администратора или встроенное.
+	// Встроенный текст отдаётся редактору отдельным полем: по нему кнопка
+	// «вернуть базовый текст» заполняет поле, не заставляя искать код.
+	form.BasePrompt = strings.TrimSpace(form.BasePrompt)
+	form.BasePromptDefault = sectionAnswerContract
 	return form, nil
 }
 
@@ -797,20 +792,6 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
 		return
 	}
-	// Правила группировки ссылок (2026-11-14, дефект 0.10.2). Пусто — пишем
-	// умолчание, а не `[]`: форма «без правил» после сохранения должна вести
-	// себя так же, как до него, а не потерять группировку ссылок.
-	linkGroups := form.LinkGroups
-	if len(linkGroups) == 0 {
-		linkGroups = skills.DefaultLinkGroupRules()
-	}
-	linkGroupsJSON, err := json.Marshal(linkGroups)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encode error"})
-		return
-	}
-	form.LinkGroups = linkGroups
-
 	// Окно КП в приложении (2026-11-15). Маршалится ВСЁ, что клиент прислал:
 	// молча не записать настройку — ровно та потеря, которую поймал сторож
 	// `sections` (класс 0.1.18). Пусто — пишем `[]`: «настройки нет» значит
@@ -837,15 +818,17 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = s.pool.Exec(r.Context(), `
-INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, sections, link_groups, window_config, updated_at)
+INSERT INTO offers_form (mode, title, placeholders, blocks, required_fields, sections, window_config, base_prompt, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
 ON CONFLICT (mode) DO UPDATE SET
 	title = EXCLUDED.title, placeholders = EXCLUDED.placeholders,
 	blocks = EXCLUDED.blocks, required_fields = EXCLUDED.required_fields,
-	sections = EXCLUDED.sections, link_groups = EXCLUDED.link_groups,
+	sections = EXCLUDED.sections,
 	window_config = EXCLUDED.window_config,
+	base_prompt = EXCLUDED.base_prompt,
 	updated_at = now()`,
-		form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required, sections, linkGroupsJSON, windowJSON)
+		form.Mode, strings.TrimSpace(form.Title), placeholders, blocks, required, sections, windowJSON,
+		strings.TrimSpace(form.BasePrompt))
 	if err != nil {
 		dbError(w, "save form", err)
 		return

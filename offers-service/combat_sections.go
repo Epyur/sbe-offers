@@ -70,7 +70,8 @@ func combatSectionCards(ourCards, competitorCards []SystemCard) []SystemCard {
 // свои, у листка это сравнение, и модель обязана знать, чей продукт описывает.
 // Люди это видят в готовом тексте («где конкурент сильнее»), поэтому путаница
 // сторон — не стилистическая мелочь.
-func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard, hint string, facts []combatFact) string {
+func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard, hint string,
+	facts []combatFact, basePrompt string) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(instruction))
 	b.WriteString("\n\nЭто боевой листок: сравнение НАШЕГО продукта с продуктами конкурентов.")
@@ -94,7 +95,9 @@ func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCa
 	// понимает, чей продукт, потом получает сведения, потом формат.
 	b.WriteString(combatFactsPrompt(facts))
 	b.WriteString("\n\n")
-	b.WriteString(sectionAnswerContract)
+	// Базовый промт — формы листка (2026-11-17), а не константа: правила
+	// формулировок и согласованности разделов администратор правит без выпуска.
+	b.WriteString(effectiveBasePrompt(basePrompt))
 	return b.String()
 }
 
@@ -115,7 +118,7 @@ func cardNames(cards []SystemCard) string {
 // `parseSectionAnswer`), поэтому сторожа конвейера разделов действуют и здесь.
 // Отличается только бриф (`brief`).
 func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
-	refs []skills.CardRef) (*sectionGen, Offer) {
+	refs []skills.CardRef, basePrompt string) (*sectionGen, Offer) {
 	offer := combatSectionOffer(sheet, ourCards, competitorCards)
 	cards := combatSectionCards(ourCards, competitorCards)
 	facts := combatFactsFromValues(sheet.FormValues)
@@ -123,17 +126,18 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 	// selection (признак набора). Разные отпечатки в них развели бы два
 	// условия свежести: карта хранится под section, а ключ подразумевает
 	// selection, и правка карточки терялась бы в кэше (грабля 2026-11-08).
-	content := combatSectionHandle(sheet, ourCards, competitorCards, facts)
+	content := combatSectionHandle(sheet, ourCards, competitorCards, facts, basePrompt)
 	return &sectionGen{
-		values:    sectionValuesFor(offer),
-		previous:  sheet.FormValues,
-		section:   content,
-		selection: combatSelectionHandle(sheet, ourCards, competitorCards, content, facts),
-		offer:     offer,
-		cards:     cards,
-		refs:      refs,
+		values:     sectionValuesFor(offer),
+		previous:   sheet.FormValues,
+		section:    content,
+		selection:  combatSelectionHandle(sheet, ourCards, competitorCards, content, facts),
+		offer:      offer,
+		cards:      cards,
+		refs:       refs,
+		basePrompt: basePrompt,
 		brief: func(instruction string, call sectionCall) string {
-			return combatSectionBrief(instruction, ourCards, competitorCards, combatHint(sheet), facts)
+			return combatSectionBrief(instruction, ourCards, competitorCards, combatHint(sheet), facts, basePrompt)
 		},
 		complete: llmCompleter{},
 	}, offer
@@ -151,10 +155,15 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 // тоже содержание листка, и правка факта обязана переписать раздел, иначе текст
 // описывал бы документы, которые с тех пор изменились.
 func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard,
-	facts []combatFact) string {
+	facts []combatFact, basePrompt string) string {
 	var b strings.Builder
 	b.WriteString("combat\x1f" + sheet.Number)
 	b.WriteString("\x1fhint\x1f" + strings.TrimSpace(combatHint(sheet)))
+	// Базовый промт входит в отпечаток содержания (2026-11-17): правка текста в
+	// форме меняет то, что модель напишет, и обязана переписать разделы.
+	if trimmed := strings.TrimSpace(basePrompt); trimmed != "" && trimmed != sectionAnswerContract {
+		b.WriteString("\x1fbase\x1f" + trimmed)
+	}
 	for _, side := range []struct {
 		name  string
 		cards []SystemCard
@@ -240,7 +249,7 @@ func (s *Server) renderCombatSections(ctx context.Context, sheet CombatSheet,
 		// умолчанию»; поэтому пусто — берём заготовку, а не молчим.
 		form.Sections = combatDefaultSections()
 	}
-	gen, offer := combatSectionGen(sheet, ourCards, competitorCards, refs)
+	gen, offer := combatSectionGen(sheet, ourCards, competitorCards, refs, form.BasePrompt)
 	cards := combatSectionCards(ourCards, competitorCards)
 	lc := combatLayoutFor(offer, cards, refs, images, links, form)
 	// Подписи схем — сквозные по документу (2026-11-17, шаг 5): один счётчик на

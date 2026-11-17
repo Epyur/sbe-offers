@@ -22,8 +22,8 @@ func TestCombatDocxHashStable(t *testing.T) {
 		CompetitorNotes: []CombatNoteRef{{NoteID: 2, Title: "PLASTFOIL"}},
 		FormValues:      map[string]string{"hint": "огнестойкость"},
 	}
-	a := combatDocxHash(sheet, []byte("layout-v1"), "v1")
-	b := combatDocxHash(sheet, []byte("layout-v1"), "v1")
+	a := combatDocxHash(sheet, []byte("layout-v1"), "v1", "")
+	b := combatDocxHash(sheet, []byte("layout-v1"), "v1", "")
 	if a != b {
 		t.Fatalf("одинаковый листок дал разные хэши: %q / %q", a, b)
 	}
@@ -37,26 +37,26 @@ func TestCombatDocxHashChanges(t *testing.T) {
 		FormValues:      map[string]string{"hint": "огнестойкость"},
 	}
 	layout := []byte("layout-v1")
-	ref := combatDocxHash(base, layout, "v1")
+	ref := combatDocxHash(base, layout, "v1", "")
 
 	addComp := base
 	addComp.CompetitorNotes = append(addComp.CompetitorNotes[:1:1],
 		CombatNoteRef{NoteID: 3, Title: "Sikaplan"})
-	if combatDocxHash(addComp, layout, "v1") == ref {
+	if combatDocxHash(addComp, layout, "v1", "") == ref {
 		t.Fatal("добавленная сторона не изменила хэш")
 	}
 
 	hint := base
 	hint.FormValues = map[string]string{"hint": "срок службы"}
-	if combatDocxHash(hint, layout, "v1") == ref {
+	if combatDocxHash(hint, layout, "v1", "") == ref {
 		t.Fatal("смена уточнения не изменила хэш")
 	}
 
-	if combatDocxHash(base, []byte("layout-v2"), "v1") == ref {
+	if combatDocxHash(base, []byte("layout-v2"), "v1", "") == ref {
 		t.Fatal("новый макет не изменил хэш")
 	}
 
-	if combatDocxHash(base, layout, "v2") == ref {
+	if combatDocxHash(base, layout, "v2", "") == ref {
 		t.Fatal("смена версии пометки не изменила хэш")
 	}
 }
@@ -73,7 +73,7 @@ func TestCombatDocxHashOrderMatters(t *testing.T) {
 		CompetitorNotes: []CombatNoteRef{{NoteID: 3, Title: "B"}, {NoteID: 2, Title: "A"}},
 		FormValues:      map[string]string{},
 	}
-	if combatDocxHash(a, nil, "v1") == combatDocxHash(b, nil, "v1") {
+	if combatDocxHash(a, nil, "v1", "") == combatDocxHash(b, nil, "v1", "") {
 		t.Fatal("порядок сторон не входит в хэш")
 	}
 }

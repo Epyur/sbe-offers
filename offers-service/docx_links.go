@@ -38,10 +38,11 @@ type renderedLink struct {
 // которые ведёт её состав (`LinkedRefs`, 2026-11-09): живой технолог просил,
 // чтобы в КП попадали документы не только систем, но и продуктов в них.
 //
-// Порядок — групповой (2026-11-10): страницы продуктов → СТО → техлисты → узлы
-// → сертификаты и прочее. Сортировка идёт ПОСЛЕ схлопывания повторов: иначе
-// первая встреченная копия адреса могла бы получить «хуже» владельца, и ссылка
-// встала бы не на своё место внутри группы.
+// Порядок — ПОРЯДОК УПОМИНАНИЯ (2026-11-17, требование пользователя): как ссылки
+// записаны в заметке, так они и печатаются. Деление на типы (страницы, СТО,
+// техлисты, узлы, сертификаты) убрано: администратор не хочет видеть в документе
+// несколько списков с заголовками. Порядок карточек — порядок предложения, внутри
+// карточки — сначала её собственные ссылки, затем ссылки материалов состава.
 func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 	if len(cards) == 0 {
 		return nil
@@ -56,69 +57,52 @@ func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 			seen[ref.URL] = true
 			out = append(out, ref)
 			if len(out) >= maxLinkRefs {
-				return skills.SortCardRefsGrouped(out)
+				return out
 			}
 		}
 	}
-	return skills.SortCardRefsGrouped(out)
+	return out
 }
 
 // cardAllRefs — все ссылки карточки: её собственные и материалы состава.
 //
-// Порядок — групповой (2026-11-10): страницы продуктов, СТО, техлисты, узлы,
-// сертификаты и прочее; внутри группы система раньше материала, у сертификатов
-// материал раньше системы. Владелец ссылки проставляется здесь: разбор строки
-// не знает, чья это карточка, а без владельца порядок внутри группы не
-// выстроить. `Refs` принадлежат системе, `LinkedRefs` — материалам состава.
+// Порядок — как в заметке (2026-11-17): `Refs` уже приходят в порядке разбора
+// раздела «Ссылки», `LinkedRefs` — в порядке состава. Никакой сортировки здесь
+// нет: порядок документа задаёт порядок упоминания, а не вид ссылки.
 func cardAllRefs(card SystemCard) []skills.CardRef {
 	all := make([]skills.CardRef, 0, len(card.Refs)+len(card.LinkedRefs))
-	all = append(all, skills.TagCardRefsOwner(card.Refs, skills.RefOwnerSystem)...)
-	all = append(all, skills.TagCardRefsOwner(card.LinkedRefs, skills.RefOwnerMaterial)...)
-	return skills.SortCardRefsGrouped(all)
+	all = append(all, card.Refs...)
+	all = append(all, card.LinkedRefs...)
+	return all
 }
 
 // renderLinkSection печатает узел `links`. Второе значение — были ли ссылки:
 // пустой раздел не печатается вовсе.
 //
-// Раздел печатается ГРУППАМИ и НУМЕРОВАННЫМ списком (2026-11-10, требование
-// пользователя). Группы и их порядок:
-//
-//  1. страницы продуктов на nav.tn.ru (сначала систем, потом материалов);
-//  2. стандарты организации (СТО);
-//  3. технические листы (сначала систем, потом материалов);
-//  4. узлы;
-//  5. сертификаты и декларации (сначала материалов, потом систем) — сюда же
-//     всё остальное.
-//
-// Нумерация в каждой группе начинается с единицы: у каждого списка свой numId
-// из плана сборки (plan.newList), и Word не продолжает счёт предыдущей группы.
-// plan == nil (печать без плана) — сквозной номер бланка, как раньше.
-func renderLinkSection(node blockNode, refs []skills.CardRef, rules skills.LinkGroupRules, plan *numberingPlan) (string, bool) {
+// ОДИН нумерованный список без подзаголовков (2026-11-17, требование
+// пользователя): деление на типы убрано, порядок — порядок упоминания в
+// заметке. Раньше было до пяти групп со своими заголовками и своей нумерацией
+// с единицы; администратор попросил этого не делать.
+func renderLinkSection(node blockNode, refs []skills.CardRef, plan *numberingPlan) (string, bool) {
 	if len(refs) == 0 {
 		return "", false
 	}
-	// Сортировка здесь, а не только в сборщике: ссылки могут прийти снаружи
-	// (renderOfferDocxFull), и порядок групп не должен зависеть от того, кто
-	// их передал. SortCardRefsGrouped не меняет вход.
-	refs = skills.SortCardRefsWith(refs, rules)
 	opts := paraOpts{Before: 12}
 	var sb strings.Builder
 	sb.WriteString(headingXMLOpts("Ссылки", node.Level, opts))
-	for _, group := range skills.GroupCardRefsWith(refs, rules) {
-		// Заголовок группы — четвёртый уровень: это подраздел внутри «Ссылок»,
-		// и он не должен попадать в оглавление как раздел документа.
-		sb.WriteString(headingXMLOpts(group.Title, linkGroupHeadingLevel, paraOpts{Before: 6}))
-		numID := styleListNumbered
-		if plan != nil {
-			numID = plan.newList()
+	numID := styleListNumbered
+	if plan != nil {
+		numID = plan.newList()
+	}
+	for _, ref := range refs {
+		if ref.URL == "" {
+			continue
 		}
-		for _, ref := range group.Refs {
-			// Видимый текст пункта — подпись, а не адрес (2026-11-09). Раньше
-			// печаталось «подпись — адрес»: адрес с параметрами занимал полстроки
-			// и выглядел как сбой вёрстки. Адрес попадает только в отношение
-			// (`applyHyperlinks`), то есть в саму ссылку, и остаётся кликабельным.
-			sb.WriteString(listItemNumXML(refDisplayText(ref), numID, paraOpts{}))
-		}
+		// Видимый текст пункта — подпись, а не адрес (2026-11-09). Раньше
+		// печаталось «подпись — адрес»: адрес с параметрами занимал полстроки
+		// и выглядел как сбой вёрстки. Адрес попадает только в отношение
+		// (`applyHyperlinks`), то есть в саму ссылку, и остаётся кликабельным.
+		sb.WriteString(listItemNumXML(refDisplayText(ref), numID, paraOpts{}))
 	}
 	if len(refs) >= maxLinkRefs {
 		sb.WriteString(paragraphAligned(

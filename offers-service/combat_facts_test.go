@@ -104,13 +104,13 @@ func TestCombatFactsRespectLimit(t *testing.T) {
 // пор изменились (класс дефекта 2026-11-08).
 func TestCombatFactsChangeSectionKey(t *testing.T) {
 	sheet, our, competitor := combatSectionFixture()
-	without := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	without := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
 
 	fact, _ := newCombatFact("файл", "смета.xlsx", "Толщина 1,5 мм")
 	withFacts := sheet
 	withFacts.FormValues = map[string]string{combatHintField: combatHint(sheet), combatFactKey(1): fact.encode()}
 	with := combatSectionHandle(withFacts, []SystemCard{our}, []SystemCard{competitor},
-		combatFactsFromValues(withFacts.FormValues))
+		combatFactsFromValues(withFacts.FormValues), "")
 	if without == with {
 		t.Fatal("добавление факта не изменило отпечаток содержания: раздел останется старым")
 	}
@@ -119,7 +119,7 @@ func TestCombatFactsChangeSectionKey(t *testing.T) {
 	editedSheet := sheet
 	editedSheet.FormValues = map[string]string{combatHintField: combatHint(sheet), combatFactKey(1): edited.encode()}
 	afterEdit := combatSectionHandle(editedSheet, []SystemCard{our}, []SystemCard{competitor},
-		combatFactsFromValues(editedSheet.FormValues))
+		combatFactsFromValues(editedSheet.FormValues), "")
 	if afterEdit == with {
 		t.Fatal("правка содержимого факта не изменила отпечаток содержания")
 	}
@@ -136,14 +136,14 @@ func TestCombatFactsChangeSectionKey(t *testing.T) {
 func TestCombatSectionBriefCarriesFacts(t *testing.T) {
 	_, our, competitor := combatSectionFixture()
 	fact, _ := newCombatFact("файл", "смета.xlsx", "Толщина у конкурента 1,2 мм")
-	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", []combatFact{fact})
+	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", []combatFact{fact}, "")
 	for _, want := range []string{"Добытые факты", "смета.xlsx", "Толщина у конкурента 1,2 мм", "по документам заказчика"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("в брифе нет %q:\n%s", want, brief)
 		}
 	}
 	// Без фактов бриф прежний — иначе у листка без ссылок промт менялся бы зря.
-	plain := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", nil)
+	plain := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", nil, "")
 	if strings.Contains(plain, "Добытые факты") {
 		t.Fatal("блок фактов появился у листка без фактов")
 	}

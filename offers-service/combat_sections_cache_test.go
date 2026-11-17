@@ -55,13 +55,13 @@ func TestCombatSectionCacheKeySeesCardEdit(t *testing.T) {
 	call := sectionCall{sub: ContentSubsection{ID: "weak", Instruction: "Сравни"}}
 	sectionID := "weakness"
 
-	genBefore, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
-	before := sectionCacheKey(sectionID, call, genBefore.selection)
+	genBefore, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
+	before := sectionCacheKey(sectionID, call, genBefore.selection, "")
 
 	edited := competitor
 	edited.Description = "Новое описание конкурента"
-	genAfter, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{edited}, nil)
-	after := sectionCacheKey(sectionID, call, genAfter.selection)
+	genAfter, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{edited}, nil, "")
+	after := sectionCacheKey(sectionID, call, genAfter.selection, "")
 	if before == after {
 		t.Fatal("правка тела карточки конкурента не изменила ключ кэша: раздел отдаст старый текст")
 	}
@@ -71,8 +71,8 @@ func TestCombatSectionCacheKeySeesCardEdit(t *testing.T) {
 	linked := competitor
 	linked.ImageKey = "photos/other.jpg"
 	linked.Refs = append(linked.Refs, skills.CardRef{URL: "https://example.com/new", Label: "Новая"})
-	genLinked, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{linked}, nil)
-	if key := sectionCacheKey(sectionID, call, genLinked.selection); key != before {
+	genLinked, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{linked}, nil, "")
+	if key := sectionCacheKey(sectionID, call, genLinked.selection, ""); key != before {
 		t.Fatal("правка ссылок/картинки карточки сломала кэш: листок будет переписываться зря")
 	}
 }
@@ -92,7 +92,7 @@ func TestCombatSectionTextComesFromCache(t *testing.T) {
 		&stubSectionCompleter{answers: map[string]string{}})
 	_ = firstCalls
 
-	gen, offer := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	gen, offer := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
 	gen.complete = once
 	cards := combatSectionCards([]SystemCard{our}, []SystemCard{competitor})
 	calls := sectionCalls(form.Sections[0], offer, cards)
@@ -107,7 +107,7 @@ func TestCombatSectionTextComesFromCache(t *testing.T) {
 	if len(gen.values) == 0 {
 		t.Fatal("текст не попал в карту кэша")
 	}
-	key := sectionCacheKey(form.Sections[0].ID, calls[0], gen.selection)
+	key := sectionCacheKey(form.Sections[0].ID, calls[0], gen.selection, "")
 	if stored := gen.values[key]; stored != text {
 		t.Fatalf("текст не сохранён под ключом кэша: %q != %q", stored, text)
 	}
@@ -116,7 +116,7 @@ func TestCombatSectionTextComesFromCache(t *testing.T) {
 // Тексты разделов сохраняются в form_values листка, стороны не трогаются.
 func TestPersistCombatSectionTextsKeepsSides(t *testing.T) {
 	sheet, our, competitor := combatSectionFixture()
-	gen, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	gen, _ := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
 	gen.mu.Lock()
 	gen.values["gen.sect.weakness.risks.insabc"] = `{"blocks":[{"kind":"paragraph","text":"Текст."}]}`
 	gen.mu.Unlock()

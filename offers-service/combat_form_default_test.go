@@ -99,7 +99,7 @@ func TestCombatDefaultPerProductRepeat(t *testing.T) {
 func TestCombatDefaultSectionsPlanCalls(t *testing.T) {
 	sheet, our, competitor := combatSectionFixture()
 	form := combatDefaultForm()
-	gen, offer := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
+	gen, offer := combatSectionGen(sheet, []SystemCard{our}, []SystemCard{competitor}, nil, "")
 	_ = gen
 	cards := combatSectionCards([]SystemCard{our}, []SystemCard{competitor})
 	total := 0

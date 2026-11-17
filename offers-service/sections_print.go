@@ -391,7 +391,7 @@ func sectionMaxWords(call sectionCall) int {
 // Карточка системы — только у вызова повторяемого подраздела: остальные видят
 // весь набор и не придумывают, что описывают.
 func sectionPromptText(instruction string, call sectionCall, maxWords int, offer Offer,
-	cards, allCards []SystemCard, refs []skills.CardRef) (string, string) {
+	cards, allCards []SystemCard, refs []skills.CardRef, basePrompt string) (string, string) {
 	if strings.TrimSpace(instruction) == "" {
 		return "", ""
 	}
@@ -402,16 +402,28 @@ func sectionPromptText(instruction string, call sectionCall, maxWords int, offer
 	if call.system != nil {
 		cards = []SystemCard{*call.system}
 	}
-	system := skills.RenderBlockSystem(sectionBriefWithContract(instruction), "", maxWords)
+	system := skills.RenderBlockSystem(sectionBriefWithContract(instruction, basePrompt), "", maxWords)
 	user := buildBlockUserPromptSelection(instruction, offer, cards, allCards, "", refs)
 	return system, user
 }
 
-// sectionBriefWithContract — бриф администратора плюс замороженный контракт
-// ответа. Контракт — один и тот же текст на все подразделы: второй его набор
-// разошёлся бы с разбором.
-func sectionBriefWithContract(instruction string) string {
-	return strings.TrimSpace(instruction) + "\n\n" + sectionAnswerContract
+// sectionBriefWithContract — бриф администратора плюс БАЗОВЫЙ ПРОМТ формы.
+//
+// Базовый промт — общая часть на все подразделы (2026-11-17): контракт ответа,
+// правила сторон и формулировок. Он правится в форме документа, а не в коде:
+// живой листок 017/2026 показал, что требования к тексту (согласованность
+// разделов, запрет называть продукты равноценными при разных значениях) меняются
+// чаще, чем печать. Пусто — встроенный текст `sectionAnswerContract`.
+func sectionBriefWithContract(instruction, basePrompt string) string {
+	return strings.TrimSpace(instruction) + "\n\n" + effectiveBasePrompt(basePrompt)
+}
+
+// effectiveBasePrompt — базовый промт формы или встроенный текст.
+func effectiveBasePrompt(basePrompt string) string {
+	if trimmed := strings.TrimSpace(basePrompt); trimmed != "" {
+		return trimmed
+	}
+	return sectionAnswerContract
 }
 
 // sectionAnswerContract — что именно должна вернуть модель.
@@ -444,7 +456,7 @@ const sectionAnswerContract = `Ответь ТОЛЬКО JSON такого ви�
 //     выбрасывает тексты соседних;
 //   - признак набора систем: текст без повтора видит весь набор, и после
 //     добавления системы он обязан пересобраться (дефект вступления 2026-11-08).
-func sectionCacheKey(sectionID string, call sectionCall, selection string) string {
+func sectionCacheKey(sectionID string, call sectionCall, selection, basePrompt string) string {
 	key := "gen.sect." + sectionID + "." + call.sub.ID
 	if instruction := strings.TrimSpace(call.sub.Instruction); instruction != "" {
 		key += ".ins" + hashShort(instruction)
@@ -454,6 +466,12 @@ func sectionCacheKey(sectionID string, call sectionCall, selection string) strin
 	}
 	if call.system != nil {
 		key += ".sys" + systemCacheHandle(*call.system)
+	}
+	// Свой базовый промт (2026-11-17) входит в ключ: правка текста в форме
+	// обязана переписать раздел. Встроенный текст не входит — иначе первая же
+	// выкладка выбросила бы кэш всех документов ради ничего.
+	if strings.TrimSpace(basePrompt) != "" && strings.TrimSpace(basePrompt) != sectionAnswerContract {
+		key += ".bp" + hashShort(basePrompt)
 	}
 	return key
 }
@@ -475,6 +493,9 @@ type sectionGen struct {
 	// у него ДВЕ стороны сравнения и контракт ответа обязан назвать роли.
 	// Правило и разбор ответа при этом те же: вторая копия разошлась бы.
 	brief func(instruction string, call sectionCall) string
+	// basePrompt — базовый промт формы (2026-11-17): общая часть на все
+	// подразделы. Пусто — встроенный `sectionAnswerContract`.
+	basePrompt string
 	// mu — запись в values: вызовы идут параллельно (sections.go), и обычная
 	// запись в карту из двух горутин роняет процесс («concurrent map writes»).
 	mu sync.Mutex
@@ -482,7 +503,7 @@ type sectionGen struct {
 
 // text отдаёт текст одного вызова: кэш, если свежий, иначе модель.
 func (g *sectionGen) text(section ContentSection, call sectionCall) string {
-	key := sectionCacheKey(section.ID, call, g.selection)
+	key := sectionCacheKey(section.ID, call, g.selection, g.basePrompt)
 	if v, ok := g.cached(key); ok {
 		return v
 	}
@@ -500,7 +521,7 @@ func (g *sectionGen) text(section ContentSection, call sectionCall) string {
 	}
 	started := time.Now()
 	system, user := sectionPromptText(call.sub.Instruction, call, call.sub.MaxWords,
-		g.offer, g.cards, g.cards, g.refs)
+		g.offer, g.cards, g.cards, g.refs, g.basePrompt)
 	if g.brief != nil {
 		system = skills.RenderBlockSystem(g.brief(call.sub.Instruction, call), "", sectionMaxWords(call))
 	}

@@ -418,15 +418,16 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 	// вызовов, но со своим кэшем (`gen.sect.…`). Генератор один на сборку —
 	// так повторная сборка внутри одного запроса не пишет модель дважды.
 	sectionGen := &sectionGen{
-		values:    sectionValuesFor(offer),
-		previous:  offer.FormValues,
-		section:   hashOfferFacts(offer),
-		selection: offerSelectionHandle(offer),
-		offer:     offer,
-		cards:     cards,
-		refs:      refs,
-		complete:  llmCompleter{},
-		report:    report,
+		values:     sectionValuesFor(offer),
+		previous:   offer.FormValues,
+		section:    hashOfferFacts(offer),
+		selection:  offerSelectionHandle(offer),
+		offer:      offer,
+		cards:      cards,
+		refs:       refs,
+		basePrompt: form.BasePrompt,
+		complete:   llmCompleter{},
+		report:     report,
 	}
 	data, err := renderLayoutDocx(layout, layoutContext{
 		values: values,

@@ -8,12 +8,6 @@ import { DescribeBlockModal, applyDescribedBlock } from './describe-block-modal'
 import { pickLayoutFile, renderLayoutCard } from './form-layout';
 import { renderSectionsEditor, SECTIONS_EDITOR_TEXTS } from './sections-editor';
 import { renderCollapsibleGroup } from './collapsible-group';
-import {
-  LINK_GROUPS_TEXTS,
-  defaultLinkGroupRules,
-  renderLinkGroupsEditor,
-  validateLinkGroupRules,
-} from './link-groups-editor';
 import { WINDOW_EDITOR_TEXTS, renderWindowEditor, type WindowEditorHandle } from './window-editor';
 import { windowForEditor, windowForSave, windowProblem, windowSummary } from './window-model';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
@@ -57,10 +51,13 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   }));
   const required = new Set(form.requiredFields);
 
-  // Правила группировки ссылок (2026-11-14, дефект 0.10.2): данные формы, не
-  // код. Пусто с сервера — умолчание, чтобы старая форма открылась со знакомым
-  // набором групп.
-  const linkGroups = (form.linkGroups ?? defaultLinkGroupRules()).map((rule) => ({ ...rule }));
+  // Базовый промт (2026-11-17): общая часть системного промта, которую видит
+  // модель при написании каждого подраздела. Раньше этот текст жил в коде, и
+  // правка формулировок требовала выпуска плагина. Сейчас — настройка формы:
+  // живой листок 017/2026 дал противоречия между подразделами, и менеджеру
+  // нужно править правила самому.
+  const basePromptInitial = (form.basePrompt ?? '').trim();
+  const basePromptDefault = (form.basePromptDefault ?? '').trim();
 
   // Группы формы (2026-11-14, дефект 0.10.2): каждая карточка — сворачиваемая
   // и по умолчанию свёрнута. Просьба пользователя. Один компонент на все
@@ -189,13 +186,32 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
     },
   });
 
-  // Группы ссылок (2026-11-14, дефект 0.10.2, пункт 4): правила раскладки
-  // ссылок в документе — настройка администратора, а не константа в коде.
-  const linkGroupsGroup = renderCollapsibleGroup(container, {
-    title: LINK_GROUPS_TEXTS.groupTitle,
-    hint: `${linkGroups.length} групп`,
+  // Базовый промт документа (2026-11-17): общая часть системного промта, которую
+  // видит модель в КАЖДОМ подразделе. Пусто — встроенный текст (кнопка ниже его
+  // возвращает). Здесь же правятся требования к согласованности разделов: сами
+  // подразделы пишутся отдельными вызовами модели и друг друга не видят.
+  const basePromptGroup = renderCollapsibleGroup(container, {
+    title: mode === 'combat' ? 'Базовый промт боевого листка' : 'Базовый промт документа',
+    hint: basePromptInitial ? 'свой текст' : 'встроенный',
   });
-  renderLinkGroupsEditor(linkGroupsGroup.body, linkGroups);
+  const basePromptArea = basePromptGroup.body.createEl('textarea', {
+    cls: 'tn-offers-input tn-offers-base-prompt',
+    attr: { rows: '14', spellcheck: 'false' },
+  });
+  basePromptArea.value = basePromptInitial || basePromptDefault;
+  basePromptGroup.body.createDiv({
+    cls: 'tn-offers-muted',
+    text:
+      'Этот текст получает модель вместе с брифом каждого подраздела: формат ответа, ' +
+      'правила сторон и формулировок. Пустое поле — встроенный текст.',
+  });
+  const basePromptReset = basePromptGroup.body.createEl('button', {
+    cls: 'tn-offers-btn',
+    text: '↩ Вернуть базовый текст',
+  });
+  basePromptReset.addEventListener('click', () => {
+    basePromptArea.value = basePromptDefault;
+  });
 
   const previewGroup = renderCollapsibleGroup(container, {
     title: 'Предпросмотр',
@@ -267,15 +283,6 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
   });
 
   async function save(): Promise<void> {
-    // Правила ссылок проверяются до запроса: пустая группа или группа с
-    // признаками на последнем месте сделала бы печать непредсказуемой, и
-    // человек должен узнать это здесь, а не по готовому документу.
-    const rulesError = validateLinkGroupRules(linkGroups);
-    if (rulesError) {
-      new Notice(`Группы ссылок: ${rulesError}`);
-      linkGroupsGroup.setOpen(true);
-      return;
-    }
     // Окно проверяется до запроса: неизвестная зона, поле-призрак или скрытое
     // обязательное отвергаются сервером, и человек должен узнать причину там,
     // где её создал, а не из общего отказа сохранения.
@@ -292,7 +299,7 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, mode:
       placeholders,
       blocks,
       sections,
-      linkGroups,
+      basePrompt: basePromptArea.value.trim(),
       window: windowToSave,
       requiredFields: Array.from(required),
     };

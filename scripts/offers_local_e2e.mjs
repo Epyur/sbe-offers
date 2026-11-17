@@ -500,44 +500,28 @@ console.log('\n4. Форма КП');
   ok('разделы снялись', (afterClear.json?.sections ?? []).length === 0,
     JSON.stringify(afterClear.json?.sections));
 
-  // Правила группировки ссылок (2026-11-14, дефект 0.10.2, пункт 4): данные
-  // формы, а не код. Проверяется хранение и порядок — то, что печать потом
-  // прочитает.
-  const groupRules = [
-    { id: 'certs', title: 'Сертификаты сначала', labelContains: ['сертификат'] },
-    { id: 'pages', title: 'Страницы', urlContains: ['/systems/'] },
-    { id: 'other', title: 'Прочее' },
-  ];
-  const savedRules = await call('PUT', '/form', {
+  // Базовый промт документа (2026-11-17): настройка формы, а не константа кода.
+  // Живой листок дал противоречия между подразделами, и правила формулировок
+  // должен править администратор.
+  const basePromptText = 'ПРАВИЛО СТЕНДА: не называй продукты равноценными, если значения различаются.';
+  const savedPrompt = await call('PUT', '/form', {
     token: ownerToken,
-    body: { ...sectionForm, sections: [], linkGroups: groupRules },
+    body: { ...sectionForm, sections: [], basePrompt: basePromptText },
   });
-  ok('форма с правилами ссылок сохраняется', savedRules.status === 200, `status ${savedRules.status}`);
-  const readRules = await call('GET', '/form', { token: ownerToken });
-  const rules = readRules.json?.linkGroups ?? [];
-  ok('правила ссылок пережили сохранение',
-    rules.length === 3 && rules[0]?.id === 'certs' && rules[2]?.title === 'Прочее',
-    JSON.stringify(rules));
-  ok('порядок групп сохранился', rules.map((r) => r.id).join(',') === 'certs,pages,other',
-    rules.map((r) => r.id).join(','));
-
-  // Последняя группа обязана быть общей: иначе ссылка, не подошедшая правилам,
-  // пропала бы из документа молча.
-  const badRules = await call('PUT', '/form', {
-    token: ownerToken,
-    body: { ...sectionForm, sections: [], linkGroups: [
-      { id: 'a', title: 'A' },
-      { id: 'b', title: 'B', labelContains: ['сто'] },
-    ] },
-  });
-  ok('последняя группа с признаками → 400', badRules.status === 400, `получили ${badRules.status}`);
-
-  // Пустые правила — законное состояние: форма читается с правилами по
-  // умолчанию, и старая форма остаётся действительной.
-  await call('PUT', '/form', { token: ownerToken, body: { ...sectionForm, sections: [], linkGroups: [] } });
-  const defaults = await call('GET', '/form', { token: ownerToken });
-  ok('пустые правила дают умолчание', (defaults.json?.linkGroups ?? []).length === 5,
-    JSON.stringify((defaults.json?.linkGroups ?? []).length));
+  ok('форма с базовым промтом сохраняется', savedPrompt.status === 200, `status ${savedPrompt.status}`);
+  const readPrompt = await call('GET', '/form', { token: ownerToken });
+  ok('базовый промт пережил сохранение',
+    (readPrompt.json?.basePrompt ?? '') === basePromptText,
+    JSON.stringify(readPrompt.json?.basePrompt ?? ''));
+  ok('встроенный базовый промт отдаётся редактору',
+    (readPrompt.json?.basePromptDefault ?? '').length > 100,
+    String((readPrompt.json?.basePromptDefault ?? '').length));
+  // Пусто — встроенный текст: старая форма ничего не теряет.
+  await call('PUT', '/form', { token: ownerToken, body: { ...sectionForm, sections: [], basePrompt: '' } });
+  const blankPrompt = await call('GET', '/form', { token: ownerToken });
+  ok('пустой базовый промт — встроенный текст',
+    (blankPrompt.json?.basePrompt ?? '') === '',
+    JSON.stringify(blankPrompt.json?.basePrompt ?? ''));
 
   // вернуть форму по умолчанию для следующих шагов
   await call('PUT', '/form', {
@@ -2351,15 +2335,18 @@ async function sectionServiceMarkers() {
     'нет таблицы характеристик');
   ok('ссылки карточки кликабельны', xml.includes('<w:hyperlink'),
     'нет ни одной гиперссылки');
-  // Раздел ссылок печатается ГРУППАМИ и НУМЕРОВАННЫМ списком (2026-11-10).
-  // Карточка 100 в заглушке несёт страницу продукта и техлист: у них разные
-  // группы, обе должны быть напечатаны, и группа страниц — раньше.
-  ok('раздел ссылок разбит на группы',
-    xml.includes('Страницы продуктов') && xml.includes('Технические листы'),
-    'нет заголовков групп ссылок');
-  ok('группа страниц продукта идёт первой',
-    xml.indexOf('Страницы продуктов') < xml.indexOf('Технические листы'),
-    'порядок групп ссылок неверен');
+  // Раздел ссылок — ОДИН нумерованный список в порядке упоминания (2026-11-17).
+  // Карточка 100 в заглушке несёт страницу продукта и техлист: в заметке
+  // страница стоит первой, значит и в документе она идёт первой, а заголовков
+  // групп («Страницы продуктов», «Технические листы») больше нет.
+  ok('раздел ссылок без деления на типы',
+    !xml.includes('Страницы продуктов') && !xml.includes('Технические листы') &&
+      !xml.includes('Сертификаты и декларации'),
+    'в документе остались заголовки групп ссылок');
+  ok('ссылки идут в порядке упоминания в заметке',
+    xml.indexOf('Страница системы') >= 0 &&
+      xml.indexOf('Страница системы') < xml.indexOf('Техлист'),
+    'порядок ссылок не совпал с заметкой');
   // Пункты ссылок нумерованные: у абзаца-ссылки есть <w:numPr> (номер ставит
   // Word по своему numId, в тексте пункта числа нет).
   {

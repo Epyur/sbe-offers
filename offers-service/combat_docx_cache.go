@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log"
 	"strings"
 )
@@ -39,17 +40,27 @@ import (
 // строкам — живая карточка конкурента (23–30 строк) теряла хвост, и модель писала
 // «не указано» на гибкость, УФ и сварной шов, которые в карточке есть. Файлы v3
 // уже собраны и лежат в кэше, поэтому версия обязана смениться ещё раз.
-const combatDocxVersion = "v4"
+//
+// v5 (2026-11-17, вечер): ссылки печатаются одним списком в порядке упоминания
+// (без групп и без ссылок конкурента), а базовый промт документа правится в
+// форме. Форма теперь входит в хэш, так что правка промта пересобирает файл;
+// версия поднята, чтобы файлы прежней печати не отдавались как свежие.
+const combatDocxVersion = "v5"
 
 // combatDocxHash — отпечаток того, из чего собирается документ листка.
 //
 // Входят: номер листка, обе стороны в порядке выбора, уточнение менеджера,
-// байты макета и версия сборки. НЕ входят тексты карточек из Базы знаний:
-// карточку правят часто, а модель на сравнение — нет, и пересборка всех листков
-// от правки одной заметки была бы накладнее, чем сборка при явном нажатии.
-// Порядок сторон — часть содержания (менеджер выстроил его сам), поэтому
-// склеивается списком, а не сортировкой.
-func combatDocxHash(sheet CombatSheet, layout []byte, version string) string {
+// байты макета, отпечаток формы (разделы и базовый промт, 2026-11-17) и версия
+// сборки. НЕ входят тексты карточек из Базы знаний: карточку правят часто, а
+// модель на сравнение — нет, и пересборка всех листков от правки одной заметки
+// была бы накладнее, чем сборка при явном нажатии. Порядок сторон — часть
+// содержания (менеджер выстроил его сам), поэтому склеивается списком, а не
+// сортировкой.
+//
+// Форма входит потому, что она задаёт СОДЕРЖАНИЕ: правка базового промта или
+// инструкции подраздела обязана пересобрать файл, а без входа в хэш кэш отдал бы
+// старый листок как свежий (та же ловушка, что с текстами карточек).
+func combatDocxHash(sheet CombatSheet, layout []byte, version, formHash string) string {
 	var b strings.Builder
 	b.WriteString(version)
 	b.WriteString("\x1f" + sheet.Number)
@@ -62,6 +73,7 @@ func combatDocxHash(sheet CombatSheet, layout []byte, version string) string {
 		b.WriteString(itoa(int(ref.NoteID)) + ":" + ref.Title + "\x1f")
 	}
 	b.WriteString("\x1fhint\x1f" + strings.TrimSpace(combatHint(sheet)))
+	b.WriteString("\x1fform\x1f" + formHash)
 	b.WriteString("\x1f" + itoa(len(layout)) + "\x1f")
 	sum := sha256.Sum256([]byte(b.String()))
 	if len(layout) > 0 {
@@ -69,6 +81,23 @@ func combatDocxHash(sheet CombatSheet, layout []byte, version string) string {
 		sum = sha256.Sum256(append(sum[:], layoutSum[:]...))
 	}
 	return hex.EncodeToString(sum[:16])
+}
+
+// combatFormFingerprint — отпечаток формы листка: разделы и базовый промт.
+//
+// Секции маршалятся как есть: в них инструкции подразделов, условия и бриф —
+// всё, что меняет текст документа. Ошибка маршалинга не роняет печать: пустой
+// отпечаток хуже свежего, но лучше отказа.
+func combatFormFingerprint(form OfferForm) string {
+	raw, err := json.Marshal(struct {
+		Base     string           `json:"base"`
+		Sections []ContentSection `json:"sections"`
+	}{Base: form.BasePrompt, Sections: form.Sections})
+	if err != nil {
+		log.Printf("форма листка: отпечаток не посчитан: %v", err)
+		return ""
+	}
+	return hashShort(string(raw))
 }
 
 // storedCombatDocx — сохранённый файл листка по хэшу.
@@ -106,7 +135,13 @@ SET hash = EXCLUDED.hash, docx = EXCLUDED.docx, updated_at = now()`,
 // содержании, только избавляет от повторной работы.
 func (s *Server) renderCombatDocxCached(ctx context.Context, layout []byte, sheet CombatSheet,
 	ourCards, competitorCards []SystemCard, images ImageSource) ([]byte, error) {
-	hash := combatDocxHash(sheet, layout, combatDocxVersion)
+	// Форма входит в хэш (2026-11-17): правка базового промта или инструкции
+	// подраздела меняет содержание файла, и кэш обязан это увидеть.
+	form, err := s.loadForm(ctx, combatFormMode)
+	if err != nil {
+		log.Printf("боевой листок %s: форма не прочитана для хэша: %v", sheet.Number, err)
+	}
+	hash := combatDocxHash(sheet, layout, combatDocxVersion, combatFormFingerprint(form))
 	if cached := s.storedCombatDocx(ctx, sheet.ID, hash); cached != nil {
 		log.Printf("боевой листок %s: файл из кэша", sheet.Number)
 		return cached, nil

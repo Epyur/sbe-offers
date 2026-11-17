@@ -71,9 +71,11 @@ func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCard
 	// (номер, дата) и связал их с карточками. Позиций у листка нет.
 	offer := combatAsOffer(sheet)
 
-	// Ссылки — из обеих сторон: страница продукта и техдокументация нужны
-	// менеджеру независимо от того, чей это продукт. Повторы по адресу убираем.
-	refs := dedupCardRefs(append(collectOfferRefs(ourCards), collectOfferRefs(competitorCards)...))
+	// Ссылки — ТОЛЬКО наши (2026-11-17, требование пользователя: «ссылки на
+	// ресурсы конкурента не приводим»). Листок — документ для заказчика, и чужие
+	// страницы/техлисты в его конце читаются как наша рекомендация. Повторы по
+	// адресу убираем.
+	refs := dedupCardRefs(collectOfferRefs(ourCards))
 
 	media := newTemplateMedia()
 	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal)}

@@ -3833,6 +3833,16 @@ components:
           type: array
           items:
             type: string
+        basePrompt:
+          type: string
+          description: >-
+            Базовый промт документа (2026-11-17): общая часть системного промта,
+            которую видит модель в каждом подразделе. Пусто — встроенный текст.
+        basePromptDefault:
+          type: string
+          description: >-
+            Встроенный базовый промт (только чтение): по нему редактор делает
+            «вернуть базовый текст». В базу не пишется.
         updatedAt:
           type: string
         hasLayout:
