@@ -16,10 +16,25 @@ export default class SbeOffersPlugin extends Plugin {
     await this.loadSettings();
     this.offersService = new OffersService(() => this.settings.apiUrl);
 
-    this.registerView(
-      OFFERS_VIEW_TYPE,
-      (leaf: WorkspaceLeaf) => new OffersView(leaf, this),
-    );
+    // Идемпотентная регистрация (2026-11-17). Живой дефект при перезагрузке
+    // плагина (HotReload): `onload` звался повторно в том же процессе при
+    // уже существующей регистрации, и Obsidian бросал
+    // «Attempting to register an existing view type "sbe-offers-view"» —
+    // плагин не поднимался. Причина — HotReload перезагружает плагин без
+    // полного `onunload` прежнего экземпляра. Проглатываем имено этот случай:
+    // повторную регистрацию того же типа второй раз не делаем. Любую другую
+    // ошибку проброса не маскируем — она должна быть видна.
+    try {
+      this.registerView(
+        OFFERS_VIEW_TYPE,
+        (leaf: WorkspaceLeaf) => new OffersView(leaf, this),
+      );
+    } catch (e: unknown) {
+      if (!/already.*registered|existing view type/i.test(errorMessage(e))) {
+        throw e;
+      }
+      console.warn('КП: вид уже зарегистрирован — повторную регистрацию пропускаю:', errorMessage(e));
+    }
 
     this.addSettingTab(new OffersSettingsTab(this.app, this));
 
@@ -36,6 +51,11 @@ export default class SbeOffersPlugin extends Plugin {
   }
 
   onunload(): void {
+    // Листья вида надо снять при выгрузке (2026-11-17). Без этого регистрация
+    // типа и листья остаются на месте, и повторный `onload` при перезагрузке
+    // плагина падал на «view type already registered». Снимаем листья СВОЕГО
+    // вида — чужие трогать нельзя; сам тип плагин отдаёт Obsidian штатно.
+    this.app.workspace.detachLeavesOfType(OFFERS_VIEW_TYPE);
     unpublishService(OFFERS_PLUGIN_ID);
   }
 
@@ -73,14 +93,15 @@ export default class SbeOffersPlugin extends Plugin {
         appName: this.manifest.name,
         version: this.manifest.version,
         summary:
-          'В приложении теперь видны ПОЛЯ ФОРМЫ: объект, срок действия, условия, ' +
-          'менеджер и любые поля, которые вы завели. Раньше их не было вовсе — это ' +
-          'был дефект, а не настройка. Поля идут ровно в том порядке, который задан ' +
-          'в «Окне КП», и сохраняются каждое своей кнопкой. Бриф больше не отдельный ' +
-          'блок: кнопка «Бриф» появилась в карточке каждого раздела — он спрашивает ' +
-          'только неотвеченное, а в конце показывает сводку, чтобы вы сами её ' +
-          'поправили. Кнопки раздела стоят в два ряда («Написать», «Выправить» / ' +
-          '«Бриф», «Принять»), кнопка «Пропустить» убрана.',
+          'КП и боевой листок собираются одинаково и настраиваются разделами. ' +
+          'Боевой листок теперь тоже пишется РАЗДЕЛАМИ — «Общее сравнение» с таблицей ' +
+          'характеристик, «Схема сравнения», «Где конкурент сильнее — и что отвечать» и ' +
+          'разбор по каждому продукту; их правит администратор в «Форме боевого листка». ' +
+          'Схемы рисуются КАРТИНКОЙ: модель отдаёт mermaid, а в документ попадает ' +
+          'рисунок с подписью «Схема N». Если схему не удалось построить — в документе ' +
+          'видна строка «Схема не отрисована: причина», а не пустое место. Смена ' +
+          'уточнения переписывает разбор. Помощник в боте умеет читать ссылки и ' +
+          'приложенные файлы и запоминать найденное у листка — это уходит в разделы.',
       });
       this.settings.lastAnnouncedVersion = this.manifest.version;
       await this.saveSettings();

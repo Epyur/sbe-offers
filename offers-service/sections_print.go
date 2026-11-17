@@ -20,6 +20,11 @@ import (
 // НИКОГДА не печатается разметкой: литерал `{"kind":"chart"}` в готовом КП —
 // это утечка разметки, а не «почти получилось».
 //
+// С 2026-11-17 (шаг 5 плана) добавлен шестой вид — `diagram`: mermaid-код,
+// который сервер растеризует в PNG (спека §7.2: `lang` только `"mermaid"`,
+// SVG не поддерживается). Ошибка рендера печатается ВИДИМОЙ строкой, а не
+// молчанием (§9.2): пустое место менеджер прочитает как недоделанный документ.
+//
 // Оформление — из макета: заголовки идут стилем заголовка макета с outlineLvl,
 // абзацы — стилем Normal с выравниванием по обоим краям, списки — нумерацией
 // макета, таблицы — настоящим `<w:tbl>` того же вида, что печатают позиции,
@@ -39,6 +44,11 @@ type sectionBlock struct {
 	Rows    [][]string `json:"rows,omitempty"`
 	Of      string     `json:"of,omitempty"`
 	Index   int        `json:"index,omitempty"`
+	// Lang / Code — только у вида `diagram` (2026-11-17, шаг 5). Lang моделей
+	// обязан быть `mermaid`; Code — mermaid-текст, который сервер растеризует
+	// в PNG. Схема приходит КОДОМ, а не байтами: модель картинок не видит.
+	Lang string `json:"lang,omitempty"`
+	Code string `json:"code,omitempty"`
 }
 
 // sectionAnswer — ответ модели на один подраздел.
@@ -49,6 +59,7 @@ type sectionAnswer struct {
 // sectionBlockKinds — разрешённые виды. Всё прочее выбрасывается.
 var sectionBlockKinds = map[string]bool{
 	"heading": true, "paragraph": true, "list": true, "table": true, "figure": true,
+	"diagram": true,
 }
 
 // parseSectionAnswer разбирает ответ модели терпимо, как layoutAnswer: модель
@@ -122,12 +133,23 @@ func blockIsEmpty(block sectionBlock) bool {
 		return len(block.Rows) == 0
 	case "figure":
 		return block.Index <= 0
+	case "diagram":
+		return strings.TrimSpace(block.Code) == ""
 	}
 	return true
 }
 
 // printSectionAnswer печатает разобранный ответ через конструкции макета.
+//
+// Контекст печати берёт счётчик схем документа; его нет — свой (см.
+// sectionDiagramCounter). Так подпись «Схема N» сквозная по документу, а не
+// внутри подраздела (спека §9.2: «нумерация без двойного «Схема N»»).
 func printSectionAnswer(answer sectionAnswer, lc layoutContext) string {
+	counter := lc.sectionNumbering
+	if counter == nil {
+		counter = &sectionDiagramCounter{}
+	}
+	lc.sectionNumbering = counter
 	var sb strings.Builder
 	for _, block := range answer.Blocks {
 		sb.WriteString(printSectionBlock(block, lc))
@@ -148,6 +170,8 @@ func printSectionBlock(block sectionBlock, lc layoutContext) string {
 		return sectionTableXML(block)
 	case "figure":
 		return sectionFigureXML(block, lc)
+	case "diagram":
+		return sectionDiagramXML(block, lc)
 	}
 	return ""
 }
@@ -311,17 +335,26 @@ func sectionBriefWithContract(instruction string) string {
 }
 
 // sectionAnswerContract — что именно должна вернуть модель.
+//
+// Про `diagram` (2026-11-17, шаг 5): схему модель просит рисовать ТОЛЬКО когда
+// бриф прямо говорит «схема» или «диаграмма»; для сравнения характеристик —
+// таблица. `lang` — только `mermaid`, SVG и прочие языки блок выбрасывает.
 const sectionAnswerContract = `Ответь ТОЛЬКО JSON такого вида, без пояснений вокруг:
 {"blocks":[
  {"kind":"heading","level":2,"text":"…"},
  {"kind":"paragraph","text":"…"},
  {"kind":"list","ordered":false,"items":["…","…"]},
  {"kind":"table","caption":"Таблица 1 — …","rows":[["шапка","шапка"],["…","…"]]},
- {"kind":"figure","of":"system","index":1,"caption":"Рисунок 1 — …"}
+ {"kind":"figure","of":"system","index":1,"caption":"Рисунок 1 — …"},
+ {"kind":"diagram","lang":"mermaid","code":"flowchart TD; A-->B","caption":"Схема 1 — …"}
 ]}
-Разрешены только эти пять видов блоков. Первая строка таблицы — её шапка.
+Разрешены только эти шесть видов блоков. Первая строка таблицы — её шапка.
 Рисунок — ссылка на картинку из КП (of: system или material, index — номер),
-адреса и картинки не придумывай. Никакого Markdown и никакой разметки — только JSON.`
+адреса и картинки не придумывай.
+Схему (diagram) рисуй ТОЛЬКО если в брифе прямо сказано «схема» или «диаграмма»;
+для сравнения характеристик предпочитай таблицу. В diagram поле lang — только
+"mermaid", а code — код mermaid (flowchart, graph и т.п.), без Markdown.
+Никакого Markdown и никакой разметки — только JSON.`
 
 // sectionCacheKey — ключ кэша текста одного вызова.
 //

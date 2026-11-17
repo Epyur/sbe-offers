@@ -113,11 +113,35 @@ func TestCombatDefaultSectionsPlanCalls(t *testing.T) {
 			}
 		}
 	}
-	// overview + specs + risks = 3, плюс повтор по двум продуктам = 2.
-	if total != 5 {
-		t.Fatalf("план вызовов заготовки — %d, ожидалось 5", total)
+	// overview + specs + diagram + risks = 4, плюс повтор по двум продуктам = 2.
+	if total != 6 {
+		t.Fatalf("план вызовов заготовки — %d, ожидалось 6", total)
 	}
 	if repeated != 2 {
 		t.Fatalf("повтор по продуктам дал %d вызовов, ожидалось 2", repeated)
+	}
+}
+
+// Схема сравнения есть в заготовке (2026-11-17, шаг 6 плана): вид блока
+// `diagram` появился шагом 5, и заготовка обязана его использовать — иначе
+// администратору неоткуда узнать, что схемы в листке поддерживаются.
+func TestCombatDefaultHasDiagramSection(t *testing.T) {
+	var found *ContentSubsection
+	for _, section := range combatDefaultForm().Sections {
+		for i := range section.Subsections {
+			if section.ID == "scheme" || strings.Contains(strings.ToLower(section.Subsections[i].Instruction), "схему") {
+				found = &section.Subsections[i]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("в заготовке нет подраздела со схемой (diagram)")
+	}
+	lower := strings.ToLower(found.Instruction)
+	if !strings.Contains(lower, "схем") {
+		t.Fatalf("инструкция схемы не просит схему: %q", found.Instruction)
+	}
+	if !strings.Contains(lower, "mermaid") {
+		t.Fatalf("инструкция схемы не называет mermaid (единственный поддерживаемый язык): %q", found.Instruction)
 	}
 }

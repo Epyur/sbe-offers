@@ -139,6 +139,31 @@ async function call(method, path, { token, body, headers = {} } = {}) {
 
 const ownerToken = makeJwt('owner@tn.ru');
 
+/**
+ * Список имён записей zip по центральному каталогу (2026-11-17, шаг 6 плана).
+ *
+ * `unzipEntrySafe` отдаёт СОДЕРЖИМОЕ одной записи по имени, а проверить «картинка
+ * схемы действительно лежит в пакете» можно только по списку имён. Читаем
+ * центральный каталог (сигнатура `PK\x01\x02`): имя записи идёт после
+ * фиксированной части заголовка, длина имени — в поле nameLen.
+ */
+function unzipNamesList(buf) {
+  const names = [];
+  const sig = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  let pos = buf.indexOf(sig);
+  while (pos >= 0 && pos + 46 <= buf.length) {
+    // В центральном заголовке: nameLen @28, extraLen @30, commentLen @32.
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const nameStart = pos + 46;
+    if (nameStart + nameLen > buf.length) break;
+    names.push(buf.subarray(nameStart, nameStart + nameLen).toString('utf8'));
+    pos = buf.indexOf(sig, nameStart + nameLen + extraLen + commentLen);
+  }
+  return names;
+}
+
 /** Читает одну запись zip по имени; пусто — записи нет или архив битый. */
 function unzipEntrySafe(buf, name) {
   // Central directory не нужен: сервис пишет записи подряд, и первое
@@ -2604,6 +2629,23 @@ async function sectionCombat() {
       combatXml.includes('Наш продукт') && combatXml.includes('Продукты конкурентов'));
     ok('в боевом листке нет незаполненных плейсхолдеров',
       !combatXml.includes('{{') && !combatXml.includes('}}'));
+    // Схема сравнения (2026-11-17, шаг 6 плана): заготовка раздела «Схема
+    // сравнения» просит mermaid-диаграмму, llm-stub отвечает блоком `diagram`,
+    // agent-stub растеризует её в PNG. В готовом файле схема обязана быть
+    // НАСТОЯЩЕЙ картинкой (wp:inline) с подписью «Схема N — …», а при отказе
+    // рендера — видимой строкой «Схема не отрисована», а не пустым местом.
+    // Одно из двух обязано быть: «ни картинки, ни строки» — дефект.
+    const hasDrawing = combatXml.includes('<w:drawing>') && combatXml.includes('<wp:inline');
+    const hasCaption = /Схема \d+ —/.test(combatXml);
+    const hasFallback = combatXml.includes('[Схема не отрисована:');
+    ok('в листке схема — картинка с подписью, а не пустота',
+      (hasDrawing && hasCaption) || hasFallback,
+      `drawing=${hasDrawing} caption=${hasCaption} fallback=${hasFallback}`);
+    // Медиа схемы дошла до пакета вместе с телом (иначе Word не покажет картинку).
+    if (hasDrawing) {
+      const mediaNames = unzipNamesList(combatDocx).filter((n) => n.startsWith('word/media/offerimg'));
+      ok('картинка схемы добавлена в пакет листка', mediaNames.length > 0, mediaNames.join(', '));
+    }
   }
 
   // Второй раз тот же файл (2026-11-12): листок не пересобирается, файл берётся

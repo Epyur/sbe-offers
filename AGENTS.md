@@ -30,9 +30,39 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.3** — ready 2026-11-16. Fields of the offer form are
-rendered in the Mini App at last, the brief moved into each section card, and the
-`brief` window zone is gone.
+Current version = **0.11.4** — ready 2026-11-17. The combat sheet is assembled from
+sections like the offer, mermaid diagrams print as pictures with a visible fallback,
+and the bot assistant reads links and attached files.
+
+> **0.11.4 (2026-11-17) — sections in the combat sheet, diagrams, agent file/link
+> reading.** Three steps of the 2026-11-16 plan landed on `backend` and are released
+> as 0.11.4. **(1) Combat sheet on sections** (steps 2a/2b/6): the sheet prints the
+> `mode='combat'` form's content sections through the same pipeline as the offer
+> (`combat_sections.go`), with per-section text cached in the sheet's own
+> `form_values` (`gen.sect.*` + `gen.section`); the default form now has five
+> sections — «Общее сравнение» (with a characteristics TABLE), «Схема сравнения»
+> (mermaid diagram), «Где конкурент сильнее — и что отвечать», «По каждому
+> продукту» (`repeat: systems`). The section brief now carries the manager's
+> `hint` (found by the stand: without it changing the hint rebuilt the file but left
+> the text unchanged). **(2) Diagram blocks** (step 5): the frozen `{blocks:[…]}`
+> contract has a sixth kind `{"kind":"diagram","lang":"mermaid","code":…,
+> "caption":…}`; `sections_print.go` prints it via `sections_diagram.go` —
+> `agent-service` `Render` → PNG → `docxMedia.add` (`wp:inline`), caption «Схема N»
+> numbered by a document-wide `sectionDiagramCounter`, width ≤16 cm / height by PNG
+> proportion (capped at 20 cm). `lang` other than `mermaid` is DROPPED with a log
+> (spec §7.2 — no SVG); a failed render prints a VISIBLE «[Схема не отрисована:
+> причина]» (§9.2), not silence. `docxMedia.register` is now mutex-guarded (sections
+> print in parallel goroutines). `combatDocxVersion` bumped v1→v2 (the sheet's look
+> changed). **(3) Agent reads files/links** (steps 1/3/4/3e): `fetch_url` and
+> `parse_file` tools via the `agent-service` client, `remember_sheet_fact` stores what
+> was read in that turn under the sheet — 18 tools total. Also fixed a
+> plugin-lifecycle defect: `onload` re-registering the view on HotReload threw
+> «existing view type»; `onunload` now detaches the leaves and `registerView` is
+> idempotent. Checks: `gofmt`/`go vet`/`go test -count=1 ./...` green, OpenAPI
+> 121/121, plugin `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
+> `check_marker_registry` OK / `check_sections_conditions` 16/16, stand **575/0**.
+> **Not verified:** live mermaid render (stand returns a 1×1 PNG), a live sheet under
+> a real model.
 
 > **Read before touching the offer screen:** the screen is built in ONE pass over
 > the window (`screenItems` in `offers-app/src/window.ts`) — zones AND form fields,

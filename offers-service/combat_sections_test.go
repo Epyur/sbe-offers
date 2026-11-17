@@ -174,11 +174,14 @@ func TestCombatSectionsSkipEmpty(t *testing.T) {
 // Бриф листка называет стороны — иначе модель путает, чей продукт описывает.
 func TestCombatSectionBriefNamesSides(t *testing.T) {
 	_, our, competitor := combatSectionFixture()
-	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, nil)
+	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "срок службы", nil)
 	for _, want := range []string{"Наш продукт:", our.Title, "Продукты конкурентов:", competitor.Title, "Не путай стороны"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("в брифе нет %q:\n%s", want, brief)
 		}
+	}
+	if !strings.Contains(brief, "срок службы") {
+		t.Fatalf("бриф раздела не несёт уточнения менеджера:\n%s", brief)
 	}
 	if !strings.Contains(brief, `"blocks"`) {
 		t.Fatal("в брифе нет замороженного контракта ответа")

@@ -136,14 +136,14 @@ func TestCombatFactsChangeSectionKey(t *testing.T) {
 func TestCombatSectionBriefCarriesFacts(t *testing.T) {
 	_, our, competitor := combatSectionFixture()
 	fact, _ := newCombatFact("файл", "смета.xlsx", "Толщина у конкурента 1,2 мм")
-	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, []combatFact{fact})
+	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", []combatFact{fact})
 	for _, want := range []string{"Добытые факты", "смета.xlsx", "Толщина у конкурента 1,2 мм", "по документам заказчика"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("в брифе нет %q:\n%s", want, brief)
 		}
 	}
 	// Без фактов бриф прежний — иначе у листка без ссылок промт менялся бы зря.
-	plain := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, nil)
+	plain := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, "", nil)
 	if strings.Contains(plain, "Добытые факты") {
 		t.Fatal("блок фактов появился у листка без фактов")
 	}

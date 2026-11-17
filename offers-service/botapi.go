@@ -458,6 +458,9 @@ func (s *Server) renderLayoutOffer(r *http.Request, layout []byte, form OfferFor
 		// (2026-11-14). Вызывается параллельно — writer один на сборку.
 		sectionText: sectionGen.text,
 		report:      report,
+		// Схемы разделов нумеруются сквозным счётчиком документа (2026-11-17,
+		// шаг 5): один указатель на всю печать, а не с единицы в каждом разделе.
+		sectionNumbering: &sectionDiagramCounter{},
 	})
 	if err != nil {
 		return nil, err

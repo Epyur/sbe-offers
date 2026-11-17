@@ -159,6 +159,11 @@ func renderContentSection(sectionID string, lc layoutContext, row layoutServiceR
 	// Списки заводятся ДО печати: подраздел обязан ссылаться на список своего
 	// раздела, а порядок ссылок не зависит от того, какой подраздел что печатал.
 	titleList, subsectionLists := nums.listsFor(numberTitles)
+	// Подписи схем нумеруются сквозным счётчиком документа (2026-11-17, шаг 5):
+	// один указатель на весь layoutContext.
+	if lc.sectionNumbering == nil {
+		lc.sectionNumbering = &sectionDiagramCounter{}
+	}
 	// Порядок регистрации заголовков в оглавлении — порядок ДОКУМЕНТА
 	// (2026-11-14). Заголовок раздела печатается первым, поэтому и закладка
 	// заводится первой: иначе пересборка оглавления шла бы в порядке вызовов,

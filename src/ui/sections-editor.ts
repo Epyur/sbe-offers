@@ -49,6 +49,13 @@ export const SECTIONS_EDITOR_TEXTS = {
   maxWords: 'Предел слов',
   previewTitle: 'Предпросмотр рамки (модель не вызывается)',
   previewSkip: 'не попадёт — условие не выполнено',
+  // Схема в листке (2026-11-17, шаг 6 плана): подраздел, чья инструкция просит
+  // схему, получает в предпросмотре заглушку «Схема». Это подсказка, что в
+  // документе будет картинка (mermaid → PNG), а не текст: администратору не
+  // нужно гадать, куда денется диаграмма.
+  previewDiagram: 'Схема (mermaid → картинка в документе)',
+  diagramHint:
+    'Схему рисует модель по инструкции подраздела (блок diagram, lang = mermaid). Печатается картинкой с подписью «Схема N». Если схема не отрисовалась — в документе видна строка «Схема не отрисована: причина», а не пустое место.',
   copyMarker: 'Скопировать метку { content: … }',
   addedSection: 'Раздел добавлен — настройте подразделы и сохраните форму',
   copied: 'Метка скопирована',
@@ -354,7 +361,25 @@ function renderFramePreview(card: HTMLElement, section: ContentSection, deps: Se
     const repeatNote = sub.repeat === 'systems' ? ' · по каждой системе' : '';
     box.createSpan({ cls: 'tn-offers-frame-sub-title', text: sub.title || '(без заголовка)' });
     box.createSpan({ cls: 'tn-offers-muted', text: ` (${conditionWords(sub.condition)}${repeatNote})` });
+    // Подраздел, чья инструкция просит схему, показывает заглушку «Схема»:
+    // это подсказка, что в документе будет картинка, а не текст (шаг 6).
+    if (sectionAsksForDiagram(sub)) {
+      box.createDiv({ cls: 'tn-offers-frame-diagram', text: `▭ ${SECTIONS_EDITOR_TEXTS.previewDiagram}` });
+    }
   }
+}
+
+/**
+ * sectionAsksForDiagram — просит ли подраздел схему.
+ *
+ * Правило одно и на предпросмотр, и на справку: схему модель рисует, только
+ * если инструкция это прямо просит (server-side `sectionAnswerContract` §4.3).
+ * Проверяется по слову «схем»/«diagram»/«mermaid» без регистра. Это эвристика
+ * предпросмотра, а не решение печати: настоящий вид решает ответ модели.
+ */
+function sectionAsksForDiagram(sub: ContentSubsection): boolean {
+  const lower = (sub.instruction || '').toLowerCase();
+  return lower.includes('схем') || lower.includes('диаграмм') || lower.includes('diagram') || lower.includes('mermaid');
 }
 
 /**

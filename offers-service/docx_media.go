@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"sync"
 )
 
 // Вставка изображений в DOCX (2026-10-29).
@@ -133,6 +134,10 @@ type docxMedia struct {
 	used    map[int]bool
 	images  []docxImagePart
 	nextRel int
+	// mu — защита register: раздел листка рисует схемы из параллельных
+	// горутин (2026-11-17, шаг 5). Один замок на сборщик; used и images
+	// меняются только под ним.
+	mu sync.Mutex
 }
 
 // newDocxMedia создаёт сборщик по текущему набору частей шаблона.
@@ -163,10 +168,17 @@ func (m *docxMedia) addAnchored(data []byte, ext, contentType string, cx, cy int
 }
 
 // register кладёт картинку в пакет и выдаёт её связь и id.
+//
+// Под замком (2026-11-17, шаг 5): раздел листка рисует схемы из горутин
+// (подразделы печатаются параллельно, sections.go), и обычная запись в срез
+// images из двух горутин — «concurrent map writes» того же класса: картинка
+// теряется или номер связи повторяется. Mutex здесь один на весь сборщик.
 func (m *docxMedia) register(data []byte, ext, contentType string) (docxImagePart, bool) {
 	if len(data) == 0 {
 		return docxImagePart{}, false
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.nextRel++
 	ids := nextDrawingIDs(m.used, 1)
 	img := docxImagePart{

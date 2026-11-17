@@ -70,7 +70,7 @@ func combatSectionCards(ourCards, competitorCards []SystemCard) []SystemCard {
 // свои, у листка это сравнение, и модель обязана знать, чей продукт описывает.
 // Люди это видят в готовом тексте («где конкурент сильнее»), поэтому путаница
 // сторон — не стилистическая мелочь.
-func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard, facts []combatFact) string {
+func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard, hint string, facts []combatFact) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(instruction))
 	b.WriteString("\n\nЭто боевой листок: сравнение НАШЕГО продукта с продуктами конкурентов.")
@@ -81,6 +81,15 @@ func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCa
 		b.WriteString("\nПродукты конкурентов: " + names + ".")
 	}
 	b.WriteString("\nНе путай стороны: наш продукт — тот, что предлагаем мы, конкуренты — чужие.")
+	// Уточнение менеджера — акцент разбора (поле `hint` листка). Оно уже входит
+	// в отпечаток содержания (`combatSectionHandle`) и в хэш DOCX, но в бриф его
+	// раньше не клали: пока разделы на стенде не печатались, это было не видно,
+	// а живой листок писал бы разбор БЕЗ учёта уточнения — против прямого
+	// требования пользователя («акцент на…»). Модель обязана его видеть, иначе
+	// смена уточнения пересобирает файл, но текст остаётся прежним.
+	if trimmed := strings.TrimSpace(hint); trimmed != "" {
+		b.WriteString("\nУточнение менеджера (чему уделить внимание): " + trimmed + ".")
+	}
 	// Добытые факты (шаг 3e) — после ролей и до контракта ответа: модель сперва
 	// понимает, чей продукт, потом получает сведения, потом формат.
 	b.WriteString(combatFactsPrompt(facts))
@@ -124,7 +133,7 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 		cards:     cards,
 		refs:      refs,
 		brief: func(instruction string, call sectionCall) string {
-			return combatSectionBrief(instruction, ourCards, competitorCards, facts)
+			return combatSectionBrief(instruction, ourCards, competitorCards, combatHint(sheet), facts)
 		},
 		complete: llmCompleter{},
 	}, offer
@@ -234,6 +243,9 @@ func (s *Server) renderCombatSections(ctx context.Context, sheet CombatSheet,
 	gen, offer := combatSectionGen(sheet, ourCards, competitorCards, refs)
 	cards := combatSectionCards(ourCards, competitorCards)
 	lc := combatLayoutFor(offer, cards, refs, images, links, form)
+	// Подписи схем — сквозные по документу (2026-11-17, шаг 5): один счётчик на
+	// всю печать листка, а не с единицы в каждом разделе.
+	lc.sectionNumbering = &sectionDiagramCounter{}
 
 	var printed strings.Builder
 	for _, section := range form.Sections {
