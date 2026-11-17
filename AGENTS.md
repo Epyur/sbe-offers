@@ -143,8 +143,8 @@ form setting, card characteristics in the prompt, one link list in mention order
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `f226a05` (code), `main` `e991975`
-(release slice of 0.11.4; `offers-service/`, `offers-bot/`, `offers-app/` live on
+Code heads: `backend` `5e8b56d` (code), `main` `9c8ae86`
+(release slice of 0.11.6; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -1107,6 +1107,13 @@ docker restart offers-local-app
 Before a stand run, drop the systems cache — it hides `kb-stub` edits:
 `docker exec offers-local-db psql -U offers -d offers -c "delete from
 offers_context where mode='systems'"` and restart `offers-local-kb-stub`.
+
+**`git archive` on Windows applies `core.autocrlf`** (2026-11-17): the first
+deploy tar brought CRLF into 16 text files (go.mod, go.sum, openapi.yaml,
+swagger assets, Dockerfile) and the server ended with `CR_TEXT=16`. Build the
+archive with `git -c core.autocrlf=false archive …` — then `md5sum` matches and
+only binaries carry `\r`. The reverse trap (archive LF against a CRLF deployed
+copy — “all files differ”) is in the same family.
 
 **Moving files to the server: compare md5 AFTER normalising line endings.**
 Git checks out `.ts` as CRLF on Windows and LF on the server; the content is
