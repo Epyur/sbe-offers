@@ -239,8 +239,10 @@ func (c SystemCard) Empty() bool {
 //   - шапка таблицы не печатается — это подписи колонок, а не факт (узнаём по
 //     словам «показатель», «ед. изм.», «значение», «характеристика»…);
 //   - пустые ячейки пропускаются, остальные склеиваются через « — »;
-//   - строки режутся по SpecsLineLimit, число строк — SpecsRowsForPrompt:
-//     модели нужен класс продукта, а не сорок строк размеров и толщин.
+//   - строки режутся по SpecsLineLimit, а весь набор — по SpecsTotalLimit:
+//     предел по ЧИСЛУ строк обрезал хвост живой карточки (23–30 строк) и модель
+//     писала «не указано» там, где значение в карточке есть (016/2026: гибкость,
+//     УФ, сварной шов у конкурентов стояли за 15-й строкой).
 func SpecsPromptLines(rows [][]string) []string {
 	if len(rows) == 0 {
 		return nil
@@ -249,9 +251,10 @@ func SpecsPromptLines(rows [][]string) []string {
 	if specsRowIsHeader(rows[0]) {
 		start = 1
 	}
-	out := make([]string, 0, min(len(rows)-start, SpecsRowsForPrompt))
+	out := make([]string, 0, len(rows)-start)
+	used := 0
 	for _, row := range rows[start:] {
-		if len(out) >= SpecsRowsForPrompt {
+		if len(out) >= SpecsRowsForPrompt || used >= SpecsTotalLimit {
 			break
 		}
 		cells := make([]string, 0, len(row))
@@ -267,7 +270,14 @@ func SpecsPromptLines(rows [][]string) []string {
 		if line == "" {
 			continue
 		}
-		out = append(out, TrimPromptLine(line, SpecsLineLimit))
+		line = TrimPromptLine(line, SpecsLineLimit)
+		// Хотя бы одна строка попадает всегда: пустой блок характеристик врал бы
+		// сильнее, чем длинная строка.
+		if len(out) > 0 && used+len([]rune(line)) > SpecsTotalLimit {
+			break
+		}
+		out = append(out, line)
+		used += len([]rune(line))
 	}
 	if len(out) == 0 {
 		return nil
@@ -275,8 +285,14 @@ func SpecsPromptLines(rows [][]string) []string {
 	return out
 }
 
-// SpecsRowsForPrompt — сколько строк характеристик отдавать модели.
-const SpecsRowsForPrompt = 15
+// SpecsRowsForPrompt — предохранитель от таблицы на сотни строк. По числу строк
+// НЕ режем живое: в карточках 15–30 строк характеристик, и обрезка по 15 уже
+// давала ложные «не указано».
+const SpecsRowsForPrompt = 60
+
+// SpecsTotalLimit — сколько знаков характеристик отдавать на одну карточку.
+// При реальном размере строк (≈170 знаков) это все 30 строк таблицы.
+const SpecsTotalLimit = 6000
 
 // SpecsLineLimit — предел длины одной строки характеристики в промпте.
 //

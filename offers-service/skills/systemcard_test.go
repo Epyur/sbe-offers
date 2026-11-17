@@ -213,14 +213,23 @@ func TestSystemCardPromptTextIncludesSpecs(t *testing.T) {
 	}
 }
 
-// Границы строк характеристик: предел числа строк и длины, пустые ячейки.
+// Границы строк характеристик: предохранители от гигантской таблицы, но НЕ
+// обрезка живых карточек в 15 строк (это давало ложные «не указано», 016/2026).
 func TestSpecsPromptLines(t *testing.T) {
 	rows := [][]string{{"Показатель", "Значение"}}
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 80; i++ {
 		rows = append(rows, []string{"П" + strings.Repeat("x", i%3), "1"})
 	}
 	if got := len(SpecsPromptLines(rows)); got != SpecsRowsForPrompt {
 		t.Fatalf("строк характеристик: %d, ожидалось %d", got, SpecsRowsForPrompt)
+	}
+	// Живая карточка (23–30 строк) обязана попасть в промпт целиком.
+	live := [][]string{{"Показатель", "Ед. изм.", "Значение"}}
+	for i := 0; i < 30; i++ {
+		live = append(live, []string{"Показатель " + strings.Repeat("я", 10), "ед", "значение"})
+	}
+	if got := len(SpecsPromptLines(live)); got != 30 {
+		t.Fatalf("живая карточка обрезана: %d строк из 30", got)
 	}
 	long := [][]string{
 		{"Показатель", "Значение"},
@@ -232,6 +241,18 @@ func TestSpecsPromptLines(t *testing.T) {
 	}
 	if runes := []rune(lines[0]); len(runes) > SpecsLineLimit+1 {
 		t.Fatalf("строка не обрезана: %d рун", len(runes))
+	}
+	// Предел по знакам: набор длинных строк не должен раздувать промпт.
+	fat := [][]string{{"Показатель", "Значение"}}
+	for i := 0; i < 60; i++ {
+		fat = append(fat, []string{strings.Repeat("ш", 200), strings.Repeat("щ", 200)})
+	}
+	total := 0
+	for _, line := range SpecsPromptLines(fat) {
+		total += len([]rune(line))
+	}
+	if total > SpecsTotalLimit+SpecsLineLimit {
+		t.Fatalf("предел знаков не работает: %d", total)
 	}
 	if got := SpecsPromptLines(nil); got != nil {
 		t.Fatalf("пустая таблица должна давать nil: %v", got)
