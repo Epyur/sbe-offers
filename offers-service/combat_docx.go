@@ -98,7 +98,14 @@ func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCard
 	// Сравнение: сначала разделы формы листка (настраиваемые подразделы), а если
 	// их нет или они пусты — прежний вид. Ошибка модели в разделе не гасит
 	// документ: перечень продуктов уже есть, и запасной вид тоже.
-	if sections, ok := s.renderCombatSections(ctx, sheet, ourCards, competitorCards, refs, images, media, links); ok {
+	//
+	// true — разделы напечатаны; false — запасной вид (карточки).
+	//
+	// Почему пример в конце, а не «вместо»: пример обязан пройти тот же путь,
+	// что и разделы, иначе кэш и печать картинок в нём могут разойтись (сборки в
+	// двух местах). Заголовок «Сравнение» ставит он же — у разделов своего нет.
+	sections, ok := s.renderCombatSections(ctx, sheet, ourCards, competitorCards, refs, images, media, links)
+	if ok {
 		sb.WriteString(sections)
 	} else {
 		sb.WriteString(renderCombatComparison(rc, sheet, ourCards, competitorCards))

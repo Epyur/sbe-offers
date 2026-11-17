@@ -106,11 +106,16 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 	refs []skills.CardRef) (*sectionGen, Offer) {
 	offer := combatSectionOffer(sheet, ourCards, competitorCards)
 	cards := combatSectionCards(ourCards, competitorCards)
+	// content — ОДНА переменная на два поля: section (свежесть всей карты) и
+	// selection (признак набора). Разные отпечатки в них развели бы два
+	// условия свежести: карта хранится под section, а ключ подразумевает
+	// selection, и правка карточки терялась бы в кэше (грабля 2026-11-08).
+	content := combatSectionHandle(sheet, ourCards, competitorCards)
 	return &sectionGen{
 		values:    sectionValuesFor(offer),
 		previous:  sheet.FormValues,
-		section:   combatSectionHandle(sheet, ourCards, competitorCards),
-		selection: combatSelectionHandle(sheet, ourCards, competitorCards),
+		section:   content,
+		selection: combatSelectionHandle(sheet, ourCards, competitorCards, content),
 		offer:     offer,
 		cards:     cards,
 		refs:      refs,
@@ -149,9 +154,14 @@ func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCa
 //
 // Тот же смысл, что `offerSelectionHandle` у КП: текст без повтора видит ВЕСЬ
 // набор и обязан пересобраться, когда набор поменялся (дефект вступления
-// 2026-11-08). Текст карточек уже входит в отпечаток содержания; здесь — состав
-// и порядок сторон.
-func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard) string {
+// 2026-11-08).
+//
+// `content` входит в признак НАМЕРЕННО. `sectionGen` сверяет свежесть карты
+// через `previous[genKeySection] == g.section`, то есть отпечатком содержания, а
+// ключ строит по `selection`. Пока `selection` знал только состав, правка тела
+// карточки оставляла ключ прежним — и листок отдавал текст по старой карточке
+// ровно та грабля 2026-11-08. Поэтому здесь и состав, и отпечаток содержания.
+func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard, content string) string {
 	var b strings.Builder
 	for _, cards := range [][]SystemCard{ourCards, competitorCards} {
 		for _, card := range cards {
@@ -160,6 +170,7 @@ func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []System
 		b.WriteString("\x1e")
 	}
 	b.WriteString(strings.TrimSpace(combatHint(sheet)))
+	b.WriteString("\x1fcontent\x1f" + content)
 	return hashShort(b.String())
 }
 
@@ -168,6 +179,14 @@ func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []System
 // Возвращает текст и признак «хоть что-то напечатано»: пустой результат обязывает
 // вызывающего напечатать прежний вид (карточки), иначе документ останется без
 // сравнения вовсе.
+//
+// Кэш (шаг 2b плана 2026-11-16). Тексты пишутся в `form_values` САМОГО листка
+// под ключами `gen.sect.*` — тем же механизмом, что у КП (`sectionGen`,
+// `sectionCacheKey`). В ключе — отпечаток СОДЕРЖИМОГО (`combatSectionHandle`:
+// стороны + уточнение + текст карточек) и признак набора
+// (`combatSelectionHandle`), поэтому правка карточки конкурента переписывает
+// текст, а повторное «⬇ DOCX» без изменений берёт его из базы и модель второй
+// раз не зовёт.
 //
 // Ошибка чтения формы и ошибка модели не роняют печать: листок — справка, и
 // пустой раздел хуже, чем честно карточный запасной вид. Ошибка в журнал.
@@ -185,7 +204,11 @@ func (s *Server) renderCombatSections(ctx context.Context, sheet CombatSheet,
 		return "", false
 	}
 	if len(form.Sections) == 0 {
-		return "", false
+		// Строка формы может существовать, но разделов в ней не быть (сохранена
+		// до 2026-11-16 или очищена администратором). Пустой листок печатал бы
+		// только карточки, а заготовка — это и есть «разделы листка по
+		// умолчанию»; поэтому пусто — берём заготовку, а не молчим.
+		form.Sections = combatDefaultSections()
 	}
 	gen, offer := combatSectionGen(sheet, ourCards, competitorCards, refs)
 	cards := combatSectionCards(ourCards, competitorCards)
@@ -216,10 +239,57 @@ func (s *Server) renderCombatSections(ctx context.Context, sheet CombatSheet,
 		printed.WriteString(combatSectionTitle(section))
 		printed.WriteString(markup.String())
 	}
+	// Тексты, которых в листке ещё не было, сохраняются, чтобы следующая сборка
+	// взяла их же. Только при живом листке: копия с чужим id (тесты,
+	// предпросмотр) не должна порождать записи.
+	if sheet.ID > 0 {
+		s.persistCombatSectionTexts(ctx, sheet, gen)
+	}
 	if printed.Len() == 0 {
 		return "", false
 	}
 	return printed.String(), true
+}
+
+// persistCombatSectionTexts сохраняет НОВЫЕ тексты разделов в form_values листка.
+//
+// Одно правило с КП (`persistLayoutTextCache`): только `form_values`, только
+// изменившееся (`mergeSectionValues`), стороны и название не трогаются. Ошибка
+// записи не мешает отдать документ: кэш — ускорение, а не повод отказать; текст
+// будет написан заново на следующей сборке.
+func (s *Server) persistCombatSectionTexts(ctx context.Context, sheet CombatSheet, gen *sectionGen) {
+	if s == nil || s.pool == nil || gen == nil {
+		return
+	}
+	gen.mu.Lock()
+	generated := make(map[string]string, len(gen.values))
+	for key, value := range gen.values {
+		generated[key] = value
+	}
+	gen.mu.Unlock()
+
+	merged := make(map[string]string, len(sheet.FormValues)+len(generated))
+	for key, value := range sheet.FormValues {
+		merged[key] = value
+	}
+	mergeSectionValues(merged, sheet.FormValues, generated)
+	// Отпечаток содержания пишется вместе с текстами. Без него `sectionGen`
+	// на следующей сборке не подтвердит свежесть (`previous[genKeySection] !=
+	// section`) и МОЛЧА перепишет листок моделью заново — кэш был бы, но на
+	// деле не работал бы.
+	merged[genKeySection] = gen.section
+	if len(merged) == len(sheet.FormValues) && sheet.FormValues[genKeySection] == gen.section {
+		return
+	}
+	sheet.FormValues = merged
+	cols, err := combatColumns(sheet)
+	if err != nil {
+		log.Printf("боевой листок %s: тексты разделов не закодированы: %v", sheet.Number, err)
+		return
+	}
+	if err := s.updateCombat(ctx, sheet.ID, sheet, cols); err != nil {
+		log.Printf("боевой листок %s: тексты разделов не сохранены: %v", sheet.Number, err)
+	}
 }
 
 // combatSectionTitle — заголовок раздела листка.
