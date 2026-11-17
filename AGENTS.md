@@ -1499,9 +1499,9 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 | `offers-bot/src/flow/agentfile.ts` | приложенный файл в режиме помощника: файл запоминается в сессии до ближайшего текста, ход его забирает и очищает, предел 16 МБ |
 
 **Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15; **after step 4 of
-the 2026-11-16 plan — 17**):
+the 2026-11-16 plan — 17**; **after step 3e 2026-11-17 — 18**):
 `get_our_products`, `read_card` (**any** note), `search_competitors`,
-`fetch_url`, `parse_file`,
+`fetch_url`, `parse_file`, `remember_sheet_fact`,
 `get_documents`, `get_document_link`, `read_document_file`, `get_emails`,
 `read_email`, `create_offer`,
 `set_system`, `set_material`, `create_combat_sheet`, `set_combat_side`,
@@ -1510,6 +1510,9 @@ rules/skills/presentation, any write to YouGile. Emails are read-only and only
 for letters whose signed-scan card carries `product_refs` (`agentmail.go`).
 `fetch_url` reads only an address the manager named, `parse_file` only a file
 attached to the turn (`agentEnv.Attachments`); both are boundaries in CODE.
+`remember_sheet_fact` takes text **only from what was read in this turn**
+(`agentEnv.readSources`, filled by `fetch_url`/`parse_file`) — a fact cannot be
+invented; writes are gated by the sheet's owner (author or admin).
 
 **Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
 (`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
@@ -1860,25 +1863,47 @@ system); OpenAPI 121/121; стенд **573/0** (+8, секции листка и
 
 ---
 
-## НАЧАЛО НОВОГО КОНТЕКСТА — 2026-11-16 (шаг 2b, незакоммиченные правки)
+## ТЕКУЩЕЕ СОСТОЯНИЕ — 2026-11-17 (шаги 2b и 3e сделаны, запушены)
 
-**Ветка `backend` плагина `sbe-offers`. HEAD = `d48434a` (шаг 2a запушен).**
-В рабочем дереве — **НЕ закоммиченные** правки шага 2b (кэш текста раздела
-листка), состояние на 2026-11-17 после проверок этого окна: `gofmt` пусто,
-`go vet` 0, `go test -count=1 ./...` зелёный, OpenAPI **121/121**, стенд
-**573/0**. Стендовой секции кэша нет (решение пользователя — вариант «б»,
-см. «Следующий шаг»).
+**Ветка `backend` плагина `sbe-offers`.** Шаги 1, 3, 4, 2a, **2b** (`709b72e`) и
+**3e** (этот коммит) сделаны. Версия плагина НЕ поднималась — правки бэковые.
+Проверки текущей точки: `gofmt` пусто, `go vet` 0, `go test -count=1 ./...`
+зелёный, OpenAPI **121/121**, стенд **573/0**.
 
-### Что лежит в рабочем дереве (git status)
+### Шаг 3e — устойчивые факты листка (2026-11-17)
 
-| файл | состояние | что это |
-|---|---|---|
-| `offers-service/combat_sections.go` | изменён | `persistCombatSectionTexts` — пишет `gen.sect.*` и `gen.section` в `form_values` **самого листка** (`updateCombat`, только эта колонка); при пустых разделах формы берётся `combatDefaultSections()` (заготовка), а не пустой листок |
-| `offers-service/combat_docx.go` | изменён | `renderCombatDocx`/`buildCombatBody` стали **методами `*Server`** (нужен `ctx`, чтобы прочитать форму `mode='combat'`); `renderCombatSections` зовётся из сборки тела |
-| `offers-service/combat_sections_cache_test.go` | новый | 3 сторожа: правка текста карточки конкурента меняет ключ кэша; правка ссылок/картинки — **не** меняет; тексты ложатся в карту под ключом, стороны не трогаются |
-| `scripts/smart-llm-stub.mjs` | новый | стабильная заглушка модели (одинаковый запрос → одинаковый текст) + счётная ручка `GET /calls` и строка журнала на каждый вызов; контракт как у `llm-stub` (`/internal/llm/complete` + `X-Service-Secret`) |
-| `docker-compose.local.yml` | изменён | сервисы `smart-llm-stub` и двойник `offers-smart` (та же база, своя модель, свой `OFFERS_SERVICE_SECRET`); **стенд их не использует** — остаются для ручных проверок и будущей секции |
-| `scripts/llm-stub.mjs`, `scripts/offers_local_e2e.mjs`, `scripts/auth-stub.mjs` | **в HEAD, без правок** | пробы секции и многосекретный `auth-stub` откачены (см. «Где я застрял») |
+Добытое агентом (ссылка заказчика, приложенный файл) больше не живёт только в
+разговоре: оно записывается **у самого листка** и входит в отпечаток
+содержания раздела, поэтому правка факта переписывает раздел, а повторная
+сборка без правки берёт готовый текст (спека §9.1).
+
+| файл | что |
+|---|---|
+| `offers-service/combat_facts.go` | `combatFact{Kind,Source,Digest,Text}`, `newCombatFact`, `factDigest`, `combatFactsFromValues`, `parseCombatFact` (формат `kind \| source \| digest` + текст второй строкой — читается в psql), `combatFactKey` → `gen.combatfact.NN`, `withCombatFacts` (тот же источник ЗАМЕНЯЕТСЯ, предел 12, обрезка текста 6 КБ), `combatFactHandle`, `combatFactsPrompt`, `persistCombatFacts` (только `form_values` листка, стороны не трогаются) |
+| `offers-service/agentfacts.go` | инструмент `remember_sheet_fact` + `agentSheetWriteError` (автор или админ; ниль-пул проверяется ДО `loadCombatSheet` — иначе паника pgxpool) |
+| `offers-service/agenttools.go` | `agentEnv.readSources` / `noteRead`; инструмент в `agentTools()` и в `agentToolDescriptors` (18 имён) |
+| `offers-service/agenttools_impl.go` | `fetch_url` (2xx) и `parse_file` пишут прочитанное в `readSources`; `parseFileText` (таблица → строки `\ | `, json → JSON, иначе текст; лист приходит `map[string]any`, а не нашим типом) |
+| `offers-service/combat_sections.go` | факты в брифе (`combatSectionBrief`), в отпечатке содержания (`combatSectionHandle`) и в признаке набора (`combatSelectionHandle`) |
+| `offers-service/agentprompt.go` | правило: запоминать только прочитанное в этом ходе, справку — нет |
+| тесты | `combat_facts_test.go` (9), `agentfacts_test.go` (5) — границы: пустой/чужой источник, порядок по номеру ключа, замена того же адреса, предел, правка факта меняет ключ, порядок в брифе, чужие ключи не факты |
+
+**Правила, которые теперь держатся:**
+- **Факт не придумывается**: `remember_sheet_fact` берёт текст только из
+  `readSources` этого хода — модели «вспомнить» нечего, если никто не читал.
+- **Тот же адрес — один факт**: повторное чтение заменяет текст (ради этого
+  хранится sha256), а не плодит записи; иначе предел кончался бы за три хода.
+- **Пустой набор фактов = пустой отпечаток**: у листков без фактов старые
+  тексты разделов не переписываются при выкатке.
+- **Предикат `errTool` — второй величиной НЕ возвращается**: отказ приходит в
+  `agentToolResult{OK:false, Error:…}`. Первая версия тестов этого не знала и
+  «зеленела» на отказах — исправлено (`factRefused`).
+
+**Не проверено по 3e:** живой ход агента под настоящей моделью (стенд —
+заглушки); запись факта на стенде (нужен живой `combat_sheet` под тем же
+пользователем — проверено юнит-тестами и ручными вызовами `persistCombatFacts`
+на двойнике), поэтому в `offers_local_e2e.mjs` новых проверок нет.
+
+### Шаг 2b — кэш текста раздела листка (2026-11-17, запушен `709b72e`)
 
 ### Как устроен кэш 2b (уже работает)
 
@@ -1899,7 +1924,7 @@ system); OpenAPI 121/121; стенд **573/0** (+8, секции листка и
 - `sectionGen` получил поле `brief` (шаг 2a) — подмена брифа; разбор ответа
   и кэш общие.
 
-### Где я застрял и почему
+### Почему НЕ секция в `llm-stub` (история, 2026-11-16/17)
 
 Проверки стенда идут через **общий `llm-stub.mjs`**, который обязан
 различать **три** вида промта:
@@ -1965,13 +1990,17 @@ system); OpenAPI 121/121; стенд **573/0** (+8, секции листка и
 
 ### Следующий шаг (по порядку)
 
-1. ~~Решить: нужна ли стендовая секция кэша.~~ **Решено 2026-11-17:** нет.
-   Юнит-сторожа `combat_sections_cache_test.go` (3) + стендовая проверка
-   «повторная выгрузка листка отдаёт тот же файл» (`sectionCombat`, 573/0)
-   покрывают то же поведение без отдельной инфраструктуры.
-2. Коммит 2b (версия НЕ поднимается: чисто бэковая правка), затем шаг 3e.
+1. ~~Стендовая секция кэша~~ **и 2b, и 3e — сделаны и запушены** (решение
+   пользователя 2026-11-17: вариант «б» — юнит-сторожа + существующая проверка
+   «повторная выгрузка листка отдаёт тот же файл»).
+2. **Шаг 2c** (backlog плана) — если карточки КП начнут расходиться так же:
+   у КП `systemCacheHandle` всё ещё `noteId`, поэтому правка тела карточки
+   системы не переписывает текст. У листка это уже закрыто (2b).
+3. **Шаг 4m** — Mini App не доносит файл/ссылку; следующая задача по порядку.
+4. Дальше: 5 (`diagram`: mermaid→PNG), 6 (предпросмотр/маркеры/справка),
+   7 (фиксация — версия из `manifest.json`).
 
-### Грабли этого захода (стоили ~2 часов)
+### Грабли этого захода (стоили времени; записаны как правило)
 
 - **Не править большие `.mjs` построчно через PowerShell**
   (`Get-Content` → фильтр → `Set-Content`): куски `offers_local_e2e.mjs`
@@ -2008,15 +2037,19 @@ docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" \
 - **Кэш 2b на стенде не сторожится**: второй файл тот же — да (проверка
   `sectionCombat`), но «модель во второй раз не звалась» подтверждено только
   ручными вызовами двойника `offers-smart`, не прогоном (см. выше).
+- **Факты 3e на стенде**: юнит-тестами доказано правило и границы, ручными
+  вызовами — запись в листок; живого хода «прочитал ссылку → запомнил факт →
+  собрал DOCX» под моделью нет (стенд — `llm-stub`, а `remember_sheet_fact`
+  требует реального `fetch_url`/`parse_file` в том же ходе).
 - Живой вызов ручек `agent-service` (шаг 1): `AGENT_INTERNAL_SECRET` на бою
   **не задан**, контейнер `agent` не пересобран; `.env` и серверный compose —
   при раскатке.
-- Шаги 3e/4m/5/6/7 не начинались.
+- Шаги 2c/4m/5/6/7 не начинались.
 
-**Дальше по плану:** 3e (устойчивые факты листка), 4m (Mini App не доносит
-файл/ссылку — зафиксировать), 5 (вид `diagram`: mermaid→PNG, видимый
-fallback), 6 (предпросмотр/маркеры/справка), 7 фиксация (версия из
-`manifest.json`).
+**Дальше по плану:** 4m (Mini App не доносит файл/ссылку — зафиксировать),
+5 (вид `diagram`: mermaid→PNG, видимый fallback), 6 (предпросмотр/маркеры/
+справка), 7 фиксация (версия из `manifest.json`). 2c — по необходимости
+(у КП ключ кэша систем всё ещё `noteId`).
 
 ## Next iterations (backlog)
 

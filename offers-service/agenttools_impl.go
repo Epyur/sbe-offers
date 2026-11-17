@@ -496,6 +496,11 @@ func (s *Server) toolFetchURL() agentToolSpec {
 				return errTool("по ссылке не удалось прочитать: %v", err)
 			}
 			view := compactFetchView(result)
+			// Прочитанное запоминается в ходе: `remember_sheet_fact` берёт текст
+			// ОТСЮДА, поэтому факт у листка не может появиться из ничего.
+			if result.Status >= 200 && result.Status < 300 {
+				env.noteRead("ссылка", rawURL, view)
+			}
 			return agentToolResult{
 				OK:      true,
 				Summary: fmt.Sprintf("Страница прочитана: HTTP %d, символов %d.", result.Status, len(view)),
@@ -541,8 +546,48 @@ func (s *Server) toolParseFile() agentToolSpec {
 			if err != nil {
 				return errTool("файл «%s» не удалось разобрать: %v", attachment.Name, err)
 			}
+			// То же, что у `fetch_url`: запоминаем текст файла, чтобы
+			// `remember_sheet_fact` мог взять его без второго разбора.
+			env.noteRead("файл", attachment.Name, parseFileText(result))
 			return parseFileResult(attachment.Name, result), nil
 		},
+	}
+}
+
+// parseFileText — какой текст разбора годится в факт листка.
+//
+// У таблиц текст — это строки с разделителем: перечислять ячейки словами дольше
+// и не нужно модели. У JSON — сам JSON. Остальное — извлечённый текст.
+func parseFileText(result AgentParseResult) string {
+	switch result.Kind {
+	case "xlsx":
+		// Листы приходят как map (форма ответа agent-service, не наш тип):
+		// берём `name` и `rows`, остальное — забота вида для модели.
+		var b strings.Builder
+		for _, sheet := range result.Sheets {
+			if name, ok := sheet["name"].(string); ok && strings.TrimSpace(name) != "" {
+				b.WriteString("Лист " + strings.TrimSpace(name) + ":\n")
+			}
+			rows, _ := sheet["rows"].([]any)
+			for _, raw := range rows {
+				cells, _ := raw.([]any)
+				parts := make([]string, 0, len(cells))
+				for _, cell := range cells {
+					parts = append(parts, fmt.Sprint(cell))
+				}
+				b.WriteString(strings.Join(parts, " | "))
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	case "json":
+		encoded, err := json.Marshal(result.Data)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	default:
+		return result.Text
 	}
 }
 

@@ -14,14 +14,17 @@ import (
 	"testing"
 )
 
-// agentToolsAfterStep4 — 17 имён, и схемы модели знают про новые.
+// agentToolsAfterStep4 — 17 имён шага 4 и +1 инструмент шага 3e, и схемы модели
+// знают про новые.
 func TestAgentToolsAfterStep4(t *testing.T) {
 	server := &Server{}
 	tools := server.agentTools()
-	if len(tools) != 17 {
-		t.Fatalf("по плану шаг 4 даёт 17 инструментов, а в карте %d", len(tools))
+	// 17 после шага 4 + `remember_sheet_fact` (шаг 3e, 2026-11-17): добытые
+	// ссылки и файлы запоминаются у листка, иначе раздел пишется по памяти.
+	if len(tools) != 18 {
+		t.Fatalf("по плану шаг 4 даёт 17 инструментов + 1 шага 3e = 18, а в карте %d", len(tools))
 	}
-	for _, name := range []string{"fetch_url", "parse_file"} {
+	for _, name := range []string{"fetch_url", "parse_file", "remember_sheet_fact"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("инструмента %q нет в карте", name)
 		}

@@ -77,6 +77,38 @@ type agentEnv struct {
 	// 2026-11-16): бот пересылает их вместе с текстом, `parse_file` берёт имя и
 	// байты отсюда, а не из аргументов модели. Пусто — файлов в ходе нет.
 	Attachments []agentAttachment
+	// readSources — что в этом ходе уже прочитано: ключ — `foldText` адреса или
+	// имени файла, значение — вид и текст. Пополняется самими инструментами
+	// чтения (`fetch_url`, `parse_file`, `read_email`), а `remember_sheet_fact`
+	// берёт факт ОТСЮДА. Так агент не может «запомнить» у листка текст,
+	// которого никто не читал, и второй раз в сеть за тем же не ходит.
+	//
+	// Живёт один ход намеренно: привязку к листку могли снять секунду назад, а
+	// «вчерашний» текст без пометки источника — это уже выдумка модели.
+	readSources map[string]agentReadSource
+}
+
+// agentReadSource — добытое в этом ходе: откуда и что.
+type agentReadSource struct {
+	kind   string
+	source string
+	text   string
+}
+
+// noteRead — запоминает добытое в ходе. Пустой текст не запоминается: «прочитано,
+// но ничего не понятно» не факт.
+func (env *agentEnv) noteRead(kind, source, text string) {
+	if env == nil || strings.TrimSpace(source) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	if env.readSources == nil {
+		env.readSources = make(map[string]agentReadSource, 4)
+	}
+	env.readSources[foldText(source)] = agentReadSource{
+		kind:   kind,
+		source: strings.TrimSpace(source),
+		text:   strings.TrimSpace(text),
+	}
 }
 
 // agentAttachment — приложенный файл хода: имя и байты.
@@ -146,6 +178,7 @@ func (s *Server) agentTools() map[string]agentToolSpec {
 		s.toolSearchCompetitors(),
 		s.toolFetchURL(),
 		s.toolParseFile(),
+		s.toolRememberSheetFact(),
 		s.toolGetDocuments(),
 		s.toolGetDocumentLink(),
 		s.toolReadDocumentFile(),
@@ -171,7 +204,7 @@ func (s *Server) agentTools() map[string]agentToolSpec {
 func (s *Server) agentToolDescriptors() []map[string]any {
 	order := []string{
 		"get_our_products", "read_card", "search_competitors",
-		"fetch_url", "parse_file",
+		"fetch_url", "parse_file", "remember_sheet_fact",
 		"get_documents", "get_document_link", "read_document_file",
 		"get_emails", "read_email",
 		"create_offer", "set_system", "set_material",

@@ -70,7 +70,7 @@ func combatSectionCards(ourCards, competitorCards []SystemCard) []SystemCard {
 // свои, у листка это сравнение, и модель обязана знать, чей продукт описывает.
 // Люди это видят в готовом тексте («где конкурент сильнее»), поэтому путаница
 // сторон — не стилистическая мелочь.
-func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard) string {
+func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCard, facts []combatFact) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(instruction))
 	b.WriteString("\n\nЭто боевой листок: сравнение НАШЕГО продукта с продуктами конкурентов.")
@@ -81,6 +81,9 @@ func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCa
 		b.WriteString("\nПродукты конкурентов: " + names + ".")
 	}
 	b.WriteString("\nНе путай стороны: наш продукт — тот, что предлагаем мы, конкуренты — чужие.")
+	// Добытые факты (шаг 3e) — после ролей и до контракта ответа: модель сперва
+	// понимает, чей продукт, потом получает сведения, потом формат.
+	b.WriteString(combatFactsPrompt(facts))
 	b.WriteString("\n\n")
 	b.WriteString(sectionAnswerContract)
 	return b.String()
@@ -106,21 +109,22 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 	refs []skills.CardRef) (*sectionGen, Offer) {
 	offer := combatSectionOffer(sheet, ourCards, competitorCards)
 	cards := combatSectionCards(ourCards, competitorCards)
+	facts := combatFactsFromValues(sheet.FormValues)
 	// content — ОДНА переменная на два поля: section (свежесть всей карты) и
 	// selection (признак набора). Разные отпечатки в них развели бы два
 	// условия свежести: карта хранится под section, а ключ подразумевает
 	// selection, и правка карточки терялась бы в кэше (грабля 2026-11-08).
-	content := combatSectionHandle(sheet, ourCards, competitorCards)
+	content := combatSectionHandle(sheet, ourCards, competitorCards, facts)
 	return &sectionGen{
 		values:    sectionValuesFor(offer),
 		previous:  sheet.FormValues,
 		section:   content,
-		selection: combatSelectionHandle(sheet, ourCards, competitorCards, content),
+		selection: combatSelectionHandle(sheet, ourCards, competitorCards, content, facts),
 		offer:     offer,
 		cards:     cards,
 		refs:      refs,
 		brief: func(instruction string, call sectionCall) string {
-			return combatSectionBrief(instruction, ourCards, competitorCards)
+			return combatSectionBrief(instruction, ourCards, competitorCards, facts)
 		},
 		complete: llmCompleter{},
 	}, offer
@@ -133,7 +137,12 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 // конкурента ОБЯЗАНА переписать текст раздела (грабля 2026-11-08: кэш ключевался
 // одним noteId, правка тела карточки не доходила до текста). Поэтому в
 // отпечаток идут и названия, и текст карточек.
-func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard) string {
+//
+// С шага 3e сюда же входит отпечаток добытых фактов (`combatFactHandle`): они
+// тоже содержание листка, и правка факта обязана переписать раздел, иначе текст
+// описывал бы документы, которые с тех пор изменились.
+func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard,
+	facts []combatFact) string {
 	var b strings.Builder
 	b.WriteString("combat\x1f" + sheet.Number)
 	b.WriteString("\x1fhint\x1f" + strings.TrimSpace(combatHint(sheet)))
@@ -146,6 +155,9 @@ func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCa
 			b.WriteString(itoa(int(card.NoteID)) + ":" + card.Title + "\x1f")
 			b.WriteString(card.PromptText() + "\x1f")
 		}
+	}
+	if handle := combatFactHandle(facts); handle != "" {
+		b.WriteString("\x1ffacts\x1f" + handle)
 	}
 	return hashShort(b.String())
 }
@@ -161,7 +173,13 @@ func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCa
 // ключ строит по `selection`. Пока `selection` знал только состав, правка тела
 // карточки оставляла ключ прежним — и листок отдавал текст по старой карточке
 // ровно та грабля 2026-11-08. Поэтому здесь и состав, и отпечаток содержания.
-func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard, content string) string {
+//
+// Факты (шаг 3e) — в признаке набора, а не только в отпечатке содержания:
+// `combatSectionHandle` входит в `content` целиком, так что правка факта
+// меняет и его. Явная строка ниже — следующая за `content`, чтобы человек,
+// читающий ключ, видел факты отдельной частью, как и состав сторон.
+func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCard,
+	content string, facts []combatFact) string {
 	var b strings.Builder
 	for _, cards := range [][]SystemCard{ourCards, competitorCards} {
 		for _, card := range cards {
@@ -171,6 +189,9 @@ func combatSelectionHandle(sheet CombatSheet, ourCards, competitorCards []System
 	}
 	b.WriteString(strings.TrimSpace(combatHint(sheet)))
 	b.WriteString("\x1fcontent\x1f" + content)
+	if handle := combatFactHandle(facts); handle != "" {
+		b.WriteString("\x1ffacts\x1f" + handle)
+	}
 	return hashShort(b.String())
 }
 

@@ -174,7 +174,7 @@ func TestCombatSectionsSkipEmpty(t *testing.T) {
 // Бриф листка называет стороны — иначе модель путает, чей продукт описывает.
 func TestCombatSectionBriefNamesSides(t *testing.T) {
 	_, our, competitor := combatSectionFixture()
-	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor})
+	brief := combatSectionBrief("Сравни", []SystemCard{our}, []SystemCard{competitor}, nil)
 	for _, want := range []string{"Наш продукт:", our.Title, "Продукты конкурентов:", competitor.Title, "Не путай стороны"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("в брифе нет %q:\n%s", want, brief)
@@ -189,16 +189,16 @@ func TestCombatSectionBriefNamesSides(t *testing.T) {
 // остался бы в кэше от старой карточки — грабля 2026-11-08.
 func TestCombatSectionHandleSeesCardEdit(t *testing.T) {
 	sheet, our, competitor := combatSectionFixture()
-	before := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor})
+	before := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{competitor}, nil)
 	edited := competitor
 	edited.Description = "Обновлённое описание конкурента"
-	after := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{edited})
+	after := combatSectionHandle(sheet, []SystemCard{our}, []SystemCard{edited}, nil)
 	if before == after {
 		t.Fatal("правка карточки конкурента не изменила отпечаток содержания: раздел отдаст старый текст")
 	}
 	rehinted := sheet
 	rehinted.FormValues = map[string]string{"hint": "новый акцент"}
-	if combatSectionHandle(rehinted, []SystemCard{our}, []SystemCard{competitor}) == before {
+	if combatSectionHandle(rehinted, []SystemCard{our}, []SystemCard{competitor}, nil) == before {
 		t.Fatal("правка уточнения не изменила отпечаток содержания")
 	}
 }
