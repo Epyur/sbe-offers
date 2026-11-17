@@ -838,9 +838,15 @@ renamed accordingly.
   `offers_context` under `mode='competitors'` and refreshed by an admin
   button. A competitor card's **title is the note heading**, never the first
   body line. The combat form is the **same form editor as КП** under
-  `mode='combat'` (no second editor). DOCX export is done (`combat_docx.go`):
+  `mode='combat'` (no second editor) — **but no UI button opens it**: the
+  combat section only shows «📄 Макет боевого листка», so the `combat` branch of
+  `form-editor.ts` is dead code today and the sheet's base prompt is invisible
+  (open defect, see «Open defects of the combat sheet» in `HANDOFF.md` and the
+  2026-11-17 revision plan). DOCX export is done (`combat_docx.go`):
   rendered from the combat form, our and competitor cards printed as two
-  sections.
+  sections. **Refs come from `## Ссылки` only** — `## Иные документы`
+  (documents app), `![[…pdf]]` attachments and `[[note]]` wiki links are NOT
+  read yet (same open defect).
   **In the bot (2026-11-09, document-style picker since 2026-11-10)**: «⚔️
   Боевой листок» creates an empty sheet with a number. Sides are picked by
   **name search** as a **numbered text list** with number buttons, paging
