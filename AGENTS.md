@@ -61,8 +61,15 @@ and the bot assistant reads links and attached files.
 > idempotent. Checks: `gofmt`/`go vet`/`go test -count=1 ./...` green, OpenAPI
 > 121/121, plugin `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
 > `check_marker_registry` OK / `check_sections_conditions` 16/16, stand **575/0**.
-> **Not verified:** live mermaid render (stand returns a 1×1 PNG), a live sheet under
-> a real model.
+> **Released and deployed 2026-11-17:** `backend` `1b3c4be`, `main` `e991975`,
+> self-hosted `manifest 731a4792…` / `main ba0aab29…` / `styles 152ebdb3…`,
+> registry `sbe-apstore-registry` `d0bb5cb`. The `sbe-agent` step-1 route
+> (`/internal/agent/*`) was deployed for the first time here, with
+> `AGENT_SERVICE_URL`/`AGENT_INTERNAL_SECRET` added to both compose blocks; live
+> check: a real Cyrillic mermaid rendered to a 127×132 PNG, `render` answers 403
+> without the secret and 400 for `lang:"svg"`. **Not verified:** a live sheet under
+> a real model (the stand's model is a stub; the diagram render itself was proven
+> live).
 
 > **Read before touching the offer screen:** the screen is built in ONE pass over
 > the window (`screenItems` in `offers-app/src/window.ts`) — zones AND form fields,
@@ -89,8 +96,9 @@ and the bot assistant reads links and attached files.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `7e94e88` (code; docs head `a9e133a`), `main` `84c138d`
-(release slice of 0.11.3; docs head `df62354`).
+Code heads: `backend` `1b3c4be` (code), `main` `e991975`
+(release slice of 0.11.4; `offers-service/`, `offers-bot/`, `offers-app/` live on
+`backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
