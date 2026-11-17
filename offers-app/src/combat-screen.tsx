@@ -357,7 +357,7 @@ function CompetitorZone({
             <>
               <p className="app-muted">
                 Файл отправляется в чат с ботом: приложение не может приложить его само. Бот прочитает
-                файл и добавит конкурента в этот листок.
+                файл (PDF, DOCX или XLSX) и добавит конкурента в этот листок.
               </p>
               <button className="app-button" type="button" disabled={busy} onClick={askFile}>
                 {askButtonText('competitor-file')}

@@ -10,6 +10,7 @@ package main
 // сохранение из плагина не стирает прочитанное.
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -256,6 +257,20 @@ func TestTextCompetitorsSurviveSectionOffer(t *testing.T) {
 	// Ключи кэша подразделов обязаны различаться, иначе тексты перезапишутся.
 	if systemCacheHandle(cards[0]) == systemCacheHandle(cards[1]) {
 		t.Fatal("у двух текстовых конкурентов один ключ кэша подраздела")
+	}
+}
+
+// TestCombatFileParseProblem — техническое «unsupported format: txt» человеку
+// ничего не говорит; отказ обязан называть читаемые форматы (найдено живой
+// проверкой 2026-11-17: agent-service не разбирает .txt).
+func TestCombatFileParseProblem(t *testing.T) {
+	msg := combatFileParseProblem(errors.New("сервис агента ответил 400: unsupported format: txt"))
+	if !strings.Contains(msg, "PDF, DOCX или XLSX") {
+		t.Fatalf("отказ должен называть форматы, получено %q", msg)
+	}
+	other := combatFileParseProblem(errors.New("сервис агента ответил 500: boom"))
+	if !strings.Contains(other, "boom") {
+		t.Fatalf("прочие ошибки отдаются как есть, получено %q", other)
 	}
 }
 

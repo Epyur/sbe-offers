@@ -54,6 +54,19 @@ func combatFileTitle(name string) string {
 	return strings.TrimSpace(base)
 }
 
+// combatFileParseProblem — человеческий текст отказа разбора файла.
+//
+// Форматы задаёт agent-service (`docx`, `xlsx`, `pdf`, `json`), и «unsupported
+// format: txt» человеку ничего не говорит: он видит технический код и не знает,
+// что делать. Остальные ошибки сервиса отдаём как есть — там уже есть причина.
+func combatFileParseProblem(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "unsupported format") {
+		return "такой файл не читается: пришлите PDF, DOCX или XLSX"
+	}
+	return "не удалось разобрать файл: " + msg
+}
+
 // handleBotCombatCompetitorFile — POST /bot/combat/{id}/competitor-file.
 //
 // Гейт: сервисный секрет на маршруте + владелец листка (`botCanEditCombat`).
@@ -108,9 +121,7 @@ func (s *Server) handleBotCombatCompetitorFile(w http.ResponseWriter, r *http.Re
 	}
 	parsed, err := client.ParseFile(r.Context(), req.Name, data)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": "не удалось разобрать файл: " + err.Error(),
-		})
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": combatFileParseProblem(err)})
 		return
 	}
 	text := strings.TrimSpace(parseFileText(parsed))
