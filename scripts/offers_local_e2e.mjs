@@ -2726,6 +2726,138 @@ async function sectionCombat() {
 }
 
 /**
+ * Источники конкурента в боевом листке (2026-11-17, 0.11.7).
+ *
+ * Просьба пользователя: в блоке «Конкуренты» выбрать источник — База знаний,
+ * файл или ссылка. Проверяется то, что видит менеджер и что легко сломать
+ * молча:
+ *   - без ключа ручки закрыты (они пишут в листок);
+ *   - не-http адрес отвергается ДО сети, а не после;
+ *   - ссылка и файл дают запись со своим текстом и источником;
+ *   - тот же адрес ЗАМЕНЯЕТ запись, а не плодит вторую;
+ *   - полное сохранение листка (плагин Obsidian, старая сборка приложения) не
+ *     стирает прочитанное — правило «пусто = не трогали»;
+ *   - нечитаемый формат отвергается словами с перечнем форматов;
+ *   - текстовый конкурент доезжает до DOCX.
+ */
+async function sectionCombatSources() {
+  console.log('\nИсточники конкурента в боевом листке (2026-11-17)');
+
+  const created = await call('POST', '/combat', {
+    token: ownerToken,
+    body: { title: 'Проверка источников', status: 'draft' },
+  });
+  const sheetId = created.json?.id;
+  ok('листок для проверки источников создан',
+    created.status === 200 && typeof sheetId === 'number' && sheetId > 0,
+    `статус ${created.status}`);
+
+  // Гейты: ручки пишут в листок, значит без ключа — 401 (проверка прав на
+  // стенде — обязательная часть выпуска).
+  const noTokenUrl = await call('POST', `/combat/${sheetId}/competitor-from-url`, {
+    body: { url: 'https://example.com/' },
+  });
+  ok('конкурент из ссылки без токена → 401', noTokenUrl.status === 401, `статус ${noTokenUrl.status}`);
+  const noTokenDelete = await call('DELETE', `/combat/${sheetId}/competitor-text`, { body: { key: 'url:x' } });
+  ok('удаление текстового конкурента без токена → 401', noTokenDelete.status === 401, `статус ${noTokenDelete.status}`);
+  const noSecretFile = await call('POST', `/bot/combat/${sheetId}/competitor-file`, {
+    body: { chat_id: String(linkedChatId), name: 'a.docx', base64: '' },
+  });
+  ok('файл по конкуренту без секрета бота → 401', noSecretFile.status === 401, `статус ${noSecretFile.status}`);
+
+  // Плохой адрес — отказ до похода в сеть.
+  const badScheme = await call('POST', `/combat/${sheetId}/competitor-from-url`, {
+    token: ownerToken,
+    body: { url: 'ftp://example.com/file' },
+  });
+  ok('адрес не http/https отвергается', badScheme.status === 400, `статус ${badScheme.status}`);
+
+  // Ссылка читается через agent-stub: та же форма ответа, что у настоящей ручки.
+  const pageUrl = 'https://example.com/competitor-page';
+  const added = await call('POST', `/combat/${sheetId}/competitor-from-url`, {
+    token: ownerToken,
+    body: { url: pageUrl },
+  });
+  ok('конкурент из ссылки добавлен', added.status === 200, `статус ${added.status} ${added.json?.error ?? ''}`);
+  const texts = added.json?.textCompetitors ?? [];
+  ok('запись одна и с источником url', texts.length === 1 && texts[0].source === 'url',
+    JSON.stringify(texts.map((t) => t.source)));
+  ok('у записи есть название и текст',
+    (texts[0]?.title ?? '') !== '' && (texts[0]?.text ?? '').length > 0,
+    JSON.stringify({ title: texts[0]?.title, len: (texts[0]?.text ?? '').length }));
+  ok('тождество — адрес, а не позиция', String(texts[0]?.key ?? '').startsWith('url:'), texts[0]?.key);
+
+  const again = await call('POST', `/combat/${sheetId}/competitor-from-url`, {
+    token: ownerToken,
+    body: { url: `${pageUrl}/` },
+  });
+  ok('повторный тот же адрес не плодит запись',
+    again.status === 200 && (again.json?.textCompetitors ?? []).length === 1,
+    JSON.stringify((again.json?.textCompetitors ?? []).map((t) => t.key)));
+
+  // Полное сохранение листка — путь плагина Obsidian. Пустой список означает
+  // «клиент про это поле не знает», и прочитанное обязано остаться.
+  const fullSave = await call('PUT', `/combat/${sheetId}`, {
+    token: ownerToken,
+    body: { title: 'Проверка источников', ourNotes: [], competitorNotes: [], formValues: {}, status: 'draft' },
+  });
+  ok('полное сохранение листка не стирает конкурента из ссылки',
+    fullSave.status === 200 && (fullSave.json?.textCompetitors ?? []).length === 1,
+    `статус ${fullSave.status}`);
+
+  // Файл по конкуренту: бот отдаёт байты сервису, разбор — agent-stub.
+  const fileBody = {
+    chat_id: String(linkedChatId),
+    name: 'Протокол.docx',
+    base64: Buffer.from('PK-заглушка docx').toString('base64'),
+  };
+  const fileAdded = await call('POST', `/bot/combat/${sheetId}/competitor-file`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: fileBody,
+  });
+  ok('конкурент из файла добавлен', fileAdded.status === 200,
+    `статус ${fileAdded.status} ${fileAdded.json?.error ?? ''}`);
+  const afterFile = fileAdded.json?.textCompetitors ?? [];
+  ok('в листке две записи: ссылка и файл', afterFile.length === 2,
+    JSON.stringify(afterFile.map((t) => t.source)));
+  ok('у файловой записи источник file', afterFile.some((t) => t.source === 'file'));
+  ok('название взято из имени файла', afterFile.some((t) => t.title === 'Протокол'),
+    JSON.stringify(afterFile.map((t) => t.title)));
+  ok('файл чужого чата отвергается', (await call('POST', `/bot/combat/${sheetId}/competitor-file`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { ...fileBody, chat_id: '999999999' },
+  })).status === 404);
+
+  // Формат, которого парсер не знает: отказ словами, а не «unsupported format».
+  const txt = await call('POST', `/bot/combat/${sheetId}/competitor-file`, {
+    headers: { 'X-Service-Secret': BOT_SECRET },
+    body: { ...fileBody, name: 'конкурент.txt' },
+  });
+  ok('нечитаемый формат отвергается с перечнем форматов',
+    txt.status === 502 && /PDF, DOCX или XLSX/.test(txt.json?.error ?? ''),
+    JSON.stringify(txt.json));
+
+  // Удаление — своей ручкой по ключу.
+  const urlKey = afterFile.find((t) => t.source === 'url')?.key ?? '';
+  const removed = await call('DELETE', `/combat/${sheetId}/competitor-text`, {
+    token: ownerToken,
+    body: { key: urlKey },
+  });
+  ok('удаление по ключу убирает одну запись',
+    removed.status === 200 && (removed.json?.textCompetitors ?? []).length === 1,
+    `статус ${removed.status}`);
+
+  // Печать: текстовый конкурент обязан доехать до документа.
+  const docx = await call('POST', `/combat/${sheetId}/export`, { token: ownerToken });
+  ok('листок с текстовым конкурентом печатается',
+    docx.status === 200 && (docx.raw?.length ?? 0) > 2000,
+    `статус ${docx.status}, байт ${docx.raw?.length ?? 0}`);
+
+  const drop = await call('DELETE', `/combat/${sheetId}`, { token: ownerToken });
+  ok('листок проверки источников удалён', drop.status === 200);
+}
+
+/**
  * У КП и боевого листка СВОЙ макет (2026-11-11).
  *
  * Живой дефект: «вместо КП выгружался пустой макет боевого листка». Проверяем
@@ -3649,6 +3781,7 @@ async function sectionWindow() {
 }
 
 await sectionCombat();
+await sectionCombatSources();
 await sectionPickerSearch();
 await sectionOfferMaterials();
 await sectionBotAppLinks();
