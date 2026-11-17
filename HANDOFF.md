@@ -67,7 +67,7 @@ False), в конце печатаются ровно две наши ссылк
 |---|---|
 | версия | **0.11.5 — ВЫПУЩЕНА 2026-11-17** |
 | `backend` | код `7b97098` (доки — следующим коммитом) |
-| `main` | код `5a1719b` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
+| `main` | код `5a1719b`, доки `ba62719` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
 | самораздача | `manifest 9c7fa4d1…` / `main 6577e472…` / `styles 50bad65b…`, сверено по https (`/plugins/sbe-offers/*`) |
 | реестр на сервере | `/opt/mailers/www/registry.json` → `0.11.5`, `uploadedAt 2026-11-17T16:29:56Z`, бэкап `registry.json.bak-20261117-1930` |
 | реестр (git-копия) | `sbe-apstore-registry` **`a1cb3dd`** (`0.11.5`, тот же `uploadedAt`) |
