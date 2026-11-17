@@ -929,3 +929,16 @@
   font-style: italic;
   text-decoration: line-through;
 }
+
+/* Подраздел-схема (2026-11-17, шаг 6 плана): заглушка «Схема» в предпросмотре
+   рамки. Ненавязчиво, но отделено от текста — администратор видит, что в
+   готовом документе будет картинка, а не абзац. */
+.tn-offers-frame-diagram {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border-secondary-enabled);
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+  text-align: center;
+}

@@ -139,6 +139,31 @@ async function call(method, path, { token, body, headers = {} } = {}) {
 
 const ownerToken = makeJwt('owner@tn.ru');
 
+/**
+ * Список имён записей zip по центральному каталогу (2026-11-17, шаг 6 плана).
+ *
+ * `unzipEntrySafe` отдаёт СОДЕРЖИМОЕ одной записи по имени, а проверить «картинка
+ * схемы действительно лежит в пакете» можно только по списку имён. Читаем
+ * центральный каталог (сигнатура `PK\x01\x02`): имя записи идёт после
+ * фиксированной части заголовка, длина имени — в поле nameLen.
+ */
+function unzipNamesList(buf) {
+  const names = [];
+  const sig = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  let pos = buf.indexOf(sig);
+  while (pos >= 0 && pos + 46 <= buf.length) {
+    // В центральном заголовке: nameLen @28, extraLen @30, commentLen @32.
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const nameStart = pos + 46;
+    if (nameStart + nameLen > buf.length) break;
+    names.push(buf.subarray(nameStart, nameStart + nameLen).toString('utf8'));
+    pos = buf.indexOf(sig, nameStart + nameLen + extraLen + commentLen);
+  }
+  return names;
+}
+
 /** Читает одну запись zip по имени; пусто — записи нет или архив битый. */
 function unzipEntrySafe(buf, name) {
   // Central directory не нужен: сервис пишет записи подряд, и первое
@@ -2604,6 +2629,23 @@ async function sectionCombat() {
       combatXml.includes('Наш продукт') && combatXml.includes('Продукты конкурентов'));
     ok('в боевом листке нет незаполненных плейсхолдеров',
       !combatXml.includes('{{') && !combatXml.includes('}}'));
+    // Схема сравнения (2026-11-17, шаг 6 плана): заготовка раздела «Схема
+    // сравнения» просит mermaid-диаграмму, llm-stub отвечает блоком `diagram`,
+    // agent-stub растеризует её в PNG. В готовом файле схема обязана быть
+    // НАСТОЯЩЕЙ картинкой (wp:inline) с подписью «Схема N — …», а при отказе
+    // рендера — видимой строкой «Схема не отрисована», а не пустым местом.
+    // Одно из двух обязано быть: «ни картинки, ни строки» — дефект.
+    const hasDrawing = combatXml.includes('<w:drawing>') && combatXml.includes('<wp:inline');
+    const hasCaption = /Схема \d+ —/.test(combatXml);
+    const hasFallback = combatXml.includes('[Схема не отрисована:');
+    ok('в листке схема — картинка с подписью, а не пустота',
+      (hasDrawing && hasCaption) || hasFallback,
+      `drawing=${hasDrawing} caption=${hasCaption} fallback=${hasFallback}`);
+    // Медиа схемы дошла до пакета вместе с телом (иначе Word не покажет картинку).
+    if (hasDrawing) {
+      const mediaNames = unzipNamesList(combatDocx).filter((n) => n.startsWith('word/media/offerimg'));
+      ok('картинка схемы добавлена в пакет листка', mediaNames.length > 0, mediaNames.join(', '));
+    }
   }
 
   // Второй раз тот же файл (2026-11-12): листок не пересобирается, файл берётся
@@ -3352,6 +3394,72 @@ async function sectionAgentP5b() {
 }
 
 /**
+ * Агент читает ссылку и приложенный файл (2026-11-16, шаги 3–4 плана
+ * 2026-11-16-sbe-offers-combat-sections-and-agent-tools-plan.md).
+ *
+ * Проверяется то, что видит менеджер: «дал ссылку — помощник прочитал»,
+ * «приложил файл — помощник разобрал». Внутри — инструменты `fetch_url` и
+ * `parse_file` через клиент agent-service (`agentservice_client.go`) и
+ * заглушку `agent-stub.mjs` в форме настоящих ручек sbe-agent. Без
+ * `AGENT_SERVICE_URL` секция печатает «пропущено», а не падает.
+ */
+async function sectionAgentTools() {
+  console.log('\nАгент читает файл и ссылку (шаги 3–4 плана 2026-11-16)');
+  const chatId = linkedChatId !== 0 ? String(linkedChatId) : '999004';
+  const botHeaders = { 'X-Service-Secret': BOT_SECRET };
+
+  const linkTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'прочитай ссылку https://example.com/reestr' },
+  });
+  ok('ход «прочитай ссылку» отвечает 200', linkTurn.status === 200,
+    `код ${linkTurn.status} ${linkTurn.text?.slice(0, 160)}`);
+  ok('ответ по ссылке не пустой', typeof linkTurn.json?.answer === 'string' && linkTurn.json.answer.length > 0,
+    JSON.stringify(linkTurn.json)?.slice(0, 160));
+
+  const linkLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const linkRow = (linkLog.json?.items ?? []).find((r) => String(r.userText ?? '').includes('прочитай ссылку'));
+  const fetchTool = (linkRow?.tools ?? []).find((t) => t.name === 'fetch_url');
+  ok('агент вызвал fetch_url', Boolean(fetchTool), JSON.stringify(linkRow?.tools ?? []).slice(0, 240));
+  ok('страница по ссылке прочитана', fetchTool?.ok === true, JSON.stringify(fetchTool)?.slice(0, 240));
+  // Журнал хранит имя, аргументы и СВОДКУ, а компактный вид уходит модели в
+  // data: проверяем, что текст страницы действительно был в выдаче инструмента —
+  // по сводке, где число символов компактного вида, и по тому, что фетч не
+  // вернул отказ.
+  const fetchSummary = String(fetchTool?.summary ?? '');
+  const fetchChars = Number((fetchSummary.match(/символов (\d+)/) ?? [])[1] ?? 0);
+  ok('компактный вид нёс текст страницы, а не пустоту', fetchChars > 20,
+    `${fetchSummary || JSON.stringify(fetchTool)?.slice(0, 240)}`);
+
+  const fileTurn = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: {
+      chat_id: chatId,
+      text: 'прочитай файл и скажи главное',
+      attachments: [{ name: 'протокол.docx', base64: Buffer.from('PK\x03\x04stub-docx').toString('base64') }],
+    },
+  });
+  ok('ход с приложенным файлом отвечает 200', fileTurn.status === 200,
+    `код ${fileTurn.status} ${fileTurn.text?.slice(0, 160)}`);
+
+  const fileLog = await call('GET', '/admin/agent-log?limit=20', { token: ownerToken });
+  const fileRow = (fileLog.json?.items ?? []).find((r) => String(r.userText ?? '').includes('прочитай файл'));
+  const parseTool = (fileRow?.tools ?? []).find((t) => t.name === 'parse_file');
+  ok('агент вызвал parse_file', Boolean(parseTool), JSON.stringify(fileRow?.tools ?? []).slice(0, 240));
+  ok('приложенный файл разобран', parseTool?.ok === true, JSON.stringify(parseTool)?.slice(0, 240));
+  ok('разбор вернул текст файла, а не отказ',
+    /символов|прочитан/i.test(String(parseTool?.summary ?? '')), String(parseTool?.summary ?? ''));
+
+  // Предел вложения: битый base64 отклоняется до хода моделью — человек должен
+  // узнать, что файл не дошёл, а не получить «в файле пусто».
+  const broken = await call('POST', '/bot/agent/message', {
+    headers: botHeaders,
+    body: { chat_id: chatId, text: 'прочитай файл', attachments: [{ name: 'a.pdf', base64: '%%%' }] },
+  });
+  ok('битое вложение отклонено 400', broken.status === 400, `код ${broken.status} ${broken.text?.slice(0, 160)}`);
+}
+
+/**
  * Окно КП в приложении (2026-11-15, шаг 6 конфигуратора окна).
  *
  * Проверяется то, что увидит администратор и менеджер, а не внутреннее
@@ -3549,6 +3657,7 @@ await sectionNewDoc();
 await sectionAgent();
 await sectionAgentP6bis();
 await sectionAgentP5b();
+await sectionAgentTools();
 
 /**
  * Бриф и «продолжить в боте» из приложения (2026-11-15).

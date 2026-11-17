@@ -30,9 +30,39 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.3** — ready 2026-11-16. Fields of the offer form are
-rendered in the Mini App at last, the brief moved into each section card, and the
-`brief` window zone is gone.
+Current version = **0.11.4** — ready 2026-11-17. The combat sheet is assembled from
+sections like the offer, mermaid diagrams print as pictures with a visible fallback,
+and the bot assistant reads links and attached files.
+
+> **0.11.4 (2026-11-17) — sections in the combat sheet, diagrams, agent file/link
+> reading.** Three steps of the 2026-11-16 plan landed on `backend` and are released
+> as 0.11.4. **(1) Combat sheet on sections** (steps 2a/2b/6): the sheet prints the
+> `mode='combat'` form's content sections through the same pipeline as the offer
+> (`combat_sections.go`), with per-section text cached in the sheet's own
+> `form_values` (`gen.sect.*` + `gen.section`); the default form now has five
+> sections — «Общее сравнение» (with a characteristics TABLE), «Схема сравнения»
+> (mermaid diagram), «Где конкурент сильнее — и что отвечать», «По каждому
+> продукту» (`repeat: systems`). The section brief now carries the manager's
+> `hint` (found by the stand: without it changing the hint rebuilt the file but left
+> the text unchanged). **(2) Diagram blocks** (step 5): the frozen `{blocks:[…]}`
+> contract has a sixth kind `{"kind":"diagram","lang":"mermaid","code":…,
+> "caption":…}`; `sections_print.go` prints it via `sections_diagram.go` —
+> `agent-service` `Render` → PNG → `docxMedia.add` (`wp:inline`), caption «Схема N»
+> numbered by a document-wide `sectionDiagramCounter`, width ≤16 cm / height by PNG
+> proportion (capped at 20 cm). `lang` other than `mermaid` is DROPPED with a log
+> (spec §7.2 — no SVG); a failed render prints a VISIBLE «[Схема не отрисована:
+> причина]» (§9.2), not silence. `docxMedia.register` is now mutex-guarded (sections
+> print in parallel goroutines). `combatDocxVersion` bumped v1→v2 (the sheet's look
+> changed). **(3) Agent reads files/links** (steps 1/3/4/3e): `fetch_url` and
+> `parse_file` tools via the `agent-service` client, `remember_sheet_fact` stores what
+> was read in that turn under the sheet — 18 tools total. Also fixed a
+> plugin-lifecycle defect: `onload` re-registering the view on HotReload threw
+> «existing view type»; `onunload` now detaches the leaves and `registerView` is
+> idempotent. Checks: `gofmt`/`go vet`/`go test -count=1 ./...` green, OpenAPI
+> 121/121, plugin `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
+> `check_marker_registry` OK / `check_sections_conditions` 16/16, stand **575/0**.
+> **Not verified:** live mermaid render (stand returns a 1×1 PNG), a live sheet under
+> a real model.
 
 > **Read before touching the offer screen:** the screen is built in ONE pass over
 > the window (`screenItems` in `offers-app/src/window.ts`) — zones AND form fields,
@@ -950,7 +980,10 @@ override, menu, both lists, the bot's own list rendering).
 `OFFERS_APP_NAME`, `OFFERS_OWNER_EMAIL`, `OFFERS_SERVICE_SECRET`,
 `OFFERS_BOT_SECRET`, `AUTH_SERVICE_URL`, `S3_ENDPOINT`/`S3_ACCESS_KEY`/
 `S3_SECRET_KEY`/`S3_BUCKET` (`sbe-offers`), `SMTP_*`, `KB_SERVICE_URL`,
-`LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`.
+`LLM_SERVICE_URL`, `LLM_SERVICE_SECRET`, `AGENT_SERVICE_URL` (default
+`http://agent:3000`), `AGENT_INTERNAL_SECRET` (secret of the agent-service
+`/internal/agent/*` routes — **not** `AGENT_SERVICE_SECRET`; empty means «not
+configured» and the tools refuse instead of returning empty).
 Bot: `TELEGRAM_SOCKS_PROXY`, `OFFERS_API_URL`, `OFFERS_BOT_SECRET`,
 `OFFERS_BOT_RATE_LIMIT`, `VERIFY_PORT`, `OFFERS_APP_URL` (optional — the Mini
 App address for the `web_app` buttons; empty means the production
@@ -1490,16 +1523,26 @@ plugin (0.9.21) and the release are untouched** — nothing was deployed.
 | `documents_client.go` + `document_text.go` | internal `/internal/documents/agent/*` client (P5a) + DOCX text extraction |
 | `mailer_client.go` | internal `/internal/mailer/agent/*` client (P5b): `MAILER_SERVICE_URL`, `MAILER_INTERNAL_SECRET`, refusal when not configured |
 | `agentmail.go` | the two email tools (P5b): `get_emails` intersects the mailer with the visible documents set (per-turn cache in `agentEnv`), `read_email` resolves each scan's `file_key` through that same set; `foldText`, `visibleScanCards`, `docsMatchProduct`, `emailView` live here |
-| `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat |
+| `agentservice_client.go` | internal `/internal/agent/{fetch,file/parse,render}` client (step 3 of the 2026-11-16 plan): `AGENT_SERVICE_URL`, `AGENT_INTERNAL_SECRET`, refusal when not configured. **No second network path**: SSRF, limits and docx/xlsx/pdf parsing stay in `agent-service` |
+| `agenttools_step4_test.go` | the step-4 tools and the code boundary: 17 names, refusal without the service, `parse_file` needs an attachment, compact HTML view, base64 attachments |
+| `offers-bot/src/flow/agent.ts` + `api.agentMessage` | bot side: «🤖 Помощник» button, «⌛» → answer, files to chat, `attachments` in the turn body |
+| `offers-bot/src/flow/agentfile.ts` | приложенный файл в режиме помощника: файл запоминается в сессии до ближайшего текста, ход его забирает и очищает, предел 16 МБ |
 
-**Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15):
+**Tools** (whitelist, `agentTools`; after P5b 2026-11-14 — 15; **after step 4 of
+the 2026-11-16 plan — 17**; **after step 3e 2026-11-17 — 18**):
 `get_our_products`, `read_card` (**any** note), `search_competitors`,
+`fetch_url`, `parse_file`, `remember_sheet_fact`,
 `get_documents`, `get_document_link`, `read_document_file`, `get_emails`,
 `read_email`, `create_offer`,
 `set_system`, `set_material`, `create_combat_sheet`, `set_combat_side`,
 `build_docx`, `build_combat_docx`. **Not** in the list: YouGile,
 rules/skills/presentation, any write to YouGile. Emails are read-only and only
 for letters whose signed-scan card carries `product_refs` (`agentmail.go`).
+`fetch_url` reads only an address the manager named, `parse_file` only a file
+attached to the turn (`agentEnv.Attachments`); both are boundaries in CODE.
+`remember_sheet_fact` takes text **only from what was read in this turn**
+(`agentEnv.readSources`, filled by `fetch_url`/`parse_file`) — a fact cannot be
+invented; writes are gated by the sheet's owner (author or admin).
 
 **Activation is opt-in, S5 stays gated.** The bot gets a «🤖 Помощник» menu button
 (`/agent` alias) that sets `session.agent`. While it is on, free text goes to the
@@ -1768,6 +1811,313 @@ node ../scripts/check_agent_engine.mjs
   результат — текст про «нет привязанных писем»);
 - сообщить: файлы, коды выхода и числа, что не проверено, что ждёт от
   мейлер-агента (фикстура), нужные строки compose.
+
+## План 2026-11-16 — боевой листок на разделах + агент (файлы/интернет) + схемы
+
+План: `C:\Obsidian\mailers\docs\superpowers\plans\2026-11-16-sbe-offers-combat-sections-and-agent-tools-plan.md`,
+вход: `...-START-HERE.md`, спека: `...-design.md` (§3.2, §7).
+Версия плагина не меняется до шага 7; всё, что ниже, живёт на `backend`.
+
+**Шаг 1 (sbe-agent) — готов и запушен 2026-11-16.** Три внутренние ручки
+`/internal/agent/{fetch,file/parse,render}` под `X-Service-Secret`
+(`AGENT_INTERNAL_SECRET`), `render` — только mermaid→PNG. Коммиты
+`sbe-agent` `e32aadd` (код) и `f1e178e` (v0.5.6 + новость ЦУП),
+`sbe-core` `f89a71a` (compose + `.env.example`). Подробности —
+`sbe-agent/agent-service/AGENTS.md` и `sbe-agent/AGENTS.md`.
+
+**Шаг 3 (клиент agent-service) — сделан 2026-11-16, не коммичен.**
+`offers-service/agentservice_client.go`: `AGENT_SERVICE_URL` (default
+`http://agent:3000`), `AGENT_INTERNAL_SECRET`, `configured()`,
+`Fetch`/`ParseFile`/`Render`; `configured()==false` → `errAgentServiceNotConfigured`
+(отказ, не пустой ответ); ошибки сервиса — текстом с кодом и причиной;
+`data:null` толерантно. Тесты `agentservice_client_test.go` — 4 проверки
+(секрет уходит на все три ручки, отказ без окружения, текст ошибки сервиса,
+разбор ответа).
+
+**Шаг 4 (инструменты `fetch_url` / `parse_file`) — сделан 2026-11-16,
+не коммичен.** В `agentTools()` теперь **17** имён, в `agentToolDescriptors`
+порядок обновлён. `agenttools_impl.go`: `toolFetchURL` (адрес называет человек,
+метод — белый список, SSRF — в agent-service; `compactFetchView` режет HTML до
+SCRIPTS/LINKS/TEXT, JSON — до 12 КБ), `toolParseFile` (файл — только из
+`agentEnv.Attachments`, имя не угадывается; несколько файлов — по `name`).
+`agentEnv.Attachments` + `agentRequest.Attachments` + `botAgentMessageRequest
+.attachments[{name,base64}]` → `decodeAgentAttachments` (пусто/битое/больше
+16 МБ — 400 всего хода, а не молчаливый пропуск). Промт: две строки под «Что
+важно помнить». Бот: `flow/agentfile.ts` (файл в сессии до ближайшего текста,
+ход забирает и очищает, предел 16 МБ; `agentfile.test.ts` — 3 проверки),
+`poller.ts` (файл при включённом помощнике не идёт в состав КП), `api
+.agentMessage(..., attachments)`. Стенд: `scripts/agent-stub.mjs` (форма
+настоящих ручек, секрет сверяется), `docker-compose.local.yml` (+`agent-stub`,
++`AGENT_SERVICE_URL`/`AGENT_INTERNAL_SECRET` в `offers`), `llm-stub.mjs`
+(сценарии «прочитай ссылку»/«прочитай файл»), `offers_local_e2e.mjs` —
+секция «Агент читает файл и ссылку» (9 проверок).
+
+**Проверки шага 3–4 (2026-11-16):** `gofmt -l` пусто, `go vet` 0,
+`go test -count=1 ./...` зелёный (новые 4 + 5 проверок); бот `tsc` 0,
+`node --test` **215/215** (+3), `build` OK; OpenAPI **121/121**; стенд
+**565/0** (+9). Грабля стенда: заглушки монтируют `scripts/` только для
+чтения, а Node читает `.mjs` один раз при старте — после правки `llm-stub.mjs`
+нужен `docker restart offers-local-llm-stub`, иначе сценарии не видны.
+
+**Не проверено:** живой вызов ручек agent-service (секрет на бою не задан,
+раскатка — по команде), живой ход помощника с настоящей моделью и Telegram,
+характеристики настоящего mermaid-рендера (стенд отдаёт PNG 1×1).
+
+**Шаг 2a (разделы боевого листка) — сделан 2026-11-16, не коммичен.**
+Печать листка (`combat_docx.go`) больше не зашита: после перечня продуктов
+идут СОДЕРЖАТЕЛЬНЫЕ РАЗДЕЛЫ формы `mode='combat'` тем же конвейером, что у КП
+(`sectionCalls` → `renderSectionSubsection`), новый файл `combat_sections.go`.
+Запасной вид — прежний: общий текст сравнения и карточки (`writeCombatCards`),
+так документ никогда не пуст. Уточнения модели: бриф подраздела называет
+**обе стороны** (у листка их две, у КП карточки «наши»); контекст модели —
+карточки обеих сторон; отпечаток содержания (`combatSectionHandle`) включает
+текст карточек — правка карточки конкурента переписывает раздел.
+`sectionGen` получил `brief` (подмена брифа; разбор ответа и кэш те же),
+`sectionMaxWords` — одно правило длины на оба пути.
+`combatDefaultForm()` теперь несёт **заготовку разделов**: «Общее сравнение»
+(коротко + характеристики ТАБЛИЦЕЙ), «Где конкурент сильнее — и что
+отвечать» (всегда), «По каждому продукту» (`repeat: systems`). Блоков вёрстки
+по-прежнему нет — у листка только макет с меткой `{{сравнение}}`.
+Тесты: `combat_sections_test.go` (6), `combat_form_default_test.go` (5),
+старые печати через `combatNoForm` (сервер без базы = запасной вид).
+
+**Проверки шага 2a (2026-11-16):** `gofmt -l` пусто, `go vet` 0,
+`go test -count=1 ./...` зелёный (прогнан дважды; пойман неустойчивый тест —
+заглушка модели искала маркер только в user-промте, а бриф листка живёт в
+system); OpenAPI 121/121; стенд **573/0** (+8, секции листка и агента).
+
+**Не проверено по шагу 2a:** живой листок под настоящей моделью (стенд —
+`llm-stub`).
+
+**Шаг 2a запушен: `backend` `d48434a`** (HEAD).
+
+---
+
+## ТЕКУЩЕЕ СОСТОЯНИЕ — 2026-11-17 (HEAD `d9f7676`; шаги 2b и 3e сделаны, запушены)
+
+**Ветка `backend` плагина `sbe-offers`. HEAD = `d9f7676`.**
+Сделаны и запушены: шаги **1** (`sbe-agent` `e32aadd`/`f1e178e`, `sbe-core`
+`f89a71a`), **3**, **4** (`1d94d4f`), **2a** (`d48434a`), **2b** (`709b72e`),
+**3e** (`673524e`), **4m** (исследован — править нечего), `d9f7676` (промт +
+документация). Версия плагина НЕ поднималась — правки бэковые.
+Проверки текущей точки: `gofmt` пусто, `go vet` 0, `go test -count=1 ./...`
+зелёный, OpenAPI **121/121**, стенд **573/0**.
+
+**ОСТАТОК ПЛАНА (проверено по коду 2026-11-17):** шаги **5**, **6**, **7**.
+Шаг 5 не начат ни на строку: `sectionBlockKinds` (`sections_print.go:50`) =
+`heading/paragraph/list/table/figure`, вида `diagram` нет; контракт блока
+`{kind:"diagram", lang, code, caption}` модели не объявлен; `sectionDiagramXML`
+(mermaid→PNG, `docxMedia`, `wp:inline`, подпись «Схема N») нет; **видимого
+fallback нет** — неизвестный вид молча отбрасывается. Шаг 6: в
+`combatDefaultSections()` три раздела (общее сравнение с таблицей, где
+конкурент сильнее, по каждому продукту) — **нет «Схемы сравнения»** (зависит
+от 5); в плагине нет предпросмотра схемы и `diagram` в `markers.ts`/`help.ts`.
+Шаг 7 — только по команде «Фиксируй».
+
+### Шаг 3e — устойчивые факты листка (2026-11-17)
+
+Добытое агентом (ссылка заказчика, приложенный файл) больше не живёт только в
+разговоре: оно записывается **у самого листка** и входит в отпечаток
+содержания раздела, поэтому правка факта переписывает раздел, а повторная
+сборка без правки берёт готовый текст (спека §9.1).
+
+| файл | что |
+|---|---|
+| `offers-service/combat_facts.go` | `combatFact{Kind,Source,Digest,Text}`, `newCombatFact`, `factDigest`, `combatFactsFromValues`, `parseCombatFact` (формат `kind \| source \| digest` + текст второй строкой — читается в psql), `combatFactKey` → `gen.combatfact.NN`, `withCombatFacts` (тот же источник ЗАМЕНЯЕТСЯ, предел 12, обрезка текста 6 КБ), `combatFactHandle`, `combatFactsPrompt`, `persistCombatFacts` (только `form_values` листка, стороны не трогаются) |
+| `offers-service/agentfacts.go` | инструмент `remember_sheet_fact` + `agentSheetWriteError` (автор или админ; ниль-пул проверяется ДО `loadCombatSheet` — иначе паника pgxpool) |
+| `offers-service/agenttools.go` | `agentEnv.readSources` / `noteRead`; инструмент в `agentTools()` и в `agentToolDescriptors` (18 имён) |
+| `offers-service/agenttools_impl.go` | `fetch_url` (2xx) и `parse_file` пишут прочитанное в `readSources`; `parseFileText` (таблица → строки `\ | `, json → JSON, иначе текст; лист приходит `map[string]any`, а не нашим типом) |
+| `offers-service/combat_sections.go` | факты в брифе (`combatSectionBrief`), в отпечатке содержания (`combatSectionHandle`) и в признаке набора (`combatSelectionHandle`) |
+| `offers-service/agentprompt.go` | правило: запоминать только прочитанное в этом ходе, справку — нет |
+| тесты | `combat_facts_test.go` (9), `agentfacts_test.go` (5) — границы: пустой/чужой источник, порядок по номеру ключа, замена того же адреса, предел, правка факта меняет ключ, порядок в брифе, чужие ключи не факты |
+
+**Правила, которые теперь держатся:**
+- **Факт не придумывается**: `remember_sheet_fact` берёт текст только из
+  `readSources` этого хода — модели «вспомнить» нечего, если никто не читал.
+- **Тот же адрес — один факт**: повторное чтение заменяет текст (ради этого
+  хранится sha256), а не плодит записи; иначе предел кончался бы за три хода.
+- **Пустой набор фактов = пустой отпечаток**: у листков без фактов старые
+  тексты разделов не переписываются при выкатке.
+- **Предикат `errTool` — второй величиной НЕ возвращается**: отказ приходит в
+  `agentToolResult{OK:false, Error:…}`. Первая версия тестов этого не знала и
+  «зеленела» на отказах — исправлено (`factRefused`).
+
+**Не проверено по 3e:** живой ход агента под настоящей моделью (стенд —
+заглушки); запись факта на стенде (нужен живой `combat_sheet` под тем же
+пользователем — проверено юнит-тестами и ручными вызовами `persistCombatFacts`
+на двойнике), поэтому в `offers_local_e2e.mjs` новых проверок нет.
+
+### Шаг 4m — Mini App и помощник (2026-11-17, исследовано: править нечего)
+
+Пункт плана звучит как «Mini App не донесёт файл/ссылку». Для файлов это
+по-прежнему верно (inline-кнопка, `sendData` не работает — 0.9.27), и путь к
+помощнику — бот. Проверено чтением кода: `ask.ts` покрывает «продолжить в
+боте»/«прислать файл для позиций», у листка есть `SendToChatButton`;
+`flow/agent.ts` зовёт `api.agentMessage(chatId, text, agentDocument(session),
+files)`, а `agentDocument` **уже отдаёт `sheetId`** — значит
+`remember_sheet_fact` (шаг 3e) работает из бота по открытому листку без правок
+Mini App.
+
+Чего нет: кнопки «файл/ссылка» внутри экрана листка как отдельного действия
+помощника. Второй вход (файл из приложения → тот же бот) — дубль потока, а не
+починка дефекта. Оставляем до живой жалобы.
+
+### Шаг 2b — кэш текста раздела листка (2026-11-17, запушен `709b72e`)
+
+Тексты разделов листка пишутся в `form_values` самого листка (`gen.sect.*` +
+`gen.section`) и берутся из базы на повторной сборке; правка карточки
+конкурента переписывает текст. Файлы: `combat_sections.go`
+(`persistCombatSectionTexts`, `combatSelectionHandle` с отпечатком содержания),
+`combat_docx.go` (`renderCombatDocx`/`buildCombatBody` — методы `*Server`),
+`combat_sections_cache_test.go` (3 сторожа). Стендовой секции нет (решение
+пользователя, вариант «б»): юнит-сторожа + существующая проверка «повторная
+выгрузка листка отдаёт тот же файл».
+
+### Как устроен кэш 2b (уже работает)
+
+- Ключ: `sectionCacheKey(sectionID, call, selection)` —
+  `gen.sect.<раздел>.<подраздел>[.ins<hash>][.sel<hash>][.sys<noteId>]`.
+- `sectionGen.section` и `sectionGen.selection` **обязаны совпадать по
+  содержимому**: свежесть карты проверяется как
+  `previous[genKeySection] == g.section`, а ключ строится по `selection`.
+  Поэтому `combatSelectionHandle` принимает **и отпечаток содержания**
+  (`content`), иначе правка тела карточки не меняла ключ (грабля 2026-11-08).
+- `combatSectionHandle` = номер листка + уточнение + `noteId:title` и
+  `card.PromptText()` **по обеим сторонам**. Ссылки и картинка в отпечаток
+  не входят намеренно.
+- `persistCombatSectionTexts` пишет `merged[genKeySection] = gen.section`
+  вместе с текстами — **без этой строки кэш не работал бы**: тексты лежали бы
+  в базе, но свежесть не подтверждалась, и модель звалась заново на каждой
+  сборке. Настоящая находка, не косметика.
+- `sectionGen` получил поле `brief` (шаг 2a) — подмена брифа; разбор ответа
+  и кэш общие.
+
+### Почему НЕ секция в `llm-stub` (история, 2026-11-16/17)
+
+Проверки стенда идут через **общий `llm-stub.mjs`**, который обязан
+различать **три** вида промта:
+
+1. подраздел документа (в системном промте есть `Ответь ТОЛЬКО JSON`) —
+   структурный ответ `{"blocks":[…]}`;
+2. старый промт сравнения листка (`combatCompareSystem`, **без** JSON) —
+   текст, зависящий от уточнения; на нём держится проверка «после смены
+   уточнения файл собирается заново»;
+3. промт помощника-агента и остальные 573 проверки.
+
+Любая перестановка порядка ветвей роняет одну из групп. Проверенные тупики:
+резать бриф по первому `"blocks"` — отрезается инструкция (в контракте есть
+пример таблицы); по последнему `Ответь ТОЛЬКО JSON` — бриф пустой; ветка 2
+раньше ветки 1 — перехватывает подразделы; условие `/Результат тула/`
+в ветке 2 — ломает агентские сценарии (8 проверок).
+
+**Решение, к которому я пришёл:** не смешивать в `llm-stub` — кэшевые
+проверки жили бы **отдельной секцией против `smart-llm-stub`** через
+сервис-«двойник» `offers-smart`. `smart-llm-stub.mjs` и compose-сервисы
+(`smart-llm-stub`, `offers-smart`) в дереве ЕСТЬ и поднимаются.
+**Стендовой секции кэша НЕТ** — решение пользователя 2026-11-17: вариант «б»,
+юнит-сторожа + существующая проверка «повторная выгрузка листка отдаёт тот же
+файл». Причина, по которой секцию не довели: `offers_local_e2e.mjs` — файл,
+который правится только целиком, а одноразовый «прогон одной секции» требует
+вставлять в него код, которого нет в репозитории; три подхода (снятие вызовов
+секций, комментарии вместо кода, сборка из «верхнеуровневых блоков по скобкам»)
+все упёрлись в одно: скобочный баланс файла держится на строках-шаблонах с
+`${}`, и вырезание блока ломает синтаксис в НЕОЖИДАННОМ месте (ошибка
+приходила на 300–800 строк ниже вырезанного). Вывод: если секция когда-нибудь
+понадобится — писать её **в сам файл** и гонять полный прогон, а не собирать
+файл из частей.
+
+### Что подтверждено вручную на двойнике (2026-11-17, не стендовая секция)
+
+Двойник `offers-smart` (та же база, `LLM_SERVICE_URL=http://smart-llm-stub:3000`,
+**свой** `OFFERS_SERVICE_SECRET`) поднят и отвечает; проверено ручными вызовами
+его ручек: создание листка, первая сборка DOCX, вторая сборка тем же файлом,
+`gen.sect.*` + `gen.section` в `form_values` листка, стороны не тронуты,
+смена `hint` пересобирает файл. Это подтверждение поведения, а не сторож в
+прогоне — при следующем заходе его надо оформить проверкой в самом стенде.
+
+### Две грабли двойника (стоили времени, записать)
+
+- **`OFFERS_APP_ID` порождает имя переменной с дефисом.** `appIDFromEnv()`
+  (`jwt.go:72`) — это `OFFERS_APP_ID`, и ключ JWT собирается как
+  `strings.ToUpper(appID) + "_SERVICE_SECRET"`. С `OFFERS_APP_ID=offers-smart`
+  ключ становится `OFFERS-SMART_SERVICE_SECRET`, а контейнер в него **не
+  передаёт**: имя с дефисом shell отвергает, а `docker compose config`
+  показывает его как обычную переменную окружения — расхождение находится
+  только после старта. Поэтому у двойника `OFFERS_APP_ID: offers` (как у
+  основного), а отличается он **значением** `OFFERS_SERVICE_SECRET`
+  (`test-service-secret-smart`).
+- **Секрет двойника обязан быть известен заглушке ролей.** `roles`-ручка
+  `auth-stub.mjs` сверяет `X-Service-Secret` со **своим** `OFFERS_SERVICE_SECRET`;
+  без второго значения двойник получал `403 forbidden: insufficient role` на
+  каждой JWT-ручке (то есть «первая сборка листка» отвечала 403, а не 200).
+  Если у двойника свой ключ, в `auth-stub` он добавляется **вторым через
+  запятую** — правило «один секрет = одно значение» здесь намеренно нарушено
+  ради двойника. `scripts/auth-stub.mjs` в HEAD этот формат **не понимает** —
+  правка была, но её откатили вместе с секцией; при возврате к двойнику
+  правку надо вернуть (два `SECRETS.includes(...)`).
+
+### Следующий шаг (по порядку)
+
+1. ~~Стендовая секция кэша~~ **и 2b, и 3e — сделаны и запушены** (решение
+   пользователя 2026-11-17: вариант «б» — юнит-сторожа + существующая проверка
+   «повторная выгрузка листка отдаёт тот же файл»).
+2. **Шаг 2c** (backlog плана) — если карточки КП начнут расходиться так же:
+   у КП `systemCacheHandle` всё ещё `noteId`, поэтому правка тела карточки
+   системы не переписывает текст. У листка это уже закрыто (2b).
+3. **Шаг 4m** — Mini App не доносит файл/ссылку; следующая задача по порядку.
+4. Дальше: 5 (`diagram`: mermaid→PNG), 6 (предпросмотр/маркеры/справка),
+   7 (фиксация — версия из `manifest.json`).
+
+### Грабли этого захода (стоили времени; записаны как правило)
+
+- **Не править большие `.mjs` построчно через PowerShell**
+  (`Get-Content` → фильтр → `Set-Content`): куски `offers_local_e2e.mjs`
+  терялись и сдвигались несколько раз. Только `edit`/`write` или
+  node-скрипт по **номерам строк** + `node --check` после каждой правки.
+- **`\\` в regex внутри PowerShell-строки** схлопывается — синтаксис
+  ломается в другом месте файла. Такие правки — только целым файлом.
+- **Заглушки монтируют `scripts/` на чтение, а Node читает `.mjs` один раз
+  при старте**: после любой правки — `docker restart offers-local-llm-stub`
+  (или `…-smart-llm-stub`), иначе «исправление не работает» без единой ошибки.
+- **Кэш DOCX листка — в `offers_combat_docx`**: перед проверкой «соберётся
+  заново» чистить (`delete from offers_combat_docx`), иначе читаешь старый
+  файл из кэша.
+- **`GET /bot/combat/{id}` не существует** — листок читается JWT-ручкой
+  `GET /combat/{id}`.
+- **Экспорт бота → JSON `{docx_base64}`, экспорт приложения → zip**: читать
+  по первому байту (`0x7b` = `{`), иначе `unzipEntrySafe` вернёт пустую
+  строку и «нет таблицы» будет ложным.
+
+### Проверки, которые сейчас зелёные (прогнаны 2026-11-17)
+
+```
+cd offers-service && gofmt -l . && go vet ./... && go test -count=1 ./...
+cd .. && node ../scripts/check_offers_openapi.mjs     # 121/121
+docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" \
+  -v "$PWD/offers-bot:/bot:ro" -w /app \
+  -e OFFERS_BOT_URL=http://offers-local-bot-stub:3000 -e BOT_DIR=/bot \
+  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000   # 573/0
+```
+
+### Что НЕ проверено
+
+- Живой листок под настоящей моделью (стенд — заглушки).
+- **Кэш 2b на стенде не сторожится**: второй файл тот же — да (проверка
+  `sectionCombat`), но «модель во второй раз не звалась» подтверждено только
+  ручными вызовами двойника `offers-smart`, не прогоном (см. выше).
+- **Факты 3e на стенде**: юнит-тестами доказано правило и границы, ручными
+  вызовами — запись в листок; живого хода «прочитал ссылку → запомнил факт →
+  собрал DOCX» под моделью нет (стенд — `llm-stub`, а `remember_sheet_fact`
+  требует реального `fetch_url`/`parse_file` в том же ходе).
+- Живой вызов ручек `agent-service` (шаг 1): `AGENT_INTERNAL_SECRET` на бою
+  **не задан**, контейнер `agent` не пересобран; `.env` и серверный compose —
+  при раскатке.
+- Шаги 2c/4m/5/6/7 не начинались.
+
+**Дальше по плану:** 4m (Mini App не доносит файл/ссылку — зафиксировать),
+5 (вид `diagram`: mermaid→PNG, видимый fallback), 6 (предпросмотр/маркеры/
+справка), 7 фиксация (версия из `manifest.json`). 2c — по необходимости
+(у КП ключ кэша систем всё ещё `noteId`).
 
 ## Next iterations (backlog)
 
