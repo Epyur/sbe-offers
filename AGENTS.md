@@ -30,9 +30,37 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.4** — ready 2026-11-17. The combat sheet is assembled from
-sections like the offer, mermaid diagrams print as pictures with a visible fallback,
-and the bot assistant reads links and attached files.
+Current version = **0.11.5** — ready 2026-11-17. The base prompt of a document is a form
+setting (not code), a card's characteristics reach the model, and links print as one list
+in the order of mention (combat sheets print our links only).
+
+> **0.11.5 (2026-11-17, вечер) — базовый промт в форме, характеристики в промпте,
+> ссылки одним списком.** Четыре правки по живым жалобам на листок 017/2026.
+> **(1) Базовый промт — настройка формы.** `offers_form.base_prompt` (миграция),
+> поле `OfferForm.BasePrompt` + `BasePromptDefault`, правка в «Форме КП» и «Форме
+> боевого листка» (карточка «Базовый промт», кнопка «↩ Вернуть базовый текст»).
+> Раньше общая часть промта (`sectionAnswerContract`) жила в коде: подразделы
+> пишутся отдельными вызовами модели и друг друга не видят, поэтому требования
+> к согласованности («не называй продукты равноценными при разных значениях»)
+> должен задавать администратор. Свой промт входит в ключ кэша (`.bp<hash>`) и в
+> отпечаток содержания листка, поэтому правка переписывает разделы.
+> **(2) Характеристики карточки доходят до модели** (`skills.SpecsPromptLines`,
+> ≤60 строк / ≤6000 знаков; `SystemCard.PromptText` передаёт `Specifications`).
+> **(3) Ссылки — один список в порядке упоминания**, без групп; деление на типы и
+> редактор правил удалены. **(4) В боевом листке печатаются только наши ссылки.**
+> `combatDocxVersion` → **v5**, и хэш файла листка теперь включает форму
+> (`combatFormFingerprint`): правка промта/разделов пересобирает файл.
+> Проверки: `gofmt`/`go vet`/`go test -count=1 ./...` зелёные, OpenAPI **121/121**,
+> плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 / `check_marker_registry`
+> OK / `check_sections_conditions` 16/16, стенд **574/0**. **Выпущена и выложена
+> 2026-11-17:** `backend` `7b97098`, self-hosted `manifest 9c7fa4d1…` /
+> `main 6577e472…` / `styles 50bad65b…`, реестр `0.11.5`
+> (`uploadedAt 2026-11-17T16:29:56Z`). Живая пересборка 017/2026: заголовков
+> групп ссылок нет, в конце — две наши ссылки в порядке заметки, адреса
+> конкурента нет; характеристики на месте. Подробности — `HANDOFF.md`, «0.11.5».
+> **Стенд-грабля:** `auth-stub` обязан понимать список секретов через запятую —
+> у стенда два экземпляра сервиса (основной и «умный» двойник), и точное
+> сравнение с одним значением даёт `403 insufficient role` на каждой ручке.
 
 > **0.11.4 (2026-11-17) — sections in the combat sheet, diagrams, agent file/link
 > reading.** Three steps of the 2026-11-16 plan landed on `backend` and are released
@@ -96,7 +124,7 @@ and the bot assistant reads links and attached files.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `1b3c4be` (code), `main` `e991975`
+Code heads: `backend` `f226a05` (code), `main` `e991975`
 (release slice of 0.11.4; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
@@ -1054,7 +1082,11 @@ offers_context where mode='systems'"` and restart `offers-local-kb-stub`.
 **Moving files to the server: compare md5 AFTER normalising line endings.**
 Git checks out `.ts` as CRLF on Windows and LF on the server; the content is
 identical and only the bytes differ. Normalise (`\r\n`→`\n`) before declaring
-a mismatch. Guard tested 2026-11-13.
+a mismatch. Guard tested 2026-11-13. **It fired again on 2026-11-17:** the
+deployed `offers-service` copy had CRLF while `git archive` from this machine
+gives LF, so the pre-copy comparison reported **all 294 files** as different
+though the content was identical — the copy itself was right, and after
+`rsync` the server files are LF (checked with `grep -c $'\r'`: 0).
 
 **Listing remote files: `find -print0 | xargs -0 md5sum`, NOT `while read`.**
 An `ssh '... while read ...'` swallows stdin — the same class as the
@@ -1246,6 +1278,39 @@ measurements) are in the archive.
 - **When a block goes empty, read the cached `form_values` first.** Three
   releases were spent tuning prompts while the defect was downstream of them, in
   the post-processing.
+- **A card's characteristics table is a FACT and must reach the model**
+  (2026-11-17, live sheets 016/2026 and 017/2026). `SystemCard.PromptText()`
+  used to DROP `Specifications` as "note metadata", so in a combat sheet our
+  product's column was «не указано» in almost every row while the competitor's
+  numbers were filled — those came from a `remember_sheet_fact` fact fetched
+  from the internet. The numbers had been in the KB card all along (note 6363
+  carries a full table: λ10, compressive strength, water absorption, operating
+  temperature). Now `skills.SpecsPromptLines` prints them (header row skipped,
+  ≤60 rows, ≤6000 characters per card, ≤240 per line) under «Характеристики из
+  карточки (числа бери только отсюда, не выдумывай)», and
+  `combat_compare.writeCardFacts` uses the same function — one rule for both
+  paths. Guards: `TestCombatSectionPromptCarriesSpecs`,
+  `TestSystemCardPromptTextIncludesSpecs`, `TestCombatSectionHandleSeesCardEdit`.
+  **A row cap is not a safety valve, it is a silent lie**: the first version cut
+  at 15 rows and live competitor cards (23–30 rows) lost the tail, so the sheet
+  said «не указано» about flexibility, UV ageing and weld strength that ARE in
+  the card — an error in OUR favour. Cap by characters, keep row count high.
+- **A prompt change is invisible to the DOCX cache — bump `combatDocxVersion`.**
+  `combatDocxHash` knows the number, both sides, the hint, the layout bytes and
+  the version, but NOT the card or section texts (on purpose: a card edit must
+  not rebuild every sheet). So a fix that only changes what the model writes
+  would still serve the old file from `offers_combat_docx` as "fresh". v3 was
+  set for exactly this (2026-11-17, second pass). The section-text cache has its
+  own freshness (`combatSectionHandle` includes `PromptText()`), so it rebuilds
+  by itself — the file cache does not.
+- **Deleting a model's `[НУЖНО: …]` marker leaves a SEAM** (2026-11-17, live
+  sheet 017/2026): «камеры, [НУЖНО: уточнить], иначе» → «камеры,, иначе» and
+  «по техлистам: [НУЖНО: цифры].» → «по техлистам:.». `stripFactNotes` now
+  collapses `,,` / `;:` / `:.` / `..` and drops leading separators, and keeps
+  the words (inventing the missing text is worse). **The semantic hole stays**
+  — the sentence reads odd; the real cure is not putting the marker
+  mid-sentence, which is a prompt decision, not a printer one. Guard:
+  `TestStripFactNotes` (the reverted printer reproduces «камеры,, иначе»).
 - **A layout marker describes the FORMAT, not the content** — strip it, keep the
   text.
 - **A hyperlink's visible text is the LABEL, never the URL.** Printing
@@ -1302,24 +1367,23 @@ measurements) are in the archive.
   The `{{ссылки: система}}` spelling behaves the same outside a repeat. A marker
   that silently does nothing is the worst outcome — a bare key must either
   print or be rejected, not be sent to the model.
-- **Links in the document are printed by GROUPS, as a NUMBERED list**
-  (2026-11-10, user request). Groups and their order: `page` (product page on
-  nav.tn.ru, systems before materials) → `sto` → `techlist` (systems before
-  materials) → `uzly` → `cert` (certificates/declarations/instructions and
-  anything else, **materials before systems**). Each group gets its own
-  `<w:numId>` from the numbering plan, so numbering restarts at 1 per group.
-  One classification rule lives in `skills/cardrefs.go` (`cardRefGroupOf`,
-  `SortCardRefsGrouped`, `GroupCardRefsByGroup`); `CardRef` now carries
-  `group` + `owner`, and `TagCardRefsOwner` sets the owner where the card is
-  known (`cardAllRefs`: `Refs`→system, `LinkedRefs`→material). Both the `links`
-  node (`renderLinkSection`) and the `{{ссылки}}` marker
-  (`renderLayoutCardLinks`) sort again before printing, so externally-supplied
-  refs are ordered too. **`applyHyperlinks` now locates the numbered item by its
-  text and wraps only its run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the
-  paragraph as a plain `hyperlinkXML` would silently drop the number.
-  Old caches without `group`/`owner` are classified on the fly
-  (`effectiveGroup`/`effectiveOwner`), so they print in the right groups without
-  a KB re-read.
+- **Links are printed as ONE numbered list, in the order of mention**
+  (2026-11-17, user's direct reversal of the 2026-11-10 grouping). «Нужно убрать
+  деление ссылок на типы, все ссылки (в том числе на иные документы) приводим в
+  порядке их упоминания в заметке. Ссылки на ресурсы конкурента не приводим».
+  So: `collectOfferRefs` does NOT sort (dedupe by URL only); `cardAllRefs` is
+  `card.Refs` (parse order of «## Ссылки») then `card.LinkedRefs` (composition
+  order); `renderLinkSection` and `renderLayoutCardLinks` print one list with one
+  `<w:numId>`, no group headings. The whole grouping machinery is DELETED
+  (`skills/cardrefs.go` group/owner code, `skills/linkgroups.go`, the
+  `link_groups` form field, the plugin's link-groups editor); the DB column
+  `offers_form.link_groups` stays unused so old data is not destroyed. **The
+  combat sheet prints OUR links only** — `buildCombatBody` no longer appends
+  `collectOfferRefs(competitorCards)`: a competitor's site in the reference list
+  reads as our recommendation to the customer.
+  **`applyHyperlinks` locates the numbered item by its text and wraps only its
+  run, keeping `<w:pPr>`/`<w:numPr>`** — rebuilding the paragraph as a plain
+  `hyperlinkXML` would silently drop the number.
 - **Model text is printed as paragraphs, and its typography is normalised**
   (2026-11-10, user request: «вставлялся единым массивом», «пропуски точек,
   двойные пробелы»). `normalizeBodyTypography` (double spaces → one, no space
@@ -1901,26 +1965,34 @@ system); OpenAPI 121/121; стенд **573/0** (+8, секции листка и
 
 ---
 
-## ТЕКУЩЕЕ СОСТОЯНИЕ — 2026-11-17 (HEAD `d9f7676`; шаги 2b и 3e сделаны, запушены)
+## ТЕКУЩЕЕ СОСТОЯНИЕ — 2026-11-17 (0.11.4 выпущена; план 2026-11-16 закрыт)
 
-**Ветка `backend` плагина `sbe-offers`. HEAD = `d9f7676`.**
-Сделаны и запушены: шаги **1** (`sbe-agent` `e32aadd`/`f1e178e`, `sbe-core`
-`f89a71a`), **3**, **4** (`1d94d4f`), **2a** (`d48434a`), **2b** (`709b72e`),
-**3e** (`673524e`), **4m** (исследован — править нечего), `d9f7676` (промт +
-документация). Версия плагина НЕ поднималась — правки бэковые.
-Проверки текущей точки: `gofmt` пусто, `go vet` 0, `go test -count=1 ./...`
-зелёный, OpenAPI **121/121**, стенд **573/0**.
+**Ветка `backend` плагина `sbe-offers`.** План 2026-11-16 пройден целиком:
+шаги **1** (`sbe-agent` `e32aadd`/`f1e178e`, `sbe-core` `f89a71a`), **2a**
+(`d48434a`), **2b** (`709b72e`), **3**, **4** (`1d94d4f`), **3e** (`673524e`),
+**4m**, **5**, **6** вошли в 0.11.4 (`1b3c4be`), шаг **7** — выпуск 0.11.4
+(2026-11-17). Точки выпуска, хэши сборки и живая сверка — `HANDOFF.md`,
+«Три точки сходятся (0.11.4)»; здесь не дублируются.
 
-**ОСТАТОК ПЛАНА (проверено по коду 2026-11-17):** шаги **5**, **6**, **7**.
-Шаг 5 не начат ни на строку: `sectionBlockKinds` (`sections_print.go:50`) =
-`heading/paragraph/list/table/figure`, вида `diagram` нет; контракт блока
-`{kind:"diagram", lang, code, caption}` модели не объявлен; `sectionDiagramXML`
-(mermaid→PNG, `docxMedia`, `wp:inline`, подпись «Схема N») нет; **видимого
-fallback нет** — неизвестный вид молча отбрасывается. Шаг 6: в
-`combatDefaultSections()` три раздела (общее сравнение с таблицей, где
-конкурент сильнее, по каждому продукту) — **нет «Схемы сравнения»** (зависит
-от 5); в плагине нет предпросмотра схемы и `diagram` в `markers.ts`/`help.ts`.
-Шаг 7 — только по команде «Фиксируй».
+**Что сделано после выпуска (без bump версии, только бэки):** правка пяти живых
+дефектов листка 016/2026 (`f226a05`) и второй заход по листку 017/2026 —
+характеристики карточки доходят до модели, чистка швов от «[НУЖНО: …]»
+(`38f8d79`), затем снятие обрезки характеристик по 15 строкам (`b4fa415`). Все
+три кода выложены. Живая пересборка после второго захода: 017/2026 — колонка
+нашего продукта заполнена (λ10, сжатие, паропроницаемость, температуры, толщины,
+габариты), «не указано» осталось 6 — все честные; 016/2026 — наша колонка без
+пропусков из 15 строк, сравнение свелось в одну таблицу. Подробности и точки
+выкладки — `HANDOFF.md` (2026-11-17).
+
+**Сверка кода с выкладкой (2026-11-17):** `/opt/mailers/offers-service` и
+`/opt/mailers/offers-bot` байт в байт совпадают с `git archive HEAD` (образы
+собраны после коммита), самораздача и `registry.json` отдают те же хэши, что
+локальная сборка. Пересборка `main.js` воспроизводит те же байты.
+
+**Что дальше (по порядку):** **2c** — у КП ключ кэша систем всё ещё `noteId`,
+поэтому правка тела карточки не переписывает текст (у листка закрыто в 2b);
+кнопка «файл/ссылка» на экране листка в Mini App (второй вход в помощника —
+4m); затем «Next iterations (backlog)» ниже.
 
 ### Шаг 3e — устойчивые факты листка (2026-11-17)
 
@@ -2101,31 +2173,38 @@ Mini App.
 ```
 cd offers-service && gofmt -l . && go vet ./... && go test -count=1 ./...
 cd .. && node ../scripts/check_offers_openapi.mjs     # 121/121
+node scripts/check_bundle_strings.mjs                 # 0 отсутствует
+node scripts/check_marker_registry.mjs && node scripts/check_sections_conditions.mjs  # 16/16
+npx tsc --noEmit && npm run build && node scripts/check_docs_state.mjs
+cd offers-bot && npx tsc --noEmit && node --test       # 217 пройдено
 docker run --rm --network sbe-offers_offersnet -v "$PWD/scripts:/app:ro" \
   -v "$PWD/offers-bot:/bot:ro" -w /app \
   -e OFFERS_BOT_URL=http://offers-local-bot-stub:3000 -e BOT_DIR=/bot \
-  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000   # 573/0
+  node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000   # 575/0 (прогон выпуска)
 ```
+
+Стенд **2026-11-17 не прогонялся**: Docker Desktop на рабочей машине был выключен.
+Число 575/0 — прогон при выпуске 0.11.4; последние правки бэков (f226a05 и второй
+заход) стендом не проверялись, только юнит-тестами и живой выкладкой.
 
 ### Что НЕ проверено
 
-- Живой листок под настоящей моделью (стенд — заглушки).
+- **Живой листок под настоящей моделью по качеству текста.** Живые листки
+  016/2026 и 017/2026 собраны на бою и как раз показали два дефекта (характеристики
+  нашего продукта «не указано», швы от `[НУЖНО: …]`). После правки 2026-11-17
+  пересборки под моделью ещё не было.
 - **Кэш 2b на стенде не сторожится**: второй файл тот же — да (проверка
   `sectionCombat`), но «модель во второй раз не звалась» подтверждено только
   ручными вызовами двойника `offers-smart`, не прогоном (см. выше).
 - **Факты 3e на стенде**: юнит-тестами доказано правило и границы, ручными
   вызовами — запись в листок; живого хода «прочитал ссылку → запомнил факт →
-  собрал DOCX» под моделью нет (стенд — `llm-stub`, а `remember_sheet_fact`
-  требует реального `fetch_url`/`parse_file` в том же ходе).
-- Живой вызов ручек `agent-service` (шаг 1): `AGENT_INTERNAL_SECRET` на бою
-  **не задан**, контейнер `agent` не пересобран; `.env` и серверный compose —
-  при раскатке.
-- Шаги 2c/4m/5/6/7 не начинались.
+  собрал DOCX» под моделью нет (стенд — `llm-stub`).
+- **Ручки `agent-service` живьём**: проверены на бою 2026-11-17 — без секрета
+  `403`, с секретом `200`, настоящий mermaid с кириллицей отдаёт PNG.
 
-**Дальше по плану:** 4m (Mini App не доносит файл/ссылку — зафиксировать),
-5 (вид `diagram`: mermaid→PNG, видимый fallback), 6 (предпросмотр/маркеры/
-справка), 7 фиксация (версия из `manifest.json`). 2c — по необходимости
-(у КП ключ кэша систем всё ещё `noteId`).
+**Дальше по плану:** 2c (у КП ключ кэша систем всё ещё `noteId`), кнопка
+«файл/ссылка» на экране листка в Mini App (4m, второй вход в помощника), затем
+«Next iterations (backlog)» ниже.
 
 ## Next iterations (backlog)
 

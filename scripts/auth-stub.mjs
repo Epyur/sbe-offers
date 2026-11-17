@@ -7,7 +7,22 @@
 import http from 'node:http';
 
 const PORT = Number(process.env.AUTH_STUB_PORT ?? 13001);
-const SECRET = process.env.OFFERS_SERVICE_SECRET ?? 'test-service-secret';
+// Секретов может быть несколько через запятую (2026-11-17): у стенда два
+// экземпляра сервиса — основной и «умный» двойник (`offers-smart`) — со своими
+// секретами, и compose передаёт в заглушку оба значения одной строкой. Раньше
+// здесь стояло точное сравнение с одним значением: двойник получал 403 на каждой
+// ручке, а основной сервис — пустую карту прав (и весь стенд краснел на
+// `403 insufficient role`). Правило «один секрет = одно значение» здесь
+// нарушено намеренно и только для стенда.
+const SECRETS = (process.env.OFFERS_SERVICE_SECRET ?? 'test-service-secret')
+  .split(',')
+  .map((value) => value.trim())
+  .filter((value) => value !== '');
+
+/** secretOk — заголовок X-Service-Secret совпал с любым из секретов стенда. */
+function secretOk(req) {
+  return SECRETS.includes(req.headers['x-service-secret']);
+}
 const ROLES = (process.env.AUTH_STUB_ROLES ?? 'owner@tn.ru=superadmin')
   .split(',')
   .map((pair) => pair.split('='))
@@ -32,7 +47,7 @@ const server = http.createServer((req, res) => {
   // Без него карточки систем не читаются даже при заданном KB_SERVICE_URL, и
   // стенд молча показывал бы «база знаний не настроена».
   if (req.method === 'POST' && req.url === '/internal/service-token') {
-    if (req.headers['x-service-secret'] !== SECRET) {
+    if (!secretOk(req)) {
       return send(403, { error: 'forbidden' });
     }
     let raw = '';
@@ -54,7 +69,7 @@ const server = http.createServer((req, res) => {
 
   const permsMatch = req.url?.match(/^\/internal\/apps\/([^/]+)\/permissions$/);
   if (permsMatch && req.method === 'GET') {
-    if (req.headers['x-service-secret'] !== SECRET) {
+    if (!secretOk(req)) {
       return send(403, { error: 'forbidden' });
     }
     return send(200, {
