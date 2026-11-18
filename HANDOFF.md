@@ -87,8 +87,8 @@
 | | значение |
 |---|---|
 | версия | **0.11.9 — ВЫПУЩЕНА 2026-11-18** |
-| `backend` | код `1a3f68b` (доки — следующим коммитом) |
-| `main` | код `939f60c` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
+| `backend` | код `1a3f68b` (доки `8ef958e`) |
+| `main` | код `939f60c` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`; доки `2f17e8d`) |
 | самораздача | `manifest be1869bd…` / `main ddd27c3b…` / `styles 2517a7cf…`, сверено по https (`/plugins/sbe-offers/*`) — sha256 совпал с локальной сборкой |
 | реестр на сервере | `/opt/mailers/www/registry.json` → `0.11.9`, `uploadedAt 2026-11-18T18:29:29Z`, бэкап `registry.json.bak-20261118-2129` |
 | реестр (git-копия) | `sbe-apstore-registry` **`c61edf7`** (`0.11.9`, тот же `uploadedAt`; сверено через `raw.githubusercontent.com`) |
