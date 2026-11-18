@@ -20,7 +20,9 @@ services:
     working_dir: /app
     command: node auth-stub.mjs
     environment:
-      OFFERS_SERVICE_SECRET: test-service-secret
+      # Два секрета через запятую: основной стенд и двойник `offers-smart`
+      # (кэш раздела боевого листка, 2026-11-16) ходят сюда со своими JWT-ключами.
+      OFFERS_SERVICE_SECRET: test-service-secret,test-service-secret-smart
       AUTH_STUB_ROLES: owner@tn.ru=superadmin,manager@tn.ru=editor
     volumes:
       - ./scripts:/app:ro
@@ -58,6 +60,25 @@ services:
       - ./scripts:/app:ro
     networks: [offersnet]
 
+  # Заглушка модели для проверки КЭША раздела листка (2026-11-16, шаг 2b):
+  # отвечает стабильно (одинаковый запрос — одинаковый текст), поэтому две
+  # сборки подряд дают один файл; счётчик вызовов на `/calls` показывает, что
+  # второй сборке модель не нужна. Её слушает ДВОЙНИК сервиса `offers-smart`
+  # (ниже), а не основной `offers`: общая заглушка `llm-stub` обязана
+  # различать три вида промта, и четвёртая ветка рвала её агентские и
+  # КП-проверки (AGENTS.md, «Где я застрял»). Основной стенд эту заглушку не
+  # видит вовсе.
+  smart-llm-stub:
+    image: node:22-alpine
+    container_name: offers-local-smart-llm-stub
+    working_dir: /app
+    command: node smart-llm-stub.mjs
+    environment:
+      LLM_SERVICE_SECRET: test-llm-secret
+      SMART_STUB_PORT: "3000"
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
   # Заглушка kb-service (2026-10-30): карточки систем с тегом commercial_propose.
   # Живой дефект того же дня — в боевом compose у `offers` не были заданы
   # KB_SERVICE_URL/KB_SERVICE_SECRET, и плагин показывал «База знаний не
@@ -73,6 +94,48 @@ services:
       - ./scripts:/app:ro
     networks: [offersnet]
 
+  # Заглушка mailer-service (2026-11-14, P5b): две внутренние ручки писем на
+  # ЗАПИСАННОЙ фикстуре (scripts/mailer-fixture.json, живой ответ 2026-11-13).
+  # Ключа файла не отдаёт вовсе, видимость не проверяет — как настоящая ручка.
+  mailer-stub:
+    image: node:22-alpine
+    container_name: offers-local-mailer-stub
+    working_dir: /app
+    command: node mailer-stub.mjs
+    environment:
+      MAILER_PORT: "3000"
+      MAILER_INTERNAL_SECRET: test-mailer-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
+  # Заглушка documents-service (2026-11-14, P5b): набор документов, привязанных
+  # к продукту. По нему offers-service проверяет видимость письма.
+  documents-stub:
+    image: node:22-alpine
+    container_name: offers-local-documents-stub
+    working_dir: /app
+    command: node documents-stub.mjs
+    environment:
+      DOCUMENTS_PORT: "3000"
+      DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
+
+  # Заглушка agent-service (2026-11-16, шаги 3–4 плана sbe-offers): ручки
+  # /internal/agent/{fetch,file/parse,render} в форме настоящего sbe-agent.
+  agent-stub:
+    image: node:22-alpine
+    container_name: offers-local-agent-stub
+    working_dir: /app
+    command: node agent-stub.mjs
+    environment:
+      AGENT_STUB_PORT: "3000"
+      AGENT_INTERNAL_SECRET: test-agent-internal-secret
+    volumes:
+      - ./scripts:/app:ro
+    networks: [offersnet]
   offers:
     build: ./offers-service
     container_name: offers-local-app
@@ -98,6 +161,18 @@ services:
       S3_SECRET_KEY: y
       SMTP_HOST: 127.0.0.1
       SMTP_PORT: "2525"
+      # Письма (P5b, 2026-11-14): ручки внутренние, видимость письма решает
+      # карточка скана. На стенде — mailer-stub на записанной фикстуре.
+      MAILER_SERVICE_URL: http://mailer-stub:3000
+      MAILER_INTERNAL_SECRET: test-mailer-internal-secret
+      # Набор «документы, привязанные к продукту» — по нему проверяется
+      # видимость письма. На стенде — documents-stub.
+      DOCUMENTS_SERVICE_URL: http://documents-stub:3000
+      DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
+      # Агент-сервис (2026-11-16, шаги 3–4 плана sbe-offers): чтение ссылки и
+      # разбор приложенного файла. Заглушка — agent-stub.
+      AGENT_SERVICE_URL: http://agent-stub:3000
+      AGENT_INTERNAL_SECRET: test-agent-internal-secret
     depends_on:
       db:
         condition: service_healthy
@@ -107,8 +182,77 @@ services:
         condition: service_started
       kb-stub:
         condition: service_started
+      mailer-stub:
+        condition: service_started
+      documents-stub:
+        condition: service_started
+      agent-stub:
+        condition: service_started
     ports:
       - "18080:3000"
+    networks: [offersnet]
+
+  # Двойник сервиса для проверки кэша раздела боевого листка (2026-11-16, шаг
+  # 2b): та же база и тот же образ, но СВОЯ модель (`smart-llm-stub`) и свой
+  # JWT-ключ. Зачем именно двойник:
+  #   - `OFFERS_APP_ID` у подпроцесса остаётся `offers` намеренно: имя его
+  #     ключа — `OFFERS_SERVICE_SECRET`, и у двойника оно тоже своё значение,
+  #     поэтому токен основного стенда сюда не подходит (проверяемо), а
+  #     счётчик бэка с app_id (`offers_system_number`, кэш DOCX
+  #     `offers_combat_docx`) не разъезжается между двумя копиями;
+  #   - с app_id `offers-smart` сервис падал на старте: имя переменной с дефисом
+  #     (`OFFERS-SMART_SERVICE_SECRET`) в shell не экспортируется — грабля
+  #     стенда, записана в AGENTS.md;
+  #   - основная модель (`llm-stub`) не терпит четвёртой ветки промта — та
+  #     роняла агентские и КП-проверки.
+  # Без LibreOffice и S3: экспорт на стенде идёт байтами.
+  offers-smart:
+    build: ./offers-service
+    image: sbe-offers-offers-smart
+    container_name: offers-local-smart-run
+    environment:
+      DATABASE_URL: postgres://offers:testpass@db:5432/offers?sslmode=disable
+      PORT: "3000"
+      OFFERS_APP_ID: offers
+      # Свой JWT-ключ — им и отличается двойник от основного стенда.
+      # Вторым в списке секретов заглушки ролей он прописан ниже (auth-stub):
+      # без этого двойник получал «forbidden: insufficient role» на каждой
+      # JWT-ручке.
+      OFFERS_SERVICE_SECRET: test-service-secret-smart
+      OFFERS_BOT_SECRET: test-bot-secret
+      OFFERS_OWNER_EMAIL: owner@tn.ru
+      AUTH_SERVICE_URL: http://auth-stub:13001
+      OFFERS_BOT_URL: http://bot-stub:3000
+      LLM_SERVICE_URL: http://smart-llm-stub:3000
+      LLM_SERVICE_SECRET: test-llm-secret
+      KB_SERVICE_URL: http://kb-stub:3000
+      KB_SERVICE_SECRET: test-kb-secret
+      S3_ENDPOINT: ""
+      S3_ACCESS_KEY: x
+      S3_SECRET_KEY: y
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: "2525"
+      MAILER_SERVICE_URL: http://mailer-stub:3000
+      MAILER_INTERNAL_SECRET: test-mailer-internal-secret
+      DOCUMENTS_SERVICE_URL: http://documents-stub:3000
+      DOCUMENTS_INTERNAL_SECRET: test-documents-internal-secret
+      AGENT_SERVICE_URL: http://agent-stub:3000
+      AGENT_INTERNAL_SECRET: test-agent-internal-secret
+    depends_on:
+      db:
+        condition: service_healthy
+      auth-stub:
+        condition: service_started
+      smart-llm-stub:
+        condition: service_started
+      kb-stub:
+        condition: service_started
+      mailer-stub:
+        condition: service_started
+      documents-stub:
+        condition: service_started
+      agent-stub:
+        condition: service_started
     networks: [offersnet]
 
 networks:

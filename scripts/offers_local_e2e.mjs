@@ -2628,6 +2628,17 @@ async function sectionCombat() {
       combatXml.includes('Наш продукт') && combatXml.includes('Продукты конкурентов'));
     ok('в боевом листке нет незаполненных плейсхолдеров',
       !combatXml.includes('{{') && !combatXml.includes('}}'));
+    // Ссылки наших карточек (2026-11-18): живой листок 017/2026 печатал только
+    // две ссылки из «## Ссылки», а раздел «## Иные документы» (файлы приложения
+    // «Документы») пропадал. Здесь проверяется весь путь: карточка из kb-stub →
+    // кэш `system_cards` → DOCX. Если ссылки не дошли, регрессия вернулась.
+    const combatRels = unzipEntrySafe(combatDocx, 'word/_rels/document.xml.rels');
+    ok('ссылки наших карточек попали в листок',
+      /nav\.tn\.ru|epyur\.fvds\.ru/.test(combatRels),
+      `rels: ${combatRels.slice(0, 300)}`);
+    ok('документ из «Иных документов» попал в листок',
+      combatRels.includes('/api/documents/file'),
+      `rels: ${combatRels.slice(0, 300)}`);
     // Схема сравнения (2026-11-17, шаг 6 плана): заготовка раздела «Схема
     // сравнения» просит mermaid-диаграмму, llm-stub отвечает блоком `diagram`,
     // agent-stub растеризует её в PNG. В готовом файле схема обязана быть
