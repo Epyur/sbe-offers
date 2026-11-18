@@ -30,11 +30,43 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.7** — ready 2026-11-17. The combat sheet takes competitors
-from three sources (KB search, a file via the bot, a URL read server-side), the
-«Аналоги» block moved under the search as «Подобрать», and two live defects are
-closed: the competitor's name is no longer the disclaimer, and the side search
-shows nothing until the manager types.
+Current version = **0.11.8** — ready 2026-11-18. The combat sheet prints every link
+of our product's cards (including documents from the «Документы» app), the links
+now take part in the DOCX cache hash, the sheet list no longer re-reads the
+competitor cache per row, and «Отправить в чат» tells the person in the chat that
+the document is being built.
+
+> **0.11.8 (2026-11-18) — ссылки карточек в листке, быстрый список, сообщение о сборке.**
+> Четыре жалобы по живому листку 017/2026 и по работе мини-приложения. **(1) Ссылки:**
+> в конце листка стояли две ссылки из `## Ссылки`, хотя в заметке был и
+> `## Иные документы` (файлы приложения «Документы»). Причина — две вещи сразу:
+> листок читает кэш `offers_context(mode='system_cards')`, а подсказка в
+> «Настройках боевого листка» отправляла перечитывать **«Системы»**
+> (`POST /systems/refresh` → `mode='systems'`, на листок не влияет; нужен
+> **«Контекст КП»** → `POST /context/refresh`); и готовый DOCX лежал в кэше под
+> хэшем, в который ссылки не входили. Теперь ссылки наших карточек входят в
+> `combatDocxHash`, `combatDocxVersion` → **v8**, а при пустом списке у карточки
+> с `noteId` документ печатает видимую строку с правильным адресом кнопки.
+> `combatOurRefs` — один набор ссылок для печати и для хэша. **(2) Список листков:**
+> `handleListCombat`/`handleBotListCombat` читают кэш конкурентов **один раз на
+> запрос** (было 1 + 2N запросов и N разборов одного JSONB: `withRepairedCompetitorTitles`
+> звался на каждой строке после 0.11.7); добавлен индекс
+> `offers_combat_sheet_created (created_at DESC)`. **(3) «Отправить в чат»:** первая
+> строка фоновой сборки — «⌛ Формирую … пришлю в чат по готовности» через
+> `notifyChat`; `notifyChat` теперь читает HTTP-статус бота, а не глотает 403/502/503.
+> Подпись в приложении объясняет, что файл придёт в чат и страницу можно закрыть.
+> **(4) Кэш карточек:** `systemCardsForCombat` при пустом кэше зовёт
+> `refreshSystemCards`, а не `SystemsFromKB`: прежний путь сохранял набор **без
+> материалов и без `LinkedRefs`**, и материал на нашей стороне листка переставал
+> находиться при печати. **Проверки:** `gofmt`/`go vet`/`go test -count=1 ./...`
+> зелёные (новые сторожа ссылок в хэше, дедупа/порядка, предупреждения и текста
+> «⌛»), OpenAPI **124/124**, плагин `tsc` 0 / `build` OK /
+> `check_bundle_strings` 0 / `check_marker_registry` OK /
+> `check_sections_conditions` 16/16, бот **220**, приложение **89**, `size` код
+> 111 712 Б, **стенд 599/0** (+2: ссылки карточек в DOCX и документ из «Иных
+> документов» в листке). **Не проверено:** живое сообщение «⌛» в Telegram
+> (стендовая заглушка бота не знает `/internal/notify`) и реальное ускорение
+> списка на боевой базе.
 
 > **0.11.7 (2026-11-17) — источники конкурента, дисклеймер вместо названия, поиск по пяти строкам.**
 > Три просьбы пользователя по боевому листку в мини-приложении плюс дефект,
@@ -172,8 +204,8 @@ shows nothing until the manager types.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `9c07cba` (code), `main` `b6898e4`
-(release slice of 0.11.7; `offers-service/`, `offers-bot/`, `offers-app/` live on
+Code heads: `backend` `7e5dc9e` (code), `main` `68fc53e`
+(release slice of 0.11.8; `offers-service/`, `offers-bot/`, `offers-app/` live on
 `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -896,7 +928,10 @@ renamed accordingly.
   DOCX export is done (`combat_docx.go`): rendered from the combat form, our and
   competitor cards printed as two sections. **Refs come from `## Ссылки` AND
   `## Иные документы`** (documents app, S3 files — since 2026-11-17), one list in
-  mention order, our products only. `![[…pdf]]` attachments and `[[note]]` wiki
+  mention order, our products only. The refs are read from the card cache
+  (`system_cards`, refreshed via «Контекст КП»), and since 2026-11-18 they are
+  part of `combatDocxHash`, so a changed link set really rebuilds the file.
+  `![[…pdf]]` attachments and `[[note]]` wiki
   links are still NOT read. The built-in view (no layout) prints the links
   section itself; with a layout the `{{ссылки}}` marker decides where it goes.
   **In the bot (2026-11-09, document-style picker since 2026-11-10)**: «⚔️
@@ -1402,15 +1437,36 @@ measurements) are in the archive.
   said «не указано» about flexibility, UV ageing and weld strength that ARE in
   the card — an error in OUR favour. Cap by characters, keep row count high.
 - **A prompt change is invisible to the DOCX cache — bump `combatDocxVersion`.**
-  `combatDocxHash` knows the number, both sides, the hint, the layout bytes and
+  `combatDocxHash` knows the number, both sides, the hint, the layout bytes,
+  the sheet form fingerprint, **our cards' links** (`combatOurRefs`, v8) and
   the version, but NOT the card or section texts (on purpose: a card edit must
   not rebuild every sheet). So a fix that only changes what the model writes
   would still serve the old file from `offers_combat_docx` as "fresh". v3 was
   set for exactly this (2026-11-17, second pass); **v6** — when the built-in
   view gained the links section and the cards started carrying documents-app
-  refs (2026-11-17, third pass). The section-text cache has its
-  own freshness (`combatSectionHandle` includes `PromptText()`), so it rebuilds
-  by itself — the file cache does not.
+  refs (2026-11-17, third pass); **v8** — when the links themselves entered the
+  hash (2026-11-18): before that, adding a document to a KB note never reached an
+  already built sheet, and the stand measured it (files (4) and (5) byte-equal).
+  The section-text cache has its own freshness (`combatSectionHandle` includes
+  `PromptText()`), so it rebuilds by itself — the file cache does not.
+- **TWO card caches, and the combat sheet uses `system_cards`** (2026-11-18,
+  live sheet 017/2026). `POST /systems/refresh` writes `offers_context(mode='systems')`
+  (the «Системы» screen); the sheet and the offer print from
+  `mode='system_cards'`, refreshed by **`POST /context/refresh`** («Контекст КП»,
+  admin). The settings hint used to send people to «Системы», so a manager
+  refreshed the wrong row and the document kept the old links. The sheet prints
+  from the cache and never reads the KB at export. If a card with `noteId` has no
+  refs, the document now says so in a visible line. `systemCardsForCombat` must
+  seed the cache through `refreshSystemCards`, never `SystemsFromKB`: the latter
+  drops `material` cards and `LinkedRefs`, and the poisoned cache then hides our
+  own material from every sheet and offer.
+- **A list must not re-read a cache per row** (2026-11-18). `loadCombatSheet`
+  repairs competitor titles and used to call `loadCachedCompetitors` itself; in
+  the list that meant 1 + 2N SQL queries and N unmarshals of the same large
+  JSONB (200 sheets → 401 queries). Lists now load the cache once and pass it to
+  `loadCombatSheetWithCards`. The response is still the full sheet — the
+  `?fields=preview` DTO is deliberately an opt-in backlog step, because an old
+  client could send a preview back as a full `PUT` and wipe `form_values`.
 - **Deleting a model's `[НУЖНО: …]` marker leaves a SEAM** (2026-11-17, live
   sheet 017/2026): «камеры, [НУЖНО: уточнить], иначе» → «камеры,, иначе» and
   «по техлистам: [НУЖНО: цифры].» → «по техлистам:.». `stripFactNotes` now
