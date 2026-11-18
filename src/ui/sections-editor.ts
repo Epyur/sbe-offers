@@ -22,6 +22,19 @@ export interface SectionsEditorDeps {
   offer?: Offer;
   /** Правка: перерисовать предпросмотр и вывод меток. */
   onChange?: () => void;
+  /**
+   * Режим боевого листка (2026-11-18). Два отличия от КП, оба — следствия
+   * того, что у листка другая печать:
+   *
+   *  1. id раздела после создания НЕ меняется. Ключ кэша текста —
+   *     `gen.sect.<id раздела>.<id подраздела>`, и переименование id
+   *     разошлось бы с уже написанными текстами: кэш остался бы в базе под
+   *     старым ключом, а листок заново звал модель на каждый раздел.
+   *  2. Метки `{ content: <id> }` в макете листка нет: разделы печатаются
+   *     целиком в месте метки `{{сравнение}}`. Копировать нечего, поэтому чипа
+   *     копирования здесь не показываем — мёртвая кнопка хуже её отсутствия.
+   */
+  combat?: boolean;
 }
 
 /** Тексты редактора — одна точка, чтобы проверка бандла нашла их все. */
@@ -37,6 +50,9 @@ export const SECTIONS_EDITOR_TEXTS = {
   removeSection: '✖ Удалить раздел',
   sectionID: 'id метки (латиницей)',
   sectionTitle: 'Заголовок раздела в документе',
+  // Подпись у неизменяемого id (боевой листок, 2026-11-18): администратор
+  // должен видеть, почему поле не правится, а не искать пропавшую настройку.
+  sectionIDLocked: 'id не меняется: на нём держится кэш текстов раздела',
   numbered: 'Нумеровать разделы',
   critique: 'Раздел (условие has_critique): критика альтернатив',
   subsections: 'Подразделы',
@@ -131,7 +147,7 @@ function renderSectionCard(
     syncFramePreviewTitle(card, titleInput.value);
   });
 
-  copyChip(head, section);
+  copyChipIfEditable(head, section, deps);
 
   const upBtn = head.createEl('button', { text: '▲', cls: 'tn-btn tn-btn-ghost' });
   upBtn.disabled = index === 0;
@@ -164,6 +180,14 @@ function renderSectionCard(
 function renderIdentityRow(card: HTMLElement, section: ContentSection, deps: SectionsEditorDeps): void {
   const row = card.createDiv({ cls: 'tn-offers-row' });
   row.createSpan({ cls: 'tn-offers-muted', text: 'id:' });
+  // У боевого листка id задаётся один раз (`combat`, 2026-11-18): ключ кэша
+  // текста — `gen.sect.<id>.<подраздел>`, и переименование id оставило бы
+  // написанные тексты под старым ключом, а листок заново звал бы модель.
+  if (deps.combat) {
+    row.createSpan({ cls: 'tn-offers-input tn-offers-readonly', text: section.id });
+    row.createSpan({ cls: 'tn-offers-muted', text: SECTIONS_EDITOR_TEXTS.sectionIDLocked });
+    return;
+  }
   const idInput = row.createEl('input', { cls: 'tn-offers-input' });
   idInput.value = section.id;
   idInput.placeholder = SECTIONS_EDITOR_TEXTS.sectionID;
@@ -397,7 +421,18 @@ function syncFramePreviewTitle(card: HTMLElement, title: string): void {
   if (titleEl) titleEl.textContent = title || '(без заголовка)';
 }
 
-/** Чип копирования метки `{ content: <id> }` — как у блоков `{{block:<id>}}`. */
+/**
+ * Чип копирования метки `{ content: <id> }` — как у блоков `{{block:<id>}}`.
+ *
+ * У боевого листка метки нет (разделы печатаются в месте `{{сравнение}}`),
+ * поэтому чип не показывается: `combat` в `SectionsEditorDeps`.
+ */
+function copyChipIfEditable(parent: HTMLElement, section: ContentSection, deps: SectionsEditorDeps): void {
+  if (deps.combat) return;
+  copyChip(parent, section);
+}
+
+/** Чип копирования метки раздела. */
 function copyChip(parent: HTMLElement, section: ContentSection): void {
   const chip = parent.createSpan({ cls: 'tn-offers-chip tn-offers-chip-copy', text: sectionMarker(section) });
   chip.title = SECTIONS_EDITOR_TEXTS.copyMarker;

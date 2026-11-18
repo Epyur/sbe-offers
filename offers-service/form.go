@@ -176,6 +176,16 @@ type OfferForm struct {
 	// показывает его, когда своё значение не задано, и по нему делает «вернуть
 	// базовый текст». В базу не пишется.
 	BasePromptDefault string `json:"basePromptDefault,omitempty"`
+	// SectionsDefault — встроенная заготовка разделов (только на чтение,
+	// 2026-11-18). До этой версии структура разделов листка жила ТОЛЬКО в коде
+	// (`combatDefaultSections`), и вернуть её после правок было нечем: редактор
+	// заготовки не знал. Теперь она приходит вместе с формой, а кнопка
+	// «↩ Вернуть заготовку» ставит её в разделы.
+	//
+	// В базу поле не пишется и в отпечаток формы (`combatFormFingerprint`) не
+	// входит: там только `sections` и `basePrompt`, иначе возврат заготовки
+	// менял бы хэш файла дважды — от самих разделов и от копии заготовки.
+	SectionsDefault []ContentSection `json:"sectionsDefault,omitempty"`
 	// Window — окно КП в приложении (2026-11-15): порядок, видимость и
 	// обязательность полей формы и зон экрана. Пусто — «как сейчас»
 	// (`effectiveWindow` строит нынешнее поведение), и старая форма не
@@ -248,6 +258,15 @@ func validateForm(f OfferForm) string {
 	if msg := validateSections(f.Sections); msg != "" {
 		return msg
 	}
+	// Боевой листок без разделов (2026-11-18). Пустой список не значит «печатать
+	// только карточки»: `renderCombatSections` подставляет заготовку, то есть
+	// документ всё равно печатает разделы — но уже не те, что администратор
+	// видит в окне. «В окне пусто, в документе текст» — та же тихая потеря
+	// настройки, что в 0.10.2 с разделами КП, поэтому сохранение отклоняется и
+	// отказ называет выход.
+	if f.Mode == combatFormMode && len(f.Sections) == 0 {
+		return combatEmptySectionsProblem
+	}
 	// Окно КП (2026-11-15) проверяется после полей: оно ссылается на их id.
 	if msg := validateWindow(f); msg != "" {
 		return msg
@@ -262,6 +281,14 @@ func validateForm(f OfferForm) string {
 
 // maxBasePromptRunes — предел длины базового промта формы.
 const maxBasePromptRunes = 20000
+
+// combatEmptySectionsProblem — отказ на пустое сохранение формы боевого листка.
+//
+// Тот же текст держит клиент (`COMBAT_SECTIONS_EMPTY` в
+// `src/ui/sections-model.ts`): администратор видит отказ ещё до запроса, а не
+// после круглого отказа сервера. Совпадение текстов сторожит
+// `scripts/check_combat_sections_rules.mjs`.
+const combatEmptySectionsProblem = "У боевого листка нет ни одного раздела: без разделов документ печатает только карточки. Нажмите «↩ Вернуть заготовку» или добавьте раздел."
 
 // validateSections — проверка содержательных разделов (2026-11-14).
 //
@@ -488,8 +515,44 @@ func combatDefaultForm() OfferForm {
 		Blocks:            []Block{},
 		RequiredFields:    []string{},
 		Sections:          combatDefaultSections(),
+		SectionsDefault:   combatDefaultSections(),
 		BasePromptDefault: sectionAnswerContract,
 	}
+}
+
+// withCombatSectionsDefault прикладывает к форме листка встроенную заготовку
+// разделов и заполняет пустой список разделов (2026-11-18).
+//
+// Два поля, две разные беды:
+//
+//  1. `sectionsDefault` — чтобы кнопке «↩ Вернуть заготовку» было что вернуть.
+//     Отдельным полем, а не «пусто = заготовка»: редактор должен видеть разницу
+//     между «у меня разделы вот такие» и «верни как в коде».
+//  2. `sections` — пустой список у листка значит ЗАГОТОВКУ, а не пустоту:
+//     `renderCombatSections` при пустом списке подставляет `combatDefaultSections`,
+//     то есть документ печатает разделы всегда. Пока чтение отдавало пустоту,
+//     окно настроек показывало «разделов нет», а собранный листок печатал четыре
+//     раздела — расхождение «в окне одно, в документе другое» (ровно этот класс
+//     и стоил 0.10.2). На стенде такой листок и нашёлся: сохранённая форма с
+//     пустыми разделами печатала заготовку.
+//
+// Правило «пустые массивы в БД — это настроенная пустая форма» (0.10.3) здесь
+// сознательно не действует: для разделов листка пустой список НЕ значит
+// «печатать без разделов» — такого состояния у листка нет вовсе.
+//
+// Клиент присылает форму целиком, поэтому своё значение этих полей не
+// принимается: `handleSaveForm` обнуляет заготовку сразу после разбора тела.
+func withCombatSectionsDefault(form OfferForm) OfferForm {
+	if form.Mode != combatFormMode {
+		return form
+	}
+	if len(form.SectionsDefault) == 0 {
+		form.SectionsDefault = combatDefaultSections()
+	}
+	if len(form.Sections) == 0 {
+		form.Sections = combatDefaultSections()
+	}
+	return form
 }
 
 // combatDefaultSections — заготовка разделов боевого листка (2026-11-16).
@@ -610,7 +673,7 @@ FROM offers_form WHERE mode = $1`, mode).
 		// Пустые массивы в БД — это НАСТРОЕННАЯ пустая форма, и подменять её
 		// нельзя: раньше проверка стояла до разбора JSON и сравнивала nil-слайс,
 		// поэтому сохранённая форма не доходила ни до редактора, ни до DOCX.
-		return defaultForm(mode), nil
+		return withCombatSectionsDefault(defaultForm(mode)), nil
 	}
 	form.Placeholders = []Placeholder{}
 	form.Blocks = []Block{}
@@ -659,7 +722,9 @@ FROM offers_form WHERE mode = $1`, mode).
 	// «вернуть базовый текст» заполняет поле, не заставляя искать код.
 	form.BasePrompt = strings.TrimSpace(form.BasePrompt)
 	form.BasePromptDefault = sectionAnswerContract
-	return form, nil
+	// Заготовка разделов — только у листка (2026-11-18): у КП её нет, разделы
+	// задаёт администратор.
+	return withCombatSectionsDefault(form), nil
 }
 
 // describeLayout — какие метки есть в макете, для показа администратору.
@@ -746,6 +811,10 @@ func (s *Server) handleSaveForm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
 		return
 	}
+	// Заготовка разделов — с сервера, а не от клиента (2026-11-18): клиент
+	// присылает форму целиком, и подменённое поле вернулось бы ему как
+	// «заготовка», которую он же и прислал.
+	form.SectionsDefault = nil
 	if strings.TrimSpace(form.Mode) == "" {
 		form.Mode = clientFormMode
 	}
@@ -859,5 +928,8 @@ ON CONFLICT (mode) DO UPDATE SET
 	}
 	saved.ID = savedID
 	saved.UpdatedAt = updatedAt
-	writeJSON(w, http.StatusOK, saved)
+	// Заготовку прикладываем к ответу: экран настроек продолжает работать после
+	// сохранения, и кнопка «↩ Вернуть заготовку» не должна пропадать до
+	// перезагрузки окна.
+	writeJSON(w, http.StatusOK, withCombatSectionsDefault(saved))
 }

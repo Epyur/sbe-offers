@@ -30,11 +30,52 @@ hashes, post-mortems) lives in
 **Starting cold?** Read [HANDOFF.md](HANDOFF.md) first — one page: versions,
 hashes, checks, what is unfinished, where to look when something breaks.
 
-Current version = **0.11.8** — ready 2026-11-18. The combat sheet prints every link
-of our product's cards (including documents from the «Документы» app), the links
-now take part in the DOCX cache hash, the sheet list no longer re-reads the
-competitor cache per row, and «Отправить в чат» tells the person in the chat that
-the document is being built.
+**Ready-made ТЗ for the next context window** — [NEXT-SESSION-PROMPT.md](NEXT-SESSION-PROMPT.md)
+(state, what is done, what is open, checks, gotchas). The short phrase that starts
+a new window:
+
+> Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
+> и выполни его как ТЗ.
+
+Current version = **0.11.9** — ready 2026-11-18. The combat sheet's comparison
+structure is now edited in its own settings window (section ids are frozen, an
+empty save is refused, «↩ Вернуть заготовку» restores the built-in default), and
+the sheet list in the Mini App asks for short rows (`?fields=preview`) instead of
+the whole document — 29 times lighter by measurement.
+
+> **0.11.9 (2026-11-18) — разделы боевого листка правятся в настройках, короткий список.**
+> Две задачи из `NEXT-SESSION-PROMPT.md`. **(1) Структура разделов — настройка
+> (решение пользователя: вариант A, «только разделы»).** До этого состав
+> сравнения жил ТОЛЬКО в коде (`combatDefaultSections`), и правка ждала выпуска
+> плагина. Теперь в «⚙️ Настройки боевого листка» есть блок «Содержательные
+> разделы боевого листка» — тот же редактор, что у КП (`renderSectionsEditor`,
+> `combat: true`), сохранение тем же `PUT /form` с `mode='combat'`. Правила:
+> **id раздела после создания не меняется** (он префикс ключа кэша
+> `gen.sect.<раздел>.<подраздел>`, и переименование оставило бы тексты под старым
+> ключом); **пустое сохранение отклоняется** русским текстом на обеих сторонах
+> (`combatEmptySectionsProblem` = `COMBAT_SECTIONS_EMPTY`), кнопка
+> «↩ Вернуть заготовку» ставит встроенную заготовку (`sectionsDefault`, только
+> чтение, глубокой копией); **пустой список разделов у листка ЗНАЧИТ заготовку**
+> — так печатает `renderCombatSections`, поэтому и `loadForm` заполняет его
+> заготовкой (на стенде нашёлся ровно такой сохранённый листок: окно сказало бы
+> «разделов нет», документ печатал четыре раздела). Каркас «продукты → стороны →
+> разделы → ссылки» не настраивается — это решение 0.11.6. **(2) Список листков:**
+> замер `scripts/measure_combat_list.mjs` (стенд, 200 листков по 8 КБ) показал
+> **1610 КБ / 87 мс** у полного списка против **56 КБ / 72 мс** у
+> `?fields=preview` — сервер после 0.11.8 не медленный, тяжёлый ОТВЕТ. Добавлен
+> opt-in `CombatSheetPreview` (id, номер, название, стороны, состояние, автор,
+> даты, подпись) без `formValues` и `textCompetitors`; формат по умолчанию НЕ
+> менялся (плагин читает полный листок из списка и сохраняет целиком), незнакомое
+> `fields` отдаёт полный листок. Мини-приложение просит короткий список, плагин —
+> полный. **Проверки:** `gofmt`/`go vet`/`go test -count=1 ./...` зелёные (+9
+> тестов), OpenAPI **124/124**, плагин `tsc` 0 / `build` OK /
+> `check_bundle_strings` 0 / `check_marker_registry` OK /
+> `check_sections_conditions` 16/16 / **новый** `check_combat_sections_rules`
+> **20/20**, бот **220** (не менялся), приложение `tsc` 0 / **90** / `build` OK /
+> `size` код 111 746 Б, **стенд 620/0** (+14 «4a. Настройки боевого листка», +7
+> «короткий список»). Точки выпуска — `HANDOFF.md`, «Три точки сходятся
+> (0.11.9)». **Не проверено:** окно настроек руками в Obsidian, живой листок под
+> настоящей моделью, живой список с `fields=preview` на бою после выкладки.
 
 > **0.11.8 (2026-11-18) — ссылки карточек в листке, быстрый список, сообщение о сборке.**
 > Четыре жалобы по живому листку 017/2026 и по работе мини-приложения. **(1) Ссылки:**
@@ -918,13 +959,25 @@ renamed accordingly.
   `offers_context` under `mode='competitors'` and refreshed by an admin
   button. A competitor card's **title is the note heading**, never the first
   body line. The combat form lives in `offers_form(mode='combat')`: content
-  sections (default set in code) plus the sheet's base prompt. **Its settings
-  window is «⚙️ Настройки боевого листка»** (2026-11-17, `combat-settings.ts`,
-  admin): the base prompt, the layout markers `{{сравнение}}` / `{{ссылки}}`
-  with click-to-copy, and the layout buttons (upload / download / delete). It is
-  NOT the КП form editor: the sheet has no form fields, blocks or app window, and
-  the `'combat'` branch of `form-editor.ts` was deleted — do not bring it back.
-  Sections are a code default (user decision 2026-11-17): no editor for them.
+  sections plus the sheet's base prompt. **Its settings window is
+  «⚙️ Настройки боевого листка»** (2026-11-17, `combat-settings.ts`, admin): the
+  content sections, the base prompt, the layout markers `{{сравнение}}` /
+  `{{ссылки}}` with click-to-copy, and the layout buttons (upload / download /
+  delete). It is NOT the КП form editor: the sheet has no form fields, blocks or
+  app window, and the `'combat'` branch of `form-editor.ts` was deleted — do not
+  bring it back.
+  **Sections are editable since 2026-11-18** (user decision: option A, «only the
+  sections»): the editor is the КП one (`renderSectionsEditor`, `combat: true`),
+  saved through the same `PUT /form` with `mode='combat'`. The skeleton
+  (products → sides → sections → links) stays in code — making it configurable
+  would reverse the 0.11.6 decision. Rules: a section's `id` is immutable after
+  creation (it prefixes the `gen.sect.*` text cache), an empty save is refused in
+  Russian (`combatEmptySectionsProblem` = `COMBAT_SECTIONS_EMPTY`), and the
+  built-in default travels to the editor as the read-only `sectionsDefault` so
+  «↩ Вернуть заготовку» has something to restore. An empty stored `sections`
+  MEANS the default on read, because that is what the sheet prints
+  (`renderCombatSections`). Editing sections changes `combatFormFingerprint`, so
+  sheets rebuild — correct, the content changed.
   DOCX export is done (`combat_docx.go`): rendered from the combat form, our and
   competitor cards printed as two sections. **Refs come from `## Ссылки` AND
   `## Иные документы`** (documents app, S3 files — since 2026-11-17), one list in
@@ -1009,21 +1062,22 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/ui/offers-view.ts` | facade: top bar + sidebar (grouped: КП / Боевой листок / Справочники / Администрирование) + content |
 | `src/ui/picker.ts` | the single product picker: name search + result buttons, taken from the combat view and reused by the offer editor (2026-11-12 removed the two dropdowns) |
 | `src/ui/offers-list.ts` | «🧾 КП»: list, card, composition editor, "Добавить систему", DOCX, link, header button «⚙️ Форма КП» |
-| `src/ui/combat-view.ts` | «⚔️ Боевой листок»: list of combat sheets, editor card (our systems + competitors from KB), form fields; header button «⚙️ Форма боевого листка» |
+| `src/ui/combat-view.ts` | «⚔️ Боевой листок»: list of combat sheets, editor card (our systems + competitors from KB), form fields; header button «⚙️ Настройки боевого листка» |
+| `src/ui/combat-settings.ts` | «⚙️ Настройки боевого листка» (admin): content sections (2026-11-18, the КП editor in `combat` mode), base prompt, links marker, layout upload/download/delete |
 | `src/ui/competitors-editor.ts` | «🏷️ Конкуренты» (admin): cached competitor cards from the KB folder, one «↻ Перечитать» button |
 | `src/ui/material-editor.ts` | «🧱 Материалы»: list with SKU, card with the ЕКН table |
 | `src/ui/systems-editor.ts` | «🧩 Системы»: cached systems, resolved composition, problems; one "↻ Перечитать из Базы знаний" button |
 | `src/ui/sheet-upload.ts` | manager's Excel: "what I understood", then apply |
 | `src/ui/context-editor.ts` | «📚 Контекст КП»: cached system cards, open note |
 | `src/ui/brief-editor.ts` + `brief-model.ts` | the brief card inside the offer editor |
-| `src/ui/form-editor.ts` | «⚙️ Форма КП» / «Форма боевого листка»: fields, blocks, required, describe-block, layout card. One editor for both documents — takes `mode` (`'client'` / `'combat'`) |
+| `src/ui/form-editor.ts` | «⚙️ Форма КП»: fields, blocks, required, content sections, describe-block, layout card, app window. The `'combat'` branch was deleted in 0.11.6 — the sheet has its own window (`combat-settings.ts`) |
 | `src/ui/block-editor.ts` | block editor: nodes, `{{field}}` chips, placement, image source, repeat, copyable block-id marker |
 | `src/ui/form-preview.ts` | live preview of the document under the blocks |
 | `src/ui/describe-block-modal.ts` | «✨ Опишите блок словами»: free text → nodes |
 | `src/ui/form-layout.ts` | «.docx layout» card: upload / download / delete, tags found in the file, marker cheat sheet |
 | `src/ui/markers.ts` | **the single registry of every layout marker** (chips, layout card, help) |
-| `src/ui/sections-model.ts` | pure rules for content sections — `conditionWords`, `conditionHoldsClient`, `sectionMarker` (no Obsidian/DOM; run by `check_sections_conditions.mjs`) |
-| `src/ui/sections-editor.ts` | «Содержательные разделы» in the form editor: section cards, subsection table, frame preview (no model), `{ content: <id> }` copy chip |
+| `src/ui/sections-model.ts` | pure rules for content sections — `conditionWords`, `conditionHoldsClient`, `sectionMarker`, `combatSectionsProblem`, `cloneSections` (no Obsidian/DOM; run by `check_sections_conditions.mjs` and `check_combat_sections_rules.mjs`) |
+| `src/ui/sections-editor.ts` | «Содержательные разделы»: section cards, subsection table, frame preview (no model), `{ content: <id> }` copy chip. Reused by the combat sheet's settings with `combat: true` (immutable section id, no copy chip) |
 | `src/ui/image-picker.ts` | picks an image from the vault, uploads it to KB attachments |
 | `src/ui/access-editor.ts` | «👤 Бот и доступ»: codes, bot token, who signed in |
 | `src/ui/help.ts` | help text, built from `markers.ts` (baked into the plugin) |
@@ -1032,9 +1086,11 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_bundle_strings.mjs` | proves the Russian labels reached `main.js` (escaped `\uXXXX`, uppercase) |
 | `scripts/check_marker_registry.mjs` | markers in the plugin vs markers the server parses |
 | `scripts/check_sections_conditions.mjs` | the client condition mirror (`sections-model.ts`) vs the server's `conditionHolds` (`form.go`/`sections.go`); 16 checks |
+| `scripts/check_combat_sections_rules.mjs` | 20 checks: the empty-save refusal text is the SAME on the server (`form.go`) and in the plugin, the rule is wired into the save path, the restore button uses a copy of `sectionsDefault`, and a combat sheet's section id is not editable |
 | `scripts/check_docs_state.mjs` | docs vs code: version, SHA-256 of the build, HEAD of both branches |
 | `scripts/mailer-stub.mjs` + `documents-stub.mjs` | stand stubs for the agent's emails: the mailer stub replays the RECORDED fixture `scripts/mailer-fixture.json` (live response 2026-11-13) and keeps one scanned letter unlinked on purpose; the documents stub serves the one linked card |
-| `scripts/offers_local_e2e.mjs` | the stand: **505 checks**, 29 sections |
+| `scripts/offers_local_e2e.mjs` | the stand: **620 checks**, 23 sections |
+| `scripts/measure_combat_list.mjs` | measurement tool for the sheet list: inserts N synthetic sheets (8 KB each, the live per-sheet size), measures the full list vs `?fields=preview`, then deletes them. `node scripts/measure_combat_list.mjs 200` |
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
@@ -1152,6 +1208,7 @@ npx tsc --noEmit && npm run build
 node scripts/check_bundle_strings.mjs
 node scripts/check_marker_registry.mjs
 node scripts/check_sections_conditions.mjs
+node scripts/check_combat_sections_rules.mjs
 node scripts/check_docs_state.mjs
 cd offers-service && gofmt -l . && go vet ./... && go test ./...
 cd ../offers-bot && npm run typecheck && npm run build && node --test "src/**/*.test.ts"
@@ -1449,6 +1506,31 @@ measurements) are in the archive.
   already built sheet, and the stand measured it (files (4) and (5) byte-equal).
   The section-text cache has its own freshness (`combatSectionHandle` includes
   `PromptText()`), so it rebuilds by itself — the file cache does not.
+- **A combat sheet's section `id` is an identity, not a label** (2026-11-18).
+  The text cache key is `gen.sect.<sectionID>.<subsectionID>[.ins<hash>]…`
+  (`sectionCacheKey`), so renaming a section id orphans every text written under
+  the old key: the sheet silently calls the model again for that section while
+  the old rows sit in `form_values` forever. That is why the combat editor shows
+  the id read-only (`combat: true` in `SectionsEditorDeps`) and why a NEW
+  section gets `section_<timestamp>`. A subsection id has the same property.
+- **An empty `sections` list MEANS the default for a combat sheet** (2026-11-18).
+  `renderCombatSections` substitutes `combatDefaultSections()` when the list is
+  empty, so "empty" cannot mean "print only cards" — the document always has
+  comparison sections. Therefore `loadForm` fills an empty list with the default
+  too (`withCombatSectionsDefault`); before that the settings window said
+  «разделов нет» while the document printed four sections (found on the stand,
+  which had exactly such a stored row). Saving an empty list is REFUSED
+  (`combatEmptySectionsProblem`, same text client-side) — otherwise the admin
+  would "configure" something that does not exist. The narrow exception to
+  "empty arrays in the DB are a configured empty form" (0.10.3) applies here and
+  only here: for the sheet, the empty state does not exist.
+- **The built-in default must travel to the editor** (2026-11-18). «↩ Вернуть
+  заготовку» cannot read Go code, so `GET /form?mode=combat` carries
+  `sectionsDefault` (read-only, never written, not part of
+  `combatFormFingerprint`). The plugin puts a DEEP COPY into the editor
+  (`cloneSections`): the editor mutates sections in place, so reusing the
+  server's object would spoil the default after the first edit.
+
 - **TWO card caches, and the combat sheet uses `system_cards`** (2026-11-18,
   live sheet 017/2026). `POST /systems/refresh` writes `offers_context(mode='systems')`
   (the «Системы» screen); the sheet and the offer print from
@@ -1464,9 +1546,16 @@ measurements) are in the archive.
   repairs competitor titles and used to call `loadCachedCompetitors` itself; in
   the list that meant 1 + 2N SQL queries and N unmarshals of the same large
   JSONB (200 sheets → 401 queries). Lists now load the cache once and pass it to
-  `loadCombatSheetWithCards`. The response is still the full sheet — the
-  `?fields=preview` DTO is deliberately an opt-in backlog step, because an old
-  client could send a preview back as a full `PUT` and wipe `form_values`.
+  `loadCombatSheetWithCards`. **The list still returns the full sheet by
+  default**; the short DTO is an OPT-IN (`GET /combat?fields=preview`,
+  `CombatSheetPreview`) because an old client reads the full sheet from the list
+  and saves it back whole — a preview row would wipe `form_values`. The
+  Mini App asks for the preview (`listPath` in `offers-app/src/lists.ts`), the
+  Obsidian plugin does not. Measured 2026-11-18 on the stand with 200 sheets of
+  8 KB: full answer 1610 KB / 87 ms, preview 56 KB / 72 ms — the server was
+  never the problem after 0.11.8, the payload was. Tool:
+  `scripts/measure_combat_list.mjs`. An unknown `fields` value returns the full
+  sheet: it is an option, not a mode.
 - **Deleting a model's `[НУЖНО: …]` marker leaves a SEAM** (2026-11-17, live
   sheet 017/2026): «камеры, [НУЖНО: уточнить], иначе» → «камеры,, иначе» and
   «по техлистам: [НУЖНО: цифры].» → «по техлистам:.». `stripFactNotes` now

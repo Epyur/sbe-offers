@@ -1064,10 +1064,26 @@ paths:
           schema:
             type: string
           example: мембрана
+        - name: fields
+          in: query
+          required: false
+          description: >-
+            `preview` — короткие строки списка (2026-11-18): id, номер, название,
+            стороны, состояние, автор и даты, но БЕЗ `formValues` (тексты
+            разделов) и `textCompetitors` (страницы конкурентов). По замеру на
+            стенде полный листок стоит 8.2 КБ, до 1.6 МБ на пределе списка —
+            мини-приложение просит короткий список, потому что открывает листок
+            отдельным маршрутом. Без параметра или с незнакомым значением формат
+            прежний: плагин читает полный листок из списка и сохраняет его
+            целиком.
+          schema:
+            type: string
+            enum: [preview]
+          example: preview
       summary: Список боевых листков (свои; admin — все)
       responses:
         '200':
-          description: Боевые листки
+          description: Боевые листки (`fields=preview` — короткие строки)
           content:
             application/json:
               schema:
@@ -3942,6 +3958,23 @@ components:
           description: >-
             Встроенный базовый промт (только чтение): по нему редактор делает
             «вернуть базовый текст». В базу не пишется.
+        sections:
+          type: array
+          description: >-
+            Содержательные разделы документа (2026-11-14): брифы для модели.
+            У боевого листка это структура сравнения (2026-11-18 правится в
+            настройках листка), у КП — разделы, на которые ссылается макет
+            меткой `{ content: <id> }`.
+          items:
+            $ref: '#/components/schemas/ContentSection'
+        sectionsDefault:
+          type: array
+          description: >-
+            Встроенная заготовка разделов боевого листка (только чтение,
+            2026-11-18): по ней кнопка «↩ Вернуть заготовку» ставит разделы.
+            Пусто у формы КП. В базу не пишется.
+          items:
+            $ref: '#/components/schemas/ContentSection'
         updatedAt:
           type: string
         hasLayout:
@@ -3976,6 +4009,58 @@ components:
             type: string
         bytes:
           type: integer
+    ContentSection:
+      type: object
+      description: |
+        Содержательный раздел документа: бриф для модели, а не вёрстка. Печать
+        идёт общим конвейером разделов (`sections.go` / `sections_print.go`).
+        `id` — он же префикс ключа кэша текста (`gen.sect.<id>.<подраздел>`),
+        поэтому у боевого листка после создания не меняется (2026-11-18).
+      properties:
+        id:
+          type: string
+          description: Устойчивый идентификатор раздела (латиницей).
+        title:
+          type: string
+          description: Заголовок раздела в документе — его печатает рамка.
+        numbered:
+          type: boolean
+          description: Нумеровать разделы (номера даёт нумерация макета).
+        critique:
+          type: boolean
+          description: Рубильник, который читает условие `has_critique`.
+        subsections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentSubsection'
+    ContentSubsection:
+      type: object
+      description: |
+        Подраздел раздела — ОДИН вызов модели: что написать, при каком условии
+        и когда звать модель по разу на продукт.
+      properties:
+        id:
+          type: string
+          description: Устойчивый идентификатор — вторая часть ключа кэша текста.
+        title:
+          type: string
+        instruction:
+          type: string
+          description: Что написать — бриф для модели.
+        condition:
+          type: string
+          description: >-
+            always | has_systems | has_materials | multi_system | has_critique |
+            has_items. Пусто — always.
+        repeat:
+          type: string
+          description: «systems» — один вызов на каждый продукт; пусто — один раз.
+        maxWords:
+          type: integer
+          description: Предел длины текста; 0 — серверное значение.
+        level:
+          type: integer
+          description: Уровень заголовка рамки (1..3); 0 — значение по умолчанию.
     OfferSection:
       type: object
       description: |
@@ -4071,6 +4156,47 @@ components:
           type: string
         updatedAt:
           type: string
+    CombatSheetPreview:
+      type: object
+      description: |
+        Строка списка боевых листков без содержимого (2026-11-18,
+        `GET /combat?fields=preview`). Нужна потому, что полный листок стоит
+        8.2 КБ (тексты разделов в `formValues` и страницы конкурентов в
+        `textCompetitors`), а списку нужны только выбор и подпись: по замеру на
+        стенде 200 строк = 1.6 МБ. Полей содержимого здесь НЕТ намеренно: тип без
+        них нельзя отправить по ошибке.
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+          example: 012/2026
+        ownerEmail:
+          type: string
+        title:
+          type: string
+        ourNotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CombatNoteRef'
+        competitorNotes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CombatNoteRef'
+        status:
+          type: string
+          enum: [draft, final]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        displayName:
+          type: string
+          description: >-
+            Подпись строки, посчитанная сервером: наш продукт → конкурент →
+            «пустой листок №». Считается по полному листку, поэтому у листка с
+            конкурентом из ссылки подпись есть, хотя его текста в ответе нет.
     CombatNoteRef:
       type: object
       description: Ссылка на заметку Базы знаний внутри боевого листка.

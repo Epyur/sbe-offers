@@ -1,100 +1,146 @@
 # Промт для нового контекстного окна (sbe-offers)
 
-Файл — готовое ТЗ для следующей сессии. Открывать новое окно с короткой фразой:
+## Как открыть новое окно
 
-> Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
-> и выполни его как ТЗ. Начни с задачи №1.
+1. Открой новый чат в папке воркспейса и вставь **одну строку**:
 
-Ниже — полный текст промта (он же копируется целиком, если файл недоступен).
+   > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
+   > и выполни его как ТЗ.
+
+2. Ничего больше добавлять не нужно: состояние, проверки, грабли и открытые
+   задачи — в этом файле, подробности — в `HANDOFF.md` и `AGENTS.md`.
+
+3. Если файл недоступен — вставь как ТЗ раздел «Полное ТЗ» ниже, начиная с
+   «Ты — центральный агент…».
+
+## Что прочитать в первую минуту
+
+1. `HANDOFF.md` — верхний блок «0.11.9» и «Три точки сходятся (0.11.9)»: версия,
+   хэши, выкладка, что не проверено.
+2. `AGENTS.md` — «Purpose (current)» (Combat sheet) и «Gotchas» (две карточки-кэша,
+   DOCX-кэш, разделы листка, список).
+3. Только потом код.
 
 ---
 
+## Полное ТЗ (копируется целиком)
+
 Ты — центральный агент по плагину sbe-offers (LogicTEAM.КП). Рабочая папка:
-C:\Obsidian\mailers\.obsidian\plugins\sbe-offers (ветка backend). Бэки живут
-только на backend: offers-service/ (Go), offers-bot/ (Node), offers-app/
-(Mini App). main — релизный срез без них.
+`C:\Obsidian\mailers\.obsidian\plugins\sbe-offers` (ветка `backend`). Бэки живут
+только на `backend`: `offers-service/` (Go), `offers-bot/` (Node), `offers-app/`
+(Mini App). `main` — релизный срез без них.
 
-СНАЧАЛА прочитай: HANDOFF.md (верхний блок «0.11.8» и «Три точки сходятся»),
-затем AGENTS.md — разделы «Purpose (current)» (Combat sheet) и «Gotchas»
-(две карточки-кэша, DOCX-кэш, список). Только потом код.
+СНАЧАЛА прочитай `HANDOFF.md` (верхний блок «0.11.9» и «Три точки сходятся»),
+затем `AGENTS.md` — «Purpose (current)» (Combat sheet) и «Gotchas» (две
+карточки-кэша, DOCX-кэш, разделы листка, список). Только потом код.
 
-СОСТОЯНИЕ: выпущена 0.11.8 (2026-11-18). Точки выпуска:
-backend код 7e5dc9e (доки fe203fe, HEAD f0a8179), main код 68fc53e
-(доки 655d3af), реестр sbe-apstore-registry 50fe7a2, uploadedAt
-2026-11-18T16:12:58Z. Файлы: manifest 394b742b…, main d3011222…,
-styles 50bad65b…; приложение assets/index-nXQtPejD.js (sha d6aefbe6…).
-Стенд 599/0.
+### СОСТОЯНИЕ
 
-ЧТО СДЕЛАНО В 0.11.8 (не переделывать):
-1) Ссылки наших карточек входят в combatDocxHash (combatOurRefs,
-   combatDocxVersion = v8), пустой список печатает видимую строку с адресом
-   кнопки; подсказка отправляет в «Контекст КП» (POST /context/refresh), а не
-   в «Системы» (POST /systems/refresh — другая строка кэша).
-2) Списки GET /combat и GET /bot/combat читают кэш конкурентов один раз на
-   запрос (loadCombatSheetWithCards), индекс offers_combat_sheet_created.
-3) «Отправить в чат» сразу пишет «⌛ Формирую …» (answerStartText + notifyChat),
-   затем файл; notifyChat читает HTTP-статус бота.
-4) systemCardsForCombat при пустом кэше зовёт refreshSystemCards, а не
-   SystemsFromKB (иначе кэш теряет материалы и LinkedRefs).
+Выпущена **0.11.9** (2026-11-18). Точки выпуска (хэши веток, самораздачи,
+реестра, приложения и сервиса) — `HANDOFF.md`, «Три точки сходятся (0.11.9)»;
+здесь они не дублируются, чтобы не разъезжаться.
 
-ЗАДАЧА №1 (главная, решение пользователя уже принято): вынести СТРУКТУРУ
-разделов боевого листка из кода в настройку — вариант A, «только разделы».
-Сейчас заготовка — combatDefaultSections() в form.go:515, редактора нет.
-Нужно:
-- в «⚙️ Настройки боевого листка» (src/ui/combat-settings.ts) добавить
-  редактор разделов, переиспользовав src/ui/sections-editor.ts; сохранение —
-  тем же PUT /form с mode='combat' (sections уже читаются/пишутся);
-- id раздела после создания НЕИЗМЕНЯЕМ (иначе обнулится кэш текстов
-  gen.sect.*);
-- пустое сохранение отклонять русским текстом + кнопка «↩ Вернуть заготовку»;
-- каркас «Продукты сравнения → стороны → разделы → ссылки» НЕ делать
-  настраиваемым: это реверс решения 0.11.6;
-- помнить: combatFormFingerprint входит в хэш файла, правка разделов
-  пересобирает листки (это правильно).
+Что вошло в 0.11.9:
 
-ЗАДАЧА №2 (после замера): если список на большом объёме всё ещё медленный —
-добавить OPT-IN ?fields=preview (отдельный DTO: id, number, title, стороны,
-status, owner, даты; без form_values и text_competitors). Формат GET /combat
-по умолчанию НЕ менять: старый клиент может отправить превью полным PUT и
-затереть form_values.
+1. **Разделы боевого листка правятся в настройках** (решение пользователя:
+   вариант A, «только разделы»). Блок «Содержательные разделы боевого листка» в
+   «⚙️ Настройки боевого листка» (`src/ui/combat-settings.ts`) — редактор КП
+   (`renderSectionsEditor`) в режиме `combat`, сохранение тем же `PUT /form` с
+   `mode='combat'`. Правила: `id` раздела после создания не меняется; пустое
+   сохранение отклоняется русским текстом (текст один на сервер и плагин);
+   «↩ Вернуть заготовку» ставит `sectionsDefault`; пустой список разделов у
+   листка ЗНАЧИТ заготовку (так печатает `renderCombatSections`, поэтому и
+   `loadForm` её подставляет); каркас «продукты → стороны → разделы → ссылки» не
+   настраивается.
+2. **Короткий список листков в приложении** — opt-in `GET /combat?fields=preview`
+   (`CombatSheetPreview`): id, номер, название, стороны, состояние, автор, даты,
+   подпись, без `formValues`/`textCompetitors`. Замер: 200 листков по 8 КБ —
+   1610 КБ / 87 мс полный против 56 КБ / 72 мс короткого
+   (`scripts/measure_combat_list.mjs`). Формат по умолчанию НЕ менялся: плагин
+   читает полный листок из списка и сохраняет целиком.
+3. Справка, `specification.md`, `AGENTS.md` (три gotcha), OpenAPI
+   (`sections`, `sectionsDefault`, `ContentSection`, `ContentSubsection`,
+   параметр `fields`) и сторож `scripts/check_combat_sections_rules.mjs`
+   (20 проверок).
 
-ЗАДАЧА №3 (проверка, не код): после следующей выкладки посмотреть в реальном
-Telegram, что «⌛» приходит сразу после нажатия «Отправить в чат», файл — по
-готовности, а отказ бота виден словами.
+### ОТКРЫТЫЕ ЗАДАЧИ (по порядку)
 
-ПРАВИЛА:
+1. **Проверка «⌛» в живом Telegram** (не код): после выкладки нажать «Отправить в
+   чат» в карточке листка и убедиться, что сообщение «⌛ Формирую …» приходит
+   сразу, файл — по готовности, а отказ бота виден словами. Стенд этого не
+   умеет: его заглушка бота не знает `/internal/notify`.
+2. **Живая проверка нового окна и списка** (не код): открыть «⚙️ Настройки
+   боевого листка» в Obsidian руками (правка раздела, «↩ Вернуть заготовку»,
+   отказ пустого сохранения), собрать листок на бою под настоящей моделью,
+   открыть список в мини-приложении и убедиться, что он грузится и показывает
+   подписи.
+3. **Дальше по backlog** — `AGENTS.md`, раздел «Next iterations (backlog)»:
+   самый близкий к коммерческому отделу пункт — сравнение с аналогами из Базы
+   знаний (не начато), затем `.docx` как источник контекста (сегодня файл
+   отклоняется).
+4. **Шаг 2c из старого плана** (если всплывёт жалоба): у КП ключ кэша текстов
+   систем всё ещё `noteId`, поэтому правка тела карточки не переписывает текст;
+   у листка это уже закрыто.
+
+### ПРАВИЛА
+
 - Коммиты, пуши, выкладка и «Фиксируй» — только по явной команде пользователя.
-- «Фиксируй» = версия +0.0.1 в manifest.json и package.json, новая новость ЦУП
-  в src/main.ts, иглы в scripts/check_bundle_strings.mjs (без «ёлочек» —
-  esbuild пишет их как \xAB), доки AGENTS/HANDOFF/specification, спросить перед
-  коммитом.
-- Правки больших .mjs и .go — только edit/write или python с UTF-8; не
+  «Продолжай», «ок», «делай дальше» — не команда.
+- **«Фиксируй»** = версия +0.0.1 в `manifest.json` и `package.json`, новая
+  новость ЦУП в `src/main.ts`, иглы в `scripts/check_bundle_strings.mjs`
+  (без «ёлочек» — esbuild пишет их как `\xAB`, а иглы прошлого выпуска снимаются
+  вместе с текстом новости), доки `AGENTS`/`HANDOFF`/`specification`, спросить
+  перед коммитом.
+- Правки больших `.mjs` и `.go` — только `edit`/`write` или python с UTF-8; не
   PowerShell-пайплайнами (грабля CRLF и mojibake).
-- Доки: AGENTS «Code heads» обязан называть последний коммит, трогавший
-  codePaths (включая specification.md), иначе check_docs_state красный.
+- Доки: `AGENTS.md`, «Code heads» обязан называть последний коммит, трогавший
+  `codePaths` (включая `specification.md`), иначе `check_docs_state` красный.
+- Кириллица в `ssh`-команде из PowerShell ломает кавычки: писать `.sh` локально →
+  `scp` → `sh /tmp/x.sh`.
 
-ПРОВЕРКИ ПЕРЕД СДАЧЕЙ:
+### ПРОВЕРКИ ПЕРЕД СДАЧЕЙ
+
+```
 cd offers-service && gofmt -l . && go vet ./... && go test -count=1 ./...
 cd .. && node ../scripts/check_offers_openapi.mjs            # 124/124
 npx tsc --noEmit && node esbuild.config.mjs production
 node scripts/check_bundle_strings.mjs && node scripts/check_marker_registry.mjs
-node scripts/check_sections_conditions.mjs && node scripts/check_docs_state.mjs
+node scripts/check_sections_conditions.mjs                    # 16/16
+node scripts/check_combat_sections_rules.mjs                  # 20/20
+node scripts/check_docs_state.mjs
 cd offers-bot && npm run typecheck && node --test "src/**/*.test.ts"   # 220
-cd ../offers-app && npm run typecheck && npm test && npm run build && npm run size
+cd ../offers-app && npm run typecheck && npm test && npm run build && npm run size  # 90
 # стенд (Docker поднят): бинарь offers-stand собрать локально с GOOS=linux,
 # docker cp в offers-local-app, очистить offers_context mode in
 # ('systems','system_cards') и offers_combat_docx, затем:
 docker run --rm --network sbe-offers_offersnet \
  -e OFFERS_BOT_URL=http://offers-local-bot-stub:3000 -e BOT_DIR=/bot \
  -v "$PWD/scripts:/app:ro" -v "$PWD/offers-bot:/bot:ro" -w /app \
- node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000
+ node:22-alpine node offers_local_e2e.mjs http://offers-local-app:3000   # 620/0
+# замер списка (нужен поднятый стенд):
+node scripts/measure_combat_list.mjs 200
+```
 
-ГРАБЛИ, КОТОРЫЕ УЖЕ СТОИЛИ ВРЕМЕНИ:
-- В листке ДВА кэша карточек: «Системы» пишет mode='systems', листок читает
-  mode='system_cards' (обновляется только «Контекст КП»).
-- Кэш DOCX offers_combat_docx не инвалидируется сам: меняешь печать —
-  поднимай combatDocxVersion (сейчас v8).
-- Прямая Cyrillic-строка в ssh-команде из PowerShell ломает кавычки: пиши
-  .sh-файл локально → scp → sh /tmp/x.sh.
-- Стендовые заглушки читают .mjs один раз при старте: после правки — restart
+### ГРАБЛИ, КОТОРЫЕ УЖЕ СТОИЛИ ВРЕМЕНИ
+
+- В листке ДВА кэша карточек: «Системы» пишет `mode='systems'`, листок читает
+  `mode='system_cards'` (обновляется только «Контекст КП»).
+- Кэш DOCX `offers_combat_docx` не инвалидируется сам: меняешь печать —
+  поднимай `combatDocxVersion` (сейчас **v8**). Форма входит в хэш
+  (`combatFormFingerprint`), поэтому правка разделов пересобирает файл сама.
+- **Пустой список разделов у листка = заготовка**, а не «печатать без разделов»:
+  печать и чтение подставляют одно и то же. Проверять «листок без разделов»
+  через базу бессмысленно — такого состояния нет.
+- **`id` раздела входит в ключ кэша** (`gen.sect.<раздел>.<подраздел>`):
+  переименование оставляет тексты под старым ключом и молча зовёт модель заново.
+- **Проверка бандла — только скриптом**: esbuild пишет кириллицу как `\uXXXX` в
+  ВЕРХНЕМ регистре, а «ёлочки» — как `\xAB`.
+- **Кириллица в SQL через `docker exec -i psql`** — тот же класс: замер пишет в
+  базу только ASCII (`repeat('a', N)`), иначе psql получает mojibake.
+- Заглушки стенда читают `.mjs` один раз при старте: после правки — restart
   контейнера заглушки.
+- `git archive` на Windows применяет `core.autocrlf`: собирать серверный архив
+  `git -c core.autocrlf=false archive …`, иначе на сервер уезжает CRLF и
+  `CR_TEXT` перестаёт быть нулём.
+- `up -d` без `--force-recreate` может не пересоздать контейнер: смотреть
+  `CREATED` в `docker ps`, а не слово `Started` в выводе compose.

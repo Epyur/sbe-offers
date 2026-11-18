@@ -23,13 +23,23 @@ import {
 test('без поиска адрес прежний — ни q, ни хвоста', () => {
   assert.equal(listPath('offers', ''), '/offers');
   assert.equal(listPath('offers', '   '), '/offers');
-  assert.equal(listPath('sheets', ''), '/combat');
+  // Список листков просит КОРОТКИЕ строки (2026-11-18): экрану нужны номер,
+  // подпись, стороны и дата, а не тексты разделов и страницы конкурентов.
+  assert.equal(listPath('sheets', ''), '/combat?fields=preview');
 });
 
 test('поиск уходит в адрес параметром q, регистр и кириллица не ломают его', () => {
   assert.equal(listPath('offers', 'Строй Монтаж'), '/offers?q=%D0%A1%D1%82%D1%80%D0%BE%D0%B9%20%D0%9C%D0%BE%D0%BD%D1%82%D0%B0%D0%B6');
-  assert.equal(listPath('sheets', 'мембрана'), '/combat?q=%D0%BC%D0%B5%D0%BC%D0%B1%D1%80%D0%B0%D0%BD%D0%B0');
-  assert.equal(listPath('sheets', '%'), '/combat?q=%25');
+  assert.equal(listPath('sheets', 'мембрана'), '/combat?fields=preview&q=%D0%BC%D0%B5%D0%BC%D0%B1%D1%80%D0%B0%D0%BD%D0%B0');
+  assert.equal(listPath('sheets', '%'), '/combat?fields=preview&q=%25');
+});
+
+test('короткий список просит только листок, КП — как раньше', () => {
+  // Опция, а не смена формата: КП в списке по-прежнему читается без `fields`.
+  // Список листков без `fields=preview` вернул бы полный листок, а приложение
+  // отправило бы его обратно полным PUT — и затёрло бы тексты разделов.
+  assert.ok(listPath('offers', '').includes('fields=') === false);
+  assert.ok(listPath('sheets', '').includes('fields=preview'));
 });
 
 const offer: OfferRow = {

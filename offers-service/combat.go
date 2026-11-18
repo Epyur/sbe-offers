@@ -233,6 +233,68 @@ func canSeeCombat(_ string, _ string, _ CombatSheet) bool {
 	return true
 }
 
+// CombatSheetPreview — строка списка боевых листков БЕЗ содержимого
+// (2026-11-18, задача №2).
+//
+// Зачем отдельный тип, а не «усечённый» `CombatSheet`: усечение на маршалинге
+// (`omitempty`/ручной JSON) уже подводило — поле, которого нет в типе, нельзя
+// случайно отправить. Здесь именно отсутствующих полей нет: ни `formValues`
+// (тексты разделов, написанные моделью), ни `textCompetitors` (страницы,
+// прочитанные из файла или ссылки). Это и есть весь вес ответа: 8.2 КБ на
+// листок по замеру стенда 2026-11-18.
+//
+// Почему opt-in, а не новый формат списка по умолчанию: плагин Obsidian читает
+// листки из этого же списка и сохраняет выбранный ЦЕЛИКОМ. Короткая строка,
+// ушедшая старому клиенту, стёрла бы `form_values` на первом же сохранении —
+// ровно та потеря, от которой предупреждает `keepStoredTextCompetitors`.
+type CombatSheetPreview struct {
+	ID         int64  `json:"id"`
+	Number     string `json:"number"`
+	OwnerEmail string `json:"ownerEmail"`
+	Title      string `json:"title"`
+	// OurNotes/CompetitorNotes — стороны без текста: по ним список показывает,
+	// что с чем сравнивается, и ищет по названиям продуктов.
+	OurNotes        []CombatNoteRef `json:"ourNotes"`
+	CompetitorNotes []CombatNoteRef `json:"competitorNotes"`
+	Status          string          `json:"status"`
+	CreatedAt       string          `json:"createdAt"`
+	UpdatedAt       string          `json:"updatedAt"`
+	// DisplayName — подпись считает сервер (`combatListLabel`), в том числе по
+	// конкуренту из ссылки, чьего текста в короткой строке нет.
+	DisplayName string `json:"displayName,omitempty"`
+}
+
+// combatListFieldPreview — значение `?fields=`, включающее короткий список.
+const combatListFieldPreview = "preview"
+
+// combatListPreview — запрошен ли короткий список.
+//
+// Незнакомое значение — полный листок: это ОПЦИЯ, а не режим, и опечатка в
+// адресе не должна отнимать у клиента содержимое документа.
+func combatListPreview(raw string) bool {
+	return strings.EqualFold(strings.TrimSpace(raw), combatListFieldPreview)
+}
+
+// combatSheetPreview — строка короткого списка из полного листка.
+func combatSheetPreview(sheet CombatSheet) CombatSheetPreview {
+	label := strings.TrimSpace(sheet.DisplayName)
+	if label == "" {
+		label = combatListLabel(sheet)
+	}
+	return CombatSheetPreview{
+		ID:              sheet.ID,
+		Number:          sheet.Number,
+		OwnerEmail:      sheet.OwnerEmail,
+		Title:           sheet.Title,
+		OurNotes:        sheet.OurNotes,
+		CompetitorNotes: sheet.CompetitorNotes,
+		Status:          sheet.Status,
+		CreatedAt:       sheet.CreatedAt,
+		UpdatedAt:       sheet.UpdatedAt,
+		DisplayName:     label,
+	}
+}
+
 func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	// Список показывает ВСЕ листки (правило 2026-11-12): листок — общая
 	// справка, а не личный документ. Правка остаётся у автора.
@@ -287,6 +349,11 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sheets := make([]CombatSheet, 0, len(ids))
+	// Короткий список (2026-11-18, `?fields=preview`): строки собираются в том же
+	// проходе, чтобы не читать базу дважды. Полный формат остаётся по умолчанию —
+	// см. `CombatSheetPreview`.
+	wantPreview := combatListPreview(r.URL.Query().Get("fields"))
+	previews := make([]CombatSheetPreview, 0, len(ids))
 	for _, id := range ids {
 		c, err := s.loadCombatSheetWithCards(r.Context(), id, competitorCards)
 		if err != nil {
@@ -296,9 +363,16 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sheets = append(sheets, c)
+		if wantPreview {
+			previews = append(previews, combatSheetPreview(c))
+		}
 		if len(sheets) >= listLimit {
 			break
 		}
+	}
+	if wantPreview {
+		writeJSON(w, http.StatusOK, map[string]any{"sheets": previews})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sheets": sheets})
 }
