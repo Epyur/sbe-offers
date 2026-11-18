@@ -245,9 +245,9 @@ the whole document — 29 times lighter by measurement.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `fe203fe` (code `7e5dc9e` + docs), `main`
-`655d3af` (release slice of 0.11.8; code `68fc53e` + docs;
-`offers-service/`, `offers-bot/`, `offers-app/` live on `backend` only).
+Code heads: `backend` `1a3f68b` (code; docs follow), `main` `939f60c`
+(release slice of 0.11.9; code; docs follow; `offers-service/`, `offers-bot/`,
+`offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
 > разбора позиций (2026-11-15).** Три просьбы пользователя в одной версии.
