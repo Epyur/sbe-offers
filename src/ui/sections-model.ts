@@ -71,3 +71,38 @@ export function conditionHoldsClient(
 export function sectionMarker(section: Pick<ContentSection, 'id'>): string {
   return `{ content: ${section.id} }`;
 }
+
+/**
+ * Отказ на пустое сохранение разделов боевого листка (2026-11-18).
+ *
+ * Тот же текст держит сервер (`combatEmptySectionsProblem`,
+ * `offers-service/form.go`): проверка стоит на обеих сторонах, и разойтись им
+ * нельзя — тексты сверяет `scripts/check_combat_sections_rules.mjs`.
+ *
+ * Почему пустое сохранение вообще отклоняется. У листка пустой список разделов
+ * на печати подменяется заготовкой (`renderCombatSections`), то есть документ
+ * печатает разделы, которых в окне настроек нет. Человек видел бы пустое окно и
+ * «настроенный» листок — ровно та тихая потеря настройки, из-за которой в 0.10.2
+ * пропадал раздел КП.
+ */
+export const COMBAT_SECTIONS_EMPTY =
+  'У боевого листка нет ни одного раздела: без разделов документ печатает только карточки. Нажмите «↩ Вернуть заготовку» или добавьте раздел.';
+
+/** Проблема разделов листка перед сохранением; пустая строка — можно сохранять. */
+export function combatSectionsProblem(sections: ContentSection[] | undefined): string {
+  return (sections?.length ?? 0) === 0 ? COMBAT_SECTIONS_EMPTY : '';
+}
+
+/**
+ * Глубокая копия разделов — для «↩ Вернуть заготовку».
+ *
+ * Заготовка приходит с сервера вместе с формой, и подставить её саму в редактор
+ * нельзя: редактор правит разделы НА МЕСТЕ, то есть первая же правка испортила
+ * бы заготовку, и второе нажатие «Вернуть заготовку» вернуло бы испорченное.
+ */
+export function cloneSections(sections: ContentSection[] | undefined): ContentSection[] {
+  return (sections ?? []).map((section) => ({
+    ...section,
+    subsections: (section.subsections ?? []).map((sub) => ({ ...sub })),
+  }));
+}

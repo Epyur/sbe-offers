@@ -172,6 +172,21 @@
   font-size: inherit;
 }
 
+/*
+ * Неизменяемое значение (2026-11-18): id раздела боевого листка.
+ *
+ * Тот же бокс, что у поля ввода, но приглушённый: видно, что это не поле, а
+ * значение. Инпут с `disabled` не подошёл бы — его текст в части тем читается
+ * как «сломанное поле», а тут важно, чтобы id можно было прочитать и выделить.
+ */
+.tn-offers-readonly {
+  width: auto;
+  display: inline-block;
+  background: var(--background-secondary-a-enabled);
+  color: var(--content-secondary-enabled);
+  cursor: default;
+}
+
 .tn-offers-table {
   width: 100%;
   border-collapse: collapse;

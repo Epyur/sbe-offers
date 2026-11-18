@@ -538,6 +538,75 @@ console.log('\n4. Форма КП');
   });
 }
 
+console.log('\n4a. Настройки боевого листка: разделы правятся, пустое сохранение отклоняется (2026-11-18)');
+{
+  const combatForm = await call('GET', '/form?mode=combat', { token: ownerToken });
+  ok('форма листка отдаётся', combatForm.status === 200, `status ${combatForm.status}`);
+  const defaultSections = combatForm.json?.sectionsDefault ?? [];
+  const storedSections = combatForm.json?.sections ?? [];
+  ok('редактору отдаётся заготовка разделов', defaultSections.length > 0, String(defaultSections.length));
+  // Пусто у листка значит заготовку (так печатает `renderCombatSections`):
+  // окно настроек обязано показывать то же, что попадёт в документ.
+  ok('у листка всегда есть разделы (пусто = заготовка)', storedSections.length > 0, String(storedSections.length));
+  ok('разделы и заготовка совпадают по id',
+    JSON.stringify(storedSections.map((s) => s.id)) === JSON.stringify(defaultSections.map((s) => s.id)),
+    `${storedSections.map((s) => s.id)} / ${defaultSections.map((s) => s.id)}`);
+
+  const emptySave = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...combatForm.json, sections: [] },
+  });
+  ok('пустое сохранение разделов → 400', emptySave.status === 400, `получили ${emptySave.status}`);
+  ok('отказ называет кнопку «Вернуть заготовку»',
+    (emptySave.json?.error ?? '').includes('Вернуть заготовку'), emptySave.json?.error ?? '');
+  const afterRefusal = await call('GET', '/form?mode=combat', { token: ownerToken });
+  ok('отказ ничего не записал',
+    (afterRefusal.json?.sections ?? []).length === storedSections.length,
+    `${(afterRefusal.json?.sections ?? []).length} / ${storedSections.length}`);
+
+  const ownSection = {
+    id: 'stend_own',
+    title: 'Свой раздел стенда',
+    numbered: true,
+    subsections: [{ id: 'one', title: 'Один', instruction: 'Сравни продукты кратко', condition: 'always' }],
+  };
+  const ownSave = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...combatForm.json, sections: [ownSection] },
+  });
+  ok('свой раздел сохраняется', ownSave.status === 200, `status ${ownSave.status}`);
+  const readOwn = await call('GET', '/form?mode=combat', { token: ownerToken });
+  const readOwnSections = readOwn.json?.sections ?? [];
+  // id переносится как есть: на нём держится ключ кэша текстов `gen.sect.*`.
+  ok('id раздела пережил сохранение', readOwnSections.length === 1 && readOwnSections[0]?.id === 'stend_own',
+    JSON.stringify(readOwnSections.map((s) => s.id)));
+  ok('заготовка не подменила разделы администратора',
+    (readOwn.json?.sectionsDefault ?? []).length === defaultSections.length,
+    String((readOwn.json?.sectionsDefault ?? []).length));
+
+  // Клиент присылает форму целиком: заготовка — только с сервера.
+  const forged = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...combatForm.json, sections: [ownSection], sectionsDefault: [{ id: 'hack', title: 'Взлом', subsections: [] }] },
+  });
+  ok('присланная клиентом заготовка не принимается',
+    (forged.json?.sectionsDefault?.[0]?.id ?? '') !== 'hack',
+    JSON.stringify((forged.json?.sectionsDefault ?? []).map((s) => s.id)));
+
+  const restored = await call('PUT', '/form', {
+    token: ownerToken,
+    body: { ...combatForm.json, sections: defaultSections },
+  });
+  ok('«Вернуть заготовку» сохраняется', restored.status === 200, `status ${restored.status}`);
+  const readRestored = await call('GET', '/form?mode=combat', { token: ownerToken });
+  ok('после возврата — разделы заготовки',
+    JSON.stringify((readRestored.json?.sections ?? []).map((s) => s.id)) === JSON.stringify(defaultSections.map((s) => s.id)),
+    JSON.stringify((readRestored.json?.sections ?? []).map((s) => s.id)));
+
+  const clientForm = await call('GET', '/form', { token: ownerToken });
+  ok('у формы КП заготовки листка нет', (clientForm.json?.sectionsDefault ?? []).length === 0);
+}
+
 console.log('\n5. Предложения: расчёт, нумерация, права');
 let offerId = 0;
 {
@@ -2597,6 +2666,22 @@ async function sectionCombat() {
 
   const list = await call('GET', '/combat', { token: ownerToken });
   ok('боевой листок в списке', (list.json?.sheets ?? []).some((s) => s.id === combatId));
+
+  // Короткий список (2026-11-18, задача №2): `?fields=preview` отдаёт строку без
+  // содержимого. Замер, из которого это выведено, — `scripts/measure_combat_list.mjs`
+  // (полный листок 8.2 КБ, до 1.6 МБ на пределе списка).
+  const preview = await call('GET', '/combat?fields=preview', { token: ownerToken });
+  ok('короткий список отвечает', preview.status === 200, `получили ${preview.status}`);
+  const previewRow = (preview.json?.sheets ?? []).find((s) => s.id === combatId) ?? {};
+  ok('короткая строка без текстов разделов', previewRow.formValues === undefined, JSON.stringify(Object.keys(previewRow)));
+  ok('короткая строка без конкурентов из ссылок', previewRow.textCompetitors === undefined);
+  ok('короткая строка называет нашего продукта', (previewRow.ourNotes ?? []).length === 1);
+  ok('подпись строки считает сервер', (previewRow.displayName ?? '').length > 0, previewRow.displayName ?? '');
+  ok('полный список по умолчанию не изменился',
+    (list.json?.sheets ?? []).some((s) => s.id === combatId && s.formValues !== undefined));
+  const typoFields = await call('GET', '/combat?fields=previews', { token: ownerToken });
+  ok('незнакомое fields отдаёт полный листок',
+    (typoFields.json?.sheets ?? []).some((s) => s.id === combatId && s.formValues !== undefined));
 
   const got = await call('GET', `/combat/${combatId}`, { token: ownerToken });
   ok('чтение боевого листка', got.status === 200 && (got.json?.competitorNotes ?? []).length === 1);

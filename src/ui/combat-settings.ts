@@ -1,9 +1,11 @@
 import { Notice } from 'obsidian';
 import type { OffersView } from './offers-view';
-import type { OfferForm } from '../types/offers';
+import type { ContentSection, OfferForm } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { copyMarker, pickLayoutFile, renderLayoutCard } from './form-layout';
 import { COMBAT_MARKERS } from './markers';
+import { renderSectionsEditor } from './sections-editor';
+import { cloneSections, combatSectionsProblem } from './sections-model';
 
 /**
  * «⚙️ Настройки боевого листка» (2026-11-17).
@@ -17,8 +19,16 @@ import { COMBAT_MARKERS } from './markers';
  *   3) макет: скачать и загрузить (и удалить — иначе нельзя вернуться к
  *      встроенному оформлению).
  *
- * Содержательные разделы листка (что именно сравнивать) остаются заготовкой в
- * коде: решение пользователя 2026-11-17 — «оставить как есть, без окна».
+ * 2026-11-18 — четвёртый блок, СОДЕРЖАТЕЛЬНЫЕ РАЗДЕЛЫ (решение пользователя,
+ * вариант A — «только разделы»). До этого структура листка задавалась заготовкой
+ * в коде сервера (`combatDefaultSections`), и поменять её было нельзя без
+ * выпуска. Редактор переиспользован у КП (`sections-editor.ts`), но в режиме
+ * `combat`: id раздела не меняется (на нём держится кэш текстов) и метки
+ * `{ content: … }` в макете листка нет.
+ *
+ * Настраиваемо ТОЛЬКО содержание разделов. Каркас документа — продукты
+ * сравнения, две стороны, разделы, ссылки — остаётся в коде: это решение
+ * пользователя 0.11.6 (реверс был бы новой настройкой, а не правкой).
  *
  * Окно СВОЁ, а не общий редактор формы КП: у листка нет полей формы, блоков и
  * окна приложения, и показывать их значило бы давать настройки, которые ни на
@@ -54,6 +64,73 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, onBac
   const basePromptInitial = (form.basePrompt ?? '').trim();
   const basePromptDefault = (form.basePromptDefault ?? '').trim();
 
+  // 0. Содержательные разделы (2026-11-18). Первым блоком: это и есть содержание
+  // листка — что именно сравнивать, а всё остальное (общая часть промта, ссылки,
+  // макет) настраивает его вид.
+  //
+  // `sections` — отдельная переменная, а не `form.sections`: редактор правит
+  // массив НА МЕСТЕ, а «↩ Вернуть заготовку» заменяет его целиком. Держать оба
+  // пути в одном поле формы значило бы забыть, какой из них сейчас актуален.
+  let sections: ContentSection[] = form.sections ?? [];
+  const sectionsCard = container.createDiv({ cls: 'tn-offers-card' });
+  sectionsCard.createDiv({ cls: 'tn-offers-muted', text: 'Содержательные разделы боевого листка' });
+  sectionsCard.createDiv({
+    cls: 'tn-offers-muted',
+    text:
+      'Раздел — это бриф для модели: подразделы, условия, инструкции и повтор по ' +
+      'продуктам. Оформление берётся из макета листка, поэтому настроек шрифтов и ' +
+      'заголовков здесь нет. Порядок разделов — порядок печати. ' +
+      'id раздела после создания не меняется: на нём держится кэш уже написанных ' +
+      'текстов.',
+  });
+  const sectionsBody = sectionsCard.createDiv();
+  const drawSections = (): void => {
+    sectionsBody.empty();
+    if (sections.length === 0) {
+      // Пустой список — состояние только внутри окна: удалили всё и ещё не
+      // сохранили. Объясняем ДО нажатия «Сохранить», потому что пустую настройку
+      // сервер отклоняет (у листка нет состояния «без разделов»: печать
+      // подставляет заготовку, и чтение тоже).
+      sectionsBody.createDiv({
+        cls: 'tn-offers-muted',
+        text: 'Разделов нет — такую настройку сервер не примет: добавьте раздел или верните заготовку.',
+      });
+    }
+    renderSectionsEditor(sectionsBody, sections, {
+      combat: true,
+      onChange: () => {
+        /* Предпросмотр рамки живёт внутри редактора, снаружи перерисовывать нечего. */
+      },
+    });
+  };
+  drawSections();
+  const restoreSectionsBtn = sectionsCard.createEl('button', {
+    cls: 'tn-btn tn-btn-ghost',
+    text: '↩ Вернуть заготовку',
+  });
+  restoreSectionsBtn.setAttribute(
+    'title',
+    'Поставить разделы, с которыми листок печатается, пока администратор не задал свои',
+  );
+  restoreSectionsBtn.addEventListener('click', () => {
+    const fallback = form.sectionsDefault ?? [];
+    // Заготовки нет — сервер старой сборки (поле появилось 2026-11-18). Честно
+    // сказать об этом лучше, чем очистить редактор: пустой список сохранить
+    // нельзя, и человек искал бы причину в своих разделах.
+    if (fallback.length === 0) {
+      new Notice(
+        'Сервер не отдал заготовку разделов — вероятно, обновлён только плагин. ' +
+          'Обновите сервис (версия 0.11.9 и новее) или добавьте раздел вручную.',
+      );
+      return;
+    }
+    // Копия, а не сама заготовка: редактор правит разделы на месте, и вторая
+    // правка испортила бы заготовку, пришедшую с сервера.
+    sections = cloneSections(fallback);
+    drawSections();
+    new Notice('Заготовка разделов подставлена — не забудьте сохранить настройки');
+  });
+
   // 1. Базовый промт документа.
   const promptCard = container.createDiv({ cls: 'tn-offers-card' });
   promptCard.createDiv({ cls: 'tn-offers-muted', text: 'Базовый промт боевого листка' });
@@ -62,8 +139,8 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, onBac
     text:
       'Этот текст получает модель вместе с брифом каждого раздела: формат ответа, ' +
       'правила сторон и формулировок, требования к согласованности. Содержание листка ' +
-      '(какие разделы сравниваются) задано заготовкой, здесь правится общая часть промта. ' +
-      'Пустое поле — встроенный текст.',
+      '(какие разделы сравниваются) правится блоком «Содержательные разделы» выше, ' +
+      'здесь — общая часть промта. Пустое поле — встроенный текст.',
   });
   const promptArea = promptCard.createEl('textarea', {
     cls: 'tn-offers-input tn-offers-base-prompt',
@@ -134,9 +211,17 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, onBac
   const saveBtn = actions.createEl('button', { text: '💾 Сохранить настройки', cls: 'tn-btn tn-btn-primary' });
   saveBtn.addEventListener('click', () => {
     void (async () => {
+      // Пустое сохранение отклоняем ДО запроса, русским текстом (2026-11-18).
+      // Сервер проверяет то же правило (`combatEmptySectionsProblem`): здесь
+      // отказ приходит сразу, без круглого отказа, а текст один и тот же.
+      const problem = combatSectionsProblem(sections);
+      if (problem) {
+        new Notice(problem);
+        return;
+      }
       try {
         // Полная форма: сервер записывает её целиком, и частичный payload стёр бы
-        // разделы и поля листка. Меняется здесь только базовый промт.
+        // разделы и поля листка. Меняются здесь разделы и базовый промт.
         //
         // Текст, равный встроенному, сохраняем ПУСТЫМ: «пусто = встроенный» —
         // правило формы, и оно же держит ключ кэша прежним. Иначе первое же
@@ -144,8 +229,13 @@ function render(view: OffersView, container: HTMLElement, form: OfferForm, onBac
         const promptValue = promptArea.value.trim();
         form = await view.plugin.offersService.saveForm({
           ...form,
+          sections,
           basePrompt: promptValue === basePromptDefault ? '' : promptValue,
         });
+        // `sections` НЕ перекладываем из ответа: редактор держит ЭТОТ массив и
+        // правит его на месте. Подменив переменную ответом сервера, мы оставили
+        // бы редактор на старом массиве, и следующее сохранение отправило бы
+        // состояние до правки — тихая потеря введённого.
         new Notice('Настройки боевого листка сохранены');
       } catch (e: unknown) {
         new Notice(`Не удалось сохранить настройки: ${errorMessage(e)}`);
