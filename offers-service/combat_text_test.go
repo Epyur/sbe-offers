@@ -212,12 +212,12 @@ func TestCombatDocxHashSeesTextChanges(t *testing.T) {
 			{Key: "url:https://a.ru/", Title: "ПВХ мембрана", Text: "старый текст", Source: combatSourceURL},
 		},
 	}
-	first := combatDocxHash(sheet, nil, combatDocxVersion, "form")
+	first := combatDocxHash(sheet, nil, combatDocxVersion, "form", nil)
 	edited := sheet
 	edited.TextCompetitors = []CombatTextRef{
 		{Key: "url:https://a.ru/", Title: "ПВХ мембрана", Text: "новый текст", Source: combatSourceURL},
 	}
-	second := combatDocxHash(edited, nil, combatDocxVersion, "form")
+	second := combatDocxHash(edited, nil, combatDocxVersion, "form", nil)
 	if first == second {
 		t.Fatal("правка текста конкурента не меняет хэш файла — кэш отдаст старый DOCX")
 	}
@@ -225,7 +225,7 @@ func TestCombatDocxHashSeesTextChanges(t *testing.T) {
 	edited.TextCompetitors = append(edited.TextCompetitors, CombatTextRef{
 		Key: "url:https://b.ru/", Title: "Второй", Text: "текст", Source: combatSourceURL,
 	})
-	if combatDocxHash(edited, nil, combatDocxVersion, "form") == second {
+	if combatDocxHash(edited, nil, combatDocxVersion, "form", nil) == second {
 		t.Fatal("добавление конкурента не меняет хэш файла")
 	}
 }

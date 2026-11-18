@@ -122,6 +122,10 @@ func (s *Server) handleAppAnswerAsync(w http.ResponseWriter, r *http.Request) {
 				log.Printf("app answer (async): паника при сборке %s %d: %v", req.Kind, req.ID, rec)
 			}
 		}()
+		// Первое, что видит человек, — что документ действительно собирается.
+		// До 2026-11-18 в чате было четыре минуты тишины: приложение закрывалось,
+		// а файл приходил потом, и отличить «работает» от «сломалось» было нечем.
+		s.notifyChat(bgCtx, chatID, answerStartText(req.Kind))
 		data, fileName, status, problem := s.answerDocxCtx(bgCtx, req, email)
 		if problem != "" {
 			log.Printf("app answer (async): %s %d не собран (код %d): %s", req.Kind, req.ID, status, problem)
@@ -135,6 +139,18 @@ func (s *Server) handleAppAnswerAsync(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("app answer (async): файл %q отправлен в чат %s (%d байт)", fileName, chatID, len(data))
 	}(req, chatID, email)
+}
+
+// answerStartText — сообщение, которое человек видит СРАЗУ после нажатия
+// «Отправить в чат» (2026-11-18). Текст один для бота и приложения: сборка
+// идёт в фоне и может занять минуты, и молчание читается как поломка.
+func answerStartText(kind string) string {
+	if kind == "combat" {
+		return "⌛ Формирую боевой листок — пришлю его в этот чат по готовности. " +
+			"Сборка может занять несколько минут, страницу можно закрыть."
+	}
+	return "⌛ Формирую коммерческое предложение — пришлю его в этот чат по готовности. " +
+		"Сборка может занять несколько минут, страницу можно закрыть."
 }
 
 // notifyChat — короткое сообщение в чат от бота (без файла), чтобы человек не
@@ -164,7 +180,15 @@ func (s *Server) notifyChat(ctx context.Context, chatID, text string) {
 		log.Printf("app answer (async): уведомление в чат %s не ушло: %v", chatID, err)
 		return
 	}
+	// Статус читаем, а не выбрасываем (2026-11-18): 403 (не тот секрет),
+	// 502 (Telegram отказал) и 503 (бот ещё не готов) раньше терялись молча,
+	// и «человек ничего не получил» выглядело как зависшая сборка.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, answerMaxReply))
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("app answer (async): уведомление в чат %s отклонено кодом %d: %s",
+			chatID, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 }
 
 // answerDocx готовит файл ТЕМИ ЖЕ путями, что бот: своих сборщиков здесь нет.

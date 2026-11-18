@@ -161,7 +161,23 @@ FROM offers_combat_sheet WHERE number LIKE '%' || $1`, suffix).Scan(&maxNum)
 }
 
 // loadCombatSheet читает боевой листок по id.
+//
+// Ремонт названий конкурентов (2026-11-17) берёт карточки из кэша конкурентов.
+// Для одного листка его можно прочитать здесь; для СПИСКА так делать нельзя:
+// кэш разбирался бы на каждой строке (живой дефект: список стал грузиться
+// заметно дольше после 0.11.7). Поэтому список зовёт `loadCombatSheetWithCards`
+// с уже прочитанным кэшем.
 func (s *Server) loadCombatSheet(ctx context.Context, id int64) (CombatSheet, error) {
+	cards, _, _ := s.loadCachedCompetitors(ctx)
+	return s.loadCombatSheetWithCards(ctx, id, cards)
+}
+
+// loadCombatSheetWithCards — то же, но кэш конкурентов приходит снаружи.
+//
+// `cards == nil` значит «ремонт названий делать нечем» (кэш не прочитан):
+// листок отдаётся как есть, без выдумывания названий. Пустой (но не nil) срез
+// тоже ничего не ремонтирует — `withRepairedCompetitorTitles` выходит по длине.
+func (s *Server) loadCombatSheetWithCards(ctx context.Context, id int64, cards []SystemCard) (CombatSheet, error) {
 	var c CombatSheet
 	var our, comp, texts, values []byte
 	err := s.pool.QueryRow(ctx, `
@@ -193,11 +209,10 @@ FROM offers_combat_sheet WHERE id = $1`, id).
 	}
 	// Названия конкурентов, сохранённые дисклеймером, исправляются на чтении
 	// (2026-11-17): иначе испорченный листок так и показывал бы предупреждение
-	// вместо продукта, пока его не пересохранят.
-	if c.CompetitorNotes != nil {
-		if cards, _, err := s.loadCachedCompetitors(ctx); err == nil {
-			c = withRepairedCompetitorTitles(c, cards)
-		}
+	// вместо продукта, пока его не пересохранят. Кэш конкурентов приходит
+	// снаружи (см. `loadCombatSheet`): в списке он читается ОДИН раз на запрос.
+	if c.CompetitorNotes != nil && cards != nil {
+		c = withRepairedCompetitorTitles(c, cards)
 	}
 	return c, nil
 }
@@ -261,9 +276,19 @@ func (s *Server) handleListCombat(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
+	// Кэш конкурентов читается ОДИН раз на запрос, а не на каждый листок
+	// (2026-11-18, живая жалоба «список грузится дольше»). Раньше `loadCombatSheet`
+	// читал его сам, и на 200 листков это было 200 SELECT + 200 разборов одного
+	// и того же JSONB. Ошибка кэша не валит список: названия остаются как есть.
+	competitorCards, _, cacheErr := s.loadCachedCompetitors(r.Context())
+	if cacheErr != nil {
+		log.Printf("список листков: кэш конкурентов не прочитан: %v", cacheErr)
+		competitorCards = nil
+	}
+
 	sheets := make([]CombatSheet, 0, len(ids))
 	for _, id := range ids {
-		c, err := s.loadCombatSheet(r.Context(), id)
+		c, err := s.loadCombatSheetWithCards(r.Context(), id, competitorCards)
 		if err != nil {
 			continue
 		}

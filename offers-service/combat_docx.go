@@ -79,7 +79,7 @@ func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCard
 	// ресурсы конкурента не приводим»). Листок — документ для заказчика, и чужие
 	// страницы/техлисты в его конце читаются как наша рекомендация. Повторы по
 	// адресу убираем.
-	refs := dedupCardRefs(collectOfferRefs(ourCards))
+	refs := combatOurRefs(ourCards)
 
 	media := newTemplateMedia()
 	links := &layoutRuntime{media: media, numbering: newNumberingPlan(numberingAbstractDecimal)}
@@ -127,7 +127,46 @@ func (s *Server) buildCombatBody(ctx context.Context, sheet CombatSheet, ourCard
 		}
 	}
 
+	// Пустой список ссылок — сказать об этом В ДОКУМЕНТЕ, а не молчать
+	// (2026-11-18). Ссылки приходят из кэша карточек (`offers_context
+	// mode='system_cards'`), а кэш обновляется только явным перечитыванием.
+	// Живая жалоба: в листке 017/2026 стояли две ссылки из «## Ссылки», хотя в
+	// заметке был и раздел «## Иные документы»; человек видел неполный список и
+	// не знал, что это кэш. Строка видна и при макете: тело печатается меткой
+	// `{{сравнение}}`.
+	if warning := combatRefsWarning(ourCards, refs); warning != "" {
+		sb.WriteString(paragraphAligned(warning, ""))
+	}
+
 	return sb.String(), refs, links, media, nil
+}
+
+// combatRefsWarning — что напечатать, если ссылок у наших продуктов не нашлось.
+//
+// Печатаем только когда у карточек есть `noteId` (то есть их можно перечитать
+// из Базы знаний). У текстового конкурента на нашей стороне заметки нет, и
+// предупреждение было бы ложным.
+func combatRefsWarning(ourCards []SystemCard, refs []skills.CardRef) string {
+	if len(refs) > 0 || len(ourCards) == 0 {
+		return ""
+	}
+	for _, card := range ourCards {
+		if card.NoteID > 0 {
+			return "Ссылки не загружены: в карточках нашего продукта список ссылок пуст. " +
+				"Если документы добавили недавно, перечитайте карточки кнопкой " +
+				"«↻ Перечитать из Базы знаний» в разделе «Контекст КП» и соберите листок заново."
+		}
+	}
+	return ""
+}
+
+// combatOurRefs — ссылки нашего продукта: печать и хэш файла берут один набор.
+//
+// Одна функция на два места (2026-11-18): если хэш и тело соберут ссылки
+// по-разному, файл будет считаться свежим при изменившемся списке ссылок —
+// ровно та ловушка, из-за которой живой листок не печатал «Иные документы».
+func combatOurRefs(cards []SystemCard) []skills.CardRef {
+	return dedupCardRefs(collectOfferRefs(cards))
 }
 
 // packCombatDocx упаковывает тело: по макету, если он загружен, иначе — как

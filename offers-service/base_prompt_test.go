@@ -48,13 +48,13 @@ func TestFormBasePromptChangesSectionKey(t *testing.T) {
 func TestCombatDocxHashSeesForm(t *testing.T) {
 	sheet, _, _ := combatSectionFixture()
 	layout := []byte("layout-v1")
-	base := combatDocxHash(sheet, layout, "v1", combatFormFingerprint(OfferForm{}))
+	base := combatDocxHash(sheet, layout, "v1", combatFormFingerprint(OfferForm{}), nil)
 	custom := OfferForm{BasePrompt: "ПРАВИЛО АДМИНИСТРАТОРА"}
-	if combatDocxHash(sheet, layout, "v1", combatFormFingerprint(custom)) == base {
+	if combatDocxHash(sheet, layout, "v1", combatFormFingerprint(custom), nil) == base {
 		t.Fatal("правка базового промта не меняет хэш файла: кэш отдаст старый листок")
 	}
 	sections := OfferForm{Sections: combatDefaultSections()}
-	if combatDocxHash(sheet, layout, "v1", combatFormFingerprint(sections)) == base {
+	if combatDocxHash(sheet, layout, "v1", combatFormFingerprint(sections), nil) == base {
 		t.Fatal("правка разделов не меняет хэш файла: кэш отдаст старый листок")
 	}
 }

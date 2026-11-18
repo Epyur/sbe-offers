@@ -120,3 +120,31 @@ func TestAppAnswerOwnershipIsByEmail(t *testing.T) {
 		t.Fatal("чужой адрес не должен пускаться")
 	}
 }
+
+// «Отправить в чат» больше не молчит (2026-11-18): первое сообщение в чат
+// уходит ДО сборки и говорит, что документ формируется. Живая жалоба: файл
+// приходил через четыре минуты, и всё это время человек не понимал, работает
+// сборка или всё сломалось.
+func TestAnswerStartText(t *testing.T) {
+	for _, kind := range []string{"offer", "combat"} {
+		text := answerStartText(kind)
+		if !strings.Contains(text, "⌛") {
+			t.Errorf("%s: в сообщении нет знака ожидания: %q", kind, text)
+		}
+		if !strings.Contains(text, "пришлю") {
+			t.Errorf("%s: сообщение не обещает файл: %q", kind, text)
+		}
+		if !strings.Contains(text, "несколько минут") {
+			t.Errorf("%s: сообщение не предупреждает о времени: %q", kind, text)
+		}
+	}
+	if !strings.Contains(answerStartText("combat"), "боевой листок") {
+		t.Error("вид документа должен называться словами менеджера")
+	}
+	if !strings.Contains(answerStartText("offer"), "коммерческое предложение") {
+		t.Error("вид документа должен называться словами менеджера")
+	}
+	if answerStartText("offer") == answerStartText("combat") {
+		t.Error("КП и листок должны называться по-разному")
+	}
+}

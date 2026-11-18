@@ -208,7 +208,7 @@ func (s *Server) combatOurItems(ctx context.Context) ([]botSystemItem, error) {
 	// Системы добавляются вторым проходом и вытесняются теми же заметками, если
 	// материал уже занял эту карточку (одна и та же заметка не должна быть в
 	// списке дважды — листок хранит сторону по заметке).
-	for _, card := range s.systemCardsForCombat(ctx, materials) {
+	for _, card := range s.systemCardsForCombat(ctx) {
 		if card.NoteID <= 0 || seen[card.NoteID] {
 			continue
 		}
@@ -230,17 +230,25 @@ func (s *Server) combatOurItems(ctx context.Context) ([]botSystemItem, error) {
 // должна гасить весь список нашего продукта (материалы уже прочитаны). Пустой
 // кеш при живом сбое Базы знаний вернётся пустым списком — это лучше, чем
 // отказ всей стороны.
-func (s *Server) systemCardsForCombat(ctx context.Context, materials []Material) []SystemCard {
+func (s *Server) systemCardsForCombat(ctx context.Context) []SystemCard {
 	cards, err := s.loadCachedSystemCards(ctx)
 	if err != nil {
 		return nil
 	}
 	if len(cards) == 0 && s.kb != nil && s.kb.configured() {
-		fresh, ferr := SystemsFromKB(ctx, s.kb, materials)
-		if ferr != nil {
+		// Пустой кэш заполняем ТЕМ ЖЕ путём, что «Контекст КП», а не
+		// `SystemsFromKB` (2026-11-18). Разница не косметическая: `SystemsFromKB`
+		// отсеивает карточки с тегом `material` и не зовёт `enrichLinkedRefs`,
+		// поэтому сохранённый им кэш «отравлял» общий `system_cards`: материал,
+		// выбранный на нашей стороне листка, переставал находиться при печати, а
+		// ссылки материалов состава исчезали и из листка, и из КП.
+		fresh, refreshErr := s.refreshSystemCards(ctx, "")
+		if refreshErr != nil {
+			// refreshSystemCards при ошибке Базы знаний не пишет кэш и отдаёт
+			// прежний. Неполный набор сохранять нельзя: лучше пустой список на
+			// один показ, чем испорченный кэш для листков и КП.
 			return nil
 		}
-		_ = s.saveCachedSystemCards(ctx, fresh, "")
 		return fresh
 	}
 	return cards
@@ -382,9 +390,17 @@ func (s *Server) handleBotListCombat(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
+	// Кэш конкурентов — ОДИН раз на запрос (2026-11-18): иначе он читался и
+	// разбирался на каждом листке (список из 50 строк = 50 разборов одного JSONB).
+	competitorCards, _, cacheErr := s.loadCachedCompetitors(r.Context())
+	if cacheErr != nil {
+		log.Printf("бот: список листков, кэш конкурентов не прочитан: %v", cacheErr)
+		competitorCards = nil
+	}
+
 	sheets := make([]CombatSheet, 0, len(ids))
 	for _, id := range ids {
-		c, err := s.loadCombatSheet(r.Context(), id)
+		c, err := s.loadCombatSheetWithCards(r.Context(), id, competitorCards)
 		if err != nil {
 			continue
 		}

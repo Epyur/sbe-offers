@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+
+	"mailers/offers/skills"
 )
 
 // Готовый DOCX боевого листка хранится рядом с листком (2026-11-12).
@@ -54,7 +56,13 @@ import (
 // и ссылки — карточки без Базы знаний, со своим текстом. Хэш начал включать их
 // (`combatDocxHash`), но файлы, собранные до этого, собраны прежним набором
 // карточек, поэтому версия обязана смениться.
-const combatDocxVersion = "v7"
+//
+// v8 (2026-11-18): в хэш вошли ССЫЛКИ наших карточек. Живой листок 017/2026
+// печатал две ссылки из «## Ссылки», хотя в заметке есть и «## Иные документы»
+// (файлы приложения «Документы»): файл отдавался из кэша, а ссылки меняются
+// вместе с карточкой и в прежний хэш не входили. Версия поднята, чтобы уже
+// собранные файлы разошлись по хэшу и пересобрались с новым правилом.
+const combatDocxVersion = "v8"
 
 // combatDocxHash — отпечаток того, из чего собирается документ листка.
 //
@@ -69,13 +77,27 @@ const combatDocxVersion = "v7"
 // Форма входит потому, что она задаёт СОДЕРЖАНИЕ: правка базового промта или
 // инструкции подраздела обязана пересобрать файл, а без входа в хэш кэш отдал бы
 // старый листок как свежий (та же ловушка, что с текстами карточек).
-func combatDocxHash(sheet CombatSheet, layout []byte, version, formHash string) string {
+func combatDocxHash(sheet CombatSheet, layout []byte, version, formHash string, refs []skills.CardRef) string {
 	var b strings.Builder
 	b.WriteString(version)
 	b.WriteString("\x1f" + sheet.Number)
 	b.WriteString("\x1four\x1f")
 	for _, ref := range sheet.OurNotes {
 		b.WriteString(itoa(int(ref.NoteID)) + ":" + ref.Title + "\x1f")
+	}
+	// Ссылки наших карточек — часть документа (2026-11-18). Почему именно здесь,
+	// а не «перечитывать карточки при каждом экспорте»: содержимое карточки
+	// по-прежнему НЕ входит в хэш (правка описания не должна пересобирать все
+	// листки), а вот список ссылок — короткий и меняется редко. Порядок берётся
+	// как в заметке: перестановка ссылок тоже меняет документ.
+	//
+	// Пустой список ничего не пишет: у листков без ссылок хэш остаётся прежним,
+	// и старые файлы не пересобираются без причины.
+	if len(refs) > 0 {
+		b.WriteString("\x1frefs\x1f")
+		for _, ref := range refs {
+			b.WriteString(hashShort(ref.Label+"\x1f"+ref.URL) + "\x1f")
+		}
 	}
 	b.WriteString("\x1fcomp\x1f")
 	for _, ref := range sheet.CompetitorNotes {
@@ -160,7 +182,7 @@ func (s *Server) renderCombatDocxCached(ctx context.Context, layout []byte, shee
 	if err != nil {
 		log.Printf("боевой листок %s: форма не прочитана для хэша: %v", sheet.Number, err)
 	}
-	hash := combatDocxHash(sheet, layout, combatDocxVersion, combatFormFingerprint(form))
+	hash := combatDocxHash(sheet, layout, combatDocxVersion, combatFormFingerprint(form), combatOurRefs(ourCards))
 	if cached := s.storedCombatDocx(ctx, sheet.ID, hash); cached != nil {
 		log.Printf("боевой листок %s: файл из кэша", sheet.Number)
 		return cached, nil

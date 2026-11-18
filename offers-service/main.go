@@ -661,6 +661,9 @@ created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 		// это различие должно быть видно в типе, а не в проверке условия.
 		`ALTER TABLE offers_combat_sheet ADD COLUMN IF NOT EXISTS text_competitors JSONB NOT NULL DEFAULT '[]'`,
 		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_owner ON offers_combat_sheet (lower(owner_email))`,
+		// Порядок списка листков (2026-11-18): список сортируется по created_at
+		// DESC, а индекса не было вовсе — база сортировала всю таблицу.
+		`CREATE INDEX IF NOT EXISTS offers_combat_sheet_created ON offers_combat_sheet (created_at DESC)`,
 		// Поиск в списках (2026-11-13, шаг S2). `text_pattern_ops` нужен
 		// потому, что база живёт с локалью, отличной от C: только с ним
 		// `LIKE 'q%'` по `lower(...)` идёт по индексу. Внутрисловная подстрока

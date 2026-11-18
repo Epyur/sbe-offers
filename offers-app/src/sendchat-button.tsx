@@ -41,7 +41,10 @@ export function SendToChatButton({ kind, id }: { kind: DocumentKind; id: number 
       <button className="app-button" type="button" onClick={onClick} disabled={busy}>
         {busy ? '⏳ Отправляю…' : sendButtonText(kind)}
       </button>
-      <p className="app-muted">Файл соберёт бот и пришлёт его в чат с приложением.</p>
+      <p className="app-muted">
+        Файл собирается в фоне: бот пришлёт его в этот чат через несколько минут, страницу можно
+        закрыть.
+      </p>
       <p className="app-muted">
         Отправка: {initData() === '' ? 'нет ключа Telegram' : 'ключ есть'}
         {platformInfo().version === '' ? '' : `, Telegram ${platformInfo().version}`}
