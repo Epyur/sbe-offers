@@ -310,7 +310,7 @@ the sheet and removed dangling clauses.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `af41768` (code; docs — следующим коммитом), `main` `2a8eec1`
+Code heads: `backend` `af41768` (code; docs `243fa2e`), `main` `2a8eec1`
 (release slice of 0.11.11; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
