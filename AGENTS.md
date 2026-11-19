@@ -37,11 +37,32 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.9** — ready 2026-11-18. The combat sheet's comparison
-structure is now edited in its own settings window (section ids are frozen, an
-empty save is refused, «↩ Вернуть заготовку» restores the built-in default), and
-the sheet list in the Mini App asks for short rows (`?fields=preview`) instead of
-the whole document — 29 times lighter by measurement.
+Current version = **0.11.10** — released 2026-11-19. The bot now reads a Word
+file from the chat as **context**: `.docx` goes through the agent's DOCX parser
+and then the `.md` path (strict labels → brief, `ExtractBriefFacts` + model →
+object context), while positions are still collected ONLY from `.xlsx` and the
+reply says so. Before that a Word file was refused outright — the most common
+shape of an old offer. The previous version (0.11.9) made the combat sheet's
+sections a setting and made the App's sheet list ask for short rows.
+
+> **0.11.10 (2026-11-19) — файл Word из чата как источник контекста.**
+> Пункт backlog, следующий после аналогов. **(1) Сервис** (`attach.go`): ветка
+> `AttachmentDocx` читает текст `documentTextOf` (тот же разбор, что у агента:
+> `w:t`, абзацы `w:p`, `w:tab`) и идёт **путём `.md`** — строгие подписи в бриф
+> (`ParseMarkdownAttachment`) плюс контекст объекта (`ExtractBriefFacts` +
+> модель); пустой текст (скан без слоя) — отказ с причиной; подсказки PDF и
+> неизвестного формата называют `.docx`. **(2) Граница названа:** состав
+> позиций из Word НЕ собирается (`w:tbl` доезжает текстом), `attachReply`
+> говорит это прямо. **(3) Бот:** подсказка «📎 Прислать файл» называет `.docx`
+> и ту же границу. **(4) Стенд:** прежняя проверка `.docx` была фиктивной (не
+> zip → ветка «неизвестный формат»); теперь настоящий docx + пустой Word.
+> **Проверки:** `gofmt`/`go vet`/`go test -count=1 ./...` зелёные (+3 сторожа),
+> OpenAPI **124/124**, плагин `tsc` 0 / `build` OK (срез воспроизводит backend
+> байт в байт) / `check_bundle_strings` 0 / `check_marker_registry` OK /
+> `check_sections_conditions` 16/16 / `check_combat_sections_rules` 20/20, бот
+> **220**, приложение **90**, стенд **623/0**. Точки выпуска — `HANDOFF.md`,
+> «Три точки сходятся (0.11.10)». **Не проверено:** живой Word из Telegram под
+> настоящей моделью.
 
 > **0.11.9 (2026-11-18) — разделы боевого листка правятся в настройках, короткий список.**
 > Две задачи из `NEXT-SESSION-PROMPT.md`. **(1) Структура разделов — настройка
@@ -245,8 +266,8 @@ the whole document — 29 times lighter by measurement.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `1a3f68b` (code; docs `8ef958e`), `main` `939f60c`
-(release slice of 0.11.9; code; docs `2f17e8d`; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `f58e758` (code; docs — следующим коммитом), `main` `961012d`
+(release slice of 0.11.10; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -1876,6 +1897,21 @@ measurements) are in the archive.
 
 ### Files, parsing and context
 
+- **Word is a CONTEXT source, not a composition source** (2026-11-18). A `.docx`
+  from the chat is read through `documentTextOf` — the same parser the agent uses
+  (`w:t` nodes, a newline per `w:p`, a space per `w:tab`), so there is no second
+  copy of "how to read a docx". After that it follows the `.md` path exactly:
+  strict labels (`ParseMarkdownAttachment`) → brief, `ExtractBriefFacts` + model →
+  object context. **Positions are NOT collected from Word**: `w:tbl` arrives as
+  plain text lines, and `attachReply` names that boundary instead of pretending.
+  A file with no text at all (a scan without a text layer) is refused with the
+  reason, not with «такие файлы не принимаю». Guards: `attach_docx_test.go` (text
+  reaches the brief; a text-less Word is refused for the right reason; the reply
+  says composition is not parsed) and the stand section «11. Файлы в бота» — the
+  stand's old `.docx` check sent `PK\x03\x04` + the string `word/document.xml`,
+  which is not a zip at all, so it exercised the unknown-format branch and proved
+  nothing about Word. **A check whose fixture cannot reach the code it names is
+  not a check.**
 - **The parsing layer is fed by real manager files.** `skills/testdata/legacy-offer.xlsx`
   is an anonymised real file. Every fix has a test named after the symptom.
 - **Address cells by `r` (`B35`), never by position** — skipped cells are absent
@@ -2527,32 +2563,37 @@ Ordered by what will bite the commercial department soonest.
 
 1. **KB analogue comparison** (why these systems, not the alternatives) — new
    functionality, not started. `compare_table`/`compareSystemRows` compare the
-   CHOSEN systems with each other, which is not what is wanted.
-2. **Word documents as a context source.** Old offers arrive as `.docx` more
-   often than as Excel; today `readAttachedFile` refuses them. Mostly a
-   `word/document.xml` text extraction (same zip walk as xlsx).
-3. **Old binary `.xls`** — refused today; cheapest step is a better message plus
+   CHOSEN systems with each other, which is not what is wanted. **The combat
+   sheet's own analogue picker IS done** (2026-11-11/12): `/combat/analogues`,
+   `/bot/combat/analogues`, «🔍 Подобрать» in the App — what is open here is the
+   offer (КП), per the user's correction of 2026-11-18.
+2. **Old binary `.xls`** — refused today; cheapest step is a better message plus
    conversion instructions.
-4. **`.docx`/`.xls` in the plugin's own upload screen** (`sheet-upload.ts`) —
+3. **`.docx`/`.xls` in the plugin's own upload screen** (`sheet-upload.ts`) —
    not touched since, may share the old positional-cell assumptions.
-5. **Multiple sheets** — `ParseXlsxAttachment` stops at the first sheet with a
+4. **Multiple sheets** — `ParseXlsxAttachment` stops at the first sheet with a
    composition.
-6. **Grouped/hidden rows in xlsx** — `outlineLevel` and `hidden="1"` are ignored.
-7. **Manual overrides vs the file** — a file always wins over what the manager
+5. **Grouped/hidden rows in xlsx** — `outlineLevel` and `hidden="1"` are ignored.
+6. **Manual overrides vs the file** — a file always wins over what the manager
    typed; offer to mark fields as "taken from file".
-8. **Editing a saved offer** has no per-item delete; add handlers in
+7. **Editing a saved offer** has no per-item delete; add handlers in
    `flow/resume.ts`, not `callbacks.ts`.
-9. **`handleDraftText` is still CC 13** (`callbacks.ts`) — dispatcher mixing
+8. **`handleDraftText` is still CC 13** (`callbacks.ts`) — dispatcher mixing
    brief, `система`, free item, quantity and form field. Take it apart with a
    handler table.
-10. **`contextWithModel`/`Complete` have no unit coverage** — network glue
-    checked only on the stand.
-11. **Data work, not code:** `SKU` for materials synced from KB is meaningless
+9. **`contextWithModel`/`Complete` have no unit coverage** — network glue
+   checked only on the stand.
+10. **Data work, not code:** `SKU` for materials synced from KB is meaningless
     (`MAT-ПРОЧ-ОБЩ-NNNN`); ~1273 composition lines still have no `[[link]]`.
-12. **`{{система}}` inside a `repeat: "materials"` block** is not supported; the
+11. **`{{система}}` inside a `repeat: "materials"` block** is not supported; the
     material repeat prints the chosen material's title (2026-11-13), and positions
     only for offers that have no chosen materials.
-13. **A prompt table still costs one model call** in some layout paths —
+12. **A prompt table still costs one model call** in some layout paths —
     `layoutTableFor` builds tables from data, verify no call happens first.
-14. **`sbe-kb/src/services/hash.ts`** is a second copy of
+13. **`sbe-kb/src/services/hash.ts`** is a second copy of
     `sbe-core/src/utils/files.ts`.
+
+**Done from this list:** «Word documents as a context source» — `.docx` from the
+chat is read as context (2026-11-18, released in **0.11.10** on 2026-11-19; see
+the gotcha above). What is NOT done there: parsing Word TABLES into positions —
+that is its own step, and the bot says so instead of pretending.
