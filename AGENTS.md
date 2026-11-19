@@ -288,7 +288,7 @@ dangling clause («…. — тогда расчёт…») in the document. The p
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `2bd8420` (code; docs — следующим коммитом), `main` `0dfbfa2`
+Code heads: `backend` `2bd8420` (code; docs `311f41b`), `main` `0dfbfa2`
 (release slice of 0.11.11; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
