@@ -1038,7 +1038,7 @@ console.log('\n10. Токен Telegram-бота (2026-10-29)');
   ok('боту возвращается пустой токен', emptyAgain.json?.token === '');
 }
 
-console.log('\n11. Файлы в бота: .md, .xlsx, отказы');
+console.log('\n11. Файлы в бота: .md, .xlsx, .docx, отказы');
 let linkedChatId = 0;
 {
   const chatId = `attach-${Date.now()}`;
@@ -1127,10 +1127,38 @@ const rawBuf = Buffer.from(await res.arrayBuffer());
   const catalogRow = (applySpec.json?.offer?.items ?? []).find((i) => i.catalogId);
   ok('цена взята из каталога, а не из файла', catalogRow?.price === 1200, String(catalogRow?.price));
 
-  const docx = await send('письмо.docx', Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('word/document.xml')]));
-  ok('.docx вежливо отклонён → 400', docx.status === 400, `получили ${docx.status}`);
-  ok('.docx: сказано, что присылать', (docx.json?.error ?? '').includes('.md') || (docx.json?.error ?? '').includes('xlsx'),
-    docx.json?.error);
+  // Word как источник контекста (2026-11-18). Раньше здесь проверялся ОТКАЗ
+  // на .docx — но файл был поддельный (`PK` + имя записи, а не zip), и проверка
+  // ничего не говорила о Word: отказ приходил из ветки «неизвестный формат».
+  // Теперь собирается настоящий docx, и проверяется то, ради чего правка:
+  // текст доходит до брифа, а состав из Word честно не обещан.
+  const wordXml =
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+    [
+      'Коммерческое предложение № 012/2025',
+      'Объект: ЖК «Поэма», корпус 3',
+      'Заказчик: ООО Строй-Инвест',
+      'Сроки: до 15 сентября',
+    ].map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join('') +
+    '</w:body></w:document>';
+  const word = await send('старое КП.docx', packZip([zipEntry('word/document.xml', Buffer.from(wordXml, 'utf8'))]));
+  ok('.docx прочитан как контекст → 200', word.status === 200, `получили ${word.status} ${word.text?.slice(0, 160)}`);
+  ok('.docx: текст Word попал в контекст', (word.json?.context ?? []).length >= 3,
+    JSON.stringify((word.json?.context ?? []).length));
+  ok('.docx: объект распознан',
+    (word.json?.contextFields?.fields?.object_name ?? []).some((v) => String(v).includes('Поэма')),
+    JSON.stringify(word.json?.contextFields?.fields?.object_name));
+  ok('.docx: просит подтверждение', word.json?.needsConfirm === true, String(word.json?.needsConfirm));
+
+  // Word без текста (скан без слоя) — честный отказ с причиной, а не «не принимаю».
+  const emptyWord = packZip([zipEntry('word/document.xml', Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body></w:body></w:document>',
+    'utf8'))]);
+  const scan = await send('скан.docx', emptyWord);
+  ok('.docx без текста отклонён с причиной', scan.status === 400 && (scan.json?.error ?? '').includes('нет текста'),
+    `${scan.status} ${scan.json?.error}`);
 
   const xls = await send('старый.xls', Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
   ok('.xls отклонён с подсказкой', xls.status === 400 && (xls.json?.error ?? '').includes('xlsx'), xls.json?.error);

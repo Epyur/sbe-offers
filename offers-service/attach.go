@@ -32,7 +32,8 @@ const maxAttachmentBytes = 10 << 20
 
 // attachedFile — что мы приняли и что из него поняли.
 type attachedFile struct {
-	// Kind — md / xlsx; docx пока не принимается (шаг 2).
+	// Kind — md / xlsx / docx. Word читается как источник контекста
+	// (2026-11-18), состав позиций из него не собирается.
 	Kind string `json:"kind"`
 	// Name — имя файла, как его прислали: по нему человек узнаёт свой файл.
 	Name string `json:"name"`
@@ -209,13 +210,29 @@ func (s *Server) readAttachedFile(ctx context.Context, offer Offer, name string,
 		out.Context = parsed.Text
 		out.ContextFields = s.contextWithModel(ctx, parsed.Text)
 	case string(skills.AttachmentDocx):
-		return nil, errors.New("файлы Word пока не принимаю: пришлите .md или .xlsx")
+		// Word — источник КОНТЕКСТА, как .md (2026-11-18, пункт backlog):
+		// старые КП приходят в Word чаще, чем в Excel, и отклонять файл целиком
+		// было отказом от самого частого вида старого КП. Текст берётся тем же
+		// разбором, что у агента (`documentTextOf`: w:t + абзацы w:p), поэтому
+		// второй копии «как читать docx» не заводится.
+		//
+		// Честная граница: таблицу позиций из Word НЕ собираем — для этого
+		// нужен свой разбор таблиц, а обещать состав и молча не дать его хуже,
+		// чем назвать границу (`attachReply`).
+		text := documentTextOf(name, data)
+		if strings.TrimSpace(text) == "" {
+			return nil, errors.New("в файле Word нет текста: похоже, это скан без текстового слоя. " +
+				"Пришлите .md с описанием объекта или .xlsx с таблицей")
+		}
+		out.Context = fileTextLines(text)
+		out.Brief = briefFromMarkdown(skills.ParseMarkdownAttachment(text))
+		out.ContextFields = s.contextWithModel(ctx, out.Context)
 	case string(skills.AttachmentOldExcel):
 		return nil, errors.New("старый формат .xls не читаю: пересохраните файл как .xlsx")
 	case string(skills.AttachmentPDF):
-		return nil, errors.New("PDF не разбираю: пришлите .md или .xlsx")
+		return nil, errors.New("PDF не разбираю: пришлите .md, .docx или .xlsx")
 	default:
-		return nil, errors.New("не понял формат файла: пришлите .md или .xlsx")
+		return nil, errors.New("не понял формат файла: пришлите .md, .docx или .xlsx")
 	}
 
 	// Что применять к КП: состав, если он есть; иначе контекст брифа, если из
@@ -230,6 +247,16 @@ func (s *Server) readAttachedFile(ctx context.Context, offer Offer, name string,
 	// данные. Ошибка хранилища файл не отменяет — разбор важнее.
 	out.Key = s.storeAttachment(ctx, offer, name, data)
 	return out, nil
+}
+
+// fileTextLines — текст файла по строкам, как его ждёт разбор контекста.
+//
+// Переводы строк Word приходят `\n` (их ставит `wordXMLText`), но файл может
+// приехать и через почту с `\r\n`: нормализация здесь, на входе, — чтобы
+// разбор контекста не зависел от того, какой редактор сохранял документ.
+func fileTextLines(text string) []string {
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.Split(strings.TrimSpace(normalized), "\n")
 }
 
 // contextWithModel дополняет дословный разбор модельным.
@@ -457,6 +484,16 @@ func attachReply(out *attachedFile, name string) string {
 	switch {
 	case len(parts) == 0:
 		if len(out.Context) > 0 {
+			// Word читается как текст (2026-11-18): если в нём не нашлось
+			// описания объекта, ответ обязан назвать два факта — файл прочитан
+			// и состав из Word не собирается. Иначе менеджер ждёт позиции,
+			// которых не будет, и считает разбор сломанным.
+			if out.Kind == string(skills.AttachmentDocx) {
+				return "Прочитал Word «" + attachmentTitle(name) + "» (строк: " + itoa(len(out.Context)) + "), " +
+					"но описания объекта в нём не нашёл. Состав из Word не разбираю — " +
+					"пришлите .xlsx с таблицей (наименование, количество, цена) " +
+					"или .md с подписями «Объект: …», «Заказчик: …»."
+			}
 			return "Прочитал «" + attachmentTitle(name) + "», но ничего применить не смог: " +
 				"ни состава (нужны «Наименование» и «Количество»), ни описания объекта. " +
 				"Расскажите про объект в чате — вопросы задам сам."
