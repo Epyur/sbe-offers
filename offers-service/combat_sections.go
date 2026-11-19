@@ -63,6 +63,66 @@ func combatSectionCards(ourCards, competitorCards []SystemCard) []SystemCard {
 	return out
 }
 
+// combatAnswerContract — встроенный базовый контракт ЛИСТКА (2026-11-19).
+//
+// Тот же замороженный ответ, что у КП (`sectionAnswerContract`), но без слов про
+// КП: у листка нет коммерческого предложения, поэтому встроенная строка «Рисунок
+// — ссылка на картинку из КП» отправляла модель искать КП. Отдельной копией
+// текст не заводится — одна строка заменяется в одном месте, чтобы контракты не
+// разъехались по видам блоков.
+var combatAnswerContract = strings.Replace(sectionAnswerContract, "из КП", "из документа", 1)
+
+// effectiveCombatBasePrompt — свой базовый промт листка или встроенный контракт
+// листка. От `effectiveBasePrompt` отличается только запасным текстом.
+func effectiveCombatBasePrompt(basePrompt string) string {
+	if trimmed := strings.TrimSpace(basePrompt); trimmed != "" {
+		return trimmed
+	}
+	return combatAnswerContract
+}
+
+// combatSectionPromptRev — ревизия промта подразделов листка.
+//
+// Входит в отпечаток содержания: правка промта сама по себе ключу не видна (там
+// номер, уточнение, карточки, факты и свой базовый промт), и без ревизии листок
+// отдал бы старые тексты из `form_values`. v2 — листок больше не получает данные
+// КП (2026-11-19).
+const combatSectionPromptRev = "p2"
+
+// combatSectionFacts — данные листка для модели вместо данных предложения.
+//
+// Что здесь есть: номер, название и ДВЕ СТОРОНЫ. Чего нет: цен, сумм и правила
+// комплекта — листок ничего не поставляет, он сравнивает.
+func combatSectionFacts(sheet CombatSheet, ourCards, competitorCards []SystemCard) string {
+	var b strings.Builder
+	b.WriteString("ДАННЫЕ БОЕВОГО ЛИСТКА:\n")
+	if number := strings.TrimSpace(sheet.Number); number != "" {
+		b.WriteString("Номер: " + number + "\n")
+	}
+	if title := strings.TrimSpace(sheet.Title); title != "" {
+		b.WriteString("Название: " + title + "\n")
+	}
+	b.WriteString("НАШ ПРОДУКТ (сторона, которую предлагаем мы): " + cardsOrNone(ourCards) + "\n")
+	b.WriteString("ПРОДУКТЫ КОНКУРЕНТОВ (чужая сторона): " + cardsOrNone(competitorCards) + "\n")
+	return b.String()
+}
+
+// cardsOrNone — названия стороны одной строкой; пустая сторона названа словами,
+// а не пустотой: иначе модель решит, что сторону забыли.
+func cardsOrNone(cards []SystemCard) string {
+	if names := cardNames(cards); names != "" {
+		return names
+	}
+	return "не выбраны"
+}
+
+// combatSectionUserPrompt — USER-промт подраздела листка.
+func combatSectionUserPrompt(sheet CombatSheet, ourCards, competitorCards []SystemCard,
+	refs []skills.CardRef) string {
+	facts := combatSectionFacts(sheet, ourCards, competitorCards)
+	return buildSectionUserPrompt(facts, combatSectionCards(ourCards, competitorCards), refs)
+}
+
 // combatSectionBrief — бриф подраздела листка: инструкция администратора, роли
 // сторон и замороженный контракт ответа (тот же, что у КП).
 //
@@ -97,7 +157,8 @@ func combatSectionBrief(instruction string, ourCards, competitorCards []SystemCa
 	b.WriteString("\n\n")
 	// Базовый промт — формы листка (2026-11-17), а не константа: правила
 	// формулировок и согласованности разделов администратор правит без выпуска.
-	b.WriteString(effectiveBasePrompt(basePrompt))
+	// Пусто — встроенный контракт ЛИСТКА (2026-11-19), а не контракт КП.
+	b.WriteString(effectiveCombatBasePrompt(basePrompt))
 	return b.String()
 }
 
@@ -139,6 +200,10 @@ func combatSectionGen(sheet CombatSheet, ourCards, competitorCards []SystemCard,
 		brief: func(instruction string, call sectionCall) string {
 			return combatSectionBrief(instruction, ourCards, competitorCards, combatHint(sheet), facts, basePrompt)
 		},
+		// USER-промт листка — свои стороны, без данных КП (2026-11-19).
+		userPrompt: func() string {
+			return combatSectionUserPrompt(sheet, ourCards, competitorCards, refs)
+		},
 		complete: llmCompleter{},
 	}, offer
 }
@@ -158,6 +223,8 @@ func combatSectionHandle(sheet CombatSheet, ourCards, competitorCards []SystemCa
 	facts []combatFact, basePrompt string) string {
 	var b strings.Builder
 	b.WriteString("combat\x1f" + sheet.Number)
+	// Ревизия промта: правка того, ЧТО видит модель, обязана переписать текст.
+	b.WriteString("\x1frev\x1f" + combatSectionPromptRev)
 	b.WriteString("\x1fhint\x1f" + strings.TrimSpace(combatHint(sheet)))
 	// Базовый промт входит в отпечаток содержания (2026-11-17): правка текста в
 	// форме меняет то, что модель напишет, и обязана переписать разделы.

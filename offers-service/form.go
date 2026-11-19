@@ -512,11 +512,13 @@ func combatDefaultForm() OfferForm {
 		Placeholders: []Placeholder{
 			{ID: combatHintField, Label: "Уточнение для разбора"},
 		},
-		Blocks:            []Block{},
-		RequiredFields:    []string{},
-		Sections:          combatDefaultSections(),
-		SectionsDefault:   combatDefaultSections(),
-		BasePromptDefault: sectionAnswerContract,
+		Blocks:          []Block{},
+		RequiredFields:  []string{},
+		Sections:        combatDefaultSections(),
+		SectionsDefault: combatDefaultSections(),
+		// У листка свой встроенный контракт (2026-11-19): контракт КП говорит
+		// «Рисунок — ссылка на картинку из КП», а КП в листке нет.
+		BasePromptDefault: combatAnswerContract,
 	}
 }
 

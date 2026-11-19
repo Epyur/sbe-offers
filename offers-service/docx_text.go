@@ -495,6 +495,14 @@ var (
 	// поставила её отдельным предложением: «…документами. [НУЖНО: срок].» →
 	// «…документами.». Многоточие здесь не жалко: пометка и так вырезана.
 	reSeamDoubleDot = regexp.MustCompile(`\.\s*\.`)
+	// reSeamDanglingDash — обрывок «— тогда …» после вырезанной пометки
+	// (2026-11-19, живой листок 017/2026). Модель ставила пометку отдельным
+	// предложением и продолжала его тире: «…ГОСТ Р 59985-2022. [НУЖНО: сверить]
+	// — тогда расчёт толщины пойдёт по сопоставимым величинам.». Пометки нет, и
+	// фрагмент висел без начала фразы. Тире и строчная буква — признак
+	// продолжения; авторское тире посреди предложения под правило не попадает,
+	// потому что срабатывает оно только после конца фразы (см. noteOwnSentence).
+	reSeamDanglingDash = regexp.MustCompile(`^\s*[—–]\s*\p{Ll}[^.!?…]*[.!?…]?`)
 )
 
 // addSpaceAfterPunct вставляет пробел после знака, если его нет.
@@ -1247,11 +1255,24 @@ func buildBlockUserPromptSelection(instruction string, offer Offer, cards, allCa
 	if allCards == nil {
 		allCards = cards
 	}
+	facts := "ДАННЫЕ ПРЕДЛОЖЕНИЯ:\n" +
+		offerFactsTextFor(offer, skills.AsksForPrices(instruction)) +
+		renderBriefForPrompt(offer.FormValues) +
+		renderSystemsForPrompt(offer, allCards, selection)
+	return buildSectionUserPrompt(facts, cards, refs)
+}
+
+// buildSectionUserPrompt — карточки, ссылки и заключительная строка запроса.
+//
+// `facts` — данные документа: у КП это данные предложения, у боевого листка —
+// его стороны (2026-11-19). Разделение появилось после живой жалобы: подраздел
+// листка получал промт КП целиком, и модель писала «В предложении три системы…
+// идут комплектом, каждая на свой участок объекта» про наш продукт и двух
+// конкурентов. Общая хвостовая часть (одни и те же карточки, ссылки и строка
+// «напиши только текст») осталась одна — второй копии быть не должно.
+func buildSectionUserPrompt(facts string, cards []SystemCard, refs []skills.CardRef) string {
 	var b strings.Builder
-	b.WriteString("ДАННЫЕ ПРЕДЛОЖЕНИЯ:\n")
-	b.WriteString(offerFactsTextFor(offer, skills.AsksForPrices(instruction)))
-	b.WriteString(renderBriefForPrompt(offer.FormValues))
-	b.WriteString(renderSystemsForPrompt(offer, allCards, selection))
+	b.WriteString(facts)
 	if len(cards) > 0 {
 		b.WriteString("\nКАРТОЧКИ СИСТЕМ (для обоснования, в подмножестве ниже):\n")
 		for _, card := range cards {

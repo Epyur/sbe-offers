@@ -239,7 +239,14 @@ func stripFactNotes(text string) string {
 			// часть пометки, которую модель не дописала.
 			break
 		}
-		text = rest[end+1:]
+		rest = rest[end+1:]
+		// Пометка стояла отдельным предложением, а модель продолжила его тире
+		// («… . [НУЖНО: …] — тогда …»): после вырезания остаётся висячий
+		// обрывок. Убираем его до конца фразы (2026-11-19).
+		if noteOwnSentence(b.String()) {
+			rest = reSeamDanglingDash.ReplaceAllString(rest, "")
+		}
+		text = rest
 	}
 	out := b.String()
 	// Следы удаления: пробел перед пунктуацией, двойные пробелы и ШОВ из двух
@@ -254,6 +261,25 @@ func stripFactNotes(text string) string {
 	out = reMultiSpace.ReplaceAllString(out, " ")
 	out = strings.TrimLeft(out, ",;: ")
 	return strings.TrimSpace(out)
+}
+
+// noteOwnSentence — пометка модели стояла отдельным предложением.
+//
+// Перед ней конец фразы или начало текста. Только в этом случае тире после
+// пометки — продолжение, которого больше нет: «…документами. [НУЖНО: срок] —
+// тогда …». Пометка посреди фразы («камеры, [НУЖНО: …], иначе») под правило не
+// попадает, иначе чистка съедала бы живой текст.
+func noteOwnSentence(prefix string) bool {
+	prefix = strings.TrimRight(prefix, " \t\n")
+	if prefix == "" {
+		return true
+	}
+	for _, term := range []string{".", "!", "?", "…"} {
+		if strings.HasSuffix(prefix, term) {
+			return true
+		}
+	}
+	return false
 }
 
 // sectionHeadingXML — заголовок подраздела: стиль заголовка макета.
@@ -493,6 +519,12 @@ type sectionGen struct {
 	// у него ДВЕ стороны сравнения и контракт ответа обязан назвать роли.
 	// Правило и разбор ответа при этом те же: вторая копия разошлась бы.
 	brief func(instruction string, call sectionCall) string
+	// userPrompt — подмена USER-промта (2026-11-19). nil — данные предложения
+	// (`buildBlockUserPromptSelection`). Боевой листок подставляет свои стороны:
+	// данные КП («ДАННЫЕ ПРЕДЛОЖЕНИЯ», «ВЫБРАННЫЕ СИСТЕМЫ В ПРЕДЛОЖЕНИИ» и
+	// правило комплекта «каждая на свой участок объекта») описывают не то, что
+	// видит читатель листка, — модель честно повторяла это в тексте.
+	userPrompt func() string
 	// basePrompt — базовый промт формы (2026-11-17): общая часть на все
 	// подразделы. Пусто — встроенный `sectionAnswerContract`.
 	basePrompt string
@@ -524,6 +556,9 @@ func (g *sectionGen) text(section ContentSection, call sectionCall) string {
 		g.offer, g.cards, g.cards, g.refs, g.basePrompt)
 	if g.brief != nil {
 		system = skills.RenderBlockSystem(g.brief(call.sub.Instruction, call), "", sectionMaxWords(call))
+	}
+	if g.userPrompt != nil {
+		user = g.userPrompt()
 	}
 	raw, err := g.complete.Complete(context.Background(), system, user, documentTextMaxTokens())
 	logModelCall("sect:"+key, "", len(call.sub.Instruction), started, err)
