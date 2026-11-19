@@ -57,11 +57,11 @@ func collectOfferRefs(cards []SystemCard) []skills.CardRef {
 			seen[ref.URL] = true
 			out = append(out, ref)
 			if len(out) >= maxLinkRefs {
-				return out
+				return shareDocumentRefs(out)
 			}
 		}
 	}
-	return out
+	return shareDocumentRefs(out)
 }
 
 // cardAllRefs — все ссылки карточки: её собственные и материалы состава.

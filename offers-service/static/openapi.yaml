@@ -40,6 +40,70 @@ paths:
         '200':
           description: YAML-схема
 
+  /api/offers/files:
+    get:
+      summary: Постоянная подписанная ссылка на файл документа
+      description: |
+        Печатается в готовый DOCX вместо ссылки документов
+        `/api/documents/file?key=…`, которая закрыта JWT: документ открывает
+        заказчик, у которого нет сессии. Гейт — подпись `sig` (HMAC от ключа
+        файла и секрета сервиса), срока у подписи нет. Ручка перенаправляет на
+        свежую presigned-ссылку сервиса документов, а тот сам проверяет, что
+        документ общий (`product_refs` не пусто, `no_agent = false`).
+      security: []
+      parameters:
+        - name: key
+          in: query
+          required: true
+          description: Ключ файла в S3 (`documents/…`)
+          schema:
+            type: string
+        - name: sig
+          in: query
+          required: true
+          description: Подпись ключа (первые 32 символа HMAC-SHA256 в hex)
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Перенаправление на временную ссылку S3
+        '400':
+          description: Не задан документ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '403':
+          description: Подпись не совпала — ссылка недействительна
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '404':
+          description: Документ недоступен (нет файла, документ не общий, сбой S3)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '503':
+          description: Сервис документов не подключён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
   /api/offers/app/config:
     get:
       summary: Публичные настройки Mini App для бота и приложения

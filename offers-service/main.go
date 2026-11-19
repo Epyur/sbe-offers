@@ -189,6 +189,11 @@ func main() {
 	mux.HandleFunc("GET /api/offers/competitors", s.requirePerm("viewer")(s.handleListCompetitors))
 	mux.HandleFunc("POST /api/offers/competitors/refresh", s.requirePerm("admin")(s.handleRefreshCompetitors))
 	mux.HandleFunc("GET /api/offers/competitors/search", s.requirePerm("viewer")(s.handleSearchCompetitors))
+	// Постоянная подписанная ссылка на файл документа (2026-11-19). Публичная
+	// намеренно: её открывает ЗАКАЗЧИК по документу из Word или Telegram, у него
+	// нет ни JWT, ни сессии. Гейт — подпись `sig` от ключа файла; видимость
+	// документа по-прежнему проверяет сервис документов (product_refs, no_agent).
+	mux.HandleFunc("GET /api/offers/files", s.handleSharedFile)
 	// Боевой листок в приложении (2026-11-13, шаг S6): стороны правятся
 	// ПОЗИЦИОННО, а не полным сохранением листка, — приложение добавляет и
 	// убирает по одному продукту. Читают и печатают все вошедшие (правило
