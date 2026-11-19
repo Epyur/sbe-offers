@@ -37,14 +37,36 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.11** — released 2026-11-19. The combat sheet's prompts are
-its OWN now: a subsection no longer receives the offer's data text («ДАННЫЕ
-ПРЕДЛОЖЕНИЯ», «выбранные системы… каждая на свой участок объекта») and its
-built-in contract no longer says «картинка из КП». The model used to repeat that
-vocabulary verbatim in the sheet («В предложении три системы… идут комплектом»).
-Also, a `[НУЖНО: …]` marker that stood as a sentence of its own no longer leaves a
-dangling clause («…. — тогда расчёт…») in the document. The previous version
-(0.11.10) taught the bot to read a Word file from the chat as context.
+Current version = **0.11.12** — released 2026-11-19. A document link printed into
+a customer document now OPENS for the customer: the Knowledge Base writes a
+permanent link to `/api/documents/file`, which sits behind a person's JWT, so the
+sheet's own links answered `unauthorized` in Word and Telegram. Printing now
+replaces them with our permanent signed link `/api/offers/files?key=…&sig=…`
+(HMAC, no expiry, deterministic), and that route answers `302` to a fresh 7-day
+presigned URL from the documents service, which still enforces `product_refs` +
+`no_agent`. The previous version (0.11.11) stopped leaking the offer's prompt into
+the sheet and removed dangling clauses.
+
+> **0.11.12 (2026-11-19) — документы в листке и КП открываются по постоянной ссылке.**
+> Живая жалоба: «при попытке открыть документы в s3 из боевого листка
+> возвращается `unauthorized`». Причина — в ссылке, которую пишет База знаний
+> (`/api/documents/file` под JWT): документ открывает заказчик без сессии.
+> **(1) `documents_share.go`:** при печати ссылка документов заменяется на свою
+> подписанную `GET /api/offers/files?key=…&sig=…` — `sig` = первые 32 hex
+> HMAC-SHA256(`documents\0` + ключ, `OFFERS_SERVICE_SECRET`), детерминированная и
+> бессрочная. Ручка публичная намеренно (гейт — подпись) и отвечает `302` на
+> свежую presigned (7 дней) через внутреннюю `/internal/documents/agent/file-link`;
+> видимость решает сервис документов (`product_refs`, `no_agent`).
+> **(2) Одна точка правки** — `collectOfferRefs`: КП, листок, макет `{{ссылки}}`,
+> бот и хэш файла идут через неё. **(3) OpenAPI:** путь `/api/offers/files`
+> (302/400/403/404/503). **Проверки:** `gofmt`/`go vet`/`go test -count=1 ./...`
+> зелёные (+9 сторожей), OpenAPI **125/125**, стенд **628/0**, плагин `tsc` 0 /
+> `build` OK (срез воспроизводит backend байт в байт) / `check_bundle_strings` 0.
+> **Живая сверка:** листок 017/2026 — 94 369 Б, ссылок на закрытую ручку **0**,
+> подписанных **2**; ссылка из готового DOCX открыта **без токена** —
+> `302` → S3 (`X-Amz-Expires=604800`), скачивание `200`, **296 541 Б**, `%PDF-`;
+> испорченная подпись — `403`. Точки выпуска — `HANDOFF.md`, «Три точки сходятся
+> (0.11.12)».
 
 > **0.11.11 (2026-11-19) — листок без данных КП и без обрывков фраз.**
 > Живая жалоба по листку 017/2026. **(1) USER-промт подраздела** собирался
@@ -288,7 +310,7 @@ dangling clause («…. — тогда расчёт…») in the document. The p
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `2bd8420` (code; docs `311f41b`), `main` `0dfbfa2`
+Code heads: `backend` `af41768` (code; docs — следующим коммитом), `main` `2a8eec1`
 (release slice of 0.11.11; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
@@ -1643,6 +1665,25 @@ measurements) are in the archive.
   `combatSectionPromptRev p2`, so it regenerates itself.
 - **A layout marker describes the FORMAT, not the content** — strip it, keep the
   text.
+- **A link printed into a customer document must open for the CUSTOMER**
+  (2026-11-19, live complaint «при попытке открыть документы в s3 из боевого
+  листка возвращается `unauthorized`»). The Knowledge Base writes a PERMANENT
+  link `GET /api/documents/file?key=…` into a card, and that route sits behind a
+  person's JWT (`requirePerm("viewer")` in documents-service). A DOCX opened in
+  Word or Telegram has no session, so the link could never work — the sheet
+  017/2026 carried two of them. Printing must replace such a link with OUR
+  permanent signed link: `GET /api/offers/files?key=…&sig=…`, `sig` = first 32
+  hex of HMAC-SHA256(`documents\0` + key, `OFFERS_SERVICE_SECRET`). The signature
+  is deterministic (the DOCX cache hash must not wobble) and has no expiry (the
+  document may be forwarded a month later); the route is public ON PURPOSE — its
+  gate is the signature — and answers `302` to a fresh 7-day presigned URL from
+  the existing internal `/internal/documents/agent/file-link`, which still
+  enforces `product_refs` + `no_agent`. Detach the card from the product and the
+  link dies: access is decided by data, not by the text in the document. One
+  place does the rewrite — `collectOfferRefs` (offer, sheet, layout `{{ссылки}}`,
+  bot door, file hash all funnel through it). **Check: print a link and open it
+  without a token** — a test that only greps the URL out of the DOCX proves the
+  text, not the access.
 - **A hyperlink's visible text is the LABEL, never the URL.** Printing
   «подпись — адрес» put the raw navigation URL (with
   `?response-content-disposition=filename="…"`) on the page, and the layout
