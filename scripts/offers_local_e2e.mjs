@@ -2750,8 +2750,31 @@ async function sectionCombat() {
       /nav\.tn\.ru|epyur\.fvds\.ru/.test(combatRels),
       `rels: ${combatRels.slice(0, 300)}`);
     ok('документ из «Иных документов» попал в листок',
-      combatRels.includes('/api/documents/file'),
+      combatRels.includes('/api/offers/files'),
       `rels: ${combatRels.slice(0, 300)}`);
+    // Постоянная подписанная ссылка (2026-11-19): ссылку документов
+    // `/api/documents/file` заказчик открыть не мог — она под JWT, отсюда
+    // «unauthorized» в живом листке. В документе обязана стоять наша
+    // подписанная ссылка, и она обязана работать: проверяем её тем же путём,
+    // каким её откроет Word, — без токена.
+    ok('в листке нет ссылки на закрытую JWT-ручку документов',
+      !combatRels.includes('/api/documents/file'),
+      `rels: ${combatRels.slice(0, 300)}`);
+    const sharedPath = ((combatRels.match(/\/api\/offers\/files\?key=[^"<]+/) ?? [''])[0])
+      .replace(/&amp;/g, '&');
+    ok('ссылка документа подписана', sharedPath.includes('key=') && sharedPath.includes('sig='), sharedPath);
+    if (sharedPath !== '') {
+      const sharedRes = await fetch(`${BASE}${sharedPath}`, { redirect: 'manual' });
+      ok('подписанная ссылка перенаправляет к файлу', sharedRes.status === 302,
+        `статус ${sharedRes.status}`);
+      ok('перенаправление ведёт в хранилище документов',
+        String(sharedRes.headers.get('location') ?? '').includes('documents-stand.local'),
+        String(sharedRes.headers.get('location') ?? ''));
+      const tamperedPath = sharedPath.replace(/sig=[0-9a-fA-F]+/, 'sig=00000000000000000000000000000000');
+      const tamperedRes = await fetch(`${BASE}${tamperedPath}`, { redirect: 'manual' });
+      ok('чужая подпись не открывает документ', tamperedRes.status === 403,
+        `статус ${tamperedRes.status}`);
+    }
     // Схема сравнения (2026-11-17, шаг 6 плана): заготовка раздела «Схема
     // сравнения» просит mermaid-диаграмму, llm-stub отвечает блоком `diagram`,
     // agent-stub растеризует её в PNG. В готовом файле схема обязана быть

@@ -57,6 +57,19 @@ http
       send(res, 200, { source: 'documents', total: items.length, items });
       return;
     }
+    // Временная ссылка на файл (2026-11-19): её просит offers-service, когда
+    // открывают постоянную подписанную ссылку `/api/offers/files`. Форма — как
+    // у боевой ручки: `{"url": "…"}`; ключ обязан начинаться с `documents/`
+    // (у боевой это `validObjectKey`), иначе 400.
+    if (url.pathname === '/internal/documents/agent/file-link') {
+      const key = url.searchParams.get('key') ?? '';
+      if (!key.startsWith('documents/')) {
+        send(res, 400, { error: 'invalid key' });
+        return;
+      }
+      send(res, 200, { url: `https://documents-stand.local/sbe-doc/${key}?sign=stand` });
+      return;
+    }
     send(res, 404, { error: 'not found' });
   })
   .listen(PORT, () => {
