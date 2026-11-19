@@ -37,13 +37,35 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.10** — released 2026-11-19. The bot now reads a Word
-file from the chat as **context**: `.docx` goes through the agent's DOCX parser
-and then the `.md` path (strict labels → brief, `ExtractBriefFacts` + model →
-object context), while positions are still collected ONLY from `.xlsx` and the
-reply says so. Before that a Word file was refused outright — the most common
-shape of an old offer. The previous version (0.11.9) made the combat sheet's
-sections a setting and made the App's sheet list ask for short rows.
+Current version = **0.11.11** — released 2026-11-19. The combat sheet's prompts are
+its OWN now: a subsection no longer receives the offer's data text («ДАННЫЕ
+ПРЕДЛОЖЕНИЯ», «выбранные системы… каждая на свой участок объекта») and its
+built-in contract no longer says «картинка из КП». The model used to repeat that
+vocabulary verbatim in the sheet («В предложении три системы… идут комплектом»).
+Also, a `[НУЖНО: …]` marker that stood as a sentence of its own no longer leaves a
+dangling clause («…. — тогда расчёт…») in the document. The previous version
+(0.11.10) taught the bot to read a Word file from the chat as context.
+
+> **0.11.11 (2026-11-19) — листок без данных КП и без обрывков фраз.**
+> Живая жалоба по листку 017/2026. **(1) USER-промт подраздела** собирался
+> промтом КП: `combatSectionOffer` кладёт в `Systems` карточки ОБЕИХ сторон, и
+> `renderSystemsForPrompt` добавлял правило комплекта («каждая — на свой участок
+> объекта»), а шапка несла цены предложения. Теперь у листка свой
+> `combatSectionFacts` (номер, название, НАШ ПРОДУКТ / ПРОДУКТЫ КОНКУРЕНТОВ), общий
+> хвост — `buildSectionUserPrompt`, у КП промт байт в байт прежний.
+> **(2) Встроенный контракт:** `effectiveBasePrompt("")` отдавал КП-текст
+> («картинка из КП»); у листка свой `combatAnswerContract` и
+> `effectiveCombatBasePrompt`, `basePromptDefault` формы листка — он же.
+> **(3) Обрывки:** `stripFactNotes` убирает «— <строчная> …» после пометки, но
+> только если пометка стояла после конца фразы (`noteOwnSentence`); авторское
+> тире посреди предложения остаётся.
+> **Кэш:** `combatSectionPromptRev` **p2**, `combatDocxVersion` **v9**.
+> **Проверки:** `gofmt`/`go vet`/`go test -count=1 ./...` зелёные (+4 сторожа
+> `combat_prompt_leak_test.go`, +5 случаев `TestStripFactNotes`), стенд **623/0**,
+> OpenAPI 124/124, плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0.
+> **Живая сверка:** листок 017/2026 пересобран ручкой бота — 76 933 Б,
+> `комплект` 0, `участок объекта` 0, обрывков 0, `[НУЖНО]` 0. Точки выпуска —
+> `HANDOFF.md`, «Три точки сходятся (0.11.11)».
 
 > **0.11.10 (2026-11-19) — файл Word из чата как источник контекста.**
 > Пункт backlog, следующий после аналогов. **(1) Сервис** (`attach.go`): ветка
@@ -266,8 +288,8 @@ sections a setting and made the App's sheet list ask for short rows.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `f58e758` (code; docs `880d89d`), `main` `961012d`
-(release slice of 0.11.10; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `2bd8420` (code; docs `311f41b`), `main` `0dfbfa2`
+(release slice of 0.11.11; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -1524,9 +1546,32 @@ measurements) are in the archive.
   view gained the links section and the cards started carrying documents-app
   refs (2026-11-17, third pass); **v8** — when the links themselves entered the
   hash (2026-11-18): before that, adding a document to a KB note never reached an
-  already built sheet, and the stand measured it (files (4) and (5) byte-equal).
+  already built sheet, and the stand measured it (files (4) and (5) byte-equal);
+  **v9** — when the sheet stopped receiving the КП user prompt (2026-11-19).
   The section-text cache has its own freshness (`combatSectionHandle` includes
   `PromptText()`), so it rebuilds by itself — the file cache does not.
+- **A prompt built for one document crept into another, and the model repeated
+  it verbatim** (2026-11-19, live sheet 017/2026). The user's complaint: «в
+  листке остаётся какой-то базовый скрытый промт … фраза про „в комплекте
+  каждый материал закрывает свой участок объекта“». Two real leaks, both from
+  the КП path: (a) `sectionGen.text` built the USER prompt with
+  `buildBlockUserPromptSelection`, and the sheet passes `combatSectionOffer`, whose
+  `Systems` holds BOTH sides — so `renderSystemsForPrompt` saw 3 systems and added
+  its «каждая — на свой участок объекта, и в документе идут в комплекте» rule,
+  and the model wrote «В предложении три системы … идут комплектом»; (b)
+  `effectiveBasePrompt("")` fell back to `sectionAnswerContract`, which says
+  «Рисунок — ссылка на картинку из КП». Now the sheet has its own data text
+  (`combatSectionFacts`: number, title, НАШ ПРОДУКТ / ПРОДУКТЫ КОНКУРЕНТОВ, no
+  prices) and its own contract (`combatAnswerContract` — the same frozen answer
+  with that one sentence replaced), wired through `sectionGen.userPrompt`; the
+  shared tail (cards, refs, "напиши только текст этого блока") stays one function
+  (`buildSectionUserPrompt`). **A document-specific vocabulary is a data seam, not
+  a prompt detail**: if two documents describe different things, they must not
+  share the facts text. Cache: `combatSectionPromptRev` in `combatSectionHandle`
+  (the prompt itself is invisible to the key) + `combatDocxVersion` v9. Guards:
+  `combat_prompt_leak_test.go` — the sheet prompt has no «предложени/комплект/
+  участок объекта», the КП prompt keeps its комплект rule, the sheet's default
+  contract does not say «КП».
 - **A combat sheet's section `id` is an identity, not a label** (2026-11-18).
   The text cache key is `gen.sect.<sectionID>.<subsectionID>[.ins<hash>]…`
   (`sectionCacheKey`), so renaming a section id orphans every text written under
@@ -1585,6 +1630,17 @@ measurements) are in the archive.
   — the sentence reads odd; the real cure is not putting the marker
   mid-sentence, which is a prompt decision, not a printer one. Guard:
   `TestStripFactNotes` (the reverted printer reproduces «камеры,, иначе»).
+  **A marker used as a sentence of its own leaves a DANGLING CLAUSE** (2026-11-19,
+  the same live sheet): the model wrote «… ГОСТ Р 59985-2022. [НУЖНО: сверить]
+  — тогда расчёт толщины пойдёт по сопоставимым величинам.», and after the cut
+  the page carried «…. — тогда расчёт толщины…» with no start of phrase (four
+  such fragments in one export). `reSeamDanglingDash` drops «— <lowercase …>.»
+  **only when the marker itself followed a sentence end** (`noteOwnSentence`):
+  a dash in the middle of a sentence is the author's punctuation and must stay
+  («Плита — не мембрана» survives; the test pins both directions). The same
+  limit as above applies — texts cached before the fix keep their fragments
+  until their section is regenerated; the sheet now has
+  `combatSectionPromptRev p2`, so it regenerates itself.
 - **A layout marker describes the FORMAT, not the content** — strip it, keep the
   text.
 - **A hyperlink's visible text is the LABEL, never the URL.** Printing
