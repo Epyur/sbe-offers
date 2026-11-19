@@ -266,7 +266,7 @@ sections a setting and made the App's sheet list ask for short rows.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `f58e758` (code; docs — следующим коммитом), `main` `961012d`
+Code heads: `backend` `f58e758` (code; docs `880d89d`), `main` `961012d`
 (release slice of 0.11.10; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
