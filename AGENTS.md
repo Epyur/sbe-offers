@@ -37,15 +37,34 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.12** — released 2026-11-19. A document link printed into
-a customer document now OPENS for the customer: the Knowledge Base writes a
-permanent link to `/api/documents/file`, which sits behind a person's JWT, so the
-sheet's own links answered `unauthorized` in Word and Telegram. Printing now
-replaces them with our permanent signed link `/api/offers/files?key=…&sig=…`
-(HMAC, no expiry, deterministic), and that route answers `302` to a fresh 7-day
-presigned URL from the documents service, which still enforces `product_refs` +
-`no_agent`. The previous version (0.11.11) stopped leaking the offer's prompt into
-the sheet and removed dangling clauses.
+Current version = **0.11.13** — released 2026-11-20. The bot prints the combat
+sheet the button belongs to: the DOCX/«Готово» buttons now carry the sheet id, an
+old message without one asks which sheet to print, and only an author's own
+newest sheet is ever re-derived for actions. The previous version (0.11.12) made
+document links open for the customer (permanent signed link instead of the
+JWT-only `/api/documents/file`).
+
+> **0.11.13 (2026-11-20) — бот: DOCX печатает листок из кнопки, «Достаточно» ведёт к конкуренту.**
+> Две живые жалобы. **(1) «Нажимаю DOCX — приходит файл самого первого
+> листка».** Кнопка не знала своего листка; `ensureCombat` при пустой сессии
+> брал `sheets[sheets.length - 1]` из `api.listCombat`, а список идёт
+> `ORDER BY created_at DESC` — то есть **самый старый листок всей базы** (и не
+> обязательно свой), и записывал догадку в `session.combat`, поэтому следующая
+> «добавить сторону» правила чужой листок. Теперь `cb:doc:<id>` /
+> `cb:done:<id>` (`combatKeyboard(sheetId)`); старые сообщения без номера
+> получают вопрос «какой листок» (`cbx:<id>`, спрашиваем всегда — сообщение
+> могло быть о листке коллеги); `ensureCombat` — только для действий и берёт
+> самый свежий листок автора по `ownerEmail`; `loadCombatById` читает один
+> листок через `GET /bot/combat?id=N` (сервер: `ORDER BY created_at DESC, id
+> DESC`), а не сканирует топ-50; «Готово» закрывает только совпадающий листок.
+> **(2) «✅ Достаточно — листок собран» вводил в стопор.** У листка не хватало
+> конкурента, а бот не говорил. Теперь первая кнопка — **«🏷️ Выбрать
+> конкурента»**, она сразу открывает поиск конкурента, в приглашении остаётся
+> меню листка, а в сводке есть номер листка и «дальше — продукт конкурента».
+> Ветка КП по смыслу не менялась. **Проверки:** бот `tsc` 0, **231 тест**,
+> сторожа прогнаны откатом; Go `gofmt`/`vet`/`test` зелёные (+3), OpenAPI
+> **125/125**, стенд **630/0**, плагин `tsc` 0 / `build` / `check_bundle_strings`
+> 0. Разбор совета — `docs/superpowers/specs/2026-11-20-sbe-offers-combat-doc-button-and-enough-step-council.md`.
 
 > **0.11.12 (2026-11-19) — документы в листке и КП открываются по постоянной ссылке.**
 > Живая жалоба: «при попытке открыть документы в s3 из боевого листка
@@ -310,7 +329,7 @@ the sheet and removed dangling clauses.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `af41768` (code; docs — следующим коммитом), `main` `2a8eec1`
+Code heads: `backend` `af41768` (code; docs `243fa2e`), `main` `2a8eec1`
 (release slice of 0.11.11; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
@@ -1489,9 +1508,13 @@ measurements) are in the archive.
   actually writes the marker** — `llm-stub.mjs` matched the brief on the system
   prompt while the marker lives in the user prompt, and the stand was red for
   months.
-- **A stub that cannot express the live data shape proves nothing.** Two live
+- **A stub that cannot express the live data shape proves nothing.** Three live
   defects hid behind it (no `system_sku` on live cards; no `## Ссылки` on the
-  stub card the links check prints).
+  stub card the links check prints; and `routes.test.ts` returning sheets in
+  insertion order with `createdAt: ''` — the reverse of the live
+  `ORDER BY created_at DESC`, so the «buttons work after a restart» check was
+  green on a stub whose order made the bug invisible, while the live bot picked
+  the oldest sheet in the database).
 - **A check that searches the WHOLE document for a construct the document
   legitimately uses elsewhere is not a check.** Scope it (`itemsTableXML`,
   `compositionSection`).
@@ -1938,13 +1961,41 @@ measurements) are in the archive.
   (`normalizeLayoutResponse`). Regression test reads the RAW JSON — a decoded
   nil slice and an empty one are indistinguishable.
 
+- **A document button must carry the document's id; a lost session is not a
+  hint** (2026-11-20, live complaint «нажимаю DOCX — приходит файл самого
+  первого листка»). `restoreSession` rebuilds only `{step, email}`, so
+  `session.combat` is gone after any restart while every button in the chat
+  history stays live forever. The DOCX button used to resolve its sheet through
+  `ensureCombat`, whose fallback took `sheets[sheets.length - 1]` from
+  `api.listCombat` — and that list is `ORDER BY created_at DESC`, so the LAST
+  element is the **oldest sheet in the whole database**, and not even the
+  author's. Worse, the guessed id was written into `session.combat`, so the next
+  «добавить сторону» edited the wrong sheet (same author ⇒ the server allowed
+  it, so it failed silently). Rules that now hold: the printing/closing buttons
+  carry the id (`cb:doc:<id>`, `cb:done:<id>`, built by
+  `combatKeyboard(sheetId)`); old messages without an id get an honest «какой
+  листок» list (`cbx:<id>`) — always, even when the author has exactly one sheet,
+  because the message may have been about a colleague's sheet (sheets are read by
+  everyone); `ensureCombat` is for ACTIONS only and falls
+  back to the **newest sheet of the chat's author** (`ownerEmail`), never to the
+  oldest and never to someone else's; `loadCombatById` reads that one sheet
+  through `GET /bot/combat?id=N` instead of scanning the top 50; «Готово» closes
+  only when the id matches the open sheet. Server order is
+  `ORDER BY created_at DESC, id DESC` (the `id` tie-breaker makes "newest"
+  defined). Guards: `routes.test.ts` (the stub now returns DESC with real
+  `createdAt` and an `ownerEmail`, foreign sheets are seeded) and
+  `combat_list_query_test.go`; the four bot tests were red on the old code, and
+  reverting the fallback turns «самый свежий свой» red again.
+
 - **Bot session state does not survive a restart; the sheet must be
   re-derived** (2026-11-11, live complaint «нажал — ничего не произошло»).
   `restoreSession` rebuilds only `{step, email}`, so `session.combat` is gone
   while every combat button is still on screen — and each answered «листок не
   открыт». `ensureCombat` loads the sheet from the session or falls back to the
-  chat's last sheet (`api.listCombat`) and refills the session; all sheet-level
-  buttons go through it. Any new button that needs `session.combat` must too.
+  newest sheet of this author (`api.listCombat`) and refills the session; all
+  sheet-level ACTIONS go through it. Any new button that needs `session.combat`
+  must too — but a button that PRINTS or CLOSES a document must not: it carries
+  the id (see the rule above).
 
 - **A "similar products" picker must decide the CLASS of the product, not
   count shared words** (2026-11-11, three live complaints in a row). Counting
