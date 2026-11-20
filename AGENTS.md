@@ -329,7 +329,7 @@ JWT-only `/api/documents/file`).
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `c196b86` (code; docs — следующим коммитом), `main` `9b5f8b2`
+Code heads: `backend` `c196b86` (code; docs `e996328`), `main` `9b5f8b2`
 (release slice of 0.11.13; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
