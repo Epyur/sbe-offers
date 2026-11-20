@@ -9,6 +9,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Боевой листок в боте (2026-11-09).
@@ -367,28 +369,73 @@ const combatSearchLimit = 50
 // справка отдела, и менеджеру нужно видеть, что уже сравнивали коллеги. Правка
 // при этом остаётся у автора (`botCanEditCombat`): чужой черновик не должен
 // испортиться от нажатия «добавить конкурента».
+// Запросы имён (id) листков для бота — два, и это ОДНО решение о порядке.
+//
+// `created_at DESC, id DESC` (2026-11-20): раньше тай-брейкера не было, и при
+// равных микросекундах «самый свежий» не был определён. Бот выбирает листок по
+// этому порядку, когда сессия потеряна (перезапуск), поэтому порядок — часть
+// поведения, а не оформление.
+//
+// `combatOneSelect` — чтение ОДНОГО листка по номеру из кнопки. До этого бот
+// искал листок в «50 самых новых во всей базе»: за этим пределом свой листок
+// объявлялся «удалённым», хотя он есть.
+const (
+	combatListSelect = `SELECT id FROM offers_combat_sheet
+		 ORDER BY created_at DESC, id DESC LIMIT 50`
+	combatOneSelect = `SELECT id FROM offers_combat_sheet WHERE id = $1`
+)
+
+// combatListID — параметр `?id=`: 0 значит «весь список».
+//
+// Это ОПЦИЯ, а не режим (тот же приём, что `?fields=preview`): нечитаемое
+// значение не ломает запрос, а отдаёт список — опечатка в адресе не должна
+// отнимать данные.
+func combatListID(raw string) int64 {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}
+
+// combatListIDs — номера листков для ответа: один (по `?id=`) или последние 50.
+func (s *Server) combatListIDs(ctx context.Context, one int64) ([]int64, error) {
+	if one > 0 {
+		var id int64
+		err := s.pool.QueryRow(ctx, combatOneSelect, one).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return []int64{}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return []int64{id}, nil
+	}
+	rows, err := s.pool.Query(ctx, combatListSelect)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, 50)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Server) handleBotListCombat(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.emailForChat(w, r, r.URL.Query().Get("chat_id")); !ok {
 		return
 	}
-	rows, err := s.pool.Query(r.Context(),
-		`SELECT id FROM offers_combat_sheet
-		 ORDER BY created_at DESC LIMIT 50`)
+	ids, err := s.combatListIDs(r.Context(), combatListID(r.URL.Query().Get("id")))
 	if err != nil {
 		dbError(w, "bot list combat", err)
 		return
 	}
-	ids := make([]int64, 0)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			dbError(w, "bot list combat scan", err)
-			return
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
 
 	// Кэш конкурентов — ОДИН раз на запрос (2026-11-18): иначе он читался и
 	// разбирался на каждом листке (список из 50 строк = 50 разборов одного JSONB).

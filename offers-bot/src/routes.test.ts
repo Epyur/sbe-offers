@@ -234,6 +234,8 @@ interface FakeCombat {
   ourNotes: Array<{ noteId: number; title: string }>;
   competitorNotes: Array<{ noteId: number; title: string }>;
   hint?: string;
+  ownerEmail?: string;
+  createdAt?: string;
 }
 
 /** Хвост списка конкурентов: проверкам поиска и «выбрать всё» нужно больше
@@ -256,16 +258,44 @@ function pageOf<T>(items: T[], params: URLSearchParams): { cards: T[]; total: nu
   return { cards: page, total: items.length, offset, hasMore: offset + limit < items.length };
 }
 
+/** Владелец листка в стенде: тот же адрес, что у вошедшего в тестах. */
+const CHAT_OWNER = 'ivanov@tn.ru';
+
+/**
+ * Стенд offers-service для боевых листков.
+ *
+ * Важно (2026-11-20): список отдаётся от НОВЫХ к старым и с настоящими
+ * `createdAt`, как боевой `ORDER BY created_at DESC, id DESC`. Раньше стенд
+ * отдавал листки в порядке вставки и с `createdAt: ''` — то есть наоборот к
+ * бою, и проверка «кнопки работают после перезапуска» зеленела именно из-за
+ * перевёрнутого порядка: `sheets[length-1]` на стенде оказывался нужным
+ * листком, а на бою — самым старым. Стенд, который не выражает живой формат
+ * данных, ничего не доказывает.
+ */
 function fakeCombatServer(): {
   calls: string[];
   current: () => FakeCombat;
   /** Номера заметок, которые сервис отверг при добавлении стороны. */
   failures: () => string[];
+  /** Положить готовый листок (для проверок «кнопка знает свой листок»). */
+  seed: (ownerEmail?: string, ourTitle?: string) => number;
 } {
   const calls: string[] = [];
   const sideAddFailures: string[] = [];
   let nextId = 1;
+  let clock = 0;
   const sheets: FakeCombat[] = [];
+  const stamp = (): string => `2026-11-20T10:00:${String(clock++).padStart(2, '0')}.000Z`;
+  const payload = (s: FakeCombat): Record<string, unknown> => ({
+    ...s,
+    ownerEmail: s.ownerEmail ?? CHAT_OWNER,
+    title: '',
+    offerId: 0,
+    formValues: s.hint === undefined ? {} : { hint: s.hint },
+    status: 'draft',
+    createdAt: s.createdAt ?? '',
+    updatedAt: s.createdAt ?? '',
+  });
 
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -275,9 +305,15 @@ function fakeCombatServer(): {
       new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
     if (method === 'POST' && url.endsWith('/bot/combat')) {
-      const sheet: FakeCombat = { id: nextId++, number: `00${nextId - 1}/2026`, ourNotes: [], competitorNotes: [] };
+      const sheet: FakeCombat = {
+        id: nextId++,
+        number: `00${nextId - 1}/2026`,
+        ourNotes: [],
+        competitorNotes: [],
+        createdAt: stamp(),
+      };
       sheets.push(sheet);
-      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
+      return json(payload(sheet));
     }
     if (method === 'GET' && url.includes('/bot/combat/systems')) {
       // Поиск и страница (2026-11-10): фильтруем по названию, режем по offset/limit,
@@ -295,8 +331,18 @@ function fakeCombatServer(): {
       const filtered = q ? all.filter((c) => c.title.toLowerCase().includes(q)) : all;
       return json(pageOf(filtered, params));
     }
-    if (method === 'GET' && url.includes('/bot/combat?') ) {
-      return json({ sheets: sheets.map((s) => ({ ...s, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' })) });
+    if (method === 'GET' && url.includes('/bot/combat?')) {
+      // Как боевой сервер: `?id=` — один листок, иначе список от новых к старым.
+      const params = new URL(url).searchParams;
+      const one = Number(params.get('id') ?? '0');
+      const rows = one > 0 ? sheets.filter((s) => s.id === one) : [...sheets].reverse();
+      return json({ sheets: rows.map(payload) });
+    }
+    const exportPost = url.match(/\/bot\/combat\/(\d+)\/export$/);
+    if (method === 'POST' && exportPost) {
+      // Файл в тестах не собираем: печать идёт через Telegram (node:https), а
+      // проверяем мы АДРЕС листка, который попросили напечатать.
+      return json({ error: 'стенд: печать не проверяется' }, 500);
     }
     const hintPut = url.match(/\/bot\/combat\/(\d+)\/hint$/);
     if (method === 'PUT' && hintPut) {
@@ -304,7 +350,7 @@ function fakeCombatServer(): {
       if (!sheet) return json({ error: 'нет листка' }, 404);
       const body = JSON.parse(String(init?.body ?? '{}')) as { hint?: string };
       sheet.hint = String(body.hint ?? '');
-      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: { hint: sheet.hint }, status: 'draft', createdAt: '', updatedAt: '' });
+      return json(payload(sheet));
     }
     if (method === 'GET' && url.includes('/bot/combat/analogues')) {
       const noteId = Number(new URL(url).searchParams.get('noteId') ?? '0');
@@ -331,7 +377,7 @@ function fakeCombatServer(): {
       if (!target.some((n) => n.noteId === noteId)) {
         target.push({ noteId, title: String(body.title ?? '') });
       }
-      return json({ ...sheet, ownerEmail: '', title: '', offerId: 0, formValues: {}, status: 'draft', createdAt: '', updatedAt: '' });
+      return json(payload(sheet));
     }
     return json({ ok: true });
   }) as typeof fetch;
@@ -340,6 +386,18 @@ function fakeCombatServer(): {
     calls,
     current: () => sheets[sheets.length - 1],
     failures: () => sideAddFailures,
+    seed: (ownerEmail = CHAT_OWNER, ourTitle = 'Наш продукт') => {
+      const id = nextId++;
+      sheets.push({
+        id,
+        number: `${String(id).padStart(3, '0')}/2026`,
+        ourNotes: [{ noteId: 900 + id, title: ourTitle }],
+        competitorNotes: [],
+        ownerEmail,
+        createdAt: stamp(),
+      });
+      return id;
+    },
   };
 }
 
@@ -592,9 +650,13 @@ describe('боевой листок в боте', () => {
       inline_keyboard: Array<Array<{ callback_data: string }>>;
     };
     const ids = kb.inline_keyboard.flat().map((b) => b.callback_data);
-    for (const want of ['cb:oursys', 'cb:comp', 'cb:doc', 'cb:done']) {
+    for (const want of ['cb:oursys', 'cb:comp']) {
       assert.ok(ids.includes(want), `на странице выбора нет кнопки ${want}`);
     }
+    // Кнопки документа несут номер листка (2026-11-20): иначе DOCX печатал
+    // «самый первый» листок базы, а не тот, о котором сообщение.
+    assert.ok(ids.includes('cb:doc:1'), 'DOCX должен нести номер листка');
+    assert.ok(ids.includes('cb:done:1'), '«Готово» должен нести номер листка');
   });
 
   it('листание зависит от общего числа совпадений', async () => {
@@ -745,7 +807,7 @@ describe('боевой листок в боте', () => {
     await route.routeCallback(deps, '42', 'compsel:0', 'c2', state);
     await route.routeCallback(deps, '42', 'cb:addpicked', 'c3', state);
     // Имитация перезапуска: сессия восстановлена по привязке, листка в ней нет.
-    state.sessions.set('42', { step: 'authed', email: 'm@tn.ru' });
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
     state.lastCompetitor.delete('42');
     sent.length = 0;
     await route.routeCallback(deps, '42', 'cb:analog', 'c4', state);
@@ -755,6 +817,136 @@ describe('боевой листок в боте', () => {
     assert.ok(server.current().competitorNotes.length > 0);
     // И сам листок снова открыт в сессии — дальше по нему работают кнопки.
     assert.ok((state.sessions.get('42')?.combat?.sheetId ?? 0) > 0);
+  });
+
+  // Живая жалоба 2026-11-20: «нажимаю DOCX — приходит файл самого первого
+  // листка». Кнопка теперь несёт номер листка, и печатается именно он.
+  it('DOCX печатает листок из кнопки, а не самый старый в базе', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const old = server.seed(CHAT_OWNER, 'Старый листок');
+    const fresh = server.seed(CHAT_OWNER, 'Свежий листок');
+    // Сессия потеряна (перезапуск бота): подсказки брать неоткуда.
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
+    const route = await import('./routes.ts');
+    server.calls.length = 0;
+
+    await route.routeCallback(deps, '42', `cb:doc:${fresh}`, 'cb1', state);
+
+    const exports = server.calls.filter((c) => c.includes('/export'));
+    assert.equal(exports.length, 1, `должен быть ровно один экспорт, вызовы:\n${server.calls.join('\n')}`);
+    assert.ok(
+      exports[0].includes(`/bot/combat/${fresh}/export`),
+      `печатать надо листок ${fresh}, а попросили: ${exports[0]}`,
+    );
+    assert.ok(
+      !server.calls.some((c) => c.includes(`/bot/combat/${old}/export`)),
+      'самый старый листок печатать нельзя',
+    );
+  });
+
+  it('старое сообщение без номера не угадывает листок, а спрашивает', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    server.seed(CHAT_OWNER, 'Первый');
+    server.seed(CHAT_OWNER, 'Второй');
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
+    const route = await import('./routes.ts');
+    server.calls.length = 0;
+    sent.length = 0;
+
+    await route.routeCallback(deps, '42', 'cb:doc', 'cb1', state);
+
+    assert.ok(!server.calls.some((c) => c.includes('/export')), 'файл не должен уходить наугад');
+    const last = sent[sent.length - 1];
+    const buttons = ((last.keyboard?.inline_keyboard ?? []) as Array<Array<{ callback_data?: string }>>).flat();
+    assert.equal(
+      buttons.filter((b) => String(b.callback_data ?? '').startsWith('cbx:')).length,
+      2,
+      'человек выбирает листок из своих кнопками cbx:<id>',
+    );
+  });
+
+  // Старое сообщение и один свой листок: бот всё равно спрашивает. Сообщение
+  // могло быть о листке коллеги (листки читаются всеми), и молча напечатать
+  // «свой единственный» — та же ошибка, только реже.
+  it('один свой листок — тоже вопрос, с одной кнопкой', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const only = server.seed(CHAT_OWNER, 'Единственный');
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
+    const route = await import('./routes.ts');
+    server.calls.length = 0;
+    sent.length = 0;
+
+    await route.routeCallback(deps, '42', 'cb:doc', 'cb1', state);
+
+    assert.ok(!server.calls.some((c) => c.includes('/export')), 'файл не должен уходить без выбора');
+    const last = sent[sent.length - 1];
+    const buttons = ((last.keyboard?.inline_keyboard ?? []) as Array<Array<{ callback_data?: string }>>).flat();
+    assert.deepEqual(buttons.map((b) => b.callback_data), [`cbx:${only}`]);
+  });
+
+  it('чужой листок не подставляется вместо своего', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    const foreign = server.seed('kollega@tn.ru', 'Чужой листок');
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
+    const route = await import('./routes.ts');
+    server.calls.length = 0;
+    sent.length = 0;
+
+    await route.routeCallback(deps, '42', 'cb:doc', 'cb1', state);
+
+    assert.ok(!server.calls.some((c) => c.includes(`/bot/combat/${foreign}/export`)));
+    assert.equal(
+      state.sessions.get('42')?.combat?.sheetId,
+      undefined,
+      'чужой листок не должен стать текущим: следующая правка получила бы 403',
+    );
+  });
+
+  // Действия листка (добавить сторону, уточнение) берут листок из сессии, а
+  // после перезапуска — самый свежий СВОЙ. Раньше брался последний элемент
+  // списка `ORDER BY created_at DESC`, то есть самый старый и, возможно,
+  // чужой: следующая правка получила бы 403.
+  it('после перезапуска действие берёт самый свежий свой листок', async () => {
+    const { deps, state } = makeDeps(AUTHED);
+    const server = fakeCombatServer();
+    server.seed('kollega@tn.ru', 'Чужой самый свежий');
+    server.seed(CHAT_OWNER, 'Мой старый');
+    const fresh = server.seed(CHAT_OWNER, 'Мой свежий');
+    state.sessions.set('42', { step: 'authed', email: CHAT_OWNER });
+    const route = await import('./routes.ts');
+
+    await route.routeCallback(deps, '42', 'cb:hint', 'cb1', state);
+
+    assert.equal(
+      state.sessions.get('42')?.combat?.sheetId,
+      fresh,
+      'должен открыться самый свежий листок этого автора, а не старейший в базе',
+    );
+  });
+
+  it('«Готово» из старого сообщения не закрывает другой листок', async () => {
+    const { deps, state } = makeDeps({ ...AUTHED, combat: { sheetId: 2, number: '002/2026' } });
+    const server = fakeCombatServer();
+    server.seed(CHAT_OWNER, 'Первый');
+    server.seed(CHAT_OWNER, 'Второй');
+    const route = await import('./routes.ts');
+    sent.length = 0;
+
+    await route.routeCallback(deps, '42', 'cb:done:1', 'cb1', state);
+
+    assert.equal(
+      state.sessions.get('42')?.combat?.sheetId,
+      2,
+      'текущий листок должен остаться открытым',
+    );
+    assert.match(sent[sent.length - 1].text, /ничего не закрываю|уже закрыт/i);
+
+    await route.routeCallback(deps, '42', 'cb:done:2', 'cb2', state);
+    assert.equal(state.sessions.get('42')?.combat, undefined, 'свой листок «Готово» закрывает');
   });
 
   it('текст в боевом листке не уходит в черновик КП', async () => {

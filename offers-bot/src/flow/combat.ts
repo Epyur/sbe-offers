@@ -10,52 +10,74 @@
 import type { CombatSheet, CombatSystemItem } from '../api.ts';
 import { appUrl } from './appbutton.ts';
 
+/**
+ * Чем кнопка документа отличается от кнопки действия: номером листка в
+ * `callback_data` (2026-11-20).
+ *
+ * Это не украшение. Сессия бота живёт в памяти и после перезапуска её нет, а
+ * кнопки в истории чата остаются живыми навсегда. Пока кнопка не знала своего
+ * листка, бот брал «последний из списка» — при `ORDER BY created_at DESC` это
+ * самый СТАРЫЙ листок базы, и человек получал чужой файл. Без номера (0) кнопка
+ * остаётся совместимой со старыми сообщениями: тогда бот спрашивает, какой
+ * листок, и ничего не печатает наугад.
+ */
+function sheetAction(base: string, sheetId: number): string {
+  return sheetId > 0 ? `${base}:${sheetId}` : base;
+}
+
 /** Клавиатура внутри боевого листка: добавить стороны или забрать файл. */
-export const COMBAT_KEYBOARD = {
-  inline_keyboard: [
-    [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
-    [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
-    // «Найти аналоги и сравнить» (2026-11-11) — в главном меню листка, а не
-    // только в сводке: менеджер ищет этот пункт там, где начинает работу, и
-    // раньше он видел его лишь после выбора конкурента в этой же сессии.
-    [{ text: '🔍 Найти аналоги и сравнить', callback_data: 'cb:analog' }],
-    // Документ/ссылка по конкуренту (2026-11-17): живая жалоба «бот не
-    // предлагает загрузить документ по конкуренту». Кнопка открывает помощника
-    // в контексте ЭТОГО листка: присланный файл или ссылка становятся фактами
-    // листка (`remember_sheet_fact`) и попадают в разбор разделов.
-    [{ text: '📎 Документ/ссылка конкурента', callback_data: 'cb:compdoc' }],
-    // Уточнение для разбора — единственная настройка листка:
-    // содержание всегда одно, а акцент менеджер задаёт сам.
-    [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
-    [{ text: '⬇ DOCX', callback_data: 'cb:doc' }],
-    [{ text: '✅ Готово', callback_data: 'cb:done' }],
-  ],
-};
+export function combatKeyboard(sheetId = 0): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
+      [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
+      // «Найти аналоги и сравнить» (2026-11-11) — в главном меню листка, а не
+      // только в сводке: менеджер ищет этот пункт там, где начинает работу, и
+      // раньше он видел его лишь после выбора конкурента в этой же сессии.
+      [{ text: '🔍 Найти аналоги и сравнить', callback_data: 'cb:analog' }],
+      // Документ/ссылка по конкуренту (2026-11-17): живая жалоба «бот не
+      // предлагает загрузить документ по конкуренту». Кнопка открывает помощника
+      // в контексте ЭТОГО листка: присланный файл или ссылка становятся фактами
+      // листка (`remember_sheet_fact`) и попадают в разбор разделов.
+      [{ text: '📎 Документ/ссылка конкурента', callback_data: 'cb:compdoc' }],
+      // Уточнение для разбора — единственная настройка листка:
+      // содержание всегда одно, а акцент менеджер задаёт сам.
+      [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
+      [{ text: '⬇ DOCX', callback_data: sheetAction('cb:doc', sheetId) }],
+      [{ text: '✅ Готово', callback_data: sheetAction('cb:done', sheetId) }],
+    ],
+  };
+}
 
 /** Сколько строк списка выбора на одной странице. Как в режиме «Документы»:
  *  восемь строк читаются на телефоне без прокрутки, номера помещаются в ряд. */
 export const COMBAT_PAGE_SIZE = 8;
 
 /**
- * Клавиатура во время выбора стороны (2026-11-11).
+ * Меню листка под страницей выбора стороны (2026-11-11).
  *
  * Раньше страница списка оставалась без основной клавиатуры боевого листка, и
  * после перелистывания или смены запроса кнопки «Наш продукт / Добавить
  * конкурента / DOCX / Готово» пропадали с экрана: вернуться к работе можно было
  * только «< Назад». Эти кнопки ведут в свои же обработчики и список не теряют
- * (`cb:oursys`/`cb:comp` начинают выбор заново, `cb:doc` берёт листок из
- * сессии, `cb:done` закрывает его).
+ * (`cb:oursys`/`cb:comp` начинают выбор заново, `cb:doc` печатает листок из
+ * своего номера, `cb:done` закрывает его).
+ *
+ * Имя отличается от `combatPickerKeyboard` (ниже) намеренно: та собирает
+ * клавиатуру СТРАНИЦЫ (номера, листание), эта — меню листка под ней.
  */
-export const COMBAT_PICKER_KEYBOARD = {
-  inline_keyboard: [
-    [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
-    [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
-    [{ text: '🔍 Найти аналоги и сравнить', callback_data: 'cb:analog' }],
-    [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
-    [{ text: '⬇ DOCX', callback_data: 'cb:doc' }],
-    [{ text: '✅ Готово', callback_data: 'cb:done' }],
-  ],
-};
+export function combatMenuKeyboard(sheetId = 0): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: '➕ Наш продукт', callback_data: 'cb:oursys' }],
+      [{ text: '🏷️ Добавить конкурента', callback_data: 'cb:comp' }],
+      [{ text: '🔍 Найти аналоги и сравнить', callback_data: 'cb:analog' }],
+      [{ text: '🎯 Уточнение для разбора', callback_data: 'cb:hint' }],
+      [{ text: '⬇ DOCX', callback_data: sheetAction('cb:doc', sheetId) }],
+      [{ text: '✅ Готово', callback_data: sheetAction('cb:done', sheetId) }],
+    ],
+  };
+}
 
 /**
  * Кнопки-подсказка под страницей выбора стороны (2026-11-11).
@@ -65,8 +87,8 @@ export const COMBAT_PICKER_KEYBOARD = {
  * списка несут два ряда: навигация (номера, листание, добавить) и это меню,
  * чтобы после перелистывания человек не искал главные действия заново.
  */
-export function withCombatMenu(rows: unknown[]): Record<string, unknown> {
-  return { inline_keyboard: [...rows, ...COMBAT_PICKER_KEYBOARD.inline_keyboard] };
+export function withCombatMenu(rows: unknown[], sheetId = 0): Record<string, unknown> {
+  return { inline_keyboard: [...rows, ...(combatMenuKeyboard(sheetId).inline_keyboard as unknown[])] };
 }
 
 /**

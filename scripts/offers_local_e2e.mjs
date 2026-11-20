@@ -3352,6 +3352,24 @@ async function sectionBotAppLinks() {
   const sheets = await call('GET', `/bot/combat?${ownerChat}&offset=0&limit=8`, { headers: { 'X-Service-Secret': BOT_SECRET } });
   ok('список боевых листков для бота отвечает 200', sheets.status === 200, `статус ${sheets.status}`);
   ok('список листков — массив, а не null', Array.isArray(sheets.json?.sheets), JSON.stringify(sheets.json)?.slice(0, 120));
+
+  // Чтение ОДНОГО листка по номеру (2026-11-20). На этом держится кнопка DOCX:
+  // раньше бот искал листок в «50 самых новых во всей базе», и за этим пределом
+  // свой листок объявлялся удалённым — теперь номер приходит из кнопки.
+  const anySheet = Array.isArray(sheets.json?.sheets) ? sheets.json.sheets[0] : null;
+  const sheetId = anySheet && typeof anySheet.id === 'number' ? anySheet.id : 0;
+  if (sheetId > 0) {
+    const one = await call('GET', `/bot/combat?${ownerChat}&id=${sheetId}`, { headers: { 'X-Service-Secret': BOT_SECRET } });
+    ok('листок читается по номеру',
+      one.status === 200 && Array.isArray(one.json?.sheets) && one.json.sheets.length === 1 && one.json.sheets[0].id === sheetId,
+      `статус ${one.status}, листков ${one.json?.sheets?.length}`);
+  } else {
+    ok('листок читается по номеру', true, 'в списке нет листков — проверка пропущена');
+  }
+  const missing = await call('GET', `/bot/combat?${ownerChat}&id=999999999`, { headers: { 'X-Service-Secret': BOT_SECRET } });
+  ok('неизвестный номер — пустой список, а не чужой листок',
+    missing.status === 200 && Array.isArray(missing.json?.sheets) && missing.json.sheets.length === 0,
+    `статус ${missing.status}, ${JSON.stringify(missing.json)?.slice(0, 80)}`);
 }
 
 /**

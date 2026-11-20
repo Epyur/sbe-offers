@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyLogin, newSession, type ChatSession } from './session.ts';
 import type { BotDeps, RouterState } from './routes.ts';
+import { addedMessage, moreKeyboard } from './flow/newdoc.ts';
 
 const REAL_ENV = { ...process.env };
 const sent: Array<{ chatId: string; text: string; keyboard?: Record<string, unknown> }> = [];
@@ -410,5 +411,143 @@ describe('«Создать новый документ» (R2)', () => {
 
     assert.match(sent[0].text, /Какой продукт или систему/);
     assert.equal(state.newDoc.get('42')?.items.length, 0);
+  });
+});
+
+/**
+ * «Достаточно» в боевом листке (2026-11-20).
+ *
+ * Живая жалоба: главный вариант «✅ Достаточно — листок собран» вводил людей в
+ * стопор. Листку не хватает продукта конкурента — без него сравнивать нечего, —
+ * а бот показывал меню из семи кнопок и об этом не говорил. Теперь кнопка
+ * называет следующий шаг и сразу открывает его.
+ */
+describe('боевой листок: «достаточно» — следующий шаг, а не конец', () => {
+  /** Стенд сервиса: наш продукт пишется, листок читается по номеру. */
+  function combatService(calls: string[]): void {
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = String(init?.method ?? 'GET').toUpperCase();
+      calls.push(`${method} ${url}`);
+      const json = (body: unknown): Response =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/bot/suggest')) {
+        return json({ systems: [], materials: [{ noteId: 425, name: 'Кровельная ПВХ-мембрана LOGICROOF PRO V-RP' }] });
+      }
+      if (method === 'POST' && url.endsWith('/bot/combat')) return json({ id: 55, number: '005/2026' });
+      if (url.includes('/bot/combat/55/our') || url.includes('/bot/combat/55/competitor')) {
+        return json({ id: 55, number: '005/2026', ourNotes: [], competitorNotes: [] });
+      }
+      if (method === 'GET' && url.includes('/bot/combat?')) {
+        return json({ sheets: [{ id: 55, number: '005/2026', ownerEmail: 'ivanov@tn.ru', ourNotes: [], competitorNotes: [] }] });
+      }
+      if (method === 'GET' && url.includes('/bot/combat/competitors')) return json({ cards: [], total: 0, offset: 0, hasMore: false });
+      return json({ ok: true });
+    }) as typeof fetch;
+  }
+
+  it('кнопка называет следующий шаг, а не «листок собран»', () => {
+    const rows = moreKeyboard('combat').inline_keyboard as Array<Array<{ text: string; callback_data: string }>>;
+    assert.equal(rows[0][0].text, '🏷️ Выбрать конкурента');
+    assert.equal(rows[0][0].callback_data, 'nd:enough');
+    assert.ok(rows.flat().some((b) => b.callback_data === 'nd:more'));
+    assert.ok(
+      rows.flat().every((b) => !/собран/i.test(b.text)),
+      'слово «собран» обещало конец, хотя листку не хватало конкурента',
+    );
+  });
+
+  it('сообщение о записи называет конкурента; в КП вопрос прежний', () => {
+    const combat = addedMessage('combat', [{ kind: 'material', title: 'LOGICROOF PRO V-RP' }], '005/2026');
+    assert.match(combat, /№ 005\/2026/);
+    assert.match(combat, /конкурент/i);
+    assert.doesNotMatch(combat, /этого достаточно/i);
+
+    const offer = addedMessage('offer', [{ kind: 'system', title: 'ТН-КРОВЛЯ' }]);
+    assert.match(offer, /Нужно добавить ещё/);
+  });
+
+  it('нажатие открывает поиск конкурента, а меню листка остаётся на экране', async () => {
+    const { deps, state, session } = makeDeps();
+    const calls: string[] = [];
+    combatService(calls);
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:combat', 'c1', state);
+    await route.routeText(deps, '42', 'LOGICROOF', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'c3', state);
+    sent.length = 0;
+
+    await route.routeCallback(deps, '42', 'nd:enough', 'c4', state);
+
+    const last = sent[sent.length - 1];
+    assert.match(last.text, /конкурент/i);
+    assert.doesNotMatch(last.text, /листок собран/i);
+    assert.equal(session()?.combat?.picking, 'competitor', 'поиск стороны переключился на конкурента');
+    assert.equal(session()?.newDoc, undefined, 'диалог нового документа закрыт');
+    const buttons = ((last.keyboard?.inline_keyboard ?? []) as Array<Array<{ callback_data?: string }>>).flat();
+    assert.ok(
+      buttons.some((b) => b.callback_data === 'cb:doc:55'),
+      'из поиска конкурента нужен выход к DOCX этого листка',
+    );
+  });
+
+  it('после «Достаточно» название ищет конкурента, а не наш продукт', async () => {
+    const { deps, state } = makeDeps();
+    const calls: string[] = [];
+    combatService(calls);
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:combat', 'c1', state);
+    await route.routeText(deps, '42', 'LOGICROOF', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'c3', state);
+    await route.routeCallback(deps, '42', 'nd:enough', 'c4', state);
+    calls.length = 0;
+
+    await route.routeText(deps, '42', 'PIRRO', state);
+
+    assert.ok(
+      calls.some((c) => c.includes('/bot/combat/competitors')),
+      `запрос должен идти в поиск конкурентов, вызовы:\n${calls.join('\n')}`,
+    );
+    assert.ok(
+      !calls.some((c) => c.includes('/bot/suggest') && c.includes('PIRRO')),
+      'название конкурента не должно попадать в поиск наших продуктов',
+    );
+  });
+
+  it('в КП «Достаточно» по-прежнему начинает бриф', async () => {
+    const { deps, state, session } = makeDeps();
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = String(init?.method ?? 'GET').toUpperCase();
+      calls.push(`${method} ${url}`);
+      const json = (body: unknown): Response =>
+        new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/bot/suggest')) {
+        return json({ systems: [{ noteId: 100, title: 'ТН-КРОВЛЯ Гарант' }], materials: [] });
+      }
+      if (url.endsWith('/bot/offers') && method === 'POST') return json({ id: 77, number: '007/2026' });
+      if (url.includes('/brief/start')) {
+        return json({ reply: 'Расскажите про объект', done: false, brief: { lastTopic: 'object_name' } });
+      }
+      return json({ ok: true });
+    }) as typeof fetch;
+    const route = await import('./routes.ts');
+    await route.routeCallback(deps, '42', 'nd:kind:offer', 'c1', state);
+    await route.routeText(deps, '42', 'Гарант', state);
+    await route.routeCallback(deps, '42', 'nd:pick:0', 'c2', state);
+    await route.routeCallback(deps, '42', 'nd:addpicked', 'c3', state);
+    calls.length = 0;
+
+    await route.routeCallback(deps, '42', 'nd:enough', 'c4', state);
+
+    assert.ok(
+      calls.some((c) => c.includes('/brief/start')),
+      `КП должно перейти к брифу, вызовы:\n${calls.join('\n')}`,
+    );
+    assert.ok(!calls.some((c) => c.includes('/bot/combat')), 'КП не должно трогать боевой листок');
+    assert.equal(session()?.newDoc, undefined);
   });
 });

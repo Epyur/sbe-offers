@@ -7,8 +7,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  COMBAT_KEYBOARD,
-  COMBAT_PICKER_KEYBOARD,
+  combatKeyboard,
+  combatMenuKeyboard,
   combatNeedOurProductMessage,
   type CombatPickerPage,
   combatAskQuery,
@@ -221,12 +221,12 @@ describe('боевой листок: выбор стороны', () => {
 
 describe('боевой листок: подбор аналогов в меню', () => {
   it('кнопка «Найти аналоги и сравнить» есть в меню листка и страницы выбора', () => {
-    const main = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string; text: string }>;
+    const main = (combatKeyboard().inline_keyboard as Array<{ callback_data: string; text: string }>).flat();
     const analog = main.find((b) => b.callback_data === 'cb:analog');
     assert.ok(analog, 'в главном меню нет кнопки подбора аналогов');
     assert.match(analog!.text, /аналоги/i);
 
-    const picker = COMBAT_PICKER_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string }>;
+    const picker = (combatMenuKeyboard().inline_keyboard as Array<{ callback_data: string }>).flat();
     assert.ok(picker.some((b) => b.callback_data === 'cb:analog'));
   });
 
@@ -320,17 +320,23 @@ describe('боевой листок: прочее', () => {
   });
 
   it('кнопки боевого листка ведут в свои обработчики', () => {
-    const kb = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string }>;
+    const kb = (combatKeyboard(7).inline_keyboard as Array<{ callback_data: string }>).flat();
     const ids = kb.map((b) => b.callback_data);
     // «Найти аналоги и сравнить» стоит в главном меню листка (2026-11-11):
     // раньше его видел только тот, кто уже выбрал конкурента в этой сессии.
+    // DOCX и «Готово» несут номер листка (2026-11-20): без него бот печатал
+    // самый старый листок базы вместо того, о котором сообщение.
     assert.deepEqual(ids, [
-      'cb:oursys', 'cb:comp', 'cb:analog', 'cb:compdoc', 'cb:hint', 'cb:doc', 'cb:done',
+      'cb:oursys', 'cb:comp', 'cb:analog', 'cb:compdoc', 'cb:hint', 'cb:doc:7', 'cb:done:7',
     ]);
+    // Без номера — совместимость со старыми сообщениями: тот же обработчик
+    // спросит, какой листок.
+    const legacy = (combatKeyboard().inline_keyboard as Array<{ callback_data: string }>).flat();
+    assert.ok(legacy.some((b) => b.callback_data === 'cb:doc'));
   });
 
   it('в листке есть кнопка «документ/ссылка конкурента» (2026-11-17)', () => {
-    const kb = COMBAT_KEYBOARD.inline_keyboard.flat() as Array<{ callback_data: string; text: string }>;
+    const kb = (combatKeyboard().inline_keyboard as Array<{ callback_data: string; text: string }>).flat();
     const btn = kb.find((b) => b.callback_data === 'cb:compdoc');
     assert.ok(btn, 'кнопка cb:compdoc должна быть в меню листка');
     assert.match(btn!.text, /конкурент/i);

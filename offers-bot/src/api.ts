@@ -676,11 +676,12 @@ export async function combatAllPaged(
   return all;
 }
 
-/** «Мои боевые листки» этого чата. */
-export async function listCombat(chatId: string): Promise<CombatSheet[]> {
+/** «Мои боевые листки» этого чата; с `id` — ровно один листок (2026-11-20). */
+export async function listCombat(chatId: string, id?: number): Promise<CombatSheet[]> {
+  const one = id && id > 0 ? `&id=${encodeURIComponent(String(id))}` : '';
   const res = await call<{ sheets: CombatSheet[] }>(
     'GET',
-    `/bot/combat?chat_id=${encodeURIComponent(chatId)}`,
+    `/bot/combat?chat_id=${encodeURIComponent(chatId)}${one}`,
   );
   return res.sheets ?? [];
 }

@@ -26,7 +26,7 @@ import * as api from './api.ts';
 import type { BotDeps, CombatPickerState } from './routes.ts';
 import type { ChatSession, OfferDraft } from './session.ts';
 import {
-  COMBAT_KEYBOARD,
+  combatKeyboard,
   COMBAT_PAGE_SIZE,
   withCombatMenu,
   type CombatPickerPage,
@@ -1033,13 +1033,12 @@ export async function startCombat(ctx: CallbackCtx): Promise<void> {
     ...ctx.session,
     combat: { sheetId: sheet.id, number: sheet.number },
   });
-  await ctx.deps.send(ctx.chatId, combatIntro(sheet.number), COMBAT_KEYBOARD);
+  await ctx.deps.send(ctx.chatId, combatIntro(sheet.number), combatKeyboard(sheet.id));
 }
 
 /** Показать сводку по листку с клавиатурой действий. */
 async function showCombatSheet(ctx: CallbackCtx, sheet: api.CombatSheet, hint?: string): Promise<void> {
-  const keyboard = combatSheetKeyboard(ctx, sheet);
-  await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), keyboard);
+  await ctx.deps.send(ctx.chatId, combatSheetMessage(sheet, hint), combatKeyboard(sheet.id));
 }
 
 // --- «Создать новый документ» (2026-11-13, R2) -------------------------------
@@ -1208,10 +1207,16 @@ export async function onNewDocAddPicked(ctx: CallbackCtx): Promise<void> {
 }
 
 /**
- * Пункт «Достаточно»: закрыть диалог и продолжить обычным путём документа.
+ * Пункт «Достаточно»: закрыть диалог и перейти к следующему шагу документа.
  *
  * Листок ли откроется, бриф ли начнётся — документ уже создан и заполнен, так
  * что оба пути только переходят к следующему шагу.
+ *
+ * Для листка следующий шаг назван, а не отдан на угадывание (2026-11-20).
+ * Живая жалоба: кнопка «Достаточно — листок собран» вводила в стопор — человек
+ * получал меню из семи кнопок и не понимал, что листку не хватает конкурента.
+ * Теперь сразу открывается поиск конкурента, а в приглашении стоит меню листка
+ * (DOCX / «Готово»), чтобы из поиска был выход, если конкурент не нужен.
  */
 export async function onNewDocEnough(ctx: CallbackCtx): Promise<void> {
   const state = ctx.newDoc;
@@ -1221,13 +1226,15 @@ export async function onNewDocEnough(ctx: CallbackCtx): Promise<void> {
   ctx.rememberNewDoc?.({ ...newDocState() });
 
   if (kind === 'combat') {
-    const sheetId = ctx.session.combat?.sheetId ?? 0;
-    await ctx.deps.send(
-      ctx.chatId,
-      sheetId > 0
-        ? `Боевой листок № ${ctx.session.combat?.number ?? ''} собран. Добавьте конкурентов кнопкой ниже.`
-        : 'Листок создан.',
-      COMBAT_KEYBOARD,
+    const sheet = await ensureCombat(ctx);
+    if (!sheet) {
+      await noCombatMessage(ctx);
+      return;
+    }
+    await startCombatPicker(
+      ctx,
+      'competitor',
+      `Боевой листок № ${sheet.number}: наш продукт записан. Дальше — продукт конкурента, с ним и будет сравнение.`,
     );
     return;
   }
@@ -1307,7 +1314,12 @@ async function writeAndAsk(ctx: CallbackCtx, state: NewDocState): Promise<void> 
   };
   ctx.newDoc = next;
   ctx.rememberNewDoc?.(next);
-  await updateProgress(ctx, noteId, addedMessage(next.kind, next.added ?? []), moreKeyboard(next.kind));
+  await updateProgress(
+    ctx,
+    noteId,
+    addedMessage(next.kind, next.added ?? [], next.kind === 'combat' ? ctx.session.combat?.number : undefined),
+    moreKeyboard(next.kind),
+  );
 }
 
 /**
@@ -1364,7 +1376,7 @@ export async function onNewDocContext(ctx: CallbackCtx): Promise<void> {
     for (const item of picked) await addPickedCombatProduct(ctx, item);
     // Все уже записанные стороны в чате не трогаем: листок собран, дальше —
     // «⚔️ Наш продукт» / «🏷️ Добавить конкурента» из меню листка.
-    await ctx.deps.send(ctx.chatId, combatIntro(ctx.session.combat?.number ?? ''), COMBAT_KEYBOARD);
+    await ctx.deps.send(ctx.chatId, combatIntro(ctx.session.combat?.number ?? ''), combatKeyboard(ctx.session.combat?.sheetId ?? 0));
     return;
   }
   if (!(await ensureNewDocDocument(ctx))) return;
@@ -1458,24 +1470,9 @@ async function openCombatInApp(ctx: CallbackCtx, picked: SuggestItem[], already:
   });
 }
 
-/**
- * Клавиатура сводки.
- *
- * «🔍 Найти аналоги и сравнить» стоит в главном меню листка постоянно
- * (2026-11-11): раньше она появлялась только после выбора конкурента в этой же
- * сессии, и человек её просто не видел. Если подбирать ещё не под что, нажатие
- * объясняет следующий шаг — тупика нет.
- */
-function combatSheetKeyboard(
-  _ctx: CallbackCtx,
-  _sheet: api.CombatSheet,
-): Record<string, unknown> {
-  return COMBAT_KEYBOARD;
-}
-
 /** Открыть сохранённый боевой листок: `cbe:<id>`. */
 export async function onCombatOpen(ctx: CallbackCtx, id: number): Promise<void> {
-  const sheet = await loadOwnCombat(ctx, id);
+  const sheet = await loadCombatById(ctx, id);
   if (!sheet) return;
   apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
   await showCombatSheet(ctx, sheet);
@@ -1483,20 +1480,25 @@ export async function onCombatOpen(ctx: CallbackCtx, id: number): Promise<void> 
 
 /** Файл по листку из списка: `cbx:<id>`. */
 export async function onCombatFile(ctx: CallbackCtx, id: number): Promise<void> {
-  const sheet = await loadOwnCombat(ctx, id);
+  const sheet = await loadCombatById(ctx, id);
   if (!sheet) return;
   apply(ctx, { ...ctx.session, combat: { sheetId: sheet.id, number: sheet.number } });
   await sendCombatDocx(ctx, sheet);
 }
 
-/** Прочитать листок по id, проверяя, что он открыт в этом чате. */
-async function loadOwnCombat(ctx: CallbackCtx, id: number): Promise<api.CombatSheet | null> {
+/**
+ * Прочитать ОДИН листок по id (2026-11-20).
+ *
+ * Раньше листок искали в списке «50 самых новых во ВСЕЙ базе»: за этим
+ * пределом свой листок объявлялся «удалённым», хотя он есть. Теперь сервер
+ * отдаёт один листок по номеру (`?id=`), и кнопка печатает именно его.
+ */
+async function loadCombatById(ctx: CallbackCtx, id: number): Promise<api.CombatSheet | null> {
   try {
-    // Список приходит из «Мои боевые листки»: там только свои. Но листок мог
-    // быть удалён — тогда честно говорим.
-    const sheets = await api.listCombat(ctx.chatId);
+    const sheets = await api.listCombat(ctx.chatId, id);
     const found = sheets.find((s) => s.id === id);
     if (!found) {
+      // Листок мог быть удалён — тогда честно говорим, а не подставляем другой.
       await ctx.deps.send(ctx.chatId, 'Боевой листок не найден — возможно, удалён.');
       return null;
     }
@@ -1524,21 +1526,35 @@ export async function onCombatComp(ctx: CallbackCtx): Promise<void> {
  * бесполезен, поэтому сначала текст, потом совпадения. Кнопка «▼ Все»
  * открывает полный список для тех, кому так удобнее.
  */
-export async function startCombatPicker(ctx: CallbackCtx, side: 'our' | 'competitor'): Promise<void> {
-  if (!ctx.session.combat) {
-    await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
+export async function startCombatPicker(
+  ctx: CallbackCtx,
+  side: 'our' | 'competitor',
+  note?: string,
+): Promise<void> {
+  // Листок восстанавливается, а не берётся из памяти «как есть» (2026-11-20):
+  // после перезапуска бота сессии нет, и «листок не открыт» на живой кнопке —
+  // тупик. Угадывания документа здесь нет: ensureCombat берёт сессию, иначе
+  // самый свежий листок ЭТОГО автора.
+  const sheet = await ensureCombat(ctx);
+  if (!sheet) {
+    await noCombatMessage(ctx);
     return;
   }
-  apply(ctx, { ...ctx.session, combat: { ...ctx.session.combat, picking: side } });
+  apply(ctx, {
+    ...ctx.session,
+    combat: { sheetId: sheet.id, number: sheet.number, picking: side },
+  });
   // Смена стороны — новый набор совпадений: отмеченные и запрос прошлой
   // стороны к этой не относятся.
   savePicker(ctx, { side, query: '', offset: 0, picked: [], allPicked: false });
-  await ctx.deps.send(ctx.chatId, combatAskQuery(side), {
-    inline_keyboard: [
-      [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
-      [{ text: '< Назад', callback_data: 'cb:back' }],
-    ],
-  });
+  const rows = [
+    [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
+    [{ text: '< Назад', callback_data: 'cb:back' }],
+  ];
+  const text = note ? `${note}\n\n${combatAskQuery(side)}` : combatAskQuery(side);
+  // Меню листка под приглашением: иначе человек, пришедший сюда кнопкой
+  // «достаточно», заперт в поиске — ни DOCX, ни «Готово» на экране нет.
+  await ctx.deps.send(ctx.chatId, text, withCombatMenu(rows, sheet.id));
 }
 
 /** Текущее состояние выбора: из контекста, а если его нет — пустое для стороны. */
@@ -1602,6 +1618,9 @@ async function renderCombatPicker(
     await ctx.deps.send(ctx.chatId, 'Боевой листок не открыт — начните заново.', MAIN_KEYBOARD);
     return;
   }
+  // Номер листка — в кнопках страницы (2026-11-20): у каждого сообщения своя
+  // клавиатура, и старая страница не должна печатать «первый» листок базы.
+  const sheetId = ctx.session.combat.sheetId ?? 0;
   const side = picker.side;
   // Страница приходит готовой от навигации (уже есть данные) либо читается при
   // поиске. Так нажатие «Дальше» не повторяет запрос к сервису — сервер отдаёт
@@ -1621,7 +1640,7 @@ async function renderCombatPicker(
       withCombatMenu([
         [{ text: '▼ Все продукты', callback_data: 'cb:all' }],
         [{ text: '< Назад', callback_data: 'cb:back' }],
-      ]),
+      ], sheetId),
     );
     return;
   }
@@ -1639,7 +1658,7 @@ async function renderCombatPicker(
   await ctx.deps.send(
     ctx.chatId,
     combatPickerMessage(page, side, picker.query),
-    withCombatMenu(keyboard.inline_keyboard as unknown[]),
+    withCombatMenu(keyboard.inline_keyboard as unknown[], sheetId),
   );
 }
 
@@ -1789,20 +1808,67 @@ function chosenSummary(items: api.CombatSystemItem[]): string {
   return items.length > 3 ? `${head} и ещё ${items.length - 3}` : head;
 }
 
-/** «⬇ DOCX»: собрать файл боевого листка. */
-export async function onCombatDoc(ctx: CallbackCtx): Promise<void> {
-  const sheet = await ensureCombat(ctx);
-  if (!sheet) {
+/**
+ * «⬇ DOCX»: собрать файл боевого листка.
+ *
+ * С номером (`cb:doc:<id>`, 2026-11-20) печатается ИМЕННО этот листок. Без
+ * номера — старое сообщение из истории: бот спрашивает, какой листок, и ничего
+ * не печатает наугад. Раньше здесь стоял `ensureCombat`, и потерянная сессия
+ * (перезапуск бота) давала файл самого старого листка базы.
+ */
+export async function onCombatDoc(ctx: CallbackCtx, id = 0): Promise<void> {
+  if (id > 0) {
+    const sheet = await loadCombatById(ctx, id);
+    if (!sheet) return;
+    await sendCombatDocx(ctx, sheet);
+    return;
+  }
+  await askCombatSheet(ctx);
+}
+
+/**
+ * Старая кнопка без номера: выбрать листок, а не угадать.
+ *
+ * Спрашиваем ВСЕГДА, даже когда свой листок один: сообщение могло быть о листке
+ * коллеги (листки читаются всеми), и молча напечатать свой — та же ошибка, что
+ * и раньше, только реже. Один тап по кнопке `cbx:<id>` — и файл уходит; этот
+ * обработчик уже умеет открыть листок и прислать файл, поэтому новых состояний
+ * и обработчиков не заводится.
+ */
+async function askCombatSheet(ctx: CallbackCtx): Promise<void> {
+  let sheets: api.CombatSheet[];
+  try {
+    sheets = await api.listCombat(ctx.chatId);
+  } catch (e) {
+    await ctx.deps.send(ctx.chatId, `Не удалось получить список листков: ${(e as Error).message}`);
+    return;
+  }
+  const mine = sheets.filter((s) => sameEmail(s.ownerEmail, ctx.session.email));
+  if (mine.length === 0) {
     await noCombatMessage(ctx);
     return;
   }
-  await sendCombatDocx(ctx, sheet);
+  const limit = 10;
+  const rows = mine.slice(0, limit).map((s) => [
+    { text: `📄 № ${s.number} — ${s.displayName ?? 'боевой листок'}`, callback_data: `cbx:${s.id}` },
+  ]);
+  const tail = mine.length > limit ? `\n\nПоказаны последние ${limit}. Остальные — в «📂 Мои боевые листки».` : '';
+  await ctx.deps.send(
+    ctx.chatId,
+    'Это старое сообщение — в нём не записан номер листка. Выберите, какой печатать:' + tail,
+    { inline_keyboard: rows },
+  );
+}
+
+/** Один адрес в двух регистрах — это один человек. */
+function sameEmail(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase() && (a ?? '').trim() !== '';
 }
 
 /** Собрать и отправить DOCX; пустой листок не печатаем. */
 async function sendCombatDocx(ctx: CallbackCtx, sheet: api.CombatSheet): Promise<void> {
   if (sheet.ourNotes.length === 0 && sheet.competitorNotes.length === 0) {
-    await ctx.deps.send(ctx.chatId, combatNotEmptyMessage(), COMBAT_KEYBOARD);
+    await ctx.deps.send(ctx.chatId, combatNotEmptyMessage(), combatKeyboard(sheet.id));
     return;
   }
   // Сборка листка зовёт модель на сравнение — это десятки секунд. Первый раз
@@ -1818,9 +1884,24 @@ async function sendCombatDocx(ctx: CallbackCtx, sheet: api.CombatSheet): Promise
   }
 }
 
-/** «✅ Готово»: выходим из боевого листка к меню. */
-export async function onCombatDone(ctx: CallbackCtx): Promise<void> {
-  const sheet = await ensureCombat(ctx);
+/**
+ * «✅ Готово»: выходим из боевого листка к меню.
+ *
+ * С номером закрывается только СВОЙ листок: «Готово» на старом сообщении не
+ * должно молча закрыть тот, который человек собирает сейчас (2026-11-20).
+ */
+export async function onCombatDone(ctx: CallbackCtx, id = 0): Promise<void> {
+  const current = ctx.session.combat;
+  if (id > 0 && (current?.sheetId ?? 0) !== id) {
+    await ctx.deps.send(
+      ctx.chatId,
+      current?.sheetId
+        ? `Это кнопка листка № ${current.number ?? ''}, а собираете вы другой — ничего не закрываю.`
+        : 'Этот листок уже закрыт.',
+    );
+    return;
+  }
+  const sheet = id > 0 ? await loadCombatById(ctx, id) : await ensureCombat(ctx);
   if (!sheet) {
     await noCombatMessage(ctx);
     return;
@@ -1839,7 +1920,7 @@ export async function onCombatBack(ctx: CallbackCtx): Promise<void> {
   // Выбор стороны брошен — невидимая страница не должна всплыть при следующем
   // «➕» со старой отметкой.
   savePicker(ctx, { side: ctx.combatPicker?.side ?? 'our', query: '', offset: 0, picked: [] });
-  const sheet = await loadOwnCombat(ctx, ctx.session.combat.sheetId);
+  const sheet = await loadCombatById(ctx, ctx.session.combat.sheetId);
   if (!sheet) return;
   await showCombatSheet(ctx, sheet);
 }
@@ -1967,34 +2048,44 @@ const COMBAT_HINT_KEY = 'hint';
  * хотя человек его только что открыл (жалоба: нажал «Найти аналоги и
  * сравнить» — ничего не произошло).
  *
- * Возвращает листок: из сессии, а если её нет — последний листок этого чата.
- * `null` — у чата боевых листков нет вовсе.
+ * Возвращает листок: из сессии, а если её нет — САМЫЙ СВЕЖИЙ листок этого
+ * автора. `null` — у человека нет своих листков.
+ *
+ * Что изменилось 2026-11-20 и почему:
+ *  - было `sheets[sheets.length - 1]` по списку `ORDER BY created_at DESC`, то
+ *    есть САМЫЙ СТАРЫЙ листок всей базы (и чужой тоже). Отсюда живая жалоба
+ *    «DOCX присылает первый листок». Теперь `[0]` — самый свежий;
+ *  - фильтр по `ownerEmail`: править чужой листок нельзя (`botCanEditCombat`),
+ *    и подстановка чужого давала 403 на следующей кнопке;
+ *  - угадывание живёт ТОЛЬКО для действий (добавить сторону, уточнение). Для
+ *    документа (`onCombatDoc`) его нет вовсе: там номер приходит из кнопки, а
+ *    без номера бот спрашивает.
  */
 async function ensureCombat(ctx: CallbackCtx): Promise<api.CombatSheet | null> {
   const current = ctx.session.combat;
   if (current) {
-    try {
-      return await loadOwnCombat(ctx, current.sheetId);
-    } catch {
-      // Упавший запрос не должен стирать сессию — идём за последним листком.
-    }
+    const sheet = await loadCombatById(ctx, current.sheetId);
+    if (sheet) return sheet;
+    // Листка нет (удалён) — не подставляем другой молча.
+    return null;
   }
   try {
     const sheets = await api.listCombat(ctx.chatId);
-    const last = sheets[sheets.length - 1];
-    if (!last) return null;
-    apply(ctx, { ...ctx.session, combat: { sheetId: last.id, number: last.number } });
-    return last;
+    const pick = sheets.find((s) => sameEmail(s.ownerEmail, ctx.session.email));
+    if (!pick) return null;
+    apply(ctx, { ...ctx.session, combat: { sheetId: pick.id, number: pick.number } });
+    return pick;
   } catch {
     return null;
   }
 }
 
-/** Сообщение, когда листка нет вовсе. */
+/** Сообщение, когда своего листка нет. */
 async function noCombatMessage(ctx: CallbackCtx): Promise<void> {
   await ctx.deps.send(
     ctx.chatId,
-    'Боевых листков пока нет. Начните кнопкой «⚔️ Боевой листок».',
+    'Не нашёл ваш боевой листок. Откройте «📂 Мои боевые листки» или начните новый: ' +
+      '«✨ Создать новый документ» → «⚔️ Боевой листок».',
     MAIN_KEYBOARD,
   );
 }
@@ -2052,7 +2143,7 @@ export async function onCombatAnalogues(ctx: CallbackCtx): Promise<void> {
   const our = sheet.ourNotes ?? [];
   const source = our[our.length - 1];
   if (!source) {
-    await ctx.deps.send(ctx.chatId, combatNeedOurProductMessage(), COMBAT_KEYBOARD);
+    await ctx.deps.send(ctx.chatId, combatNeedOurProductMessage(), combatKeyboard(sheet.id));
     return;
   }
   // «⌛» пишется ДО подбора: модель отвечает десятки секунд, и без него человек
@@ -2124,7 +2215,7 @@ export async function handleCombatText(ctx: CallbackCtx, text: string): Promise<
       ctx.chatId,
       'В боевом листке наш продукт и конкурент выбираются кнопками ниже. ' +
         'Чтобы найти по названию, нажмите «➕ Наш продукт» или «🏷️ Добавить конкурента».',
-      COMBAT_KEYBOARD,
+      combatKeyboard(combat.sheetId),
     );
     return true;
   }
@@ -2182,8 +2273,10 @@ export const BUTTONS: Record<string, (ctx: CallbackCtx) => Promise<void>> = {
   'cb:pickall': onCombatPickAll,
   'cb:unpickall': onCombatDropAll,
   'cb:addpicked': onCombatAddPicked,
-  'cb:doc': onCombatDoc,
-  'cb:done': onCombatDone,
+  // Кнопки документа без номера — только у сообщений, отправленных до
+  // 2026-11-20. Обработчик спросит, какой листок, а не напечатает «первый».
+  'cb:doc': (ctx) => onCombatDoc(ctx),
+  'cb:done': (ctx) => onCombatDone(ctx),
   'cb:back': onCombatBack,
   // Подсказка по свободной фразе (2026-11-12).
   'sug:systems': onSuggestAddAllSystems,
@@ -2202,6 +2295,10 @@ export const ID_BUTTONS: Record<string, (ctx: CallbackCtx, id: number) => Promis
   // Боевой листок (2026-11-09): открыть листок, файл по листку, выбор стороны.
   cbe: onCombatOpen,
   cbx: onCombatFile,
+  // Кнопки документа с номером листка (2026-11-20): `cb:doc:<id>` и
+  // `cb:done:<id>` — тот же обработчик, что у старых кнопок без номера.
+  'cb:doc': onCombatDoc,
+  'cb:done': onCombatDone,
   oursel: onCombatPick,
   compsel: onCombatPick,
   // Аналог — НАШ продукт: кнопка несёт заметку, а не индекс.

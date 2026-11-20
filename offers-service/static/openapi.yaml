@@ -3160,9 +3160,16 @@ paths:
           required: true
           schema:
             type: string
+        - name: id
+          in: query
+          required: false
+          description: Номер одного листка. Пусто или мусор — весь список (опция, а не режим). Нужен кнопке «DOCX»: печатать листок из сообщения, а не «самый свежий».
+          schema:
+            type: integer
+            format: int64
       responses:
         '200':
-          description: Листки привязанного chat_id
+          description: Листки привязанного chat_id (или один по `id`; неизвестный номер — пустой массив)
           content:
             application/json:
               schema:

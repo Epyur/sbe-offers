@@ -222,8 +222,13 @@ export function pickedLabel(item: SuggestItem): string {
  * добавить ещё или этого достаточно — человек собирает КП из нескольких систем
  * (ТН-Кровля, затем ТН-Перекрытие, ТН-Фундамент). Поэтому сводка перечисляет
  * уже записанное, а решение — кнопками, а не свободным текстом.
+ *
+ * У листка вопрос был не тот, на который отвечают кнопки (2026-11-20): «или
+ * этого достаточно?» — а варианты были действиями, и главный из них
+ * («листок собран») вводил в стопор: листку не хватает конкурента, но бот об
+ * этом не говорил. Теперь следующий шаг назван, а не угадывается.
  */
-export function addedMessage(kind: NewDocKind, added: NewDocAdded[]): string {
+export function addedMessage(kind: NewDocKind, added: NewDocAdded[], sheetNumber?: string): string {
   const systems = added.filter((a) => a.kind === 'system');
   const materials = added.filter((a) => a.kind === 'material');
   const lines: string[] = [];
@@ -233,22 +238,36 @@ export function addedMessage(kind: NewDocKind, added: NewDocAdded[]): string {
   if (materials.length > 0) {
     lines.push(`Материалы (описанием): ${materials.map((a) => `«${a.title}»`).join(', ')}.`);
   }
-  const what = kind === 'combat' ? 'листок' : 'предложение';
-  return (
-    `Записано в ${what}:\n${lines.join('\n')}\n\n` +
-    'Нужно добавить ещё продукт или систему — или этого достаточно?'
-  );
+  const number = kind === 'combat' && sheetNumber ? ` № ${sheetNumber}` : '';
+  const text = `Записано в ${kind === 'combat' ? 'листок' : 'предложение'}${number}:\n${lines.join('\n')}`;
+  return kind === 'combat'
+    ? `${text}\n\nДальше — продукт конкурента: с ним и будет сравнение.`
+    : `${text}\n\nНужно добавить ещё продукт или систему — или этого достаточно?`;
 }
 
-/** Развилка после записи: добавить ещё или продолжить. */
+/**
+ * Развилка после записи: добавить ещё или перейти к следующему шагу.
+ *
+ * Первой строкой — следующий шаг, а не повтор только что сделанного: у
+ * inline-кнопок нет цвета и веса, иерархия только порядком. До 2026-11-20
+ * сверху стояло «добавить ещё», а «достаточно» — вторым, и человек жал
+ * верхнюю кнопку не читая.
+ */
 export function moreKeyboard(kind: NewDocKind): Record<string, unknown> {
-  const done = kind === 'combat' ? '✅ Достаточно — листок собран' : '✅ Достаточно — собрать контекст';
-  const appText = kind === 'combat' ? '📱 Открыть листок в приложении' : '📱 Продолжить в приложении';
+  if (kind === 'combat') {
+    return {
+      inline_keyboard: [
+        [{ text: '🏷️ Выбрать конкурента', callback_data: 'nd:enough' }],
+        [{ text: '➕ Ещё наш продукт', callback_data: 'nd:more' }],
+        [{ text: '📱 Открыть листок в приложении', callback_data: 'nd:app' }],
+      ],
+    };
+  }
   return {
     inline_keyboard: [
+      [{ text: '✅ Достаточно — собрать контекст', callback_data: 'nd:enough' }],
       [{ text: '➕ Добавить ещё продукт или систему', callback_data: 'nd:more' }],
-      [{ text: done, callback_data: 'nd:enough' }],
-      [{ text: appText, callback_data: 'nd:app' }],
+      [{ text: '📱 Продолжить в приложении', callback_data: 'nd:app' }],
     ],
   };
 }
