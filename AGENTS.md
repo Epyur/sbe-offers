@@ -71,7 +71,7 @@ sent «Достаточно» to the competitor picker.
 > хэндлом — 3 красных); приложение `typecheck` 0 / **91** тест (+1 новый,
 > красный до правки) / `build` OK / `size` код 111 811 Б, картинки 192 618 Б.
 > Сервер, бот и база не менялись. Подробности выкладки — `HANDOFF.md`,
-> «Три точки сходятся (0.11.14)».
+> «Три точки сходятся (0.11.14)». Точки: `backend` `36148c3`, `main` `efa492e`.
 
 > **0.11.13 (2026-11-20) — бот: DOCX печатает листок из кнопки, «Достаточно» ведёт к конкуренту.**
 > Две живые жалобы. **(1) «Нажимаю DOCX — приходит файл самого первого
@@ -358,8 +358,8 @@ sent «Достаточно» to the competitor picker.
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `c196b86` (code; docs `e996328`), `main` `9b5f8b2`
-(release slice of 0.11.13; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `36148c3` (code; docs — следующим коммитом), `main` `efa492e`
+(release slice of 0.11.14; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
