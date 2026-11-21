@@ -14,6 +14,7 @@ import { formFieldWindow } from './window-model';
 import { renderSheetUpload } from './sheet-upload';
 import { renderFormEditor } from './form-editor';
 import { renderPicker, type PickerCandidate } from './picker';
+import { refTitle, rememberNames, type PickerNames } from './picker-model';
 import { FORM_FLAG_BRIEF_SUMMARY, FORM_FLAG_SECTION_COPY } from '../constants';
 
 /**
@@ -243,8 +244,10 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         }
         materialCandidates.length = 0;
         for (const item of res.items) {
-          materialCandidates.push(materialCandidate(item));
+          const candidate = materialCandidate(item);
+          materialCandidates.push(candidate);
         }
+        redrawItems();
         return materialCandidates;
       },
       onPick: (candidate) => {
@@ -278,7 +281,10 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
     // Гарант» прокруткой было нельзя. Поиск тот же, что в боевом листке.
     const systemsBox = itemsCard.createDiv({ cls: 'tn-offers-system-add' });
     const systemCandidates: PickerCandidate[] = [];
-    const redrawSystems = renderPicker(
+    // Имена выбранных систем: сервер хранит только `noteId`/`sku`, поэтому
+    // название помнит окно (2026-11-21).
+    const systemNames: PickerNames = new Map();
+    renderPicker(
       systemsBox,
       {
         label: 'Система в КП',
@@ -296,12 +302,17 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
             return;
           }
           for (const system of res.systems) {
-            systemCandidates.push({
+            const candidate: PickerCandidate = {
               noteId: system.noteId,
               title: system.title,
               code: system.sku,
-            });
+            };
+            systemCandidates.push(candidate);
+            rememberNames(systemNames, [candidate]);
           }
+          // Выбранное подписывается названием, а не `sys-N`: справочник
+          // прочитан — можно перерисовать список выбранного.
+          renderChosen(current);
         },
         search: async (query) => {
           const res = await view.plugin.offersService.searchSystems(query);
@@ -311,11 +322,17 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
           }
           systemCandidates.length = 0;
           for (const item of res.items) {
-            systemCandidates.push(systemCandidate(item));
+            const candidate = systemCandidate(item);
+            systemCandidates.push(candidate);
+            rememberNames(systemNames, [candidate]);
           }
+          renderChosen(current);
           return systemCandidates;
         },
-        onPick: (candidate) => addSystemPicked(candidate.noteId),
+        onPick: (candidate) => {
+          rememberNames(systemNames, [candidate]);
+          return addSystemPicked(candidate.noteId);
+        },
       },
       errorMessage,
     );
@@ -340,7 +357,7 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         // Название берём из того же ответа, что и удаление: у выбора есть код
         // или заметка, а человеку нужно имя.
         const handle = chosen.noteId ? `sys-${chosen.noteId}` : (chosen.sku ?? '');
-        const label = handle ? `Система: ${handleLabel(handle)}` : 'Система';
+        const label = handle ? `Система: ${refTitle(systemNames, chosen)}` : 'Система';
         row.createSpan({ cls: 'tn-offers-grow', text: label });
         // «Пересчитать тексты системы» (2026-11-06, шаг B): карточку в Базе
         // знаний могли поправить после выбора. Пересчёт — осознанное действие,
@@ -372,23 +389,7 @@ async function openEditor(view: OffersView, container: HTMLElement, offer: Offer
         });
       }
     }
-
-    /**
-     * Подпись системы по хэндлу: имя из найденного, иначе сам хэндл.
-     *
-     * Список найденного теперь живёт в окне поиска, поэтому имя ищется и там,
-     * и в кэше систем: выбранное могло прийти и поиском, и из кэша.
-     */
-    function handleLabel(handle: string): string {
-      const noteId = Number(/^sys-(\d+)$/.exec(handle)?.[1] ?? 0);
-      if (noteId > 0) {
-        const found = systemCandidates.find((c) => c.noteId === noteId);
-        if (found) return found.title;
-      }
-      return handle;
-    }
     renderChosen(current);
-    void redrawSystems;
 
     /**
      * Выбрать систему: сервер пишет её тексты один раз при выборе (2026-11-06).
@@ -618,6 +619,9 @@ function renderChosenMaterials(view: OffersView, card: HTMLElement, offer: Offer
   box.createDiv({ cls: 'tn-offers-muted', text: 'Материалы в предложении (описанием)' });
   const chosenList = box.createDiv({ cls: 'tn-offers-chosen-systems' });
   const candidates: PickerCandidate[] = [];
+  // Имена выбранного: сервер хранит только код/заметку, поэтому окно помнит
+  // названия из справочника и поиска (2026-11-21).
+  const materialNames: PickerNames = new Map();
 
   const renderChosen = (current: Offer): void => {
     chosenList.empty();
@@ -632,8 +636,8 @@ function renderChosenMaterials(view: OffersView, card: HTMLElement, offer: Offer
     for (const chosen of materials) {
       const row = chosenList.createDiv({ cls: 'tn-offers-row tn-offers-chosen-system' });
       const handle = chosen.noteId ? `sys-${chosen.noteId}` : (chosen.sku ?? '');
-      const found = candidates.find((c) => c.noteId === chosen.noteId);
-      row.createSpan({ cls: 'tn-offers-grow', text: `Материал: ${found?.title ?? handle}` });
+      const label = handle ? `Материал: ${refTitle(materialNames, chosen)}` : 'Материал';
+      row.createSpan({ cls: 'tn-offers-grow', text: label });
       const removeBtn = row.createEl('button', { text: 'Убрать', cls: 'tn-btn tn-btn-ghost' });
       removeBtn.addEventListener('click', () => {
         void removeMaterial(handle, removeBtn);
@@ -650,7 +654,21 @@ function renderChosenMaterials(view: OffersView, card: HTMLElement, offer: Offer
       emptyText: 'Найдите материал: он попадёт в документ описанием, без цены.',
       candidates: () => candidates,
       load: async () => {
+        // Справочник целиком — чтобы при открытии КП выбранные материалы были
+        // подписаны названиями, а не кодами `MAT-…` (2026-11-21).
         candidates.length = 0;
+        const materials = await view.plugin.offersService.listMaterials();
+        for (const material of materials) {
+          if (!material.noteId || material.noteId <= 0) continue;
+          const candidate: PickerCandidate = {
+            noteId: material.noteId,
+            title: material.name,
+            code: material.sku,
+          };
+          candidates.push(candidate);
+          rememberNames(materialNames, [candidate]);
+        }
+        renderChosen(offer);
       },
       search: async (query) => {
         const res = await view.plugin.offersService.searchMaterials(query);
@@ -660,11 +678,15 @@ function renderChosenMaterials(view: OffersView, card: HTMLElement, offer: Offer
         }
         candidates.length = 0;
         for (const item of res.items) {
-          candidates.push({ noteId: item.noteId, title: item.name, code: item.sku });
+          const candidate: PickerCandidate = { noteId: item.noteId, title: item.name, code: item.sku };
+          candidates.push(candidate);
+          rememberNames(materialNames, [candidate]);
         }
+        renderChosen(offer);
         return candidates;
       },
       onPick: (candidate) => {
+        rememberNames(materialNames, [candidate]);
         void addMaterial(candidate.noteId);
       },
     },

@@ -23,6 +23,7 @@ import {
   itemsChanged,
   itemsProblem,
   loadOffer,
+  loadMaterialCatalog,
   loadSystemCatalog,
   money,
   readWindowSave,
@@ -64,6 +65,8 @@ type LoadState =
       kind: 'ready';
       offer: OfferDto;
       catalog: SystemCardDto[];
+      /** Справочник материалов: по нему подписаны выбранные описанием. */
+      materialCatalog: SystemCardDto[];
       /**
        * Окно КП (2026-11-15, шаг 3). `null` — настройку прочитать не удалось:
        * показываем все зоны и строку об этом, а не пустой экран.
@@ -92,17 +95,21 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
     void Promise.all([
       loadOffer(id),
       loadSystemCatalog().catch(() => [] as SystemCardDto[]),
+      // Справочник материалов — чтобы выбранное описанием было подписано
+      // названием, а не кодом `MAT-…` (2026-11-21).
+      loadMaterialCatalog().catch(() => [] as SystemCardDto[]),
       // Окно читается отдельным запросом: форма общая для всех КП, и её правка
       // не должна перезагружать карточку. Ошибка окна — `null`, не отказ.
       loadOfferWindow()
         .then((form) => ({ ok: form !== null, form }))
         .catch(() => ({ ok: false as const, form: null })),
     ])
-      .then(([offer, catalog, windowLoaded]) => {
+      .then(([offer, catalog, materialCatalog, windowLoaded]) => {
         setState({
           kind: 'ready',
           offer,
           catalog,
+          materialCatalog,
           // `zones === null` — не прочитали; иначе это настоящий список зон.
           window: windowLoaded.form,
           windowRead: windowLoaded.ok,
@@ -158,7 +165,7 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
     );
   }
 
-  const { offer, catalog, window, windowRead } = state;
+  const { offer, catalog, materialCatalog, window, windowRead } = state;
   // Экран одним проходом по окну: зоны И поля формы, в порядке окна (0.11.3).
   // До 0.11.3 поля отбрасывались насовсем — их не было в приложении вовсе.
   const items: ScreenItem[] = windowRead
@@ -194,6 +201,7 @@ export function OfferCard({ id }: { id: number }): JSX.Element {
             zone={item.id}
             offer={offer}
             catalog={catalog}
+            materialCatalog={materialCatalog}
             busy={busy}
             missing={softMissing}
             id={id}
@@ -252,6 +260,7 @@ interface ZoneProps {
   zone: WindowZoneId;
   offer: OfferDto;
   catalog: SystemCardDto[];
+  materialCatalog: SystemCardDto[];
   busy: boolean;
   missing: MissingField[];
   id: number;
@@ -265,7 +274,7 @@ interface ZoneProps {
 
 /** Одна зона окна. Невидимые сюда не доходят: их отсекает `visibleZones`. */
 function Zone(props: ZoneProps): JSX.Element | null {
-  const { zone, offer, catalog, busy, missing, id } = props;
+  const { zone, offer, catalog, materialCatalog, busy, missing, id } = props;
   const lacks = (key: string): boolean => missing.some((item) => item.id === key);
   switch (zone) {
     case 'client':
@@ -293,6 +302,7 @@ function Zone(props: ZoneProps): JSX.Element | null {
       return (
         <MaterialsZone
           offer={offer}
+          catalog={materialCatalog}
           busy={busy}
           onAdd={props.onAddMaterial}
           onRemove={props.onRemoveMaterial}
@@ -703,16 +713,18 @@ function ItemsZone({
  */
 function MaterialsZone({
   offer,
+  catalog,
   busy,
   onAdd,
   onRemove,
 }: {
   offer: OfferDto;
+  catalog: SystemCardDto[];
   busy: boolean;
   onAdd: (material: ChosenSystem) => void;
   onRemove: (material: ChosenSystem) => void;
 }): JSX.Element {
-  const chosen = chosenMaterials(offer);
+  const chosen = chosenMaterials(offer, catalog);
   return (
     <div className="app-card">
       <h2 className="app-h2">Материалы (описанием)</h2>

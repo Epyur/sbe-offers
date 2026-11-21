@@ -9,30 +9,13 @@ import {
 } from '../types/offers';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { renderCombatSettings } from './combat-settings';
+import { PICKER_EMPTY_HINT, pickerRows, type PickerCandidate } from './picker-model';
 
 /** Сторона выбора в боевом листке: наш продукт или конкурент. */
 type CombatSide = 'our' | 'competitor';
 
 /** Вариант выбора стороны: заметка Базы знаний и её подпись. */
-interface CombatCandidate {
-  noteId: number;
-  title: string;
-  code?: string;
-}
-
-/**
- * Совпадение по запросу — то же правило, что в боте (2026-11-09): слова запроса
- * ищутся по названию и коду, регистр и «ё» не важны. Одно место на обе стороны.
- */
-function filterCandidates(items: CombatCandidate[], query: string): CombatCandidate[] {
-  const q = query.trim().toLowerCase().replace(/ё/g, 'е');
-  if (!q) return items;
-  const words = q.split(/\s+/).filter((w) => w !== '');
-  return items.filter((item) => {
-    const hay = `${item.title} ${item.code ?? ''}`.toLowerCase().replace(/ё/g, 'е');
-    return words.every((w) => hay.includes(w));
-  });
-}
+type CombatCandidate = PickerCandidate;
 
 /**
  * Раздел «⚙️ Боевой листок» (2026-11-08).
@@ -382,16 +365,18 @@ function renderSidePicker(
   let foundByServer: CombatCandidate[] | null = null;
   let searchSeq = 0;
 
-  const shown = (query: string): CombatCandidate[] => {
-    const found = foundByServer ?? filterCandidates(opts.candidates(), query);
-    // Без запроса показываем небольшой срез: весь каталог — это тысячи строк,
-    // которые человек всё равно не прочитает.
-    return query.trim() ? found : found.slice(0, 20);
-  };
+  const shown = (query: string): CombatCandidate[] =>
+    pickerRows(opts.candidates(), foundByServer, query);
 
   const renderItems = (items: CombatCandidate[]): void => {
     results.empty();
     if (items.length === 0) {
+      // До ввода списка нет — то же правило, что в окне КП и в мини-приложении
+      // (2026-11-21): человек начинает с названия, а не с чужого каталога.
+      if (search.value.trim() === '') {
+        results.createDiv({ cls: 'tn-offers-muted', text: PICKER_EMPTY_HINT });
+        return;
+      }
       if (opts.candidates().length === 0 && foundByServer === null) {
         results.createDiv({ cls: 'tn-offers-muted', text: 'Список пуст — нечего выбирать.' });
         return;

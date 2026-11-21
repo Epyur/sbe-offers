@@ -132,6 +132,19 @@ test('выбранные материалы показываются отдел�
   assert.equal(chosenMaterials({ ...offer, materials: undefined }).length, 0);
 });
 
+test('выбранный материал подписан НАЗВАНИЕМ из справочника, а не кодом', () => {
+  // Живая жалоба 2026-11-21: в карточке КП после выбора материала показывался
+  // `MAT-…`. Сервер хранит в `material_choice` только код и заметку; имя
+  // приходит справочником, который теперь грузится вместе с карточкой.
+  const materialCatalog: SystemCardDto[] = [
+    { noteId: 100, sku: 'MAT-КРОВ-ПВХ-0001', title: 'Кровельная ПВХ-мембрана ECOPLAST' },
+  ];
+  const withMaterials = { ...offer, materials: [{ sku: 'MAT-КРОВ-ПВХ-0001', noteId: 100 }] };
+  assert.equal(chosenMaterials(withMaterials, materialCatalog)[0]?.title, 'Кровельная ПВХ-мембрана ECOPLAST');
+  // Справочник не прочитался — остаётся код: пустая строка была бы хуже.
+  assert.equal(chosenMaterials(withMaterials)[0]?.title, 'MAT-КРОВ-ПВХ-0001');
+});
+
 test('ответ сохранения читается в новой форме — документ и пустые обязательные', () => {
   const res = readWindowSave({
     offer: { ...offer, number: '007/2026' },

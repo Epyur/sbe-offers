@@ -239,6 +239,29 @@ export async function loadSystemCatalog(): Promise<SystemCardDto[]> {
   return res.systems ?? [];
 }
 
+/**
+ * Справочник материалов: по нему карточка подписывает уже выбранные материалы
+ * названием, а не кодом (2026-11-21). Ответ сервера — `{items: Material[]}`;
+ * берём только то, что нужно подписи.
+ */
+export async function loadMaterialCatalog(): Promise<SystemCardDto[]> {
+  const res = await apiRequest<{
+    items?: Array<{ noteId?: number; sku?: string; name?: string }>;
+    error?: string;
+  }>('/materials');
+  return (res.items ?? [])
+    .filter((item) => (item.noteId ?? 0) > 0 && (item.name ?? '').trim() !== '')
+    .map((item) => {
+      const card: SystemCardDto = {
+        noteId: item.noteId as number,
+        title: (item.name ?? '').trim(),
+      };
+      // `exactOptionalPropertyTypes`: пустой код не пишем вовсе, а не `undefined`.
+      if ((item.sku ?? '').trim() !== '') card.sku = (item.sku ?? '').trim();
+      return card;
+    });
+}
+
 /** Ключ системы — тот же, что уходит на сервер: `sku` сильнее `noteId`. */
 export function systemKey(system: { sku?: string; noteId?: number }): string {
   const sku = (system.sku ?? '').trim().toUpperCase();
@@ -255,12 +278,15 @@ export function chosenSystems(offer: OfferDto, catalog: SystemCardDto[]): Chosen
 }
 
 /**
- * Названия выбранных МАТЕРИАЛОВ (2026-11-13). Каталог материалов в приложении
- * не грузится: у материала название приходит из описания и продукта, а здесь
- * достаточно кода или номера заметки — человек видит, что материал выбран.
+ * Названия выбранных МАТЕРИАЛОВ (2026-11-13).
+ *
+ * Каталог материалов приходит с экраном (2026-11-21): сервер хранит в
+ * `material_choice` только код и заметку, поэтому без справочника подписью
+ * становился код `MAT-…`. Справочник не прочитался — код остаётся: пустая
+ * строка хуже, человек должен видеть, что материал выбран.
  */
-export function chosenMaterials(offer: OfferDto): ChosenSystem[] {
-  return chosenRefs(offer.materials, []);
+export function chosenMaterials(offer: OfferDto, catalog: SystemCardDto[] = []): ChosenSystem[] {
+  return chosenRefs(offer.materials, catalog);
 }
 
 function chosenRefs(refs: OfferSystemDto[] | undefined, catalog: SystemCardDto[]): ChosenSystem[] {
