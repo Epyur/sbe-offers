@@ -11,12 +11,9 @@
  * умеет только «покажи найденное кнопками и запомни выбор».
  */
 
-/** Вариант выбора: заметка Базы знаний и её подпись. */
-export interface PickerCandidate {
-  noteId: number;
-  title: string;
-  code?: string;
-}
+import { PICKER_EMPTY_HINT, pickerRows, type PickerCandidate } from './picker-model';
+
+export type { PickerCandidate } from './picker-model';
 
 /** Опции окна выбора. */
 export interface PickerOptions {
@@ -48,20 +45,6 @@ export interface PickerOptions {
   onRemove?: (index: number) => void | Promise<void>;
   /** Текст, когда ничего не выбрано. */
   emptyText?: string;
-}
-
-/**
- * Совпадение по запросу: слова ищутся по названию и коду, регистр и «ё» не
- * важны. То же правило, что в боте — одно место на все окна.
- */
-export function filterCandidates(items: PickerCandidate[], query: string): PickerCandidate[] {
-  const q = query.trim().toLowerCase().replace(/ё/g, 'е');
-  if (!q) return items;
-  const words = q.split(/\s+/).filter((w) => w !== '');
-  return items.filter((item) => {
-    const hay = `${item.title} ${item.code ?? ''}`.toLowerCase().replace(/ё/g, 'е');
-    return words.every((w) => hay.includes(w));
-  });
 }
 
 /**
@@ -102,16 +85,18 @@ export function renderPicker(
   let foundByServer: PickerCandidate[] | null = null;
   let searchSeq = 0;
 
-  const shown = (query: string): PickerCandidate[] => {
-    const found = foundByServer ?? filterCandidates(opts.candidates(), query);
-    // Без запроса показываем небольшой срез: весь каталог — это тысячи строк,
-    // которые человек всё равно не прочитает.
-    return query.trim() ? found : found.slice(0, 20);
-  };
+  const shown = (query: string): PickerCandidate[] =>
+    pickerRows(opts.candidates(), foundByServer, query);
 
   const renderItems = (items: PickerCandidate[]): void => {
     results.empty();
     if (items.length === 0) {
+      // Пустой запрос — не «ничего не нашлось»: человек ещё не начал вводить,
+      // и показывать ему первые 20 строк каталога больше не нужно (2026-11-21).
+      if (search.value.trim() === '') {
+        results.createDiv({ cls: 'tn-offers-muted', text: PICKER_EMPTY_HINT });
+        return;
+      }
       if (opts.candidates().length === 0 && foundByServer === null) {
         results.createDiv({ cls: 'tn-offers-muted', text: 'Список пуст — нечего выбирать.' });
         return;

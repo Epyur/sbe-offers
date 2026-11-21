@@ -37,12 +37,41 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.13** — released 2026-11-20. The bot prints the combat
-sheet the button belongs to: the DOCX/«Готово» buttons now carry the sheet id, an
-old message without one asks which sheet to print, and only an author's own
-newest sheet is ever re-derived for actions. The previous version (0.11.12) made
-document links open for the customer (permanent signed link instead of the
-JWT-only `/api/documents/file`).
+Current version = **0.11.14** — released 2026-11-21. In the КП and combat-sheet
+windows the product list appears only after the manager starts typing, and
+chosen products are signed with their **names** instead of `sys-…` / `MAT-…`
+codes; the Mini App's chosen materials got the same name fix. The previous
+version (0.11.13) made the bot print the combat sheet carried by the button and
+sent «Достаточно» to the competitor picker.
+
+> **0.11.14 (2026-11-21) — окна выбора продукта: список после ввода, выбранное — названиями.**
+> Две живые жалобы по окнам создания/редактирования КП и боевого листка.
+> **(1) «В блоке выбора продукта показываются продукты до начала ввода».**
+> Окно рисовало первые 20 строк кэша, хотя человек ещё не написал ни буквы;
+> в мини-приложении это уже было решено (`shouldSearchSide`, 0.11.7). Правило
+> вынесено в чистый `src/ui/picker-model.ts` (`pickerRows`: пустой запрос —
+> пустой список), им пользуются **оба** окна — `picker.ts` (системы и материалы
+> КП) и `combat-view.ts` (наш продукт / конкуренты листка); вместо каталога
+> показывается подсказка «Начните вводить название — совпадения появятся
+> здесь». Заодно убрана вторая копия `filterCandidates`.
+> **(2) «После выбора показываются коды, а не названия».** У выбора в КП сервер
+> хранит только `noteId`/`sku`, а подпись бралась из результатов **последнего**
+> поиска: после второго запроса или переоткрытия КП появлялись `sys-412` /
+> `MAT-…`. Теперь окно помнит имена всего, что встречало (`rememberNames`), и
+> подписывает выбранное через `refTitle`; справочник систем/материалов
+> дочитывается при открытии и перерисовывает список выбранного. В
+> мини-приложении `chosenMaterials(offer, catalog)` получает справочник
+> материалов (`loadMaterialCatalog`) — чипы материалов тоже названиями. Если
+> справочник не прочитался, код остаётся запасным путём: пустая строка была бы
+> хуже.
+> **Проверки:** плагин `tsc` 0 / `build` OK / `check_bundle_strings` 0 /
+> `check_marker_registry` OK / `check_sections_conditions` 16/16 /
+> `check_combat_sections_rules` 20/20 / новый `check_picker_rules` **6/6**
+> (оба сторожа прогнаны откатом: возврат первых 20 строк — 1 красный, подпись
+> хэндлом — 3 красных); приложение `typecheck` 0 / **91** тест (+1 новый,
+> красный до правки) / `build` OK / `size` код 111 811 Б, картинки 192 618 Б.
+> Сервер, бот и база не менялись. Подробности выкладки — `HANDOFF.md`,
+> «Три точки сходятся (0.11.14)».
 
 > **0.11.13 (2026-11-20) — бот: DOCX печатает листок из кнопки, «Достаточно» ведёт к конкуренту.**
 > Две живые жалобы. **(1) «Нажимаю DOCX — приходит файл самого первого
@@ -1144,7 +1173,8 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `src/types/settings.ts` | `OffersSettings { apiUrl, lastAnnouncedVersion }` |
 | `src/services/offers.service.ts` | HTTP to `/api/offers/*`, `OffersError`, 401 retry, `exportDocx`, `refreshSystems`, 300 s timeouts on long calls |
 | `src/ui/offers-view.ts` | facade: top bar + sidebar (grouped: КП / Боевой листок / Справочники / Администрирование) + content |
-| `src/ui/picker.ts` | the single product picker: name search + result buttons, taken from the combat view and reused by the offer editor (2026-11-12 removed the two dropdowns) |
+| `src/ui/picker.ts` | the single product picker: name search + result buttons, taken from the combat view and reused by the offer editor (2026-11-12 removed the two dropdowns). Since 0.11.14 it shows no rows before typing; rules live in `picker-model.ts` |
+| `src/ui/picker-model.ts` | pure picker rules (no DOM): `pickerRows` (empty query — no list), `filterCandidates`, `rememberNames`/`refTitle` (chosen is signed with a name, not `sys-…`/`MAT-…`) |
 | `src/ui/offers-list.ts` | «🧾 КП»: list, card, composition editor, "Добавить систему", DOCX, link, header button «⚙️ Форма КП» |
 | `src/ui/combat-view.ts` | «⚔️ Боевой листок»: list of combat sheets, editor card (our systems + competitors from KB), form fields; header button «⚙️ Настройки боевого листка» |
 | `src/ui/combat-settings.ts` | «⚙️ Настройки боевого листка» (admin): content sections (2026-11-18, the КП editor in `combat` mode), base prompt, links marker, layout upload/download/delete |
@@ -1923,6 +1953,20 @@ measurements) are in the archive.
   (`COMBAT_SEARCH_LIMIT = 5`, the server is asked with `limit=5`). An empty
   query used to return the whole cache and the manager started by reading a
   page of foreign products. Tests: `offers-app/test/combat.test.ts`.
+  **The Obsidian windows follow the same rule since 0.11.14** (live complaint
+  «показываются продукты до начала ввода»): `pickerRows` in
+  `src/ui/picker-model.ts` returns nothing for an empty query, and BOTH
+  `picker.ts` and `combat-view.ts` use it. They used to show `found.slice(0, 20)`.
+- **A chosen product must be signed with its NAME, not its handle** (2026-11-21,
+  live complaint «после выбора показываются коды»). The server stores only
+  `noteId`/`sku` in `system_choice`/`material_choice`, and the window used to
+  resolve the label from the LAST search result — so after a second query, or
+  after reopening the offer, the list showed `sys-412` / `MAT-…`. The window now
+  keeps a name map (`rememberNames`) filled by the catalogue load and every
+  search, and `refTitle` signs the selection. The catalogue is re-rendered after
+  `load()`; the Mini App loads the material catalogue for the same reason
+  (`loadMaterialCatalog`, `chosenMaterials(offer, catalog)`). A missing
+  catalogue still falls back to the handle — an empty label is worse.
 - **A card without a KB note needs a non-empty SKU, or it vanishes / overwrites**
   (2026-11-17, `claude-5-opus` + `gemini-4-argon`, both confirmed in code).
   Text competitors have `noteId == 0`; `Ref.Empty()` (`model/offer.go:60`) is
