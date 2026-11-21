@@ -36,8 +36,8 @@
 | `backend` | код `36148c3` (доки — следующим коммитом) |
 | `main` | код `efa492e` (срез; `offers-service/`, `offers-bot/`, `offers-app/` — только на `backend`) |
 | самораздача | `manifest dbaba2c0…` / `main c7c75641…` / `styles 2517a7cf…`, сверено по https (`/plugins/sbe-offers/*`) и с локальной сборкой |
-| реестр на сервере | `/opt/mailers/www/registry.json` → `0.11.14` (бэкап `registry.json.bak-20261121-1048`), `uploadedAt 2026-11-21T07:48:37Z` |
-| реестр (git-копия) | `sbe-apstore-registry` **`3064b52`** (`0.11.14`, те же суммы и `uploadedAt`) |
+| реестр на сервере | `/opt/mailers/www/registry.json` → `0.11.14` (бэкапы `registry.json.bak-20261121-1048` и `-1055`), `uploadedAt 2026-11-21T07:48:37Z` |
+| реестр (git-копия) | `sbe-apstore-registry` **`3064b52`** (данные `0.11.14`; доки `fb8b7df`), те же суммы и `uploadedAt` |
 | приложение | `assets/index-dKlcPT0X.js` (551 552 Б), бэкап `app-offers.bak-20261121-1048`, sha256 `91ffc0cf…`; `index.html` ссылается на новый бандл, `vendor` тот же |
 | сервис и бот | **не менялись и не пересобирались** (правка только плагин + мини-приложение) |
 | стенд | **630/0** (2026-11-21, на коде выпуска) |
