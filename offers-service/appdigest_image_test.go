@@ -171,24 +171,50 @@ func TestDigestFeedCarriesImagePath(t *testing.T) {
 	}
 }
 
-// Подпись под кадром: шапка новости, обрезка по СИМВОЛАМ.
-func TestDigestCaptionForChat(t *testing.T) {
+// Новость уходит ОДНИМ сообщением: либо целиком в подписи под кадром, либо
+// целым текстом — но никогда двумя сообщениями.
+func TestDigestOneMessage(t *testing.T) {
 	issue := KBDigestIssue{YM: "2026-11", Title: "Технические новости ноября 2026"}
-	news := KBDigestNews{ID: 7, Title: "Новая мембрана", RubricName: "Материалы", Status: digestPublished}
-	caption := digestCaptionForChat(issue, news, "2026-11")
-	for _, want := range []string{"Технические новости ноября 2026", "Материалы", "Новая мембрана"} {
-		if !strings.Contains(caption, want) {
-			t.Errorf("в подписи нет %q:\n%s", want, caption)
+	news := KBDigestNews{
+		ID: 7, Title: "Новая мембрана", RubricName: "Материалы",
+		Lead: "Коротко о главном", BodyMD: "Первый абзац.",
+		Status: digestPublished,
+	}
+	full := digestNewsForChat(issue, news, "2026-11")
+	// Живые новости (256–647 знаков) целиком влезают в подпись — тогда уходит
+	// кадр с полным текстом, и это одно сообщение.
+	if !digestFitsCaption(full) {
+		t.Fatalf("короткая новость не влезла в подпись (%d знаков):\n%s", len([]rune(full)), full)
+	}
+	// Заголовок не повторяется: шапка — часть того же сообщения, а не второй.
+	if strings.Count(full, "Новая мембрана") != 1 {
+		t.Errorf("заголовок в сообщении не один раз:\n%s", full)
+	}
+	for _, want := range []string{"Технические новости ноября 2026", "Материалы", "Коротко о главном", "Первый абзац."} {
+		if !strings.Contains(full, want) {
+			t.Errorf("в сообщении нет %q:\n%s", want, full)
 		}
 	}
 
-	long := KBDigestNews{Title: strings.Repeat("я", 2000), Status: digestPublished}
-	cut := digestCaptionForChat(KBDigestIssue{YM: "2026-11"}, long, "2026-11")
-	if len([]rune(cut)) > digestCaptionLimit {
-		t.Fatalf("подпись длиннее предела: %d знаков", len([]rune(cut)))
+	// Длинная новость: одно сообщение, обрыв помечен многоточием.
+	longNews := KBDigestNews{
+		ID: 8, Title: "Длинная новость",
+		BodyMD: strings.Repeat("Очень длинный абзац текста новости. ", 400),
+		Status: digestPublished,
 	}
-	if !strings.HasSuffix(cut, "…") {
-		t.Errorf("обрезанная подпись не помечена многоточием: %q", cut)
+	long := digestOneMessage(digestNewsForChat(issue, longNews, "2026-11"))
+	if len([]rune(long)) > digestMessageLimit+1 {
+		t.Fatalf("сообщение длиннее предела: %d знаков", len([]rune(long)))
+	}
+	if !strings.HasSuffix(long, "…") {
+		t.Errorf("обрезанное сообщение не помечено многоточием")
+	}
+	if strings.Contains(long, "  ") || strings.HasSuffix(strings.TrimSuffix(long, "…"), " ") {
+		t.Errorf("обрезка оставила висячий пробел")
+	}
+	// Пустой текст не превращается в «…».
+	if got := digestOneMessage("   "); got != "" {
+		t.Errorf("пустой текст дал %q", got)
 	}
 }
 

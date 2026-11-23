@@ -862,7 +862,7 @@ p.app-required {
 }
 
 /* Ведущая новость: кадр, плашка рубрики поверх и текст под ним. */
-.app-digest-hero {
+.app-digest .app-news-lead {
   margin: 12px 16px 4px;
   padding: 0;
   border: 1px solid #253346;
@@ -871,9 +871,16 @@ p.app-required {
   overflow: hidden;
 }
 
-.app-digest .app-news {
-  border-top: 0;
-  padding: 0;
+/* Новости выпуска — такие же карточки, как ведущая (2026-11-23: жалоба
+ * «разъезжаются по всей ширине и почти наезжают друг на друга»). Раньше это
+ * были строки во всю ширину полосы с пунктирным разделителем: на телефоне
+ * текст одной новости читался как продолжение соседней. */
+.app-digest .app-digest-news {
+  margin: 10px 16px 0;
+  padding: 14px;
+  background: var(--dg-card);
+  border: 1px solid #253346;
+  border-radius: 8px;
 }
 
 .app-digest-hero-media {
@@ -1010,11 +1017,6 @@ p.app-required {
   color: var(--dg-red-soft);
 }
 
-.app-digest-news {
-  padding: 14px 16px;
-  border-top: 1px dashed var(--dg-line-soft);
-}
-
 .app-digest-thumb {
   display: block;
   width: 100%;
@@ -1072,7 +1074,7 @@ p.app-required {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 4px 16px 18px;
+  margin: 12px 16px 18px;
   padding: 14px 16px;
   background: #151d2a;
   border: 1px solid #253346;

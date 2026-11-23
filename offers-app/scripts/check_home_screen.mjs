@@ -176,6 +176,19 @@ await page.route('**/api/offers/**', (route) => {
             // и путь к нему проверяется так же, как у ведущей.
             imagePath: '/digest/image?hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&name=mini.png&sig=ff',
           },
+          {
+            id: 9,
+            title: 'Третья новость',
+            lead: 'Третья — чтобы карточек было ДВЕ и можно было проверить зазор.',
+            body: 'Текст третьей новости.',
+            rubric: 'Инструкция',
+            author: '',
+            at: '2026-11-08T09:00:00Z',
+            isLead: false,
+            linkUrl: '',
+            linkText: '',
+            imagePath: '',
+          },
         ],
       }),
     });
@@ -299,10 +312,10 @@ check(
 // Лента приходит запросом ПОСЛЕ отрисовки заголовка: ждём новости, а не
 // считаем их сразу — иначе счётчик видит ещё пустой экран.
 await page.locator('.app-news-title').first().waitFor({ timeout: 10000 });
-check('«Технодайджест»: новости выпуска нарисованы', (await page.locator('.app-news-title').count()) === 2);
+check('«Технодайджест»: новости выпуска нарисованы', (await page.locator('.app-news-title').count()) === 3);
 check(
   '«Технодайджест»: заголовки новостей — из Базы знаний',
-  ((await page.locator('.app-news-title').allTextContents()).join('|')) === 'Новая мембрана|Вторая новость',
+  ((await page.locator('.app-news-title').allTextContents()).join('|')) === 'Новая мембрана|Вторая новость|Третья новость',
 );
 check(
   '«Технодайджест»: выпуски для переключения месяцев',
@@ -310,7 +323,32 @@ check(
 );
 check(
   '«Технодайджест»: у КАЖДОЙ новости своя кнопка «Отправить в чат»',
-  (await page.locator('.app-news-send button').count()) === 2,
+  (await page.locator('.app-news-send button').count()) === 3,
+);
+// Карточки новостей (2026-11-23, жалоба «разъезжаются по ширине и наезжают друг
+// на друга»): каждая новость — в рамке своего цвета, как ведущая, и между ними
+// есть зазор. Проверяются вычисленные стили и расстояния, а не имена классов.
+const articleCards = page.locator('.app-digest-news');
+const cardStyle = await articleCards.first().evaluate((el) => {
+  const css = getComputedStyle(el);
+  return { bg: css.backgroundColor, border: css.borderTopWidth, radius: css.borderTopLeftRadius };
+});
+check(
+  '«Технодайджест»: карточка новости — в рамке на своей подложке',
+  cardStyle.bg !== 'rgba(0, 0, 0, 0)' && cardStyle.border !== '0px' && cardStyle.radius !== '0px',
+  JSON.stringify(cardStyle),
+);
+const firstCard = await articleCards.nth(0).boundingBox();
+const secondCard = await articleCards.nth(1).boundingBox();
+check(
+  '«Технодайджест»: карточки новостей не наезжают друг на друга',
+  firstCard !== null && secondCard !== null && secondCard.y - (firstCard.y + firstCard.height) >= 8,
+  firstCard && secondCard ? `зазор ${secondCard.y - (firstCard.y + firstCard.height)}px` : 'нет карточек',
+);
+check(
+  '«Технодайджест»: карточка уже полосы (есть отступы по краям)',
+  firstCard !== null && firstCard.x > 15 && firstCard.width < 430 - 30,
+  firstCard ? `x=${firstCard.x}, ширина=${firstCard.width}` : 'нет карточки',
 );
 // Брендовая полоса (2026-11-23, макет тёмной темы): шапка с эмблемой и
 // плашкой месяца, кадр ведущей новости, подвал. Проверяются те части макета,

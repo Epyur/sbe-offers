@@ -299,36 +299,34 @@ func (s *Server) handleAppNews(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.WithoutCancel(r.Context())
-	// Текст и подпись собираются ДО отправки: сначала решаем, уйдёт ли кадр,
-	// и только потом решаем, что писать под ним.
-	caption := digestCaptionForChat(issue, newsItem, ym)
+	// ОДНО сообщение на новость (2026-11-23, жалоба пользователя: «новость не
+	// должна резаться на несколько сообщений»). Форму выбираем до отправки:
+	// кадр с подписью — только если ВЕСЬ текст новости влезает в подпись
+	// Telegram (1000 знаков); иначе уходит один текстовый месседж. Второго
+	// сообщения не бывает никогда: ни «шапка + текст», ни «кадр + текст».
 	text := digestNewsForChat(issue, newsItem, ym)
-	photoSent := false
-	if photo, fileName, ok := s.digestNewsPhoto(ctx, newsItem); ok {
-		if err := s.sendChatPhoto(ctx, chatID, fileName, photo, caption); err != nil {
-			// Картинка необязательна: новость уйдёт текстом, как раньше, а
-			// причина останется в журнале (спросить уже некого).
-			log.Printf("digest: картинка новости %d в чат %s не ушла: %v", req.ID, chatID, err)
-		} else {
-			photoSent = true
-			// Подпись под кадром уже называет выпуск, рубрику и заголовок —
-			// второй раз их в сообщении не повторяем.
-			text = digestNewsBodyForChat(newsItem)
+	sent := false
+	if digestFitsCaption(text) {
+		if photo, fileName, ok := s.digestNewsPhoto(ctx, newsItem); ok {
+			if err := s.sendChatPhoto(ctx, chatID, fileName, photo, text); err != nil {
+				// Кадр не ушёл — новость всё равно должна дойти: текстом.
+				log.Printf("digest: картинка новости %d в чат %s не ушла: %v", req.ID, chatID, err)
+			} else {
+				sent = true
+			}
 		}
 	}
-	if strings.TrimSpace(text) != "" {
-		if err := s.sendChatText(ctx, chatID, text); err != nil {
+	if !sent {
+		// `digestOneMessage` держит текст в пределах одного сообщения Telegram:
+		// длинную новость бот не разрежет на части, а закончит многоточием.
+		if err := s.sendChatText(ctx, chatID, digestOneMessage(text)); err != nil {
 			// Причина — в журнал, человеку — свой текст: ответ бота («бот ответил
 			// 403 forbidden») ничего не говорит менеджеру и раскрывает внутренности.
 			log.Printf("digest: новость %d в чат %s не ушла: %v", req.ID, chatID, err)
-			// Кадр уже дошёл — новость человек получил. Отвечать отказом значило
-			// бы звать нажать ещё раз и подарить второй кадр.
-			if !photoSent {
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"error": "Бот не смог отправить новость в чат — попробуйте ещё раз",
-				})
-				return
-			}
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Бот не смог отправить новость в чат — попробуйте ещё раз",
+			})
+			return
 		}
 	}
 	log.Printf("digest: новость %d отправлена в чат %s (%s)", req.ID, chatID, email)
@@ -466,23 +464,33 @@ func digestNewsForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
 // digestCaptionForChat — подпись под картинкой новости.
 //
 // Telegram пускает в подпись не больше 1024 знаков и считает СИМВОЛЫ, а не
-// байты, поэтому обрезка — по рунам. Шапка короткая по построению; предел всё
-// равно держим, чтобы длинный заголовок не превратил отправку в отказ.
-func digestCaptionForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
-	return cutRunes(strings.Join(digestHeadlineForChat(issue, n, ym), "\n"), digestCaptionLimit)
+// байты, поэтому предел сравнивается по рунам. Подпись — это ВСЯ новость
+// (`digestNewsForChat`): своей короткой «шапки» больше нет, иначе новость уходила
+// бы двумя сообщениями (2026-11-23, жалоба «не резать на несколько сообщений»).
+func digestFitsCaption(text string) bool {
+	return len([]rune(text)) <= digestCaptionLimit
 }
 
-// cutRunes — обрезать текст по числу символов, поставив многоточие.
-func cutRunes(text string, limit int) string {
-	if limit <= 0 {
-		return ""
+// digestOneMessage — текст в пределах ОДНОГО сообщения Telegram.
+//
+// Telegram не примет больше 4096 знаков и не даст «продолжить» в следующем
+// сообщении так, чтобы это выглядело одной новостью. Поэтому длинную новость
+// бот заканчивает многоточием на границе слова: одно сообщение, честный обрыв
+// виден. Реальные новости выпуска — 256–647 знаков, так что обрезка — запасной
+// путь, а не обычный.
+func digestOneMessage(text string) string {
+	trimmed := strings.TrimSpace(text)
+	runes := []rune(trimmed)
+	if len(runes) <= digestMessageLimit {
+		return trimmed
 	}
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
+	cut := runes[:digestMessageLimit]
+	// Режем по последнему пробелу или переводу строки, чтобы не рвать слово.
+	for i := len(cut) - 1; i > len(cut)/2; i-- {
+		if cut[i] == ' ' || cut[i] == '\n' {
+			cut = cut[:i]
+			break
+		}
 	}
-	if limit == 1 {
-		return "…"
-	}
-	return string(runes[:limit-1]) + "…"
+	return strings.TrimRight(string(cut), " \n") + "…"
 }
