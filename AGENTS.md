@@ -44,6 +44,16 @@ codes; the Mini App's chosen materials got the same name fix. The previous
 version (0.11.13) made the bot print the combat sheet carried by the button and
 sent «Достаточно» to the competitor picker.
 
+**Unreleased (2026-11-23):** the Mini App's fourth card «Технодайджест» is no
+longer a stub — the screen shows the month's news from the Knowledge Base
+digest (month switcher, rubric, lead, body, source) and gives every item its own
+«📤 Отправить в чат» button. The Mini App key cannot read kb-service (a token is
+issued to ONE app), so `offers-service` proxies the digest with its
+service-to-service token; see `appdigest.go` and the gotcha about `app_id`.
+Deploy the service **before** the new app bundle. Two independent reviews
+(server/access, client/product) before deploy found **no blockers**; their
+findings are fixed and listed in `HANDOFF.md` («Две независимые ревизии…»).
+
 > **0.11.14 (2026-11-21) — окна выбора продукта: список после ввода, выбранное — названиями.**
 > Две живые жалобы по окнам создания/редактирования КП и боевого листка.
 > **(1) «В блоке выбора продукта показываются продукты до начала ввода».**
@@ -1208,7 +1218,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
-| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`), `base: './'`, built to `offers-app/dist/`. **S0+S1+B+ done**: scaffold, placeholder screens, sign-in (initData → JWT), and the bot's «📱 Открыть приложение» buttons. Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 72 KiB used), `npm test` (12 passing). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
+| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`, `#/digest/:ym`), `base: './'`, built to `offers-app/dist/`. **S0+S1+B+ done**: scaffold, placeholder screens, sign-in (initData → JWT), and the bot's «📱 Открыть приложение» buttons. **Since 2026-11-23** the fourth card «Технодайджест» is real: `src/digest.ts` (pure: `digestFeedOf` boundary parse, `digestParagraphs`, `monthLabel`, `sendNewsToChat`) + `src/digest-screen.tsx` (news of the month from the KB digest, month switcher, «📤 Отправить в чат» per item, window not closed). Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 113 677 B of code used), `npm test` (100 passing), `scripts/check_home_screen.mjs` (26 checks, real browser). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
 
 **Mini App, S1 — identity (2026-11-13).** `offers-service/appauth.go`:
 `verifyInitData` (HMAC per Telegram docs, constant-time compare, `auth_date`
@@ -1255,6 +1265,10 @@ reuses `combat.go`/`combat_docx.go`, owner is the chat's bound email),
 `/suggest`/`/bot/suggest`, 2026-11-12), `appauth.go` (Mini App sign-in,
 2026-11-13: `verifyInitData` over the bot token from `offers_bot_config`,
 `signAppJWT` with the plugin's claims, `POST /app/session`, `GET /app/config`),
+`appdigest.go` (Технодайджест in the Mini App, 2026-11-23: `GET /digest` from
+the KB digest — published only, month from the service — and `POST /app/news`,
+which re-reads the item and sends it to the chat as a bot message;
+`sendChatText` in `appanswer.go` is the transport),
 `kb_image.go`, `llmclient.go`, `gentrace.go` (per-route timeouts + generation
 log), `systemtext.go` (`offers_system_text`, `generateSystemTexts`),
 `docx.go` (render entry points, service fields, composition printing),
@@ -1556,6 +1570,22 @@ measurements) are in the archive.
 - **A screen that reads another service live on every open will eventually show
   that service's error to the user.** `GET /systems` did exactly that. Read from
   a cache, refresh on an explicit button.
+  **The digest feed is the named exception (2026-11-23, deliberate).**
+  `GET /digest` asks kb-service twice per open (`DigestIssues` + `DigestIssue`)
+  and has no cache: news are read once, freshness is the point, and the refusal
+  is shown honestly with a «Повторить» button and a way back to the current
+  issue. Do not copy this to catalogue screens (systems, materials, competitors
+  — those keep caches), and do not "fix" the digest by freezing the month's news
+  in `offers_context`. If traffic ever matters, a ≤60 s in-memory cache is the
+  sanctioned step.
+- **Model/ledger text goes to Telegram as PLAIN text — strip markdown once, in
+  one place per side** (2026-11-23). The news body is authored in KB's reduced
+  markdown (`**bold**`, `[label](url)`, list markers, `#`), and the bot sends
+  without `parse_mode`, so `digestPlainText` (`appdigest.go`) cleans it for the
+  chat while `plainLine`/`digestParagraphs` (`offers-app/src/digest.ts`) do the
+  same for the screen. Two languages cannot share a function, but the rule must
+  match — change both or neither. Do not switch the bot to `parse_mode=Markdown`:
+  user text would become markup and a stray `_`/`*` breaks the message.
 - **Service-to-service clients need the same 401 retry as the plugin.**
   `KBClient.get` drops the token and repeats once.
 - **Time in API responses must be `RFC3339Nano`, not `RFC3339`** — the short
@@ -1853,6 +1883,17 @@ measurements) are in the archive.
   Neither internal route takes an `email` parameter.
 
 ### Bot and rights
+
+- **A Mini App key is issued to ONE app and cannot read another app's API**
+  (2026-11-23). `kb-service` compares `claims.app_id` with its own and answers
+  `403 «ключ выдан другому приложению»`, so the offers JWT cannot open
+  `/api/kb/digest/*` — and the same holds for every service in the system. Data
+  of a foreign service goes through OUR service: `offers-service` reads the KB
+  with its service-to-service token (`KBClient`) and hands the Mini App a short
+  view (`appdigest.go`). Do not «fix» this by loosening the foreign check and do
+  not put the KB token into the browser. `requireServiceSecret`/JWT gates stay
+  as they are: the digest feed is `requirePerm("viewer")`, the chat send is
+  gated by the Telegram signature.
 
 - **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
   (2026-11-13, R2). `nd:pick:3` must become `{prefix:'nd:pick', id:3}`. Parsing
