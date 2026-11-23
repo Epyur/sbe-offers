@@ -9,13 +9,16 @@
 export type Route =
   | { name: 'home' }
   | { name: 'ambulance' }
-  | { name: 'digest' }
+  | { name: 'digest'; ym: string }
   | { name: 'list'; kind: 'offers' | 'sheets'; query: string }
   | { name: 'offer'; id: number }
   | { name: 'sheet'; id: number }
   | { name: 'notFound'; hash: string };
 
 const EMPTY_HASH = '';
+
+/** Вид месяца выпуска Технодайджеста: `2026-11` (тот же, что у сервиса). */
+const DIGEST_YM = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
  * Параметры, которые дописывает в хэш сам Telegram при открытии Mini App.
@@ -93,7 +96,14 @@ export function parseRoute(hash: string): Route {
   }
 
   if (parts.length === 1 && parts[0] === 'digest') {
-    return { name: 'digest' };
+    return { name: 'digest', ym: '' };
+  }
+
+  // Выпуск месяца: `#/digest/2026-11`. Вид месяца тот же, что у сервиса —
+  // мусор в адресе остаётся «экраном не найден», а не запросом в пустоту.
+  if (parts.length === 2 && parts[0] === 'digest') {
+    const month = parts[1] ?? '';
+    if (DIGEST_YM.test(month)) return { name: 'digest', ym: month };
   }
 
   if (parts.length === 2) {
@@ -123,7 +133,7 @@ export function routeHash(route: Exclude<Route, { name: 'notFound' }>, base = ''
     case 'ambulance':
       return `${prefix}#/ambulance`;
     case 'digest':
-      return `${prefix}#/digest`;
+      return `${prefix}#/digest${route.ym === '' ? '' : `/${route.ym}`}`;
     case 'list': {
       const q = route.query.trim();
       const suffix = q === '' ? '' : `?q=${encodeURIComponent(q)}`;

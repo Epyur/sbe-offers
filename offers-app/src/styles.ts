@@ -574,6 +574,76 @@ p.app-required {
   font-weight: 600;
 }
 
+/*
+ * «Технодайджест» (2026-11-23): лента новостей выпуска из Базы знаний.
+ * Вёрстка простая и «газетная» настолько, насколько это уместно в телефоне:
+ * рубрика — над заголовком, лид курсивом, текст абзацами. Своей полосы A4
+ * (как в Базе знаний) здесь нет намеренно — на телефоне она нечитаема.
+ */
+.app-months {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--app-gap);
+}
+
+.app-month {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--tg-hint);
+  color: var(--tg-text);
+  text-decoration: none;
+  font-size: 14px;
+  background: var(--tg-secondary-bg);
+}
+
+.app-month-current {
+  border-color: var(--tg-link);
+  color: var(--tg-link);
+  background: transparent;
+}
+
+.app-news {
+  padding: var(--app-gap) 0;
+  border-top: 1px solid var(--tg-hint);
+}
+
+.app-news:first-of-type {
+  border-top: 0;
+}
+
+.app-news-rubric {
+  margin: 0 0 2px;
+  color: var(--tg-link);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-news-title {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.app-news-lead .app-news-title {
+  font-size: 21px;
+}
+
+.app-news-byline {
+  color: var(--tg-hint);
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.app-news-lead-text {
+  font-style: italic;
+  color: var(--tg-hint);
+}
+
+.app-news-send {
+  margin-top: 8px;
+}
+
 .app-brief-fields {
   list-style: none;
   margin: 0 0 var(--app-gap);

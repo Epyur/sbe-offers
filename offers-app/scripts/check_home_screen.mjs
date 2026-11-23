@@ -5,7 +5,7 @@
  *   `#/`            — четыре карточки разделов, «Скорая помощь» первой;
  *   `#/list/offers` — список КП и строка разделов;
  *   `#/ambulance`   — экран «раздел ещё готовится»;
- *   `#/digest`      — экран «раздел проектируется»;
+ *   `#/digest`      — новости Технодайджеста и кнопка «Отправить в чат» у каждой;
  *   открытие без хэша — приветствие.
  *
  * Подменяются только SDK Telegram (настоящий `initData` иначе пуст) и
@@ -73,6 +73,31 @@ await page.addInitScript(() => {
   install();
 });
 
+// SDK платформы подменяется крошечной заглушкой (2026-11-23). Настоящий
+// `vendor/telegram-web-app.js` вне клиента Telegram отдаёт ПУСТОЙ initData, и
+// тогда «Отправить в чат» честно отвечает «окно открыто без ключа Telegram» —
+// проверить отправку было бы нельзя. Заглушка даёт подпись и ровно те методы,
+// которые приложение у платформы спрашивает (`src/tg.ts`).
+const TELEGRAM_STUB = `
+window.Telegram = { WebApp: {
+  initData: 'query_id=AAFe&user=%7B%22id%22%3A1%7D&auth_date=1',
+  initDataUnsafe: { user: { id: 1 } },
+  colorScheme: 'light',
+  themeParams: {},
+  version: '9.6',
+  platform: 'web',
+  ready() {}, expand() {}, close() {}, sendData() {},
+  onEvent() {}, offEvent() {},
+}};
+`;
+
+// Заглушка подменяет файл SDK целиком — что сам файл есть в сборке,
+// проверяется ниже, когда объявлен счётчик проверок.
+
+await page.route('**/vendor/telegram-web-app.js', (route) =>
+  route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: TELEGRAM_STUB }),
+);
+
 // Режим ответа (2026-11-15): вторая половина проверки смотрит бриф, поэтому
 // окно и ответ брифа переключаются флагом, а не ВТОРЫМ обработчиком маршрута:
 // page.route дописывает стопкой, и первый ответил бы раньше второго.
@@ -85,6 +110,55 @@ await page.route('**/api/offers/**', (route) => {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ token: 'test', user: { email: 'test@tn.ru', role: 'admin' } }),
+    });
+  }
+  if (url.includes('/app/news')) {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  }
+  // Технодайджест (2026-11-23): два выпуска и две новости — проверяется, что
+  // лента нарисована и у КАЖДОЙ новости есть своя кнопка отправки.
+  if (url.includes('/digest')) {
+    // Несуществующий выпуск — для проверки, что отказ не тупик.
+    if (url.includes('ym=2025-01')) {
+      return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'такого выпуска нет' }) });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        current: '2026-11',
+        issues: [
+          { ym: '2026-11', title: 'Технические новости ноября 2026', items: 2 },
+          { ym: '2026-10', title: 'Технические новости октября 2026', items: 1 },
+        ],
+        issue: { ym: '2026-11', title: 'Технические новости ноября 2026', items: 2 },
+        items: [
+          {
+            id: 7,
+            title: 'Новая мембрана',
+            lead: 'Коротко о главном',
+            body: 'Первый абзац.\n\nВторой абзац.',
+            rubric: 'Материалы',
+            author: 'Иван Петров',
+            at: '2026-11-05T09:00:00Z',
+            isLead: true,
+            linkUrl: '',
+            linkText: '',
+          },
+          {
+            id: 8,
+            title: 'Вторая новость',
+            lead: '',
+            body: 'Текст второй новости.',
+            rubric: '',
+            author: '',
+            at: '2026-11-07T09:00:00Z',
+            isLead: false,
+            linkUrl: 'https://example.org/news',
+            linkText: 'Источник',
+          },
+        ],
+      }),
     });
   }
   // Окно КП (2026-11-15): только две зоны из пяти, в обратном порядке —
@@ -166,6 +240,10 @@ function check(name, ok, detail = '') {
   if (!ok) failed += 1;
 }
 
+// Заглушка SDK подменяет файл целиком, поэтому отдельно убеждаемся, что сам
+// файл попал в сборку: иначе его пропажа прошла бы незамеченной.
+check('сборка: SDK Telegram на месте', existsSync(join(DIST, 'vendor', 'telegram-web-app.js')));
+
 await page.goto(`${base}#/`, { waitUntil: 'networkidle' });
 check('главная: 4 карточки разделов', (await page.locator('.app-section-tile').count()) === 4);
 check(
@@ -199,10 +277,57 @@ check(
   '«Технодайджест»: свой экран',
   ((await page.locator('main h1').first().textContent()) ?? '').includes('Технодайджест'),
 );
+// Лента приходит запросом ПОСЛЕ отрисовки заголовка: ждём новости, а не
+// считаем их сразу — иначе счётчик видит ещё пустой экран.
+await page.locator('.app-news-title').first().waitFor({ timeout: 10000 });
+check('«Технодайджест»: новости выпуска нарисованы', (await page.locator('.app-news-title').count()) === 2);
+check(
+  '«Технодайджест»: заголовки новостей — из Базы знаний',
+  ((await page.locator('.app-news-title').allTextContents()).join('|')) === 'Новая мембрана|Вторая новость',
+);
+check(
+  '«Технодайджест»: выпуски для переключения месяцев',
+  (await page.locator('.app-month').count()) === 2,
+);
+check(
+  '«Технодайджест»: у КАЖДОЙ новости своя кнопка «Отправить в чат»',
+  (await page.locator('.app-news-send button').count()) === 2,
+);
+await page.locator('.app-news-send button').first().click();
+await page.waitForFunction(
+  () => (document.querySelector('.app-news-send button')?.textContent ?? '').includes('Отправлено'),
+);
+check(
+  '«Технодайджест»: отправка в чат подтверждена на экране',
+  ((await page.locator('.app-news-send button').first().textContent()) ?? '').includes('Отправлено'),
+);
+// Повторное нажатие по «Отправлено» не должно слать второе сообщение.
+check(
+  '«Технодайджест»: после отправки кнопка выключена',
+  await page.locator('.app-news-send button').first().isDisabled(),
+);
+check('«Технодайджест»: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+// Отказ по месяцу не оставляет человека в тупике: есть путь к текущему выпуску.
+// Ошибки считаем с этой точки отдельно: намеренный 404 ниже попадёт в консоль
+// как «Failed to load resource» и не должен краснить следующие экраны.
+const errorsBeforeMonth = errors.length;
+await page.goto(`${base}#/digest/2025-01`, { waitUntil: 'networkidle' });
+await page.locator('.app-error').first().waitFor({ timeout: 10000 });
+check(
+  '«Технодайджест»: у отказа есть ссылка «К текущему выпуску»',
+  (await page.getByRole('link', { name: 'К текущему выпуску' }).count()) === 1,
+);
+for (let i = errors.length - 1; i >= errorsBeforeMonth; i -= 1) {
+  if (/404/.test(errors[i] ?? '')) errors.splice(i, 1);
+}
 
 // Окно КП (2026-11-15, шаг 3): экран рисует ТОЛЬКО зоны из настройки и в её
 // порядке. Подмена `/form` выше отдаёт «позиции, заказчик» и прячет остальные.
 await page.goto(`${base}#/offer/1`, { waitUntil: 'networkidle' });
+// Карточка собирается запросом после перехода: ждём её, иначе список зон
+// измеряется на ещё пустом экране (гонка, поймана проверкой 2026-11-23).
+await page.locator('main .app-card').first().waitFor({ timeout: 10000 });
 const zoneTitles = (await page.locator('.app-card h2').allTextContents()).map((s) => s.trim());
 check('карточка КП: рисуются зоны из окна', zoneTitles.join('|') === 'Позиции|Заказчик', zoneTitles.join('|'));
 check('карточка КП: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));

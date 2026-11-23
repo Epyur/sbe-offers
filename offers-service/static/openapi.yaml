@@ -237,6 +237,156 @@ paths:
         '502':
           description: Файл собран, но в чат не ушёл (текст в `error`/`detail`)
 
+  /api/offers/digest:
+    get:
+      summary: Новости Технодайджеста из Базы знаний
+      description: |
+        Лента для четвёртой кнопки Mini App. Раздел «Дайджест» живёт в
+        kb-service, но ключ приложения выдан `offers`, а kb-service отвергает
+        чужой `app_id`; поэтому новости читает сервис своим межсервисным
+        токеном и отдаёт приложению короткий вид.
+
+        В ленту попадают только вышедшие новости (`published`): редакторская
+        очередь модерации в приложение не выходит. Без `ym` показывается месяц,
+        который назвал kb-service (по московскому времени).
+
+        Коды: 400 — месяц не вида `2026-11`; 404 — такого выпуска нет; 502 —
+        База знаний не ответила; 503 — База знаний не настроена.
+      parameters:
+        - name: ym
+          in: query
+          required: false
+          schema:
+            type: string
+            example: '2026-11'
+          description: Месяц выпуска; пусто — текущий месяц по версии Базы знаний
+      responses:
+        '200':
+          description: Выпуск и его новости
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current:
+                    type: string
+                    example: '2026-11'
+                  issues:
+                    type: array
+                    description: Выпуски для переключения месяцев (пусто — `[]`)
+                    items:
+                      type: object
+                      properties:
+                        ym:
+                          type: string
+                        title:
+                          type: string
+                        items:
+                          type: integer
+                  issue:
+                    type: object
+                    properties:
+                      ym:
+                        type: string
+                      title:
+                        type: string
+                      items:
+                        type: integer
+                  items:
+                    type: array
+                    description: Только вышедшие новости (пусто — `[]`)
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        title:
+                          type: string
+                        lead:
+                          type: string
+                        body:
+                          type: string
+                        rubric:
+                          type: string
+                        author:
+                          type: string
+                        at:
+                          type: string
+                          format: date-time
+                        isLead:
+                          type: boolean
+                        linkUrl:
+                          type: string
+                        linkText:
+                          type: string
+        '400':
+          description: Месяц задан неверно
+        '404':
+          description: Такого выпуска нет
+        '502':
+          description: База знаний не ответила
+        '503':
+          description: База знаний не настроена
+
+  /api/offers/app/news:
+    post:
+      summary: Отправить новость Технодайджеста в чат бота
+      description: |
+        Кнопка «Отправить в чат» у новости. Адресат — из подписи `initData`,
+        поэтому попросить чужой чат нельзя. Текст новости сервис перечитывает
+        из выпуска Базы знаний по `ym` и `id`, а не берёт из тела запроса;
+        неопубликованная новость не отправляется (`404`).
+
+        Коды: 400 — новость не указана или тело не JSON; 401/403 — та же
+        проверка подписи, что у `/app/session` (`not_linked` — человека нет в
+        боте); 404 — новость не найдена; 502 — База знаний не ответила или
+        бот не принял сообщение; 503 — База знаний не настроена.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData, ym, id]
+              properties:
+                initData:
+                  type: string
+                  description: Строка `window.Telegram.WebApp.initData`
+                ym:
+                  type: string
+                  example: '2026-11'
+                  description: Месяц выпуска, в котором лежит новость
+                id:
+                  type: integer
+                  description: Номер новости в выпуске
+      responses:
+        '200':
+          description: Новость отправлена в чат
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          description: Новость не указана или тело не JSON
+        '401':
+          description: Подпись неверна или устарела
+        '403':
+          description: Человек ещё не входил в бота (`not_linked`)
+        '404':
+          description: Новость не найдена в выпуске
+        '502':
+          description: База знаний не ответила или бот не принял сообщение
+        '503':
+          description: |
+            База знаний не настроена (`KB_SERVICE_URL` пуст) или в сервисе нет
+            токена бота (`offers_bot_config`) — отправлять нечем.
+        '500':
+          description: Ошибка базы сервиса (настройка бота или привязка чата не прочитаны)
+
   /api/offers/permissions/me:
     get:
       summary: Роль текущего пользователя

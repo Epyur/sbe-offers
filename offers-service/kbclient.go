@@ -217,7 +217,7 @@ func (c *KBClient) get(ctx context.Context, path string, query url.Values, out a
 
 // isUnauthorized — отказ по токену (401), а не «нет прав» (403).
 func isUnauthorized(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "ответила 401")
+	return kbStatusOf(err) == http.StatusUnauthorized
 }
 
 // getOnce — один запрос с текущим токеном.
@@ -245,12 +245,36 @@ func (c *KBClient) getOnce(ctx context.Context, path string, query url.Values, o
 		return fmt.Errorf("прочитать ответ базы знаний: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("база знаний ответила %d: %s", resp.StatusCode, previewKB(body))
+		return &kbStatusError{Status: resp.StatusCode, Body: previewKB(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("база знаний ответила не JSON: %s", previewKB(body))
 	}
 	return nil
+}
+
+// kbStatusError — отказ kb-service вместе с кодом ответа.
+//
+// Отдельный тип, а не текст ошибки (2026-11-23): «такого выпуска нет» (404) и
+// «сервис не ответил» (502) — разные ответы человеку, и различать их поиском
+// подстроки значило бы поставить поведение в зависимость от формулировки
+// сообщения. Текст остаётся прежним, ради журналов и старых тестов.
+type kbStatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *kbStatusError) Error() string {
+	return fmt.Sprintf("база знаний ответила %d: %s", e.Status, e.Body)
+}
+
+// kbStatusOf — код ответа kb-service в ошибке; 0 — отказ не по статусу.
+func kbStatusOf(err error) int {
+	var status *kbStatusError
+	if errors.As(err, &status) {
+		return status.Status
+	}
+	return 0
 }
 
 // previewKB — начало тела ответа для журнала.
@@ -495,6 +519,70 @@ func (c *KBClient) Attachments(ctx context.Context, noteID int64) ([]KBAttachmen
 	}
 	err := c.get(ctx, fmt.Sprintf("/api/kb/notes/%d/attachments", noteID), nil, &out)
 	return out.Attachments, err
+}
+
+// KBDigestIssue — выпуск «Технодайджеста» (2026-11-23).
+//
+// Раздел «Дайджест» живёт в kb-service, но ключ Mini App выдан приложению
+// `offers`: kb-service отвечает «ключ выдан другому приложению» на любой чужой
+// токен (jwt.go, requirePerm). Поэтому карточки читает сервис — тем же
+// межсервисным токеном, что и заметки, — а приложению отдаёт короткий вид.
+type KBDigestIssue struct {
+	ID        int64     `json:"id"`
+	YM        string    `json:"ym"`
+	Title     string    `json:"title"`
+	NoteID    *int64    `json:"note_id,omitempty"`
+	Items     int       `json:"items"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// KBDigestNews — новость выпуска в том виде, в каком её отдаёт kb-service.
+// Разбор — на границе (`appdigest.go`): поля называются snake_case, а Mini App
+// читает camelCase.
+type KBDigestNews struct {
+	ID          int64     `json:"id"`
+	Title       string    `json:"title"`
+	Lead        string    `json:"lead"`
+	BodyMD      string    `json:"body_md"`
+	RubricName  string    `json:"rubric_name"`
+	AuthorEmail string    `json:"author_email"`
+	AuthorName  string    `json:"author_name"`
+	ImageHash   string    `json:"image_hash"`
+	ImageName   string    `json:"image_name"`
+	LinkURL     string    `json:"link_url"`
+	LinkText    string    `json:"link_text"`
+	Status      string    `json:"status"`
+	IsLead      bool      `json:"is_lead"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// DigestIssues — выпуски дайджеста и месяц, в который принимаются новости.
+//
+// `current` приходит от сервиса, а не считается здесь: месяц он определяет по
+// московскому времени, и вторая такая арифметика разошлась бы с первой.
+func (c *KBClient) DigestIssues(ctx context.Context) ([]KBDigestIssue, string, error) {
+	var out struct {
+		Issues  []KBDigestIssue `json:"issues"`
+		Current string          `json:"current"`
+	}
+	if err := c.get(ctx, "/api/kb/digest/issues", nil, &out); err != nil {
+		return nil, "", err
+	}
+	return out.Issues, out.Current, nil
+}
+
+// DigestIssue — один выпуск с новостями.
+//
+// Сервисный токен может оказаться редакторским, а редактору kb-service отдаёт
+// и неопубликованные записи. Поэтому отбор по статусу делается здесь, на
+// выходе: Mini App показывает газету, а не очередь модерации.
+func (c *KBClient) DigestIssue(ctx context.Context, ym string) (KBDigestIssue, []KBDigestNews, error) {
+	var out struct {
+		Issue KBDigestIssue  `json:"issue"`
+		Items []KBDigestNews `json:"items"`
+	}
+	err := c.get(ctx, "/api/kb/digest/"+ym, nil, &out)
+	return out.Issue, out.Items, err
 }
 
 // FileLink — ссылка на файл вложения.

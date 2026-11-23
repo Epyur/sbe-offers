@@ -102,6 +102,12 @@ func main() {
 	mux.HandleFunc("POST /api/offers/app/session", s.handleAppSession)
 	mux.HandleFunc("GET /api/offers/app/config", s.handleAppConfig)
 	mux.HandleFunc("POST /api/offers/app/answer", s.handleAppAnswerAsync)
+	// Технодайджест (2026-11-23): лента новостей из раздела «Дайджест» Базы
+	// знаний и отправка одной новости ботом в чат. Гейт «в чат» — подпись
+	// initData, как у /app/answer; сама лента — обычный JWT приложения, потому
+	// что ключ Mini App в kb-service не принимается (чужой app_id). См. appdigest.go.
+	mux.HandleFunc("GET /api/offers/digest", s.requirePerm("viewer")(s.handleAppDigest))
+	mux.HandleFunc("POST /api/offers/app/news", s.handleAppNews)
 
 	mux.HandleFunc("GET /api/offers/permissions/me", s.requirePerm("viewer")(s.handleMyPermission))
 	mux.HandleFunc("GET /api/offers/permissions/list", s.requirePerm("admin")(s.handleListPermissions))

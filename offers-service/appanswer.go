@@ -158,37 +158,47 @@ func answerStartText(kind string) string {
 // есть отдельная ручка отправить текст — `POST /internal/answer` его не умеет,
 // он только файл. Поэтому шлём через тот же транспорт-файл нельзя; пишем в
 // журнал и в чат обычным сообщением бота через `OFFERS_BOT_URL`-ручку notify.
+//
+// Ошибку здесь только журналируем: у фоновой сборки спросить некого.
 func (s *Server) notifyChat(ctx context.Context, chatID, text string) {
+	if err := s.sendChatText(ctx, chatID, text); err != nil {
+		log.Printf("app answer (async): уведомление в чат %s не ушло: %v", chatID, err)
+	}
+}
+
+// sendChatText — текст ботом в чат. Отдельная функция, потому что у «Отправить
+// в чат» у новости Технодайджеста (2026-11-23) причину отказа надо отдать
+// человеку сразу, а у фоновой сборки — только записать в журнал.
+func (s *Server) sendChatText(ctx context.Context, chatID, text string) error {
 	base := strings.TrimRight(getEnv("OFFERS_BOT_URL"), "/")
 	if base == "" {
 		base = "http://offers-bot:3000"
 	}
 	payload, err := json.Marshal(map[string]any{"chat_id": chatID, "text": text})
 	if err != nil {
-		return
+		return err
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, answerTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, base+"/internal/notify", bytes.NewReader(payload))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Service-Secret", getEnv("OFFERS_BOT_SECRET"))
 	resp, err := (&http.Client{Timeout: answerTimeout}).Do(req)
 	if err != nil {
-		log.Printf("app answer (async): уведомление в чат %s не ушло: %v", chatID, err)
-		return
+		return fmt.Errorf("бот недоступен: %w", err)
 	}
+	defer resp.Body.Close()
 	// Статус читаем, а не выбрасываем (2026-11-18): 403 (не тот секрет),
 	// 502 (Telegram отказал) и 503 (бот ещё не готов) раньше терялись молча,
 	// и «человек ничего не получил» выглядело как зависшая сборка.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, answerMaxReply))
-	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("app answer (async): уведомление в чат %s отклонено кодом %d: %s",
-			chatID, resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("бот ответил кодом %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	return nil
 }
 
 // answerDocx готовит файл ТЕМИ ЖЕ путями, что бот: своих сборщиков здесь нет.

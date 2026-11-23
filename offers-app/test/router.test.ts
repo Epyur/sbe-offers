@@ -73,9 +73,13 @@ test('приветствие, «Скорая помощь» и «Технода�
   assert.deepEqual(parseRoute(routeHash({ name: 'ambulance' })), { name: 'ambulance' });
   assert.equal(routeHash({ name: 'ambulance' }), '#/ambulance');
   assert.equal(parseRoute('#/ambulance/whatever').name, 'notFound');
-  assert.deepEqual(parseRoute(routeHash({ name: 'digest' })), { name: 'digest' });
-  assert.equal(routeHash({ name: 'digest' }), '#/digest');
+  assert.deepEqual(parseRoute(routeHash({ name: 'digest', ym: '' })), { name: 'digest', ym: '' });
+  assert.equal(routeHash({ name: 'digest', ym: '' }), '#/digest');
   assert.equal(parseRoute('#/digest/whatever').name, 'notFound');
+  // Выпуск месяца в адресе: переход по месяцам не теряется (2026-11-23).
+  assert.deepEqual(parseRoute('#/digest/2026-11'), { name: 'digest', ym: '2026-11' });
+  assert.equal(routeHash({ name: 'digest', ym: '2026-11' }), '#/digest/2026-11');
+  assert.equal(parseRoute('#/digest/2026-13').name, 'notFound');
 });
 
 test('свой поиск в адресе от бота сохраняется', () => {
