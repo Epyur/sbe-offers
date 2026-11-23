@@ -37,22 +37,19 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.14** — released 2026-11-21. In the КП and combat-sheet
-windows the product list appears only after the manager starts typing, and
-chosen products are signed with their **names** instead of `sys-…` / `MAT-…`
-codes; the Mini App's chosen materials got the same name fix. The previous
-version (0.11.13) made the bot print the combat sheet carried by the button and
-sent «Достаточно» to the competitor picker.
+Current version = **0.11.15** — released 2026-11-23. The Mini App's fourth card
+«Технодайджест» is no longer a stub: it shows the month's news from the Knowledge
+Base digest (month switcher, rubric, lead, body, source) and gives every item its
+own «📤 Отправить в чат» button (a bot message; the window stays open). The
+previous version (0.11.14) made the product list appear only after typing in the
+КП/combat windows and signed chosen products with their names.
 
-**Unreleased (2026-11-23):** the Mini App's fourth card «Технодайджест» is no
-longer a stub — the screen shows the month's news from the Knowledge Base
-digest (month switcher, rubric, lead, body, source) and gives every item its own
-«📤 Отправить в чат» button. The Mini App key cannot read kb-service (a token is
-issued to ONE app), so `offers-service` proxies the digest with its
-service-to-service token; see `appdigest.go` and the gotcha about `app_id`.
-Deploy the service **before** the new app bundle. Two independent reviews
-(server/access, client/product) before deploy found **no blockers**; their
-findings are fixed and listed in `HANDOFF.md` («Две независимые ревизии…»).
+The Mini App key cannot read kb-service (a token is issued to ONE app), so
+`offers-service` proxies the digest with its service-to-service token; see
+`appdigest.go` and the gotcha about `app_id`. Deploy the service **before** the
+new app bundle. Two independent reviews (server/access, client/product) before
+deploy found **no blockers**; their findings are fixed and listed in
+`HANDOFF.md` («Две независимые ревизии…»).
 
 > **0.11.14 (2026-11-21) — окна выбора продукта: список после ввода, выбранное — названиями.**
 > Две живые жалобы по окнам создания/редактирования КП и боевого листка.
@@ -368,8 +365,8 @@ findings are fixed and listed in `HANDOFF.md` («Две независимые �
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `36148c3` (code; docs — следующим коммитом), `main` `efa492e`
-(release slice of 0.11.14; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `3516da9` (code; docs — следующим коммитом), `main` `4eabd60`
+(release slice of 0.11.15; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
