@@ -20,7 +20,7 @@
  * а переслать коллеге в рабочий чат удобнее сообщением бота (картинкой и
  * текстом). Вне Telegram (пустой `initData`) кнопки нет — там отправлять некуда.
  */
-import { useCallback, useEffect, useState, type JSX } from 'react';
+import { useCallback, useEffect, useState, type ChangeEvent, type JSX } from 'react';
 import { ApiError } from './api.ts';
 import {
   digestParagraphs,
@@ -118,9 +118,11 @@ function Feed({ feed, ym }: { feed: DigestFeed; ym: string }): JSX.Element {
 
       <header className="app-digest-head">
         <div className="app-digest-brand">
-          <span className="app-digest-mark" aria-hidden="true">
-            TN
-          </span>
+          {/* Эмблема — та же, что в шапке полосы Базы знаний
+              (`kb-service/templates/logo.png`, белая на прозрачном).
+              Файл лежит рядом с приложением (`public/digest-logo.png`), а не
+              вшит в бандл: 4 КБ картинки незачем гонять через бюджет кода. */}
+          <img className="app-digest-emblem" src="./digest-logo.png" alt="" width={32} height={32} />
           <span className="app-digest-brand-text">
             <span className="app-digest-word">
               ТЕХНО<span className="app-digest-word-red">ДАЙДЖЕСТ</span>
@@ -129,10 +131,11 @@ function Feed({ feed, ym }: { feed: DigestFeed; ym: string }): JSX.Element {
             <span className="app-digest-tagline">Инженерные решения и сервисы</span>
           </span>
         </div>
-        <span className="app-digest-stamp">{monthLabel(shown)}</span>
       </header>
 
-      {feed.issues.length > 0 ? <Months issues={feed.issues} shown={shown} current={feed.current} /> : null}
+      {/* Месяц — отдельной строкой под названием (2026-11-23: плашка месяца
+          наезжала на «LOGICTEAM») и сразу выпадающим списком выпусков. */}
+      <IssuePicker issues={feed.issues} shown={shown} current={feed.current} />
 
       <div className="app-digest-intro">
         <div className="app-digest-eyebrow">Инженерная практика</div>
@@ -179,8 +182,16 @@ function Feed({ feed, ym }: { feed: DigestFeed; ym: string }): JSX.Element {
   );
 }
 
-/** Строка месяцев: текущий помечен и не кликается, остальные ведут на выпуск. */
-function Months({
+/**
+ * Выбор выпуска — выпадающий список (2026-11-23, просьба пользователя: строка
+ * месяцев занимала место, а месяц нужен одной строкой под названием).
+ *
+ * Значение — месяц из ленты; выбирает человек → адрес меняется на выпуск, а
+ * экран перечитывает ленту (маршрут `#/digest/:ym`). Если База знаний ещё не
+ * назвала выпуски, в списке остаётся единственный — тот, что показан: список
+ * из одного пункта честнее пустого места.
+ */
+function IssuePicker({
   issues,
   shown,
   current,
@@ -188,25 +199,36 @@ function Months({
   issues: DigestFeed['issues'];
   shown: string;
   current: string;
-}): JSX.Element {
+}): JSX.Element | null {
+  const rows = issues.length > 0 ? issues : [{ ym: shown, title: '', items: 0 }];
+  const usable = rows.filter((issue) => issue.ym !== '');
+  if (usable.length === 0) return null;
+
+  const onChange = (event: ChangeEvent<HTMLSelectElement>): void => {
+    const ym = event.target.value;
+    if (ym === shown) return;
+    window.location.hash = routeHash({ name: 'digest', ym }).replace(/^.*#/, '#');
+  };
+
   return (
-    <div className="app-digest-months">
-      {issues.map((issue) => {
-        const label = monthLabel(issue.ym);
-        if (issue.ym === shown) {
-          return (
-            <span key={issue.ym} className="app-month app-month-current app-digest-month" aria-current="page">
-              {label}
-              {issue.ym === current ? ' · текущий' : ''}
-            </span>
-          );
-        }
-        return (
-          <a key={issue.ym} className="app-month app-digest-month" href={routeHash({ name: 'digest', ym: issue.ym })}>
-            {label}
-          </a>
-        );
-      })}
+    <div className="app-digest-pick">
+      <label className="app-digest-pick-label" htmlFor="digest-issue">
+        Выпуск
+      </label>
+      <select
+        id="digest-issue"
+        className="app-digest-select"
+        value={shown}
+        onChange={onChange}
+        aria-label="Выпуск технодайджеста"
+      >
+        {usable.map((issue) => (
+          <option key={issue.ym} value={issue.ym}>
+            {monthLabel(issue.ym)}
+            {issue.ym === current ? ' · текущий' : ''}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

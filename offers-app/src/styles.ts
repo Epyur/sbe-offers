@@ -579,30 +579,12 @@ p.app-required {
  * Вёрстка простая и «газетная» настолько, насколько это уместно в телефоне:
  * рубрика — над заголовком, лид курсивом, текст абзацами. Своей полосы A4
  * (как в Базе знаний) здесь нет намеренно — на телефоне она нечитаема.
+ *
+ * Выбор выпуска — выпадающий список (.app-digest-select); прежняя строка
+ * месяцев со ссылками удалена 2026-11-23 вместе с классами .app-months и
+ * .app-month: держать в CSS правило, которым ничего не рисуется, — вторая
+ * правда о том же экране.
  */
-.app-months {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: var(--app-gap);
-}
-
-.app-month {
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--tg-hint);
-  color: var(--tg-text);
-  text-decoration: none;
-  font-size: 14px;
-  background: var(--tg-secondary-bg);
-}
-
-.app-month-current {
-  border-color: var(--tg-link);
-  color: var(--tg-link);
-  background: transparent;
-}
-
 .app-news {
   padding: var(--app-gap) 0;
   border-top: 1px solid var(--tg-hint);
@@ -752,16 +734,14 @@ p.app-required {
   min-width: 0;
 }
 
-.app-digest-mark {
+/* Эмблема из шапки полосы Базы знаний (kb-service/templates/logo.png):
+   белая на прозрачном, поэтому на тёмной подложке читается как есть. */
+.app-digest-emblem {
   flex: none;
-  background: var(--dg-red);
-  color: #ffffff;
-  font-weight: 900;
-  font-size: 12px;
-  line-height: 1;
-  padding: 7px 8px;
-  border-radius: 4px;
-  letter-spacing: 0.5px;
+  width: clamp(26px, 7.6vw, 34px);
+  height: clamp(26px, 7.6vw, 34px);
+  object-fit: contain;
+  display: block;
 }
 
 .app-digest-brand-text {
@@ -771,12 +751,16 @@ p.app-required {
   min-width: 0;
 }
 
+/* Верхняя строка подстраивается под ширину экрана (2026-11-23, просьба
+   пользователя): кегль растёт с вьюпортом, но не выходит за 12–16 px — на узком
+   телефоне строка не переносится и не наезжает на что-либо. */
 .app-digest-word {
-  font-size: 14px;
+  font-size: clamp(12px, 3.9vw, 16px);
   font-weight: 900;
   color: var(--dg-title);
   letter-spacing: 0.3px;
   line-height: 1.15;
+  white-space: nowrap;
 }
 
 .app-digest-word-red {
@@ -788,43 +772,45 @@ p.app-required {
 }
 
 .app-digest-tagline {
-  font-size: 10px;
+  font-size: clamp(8.5px, 2.5vw, 10px);
   font-weight: 600;
   color: var(--dg-muted);
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
 
-.app-digest-stamp {
-  flex: none;
-  background: #1a2332;
-  border: 1px solid #283548;
-  color: #cbd5e1;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 9px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-.app-digest-months {
+/* Месяц — своей строкой под названием и сразу выпадающим списком выпусков. */
+.app-digest-pick {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px 0;
 }
 
-.app-digest .app-digest-month {
-  background: #1a2332;
-  border-color: #283548;
-  color: #cbd5e1;
-  font-size: 12px;
+.app-digest-pick-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--dg-muted);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
 }
 
-.app-digest .app-month-current {
-  border-color: var(--dg-red);
-  color: #fca5a5;
-  background: #3b1419;
+.app-digest-select {
+  flex: 0 1 220px;
+  margin-left: auto;
+  max-width: 70%;
+  background: #1a2332;
+  border: 1px solid #283548;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 9px;
+  border-radius: 6px;
+  /* Нативный значок списка рисует система: в тёмной карточке он должен быть
+     светлым, иначе его не видно. */
+  color-scheme: dark;
 }
 
 .app-digest-intro {

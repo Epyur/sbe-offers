@@ -25,6 +25,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.webp': 'image/webp',
+  '.png': 'image/png',
 };
 
 if (!existsSync(join(DIST, 'index.html'))) {
@@ -318,8 +319,53 @@ check(
   ((await page.locator('.app-news-title').allTextContents()).join('|')) === 'Новая мембрана|Вторая новость|Третья новость',
 );
 check(
-  '«Технодайджест»: выпуски для переключения месяцев',
-  (await page.locator('.app-month').count()) === 2,
+  '«Технодайджест»: выбор выпуска — выпадающий список',
+  (await page.locator('.app-digest-select option').count()) === 2,
+);
+check(
+  '«Технодайджест»: в списке выбран текущий выпуск',
+  (await page.locator('.app-digest-select').inputValue()) === '2026-11',
+);
+// Эмблема — та же, что в шапке полосы Базы знаний (файл рядом с приложением).
+await page
+  .waitForFunction(
+    () => {
+      const img = document.querySelector('.app-digest-emblem');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0;
+    },
+    undefined,
+    { timeout: 10000 },
+  )
+  .catch(() => {});
+check(
+  '«Технодайджест»: эмблема из дайджеста Базы знаний',
+  await page.locator('.app-digest-emblem').evaluate((img) => img.complete && img.naturalWidth > 0),
+);
+// Месяц — отдельной строкой ПОД названием: раньше плашка наезжала на
+// «LOGICTEAM» (жалоба 2026-11-23).
+const headBox = await page.locator('.app-digest-head').boundingBox();
+const pickBox = await page.locator('.app-digest-pick').boundingBox();
+check(
+  '«Технодайджест»: месяц ниже строки с названием',
+  headBox !== null && pickBox !== null && pickBox.y >= headBox.y + headBox.height - 1,
+  headBox && pickBox ? `низ шапки ${Math.round(headBox.y + headBox.height)}, верх списка ${Math.round(pickBox.y)}` : 'нет блоков',
+);
+// Кегль верхней строки зависит от ширины экрана (clamp с vw).
+const mastheadAt = async (width) => {
+  await page.setViewportSize({ width, height: 900 });
+  return page.locator('.app-digest-word').evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+};
+const masthead430 = await mastheadAt(430);
+const masthead320 = await mastheadAt(320);
+await page.setViewportSize({ width: 430, height: 900 });
+check(
+  '«Технодайджест»: кегль верхней строки подстраивается под ширину экрана',
+  masthead320 < masthead430,
+  `320 px → ${masthead320}, 430 px → ${masthead430}`,
+);
+check(
+  '«Технодайджест»: эмблема ТН в шапке полосы',
+  (await page.locator('.app-digest-emblem').count()) === 1,
 );
 check(
   '«Технодайджест»: у КАЖДОЙ новости своя кнопка «Отправить в чат»',
@@ -351,19 +397,15 @@ check(
   firstCard ? `x=${firstCard.x}, ширина=${firstCard.width}` : 'нет карточки',
 );
 // Брендовая полоса (2026-11-23, макет тёмной темы): шапка с эмблемой и
-// плашкой месяца, кадр ведущей новости, подвал. Проверяются те части макета,
-// которые видит человек, а не наличие классов в бандле.
-check(
-  '«Технодайджест»: эмблема ТН в шапке полосы',
-  ((await page.locator('.app-digest-mark').first().textContent()) ?? '').trim() === 'TN',
-);
+// месяцем строкой ниже, кадр ведущей новости, подвал. Проверяются те части
+// макета, которые видит человек, а не наличие классов в бандле.
 check(
   '«Технодайджест»: название полосы в шапке',
   ((await page.locator('.app-digest-word').first().textContent()) ?? '').includes('ТЕХНОДАЙДЖЕСТ'),
 );
 check(
-  '«Технодайджест»: плашка месяца выпуска',
-  ((await page.locator('.app-digest-stamp').first().textContent()) ?? '').includes('Ноябрь 2026'),
+  '«Технодайджест»: месяц выпуска виден в списке',
+  ((await page.locator('.app-digest-select').inputValue()) ?? '') === '2026-11',
 );
 // Кадр грузится лениво (`loading="lazy"`) — ждём его, иначе проверка увидела
 // бы «complete ещё false» на честно работающей картинке.
@@ -430,6 +472,23 @@ check(
   await page.locator('.app-news-send button').first().isDisabled(),
 );
 check('«Технодайджест»: нет ошибок JS', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+// Выбор выпуска из списка (2026-11-23): смена значения ведёт на адрес выпуска,
+// и экран перечитывает ленту — это и есть весь механизм переключения.
+await page.locator('.app-digest-select').selectOption('2026-10');
+await page
+  .waitForFunction(() => window.location.hash.includes('2026-10'), undefined, { timeout: 10000 })
+  .catch(() => {});
+check(
+  '«Технодайджест»: выбор выпуска из списка ведёт на его адрес',
+  (await page.evaluate(() => window.location.hash)).includes('2026-10'),
+  await page.evaluate(() => window.location.hash),
+);
+await page.locator('.app-news-title').first().waitFor({ timeout: 10000 });
+check(
+  '«Технодайджест»: после выбора выпуска лента нарисована снова',
+  (await page.locator('.app-news-title').count()) === 3,
+);
 
 // Отказ по месяцу не оставляет человека в тупике: есть путь к текущему выпуску.
 // Ошибки считаем с этой точки отдельно: намеренный 404 ниже попадёт в консоль
