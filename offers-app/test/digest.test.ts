@@ -12,9 +12,15 @@ import {
   digestFeedOf,
   digestParagraphs,
   digestPath,
+  issueIntro,
+  leadNews,
   monthLabel,
   newsByline,
+  newsCountLabel,
+  newsImageURL,
+  otherNews,
   sendNewsToChat,
+  type DigestItem,
 } from '../src/digest.ts';
 
 test('лента: ответ сервиса разбирается в новости и месяцы', () => {
@@ -126,4 +132,65 @@ test('«Отправить в чат» вне Telegram не делает зап�
   const outcome = await sendNewsToChat('2026-11', 7);
   assert.equal(outcome.sent, false);
   assert.match(outcome.problem, /только из Telegram/);
+});
+
+/** Новость без картинки собирается так же, как с ней: разница только в кадре. */
+function item(over: Partial<DigestItem>): DigestItem {
+  return {
+    id: 1,
+    title: 'Т',
+    lead: '',
+    body: '',
+    rubric: '',
+    author: '',
+    at: '',
+    isLead: false,
+    linkUrl: '',
+    linkText: '',
+    imagePath: '',
+    ...over,
+  };
+}
+
+test('картинка: подписанный путь превращается в полный адрес сервиса', () => {
+  const url = newsImageURL(item({ imagePath: '/digest/image?hash=abc&name=1.jpg&sig=ff' }));
+  assert.match(url, /\/api\/offers\/digest\/image\?hash=abc&name=1\.jpg&sig=ff$/);
+  assert.match(url, /^https?:\/\//);
+});
+
+test('картинка: пустой путь — пустой адрес, а не битый <img>', () => {
+  assert.equal(newsImageURL(item({ imagePath: '' })), '');
+  assert.equal(newsImageURL(item({ imagePath: '   ' })), '');
+});
+
+test('ведущая новость: отмеченная редактором, иначе первая', () => {
+  const first = item({ id: 1 });
+  const marked = item({ id: 2, isLead: true });
+  const third = item({ id: 3 });
+  assert.equal(leadNews([first, marked, third])?.id, 2);
+  assert.equal(leadNews([first, third])?.id, 1);
+  assert.equal(leadNews([]), null);
+  assert.deepEqual(
+    otherNews([first, marked, third]).map((n) => n.id),
+    [1, 3],
+  );
+  assert.deepEqual(otherNews([]), []);
+});
+
+test('число новостей по-русски: 1 новость, 2 новости, 5 новостей', () => {
+  assert.equal(newsCountLabel(1), '1 новость');
+  assert.equal(newsCountLabel(2), '2 новости');
+  assert.equal(newsCountLabel(4), '4 новости');
+  assert.equal(newsCountLabel(5), '5 новостей');
+  assert.equal(newsCountLabel(11), '11 новостей');
+  assert.equal(newsCountLabel(21), '21 новость');
+  assert.equal(newsCountLabel(0), '0 новостей');
+});
+
+test('вводная строка выпуска: месяц и число новостей, без выдуманных обещаний', () => {
+  const intro = issueIntro({ ym: '2026-11', title: 'Ноябрь', items: 4 }, 4);
+  assert.match(intro, /Ноябрь 2026/);
+  assert.match(intro, /4 новости/);
+  // Пустой выпуск не притворяется полосой.
+  assert.match(issueIntro({ ym: '2026-11', title: 'Ноябрь', items: 0 }, 0), /новостей пока нет/);
 });

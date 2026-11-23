@@ -11,7 +11,7 @@
  * Запрос — в `api.ts`, отрисовка — в `digest-screen.tsx`. Разбор делается один
  * раз, где данные входят: внутри экрана им верим (правило 2026-11-13).
  */
-import { ApiError, apiRequest } from './api.ts';
+import { ApiError, apiRequest, apiUrlOf } from './api.ts';
 import { initData } from './tg.ts';
 
 /** Новость выпуска: то, что реально нужно экрану. */
@@ -27,6 +27,12 @@ export interface DigestItem {
   isLead: boolean;
   linkUrl: string;
   linkText: string;
+  /**
+   * Подписанный путь картинки (сервис отдаёт его, когда картинка есть).
+   * Именно ПУТЬ, а не готовый адрес: домен API знает приложение, и склеивать
+   * его дважды (у сервиса и у клиента) значило бы держать два адреса правды.
+   */
+  imagePath: string;
 }
 
 /** Выпуск месяца для строки навигации. */
@@ -229,5 +235,58 @@ function itemOf(value: unknown): DigestItem {
     isLead: src.isLead === true,
     linkUrl: textOf(src.linkUrl),
     linkText: textOf(src.linkText),
+    imagePath: textOf(src.imagePath),
   };
+}
+
+/**
+ * Адрес картинки новости. Пустая строка — картинки нет: пустой `src` браузер
+ * грузит как саму страницу, поэтому подставлять его нельзя.
+ */
+export function newsImageURL(item: DigestItem): string {
+  const path = item.imagePath.trim();
+  return path === '' ? '' : apiUrlOf(path);
+}
+
+/**
+ * Ведущая новость выпуска: та, которую отметил редактор, иначе первая.
+ *
+ * «Иначе первая» — не поблажка: выпуск может выйти без отмеченной ведущей, и
+ * тогда полоса всё равно должна начинаться с самой верхней новости, а не с
+ * пустого места.
+ */
+export function leadNews(items: DigestItem[]): DigestItem | null {
+  if (items.length === 0) return null;
+  return items.find((item) => item.isLead) ?? items[0] ?? null;
+}
+
+/** Остальные новости выпуска — в порядке полосы (его задала База знаний). */
+export function otherNews(items: DigestItem[]): DigestItem[] {
+  const lead = leadNews(items);
+  return lead === null ? [] : items.filter((item) => item !== lead);
+}
+
+/** «1 новость», «2 новости», «5 новостей» — по-русски, а не «1 новостей». */
+export function newsCountLabel(count: number): string {
+  const tail10 = count % 10;
+  const tail100 = count % 100;
+  let word = 'новостей';
+  if (tail10 === 1 && tail100 !== 11) word = 'новость';
+  else if (tail10 >= 2 && tail10 <= 4 && (tail100 < 12 || tail100 > 14)) word = 'новости';
+  return `${count} ${word}`;
+}
+
+/**
+ * Вводная строка выпуска. В макете на этом месте стоит письмо редакции; в
+ * приложении письма нет, поэтому строка собирается из того, что известно:
+ * месяц и число новостей. Выдуманных обещаний («делимся альбомами узлов») здесь
+ * нет намеренно — их нечем подтвердить.
+ */
+export function issueIntro(issue: DigestIssueRow, items: number): string {
+  const month = monthLabel(issue.ym);
+  if (items <= 0) {
+    return month === '' ? 'В этом выпуске новостей пока нет.' : `${month}: новостей пока нет.`;
+  }
+  const prefix = month === '' ? '' : `${month}: `;
+  return `${prefix}${newsCountLabel(items)} — стандарты, решения и сервисы для проектировщиков и подрядчиков.`;
 }

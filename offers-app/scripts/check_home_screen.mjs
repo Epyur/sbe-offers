@@ -117,6 +117,21 @@ await page.route('**/api/offers/**', (route) => {
   }
   // Технодайджест (2026-11-23): два выпуска и две новости — проверяется, что
   // лента нарисована и у КАЖДОЙ новости есть своя кнопка отправки.
+  //
+  // Картинка новости (2026-11-23) — подписанная ссылка сервиса. Отдаём
+  // настоящий PNG: без байтов проверка «кадр нарисован» ничего не доказывала
+  // бы (битый <img> тоже существует в разметке). Ветка стоит ВЫШЕ общей
+  // `/digest`: адрес картинки тоже содержит это слово.
+  if (url.includes('/digest/image')) {
+    return route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    });
+  }
   if (url.includes('/digest')) {
     // Несуществующий выпуск — для проверки, что отказ не тупик.
     if (url.includes('ym=2025-01')) {
@@ -142,8 +157,9 @@ await page.route('**/api/offers/**', (route) => {
             author: 'Иван Петров',
             at: '2026-11-05T09:00:00Z',
             isLead: true,
-            linkUrl: '',
-            linkText: '',
+            linkUrl: 'https://example.org/lead',
+            linkText: 'К расчёту на nav.tn.ru',
+            imagePath: '/digest/image?hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&name=kadr.png&sig=ff',
           },
           {
             id: 8,
@@ -156,6 +172,9 @@ await page.route('**/api/offers/**', (route) => {
             isLead: false,
             linkUrl: 'https://example.org/news',
             linkText: 'Источник',
+            // Кадр есть и у обычной новости: в мини-аппе он идёт миниатюрой,
+            // и путь к нему проверяется так же, как у ведущей.
+            imagePath: '/digest/image?hash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&name=mini.png&sig=ff',
           },
         ],
       }),
@@ -292,6 +311,72 @@ check(
 check(
   '«Технодайджест»: у КАЖДОЙ новости своя кнопка «Отправить в чат»',
   (await page.locator('.app-news-send button').count()) === 2,
+);
+// Брендовая полоса (2026-11-23, макет тёмной темы): шапка с эмблемой и
+// плашкой месяца, кадр ведущей новости, подвал. Проверяются те части макета,
+// которые видит человек, а не наличие классов в бандле.
+check(
+  '«Технодайджест»: эмблема ТН в шапке полосы',
+  ((await page.locator('.app-digest-mark').first().textContent()) ?? '').trim() === 'TN',
+);
+check(
+  '«Технодайджест»: название полосы в шапке',
+  ((await page.locator('.app-digest-word').first().textContent()) ?? '').includes('ТЕХНОДАЙДЖЕСТ'),
+);
+check(
+  '«Технодайджест»: плашка месяца выпуска',
+  ((await page.locator('.app-digest-stamp').first().textContent()) ?? '').includes('Ноябрь 2026'),
+);
+// Кадр грузится лениво (`loading="lazy"`) — ждём его, иначе проверка увидела
+// бы «complete ещё false» на честно работающей картинке.
+await page
+  .waitForFunction(
+    () => {
+      const img = document.querySelector('.app-digest-photo');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0;
+    },
+    undefined,
+    { timeout: 10000 },
+  )
+  .catch(() => {});
+check(
+  '«Технодайджест»: картинка ведущей новости загружена',
+  await page
+    .locator('.app-digest-photo')
+    .first()
+    .evaluate((img) => img.complete && img.naturalWidth > 0),
+);
+// Миниатюра ниже первого экрана и грузится лениво: прокручиваем к ней, иначе
+// проверка честно не увидит загрузку.
+await page.locator('.app-digest-thumb').first().scrollIntoViewIfNeeded();
+await page
+  .waitForFunction(
+    () => {
+      const img = document.querySelector('.app-digest-thumb');
+      return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0;
+    },
+    undefined,
+    { timeout: 10000 },
+  )
+  .catch(() => {});
+check(
+  '«Технодайджест»: у обычной новости картинка идёт миниатюрой',
+  await page
+    .locator('.app-digest-thumb')
+    .first()
+    .evaluate((img) => img.complete && img.naturalWidth > 0),
+);
+check(
+  '«Технодайджест»: у ведущей новости кнопка-ссылка на источник',
+  ((await page.locator('.app-digest-button').first().textContent()) ?? '').includes('nav.tn.ru'),
+);
+check(
+  '«Технодайджест»: баннер источника ведёт на адрес ведущей новости',
+  (await page.locator('.app-digest-outline').first().getAttribute('href')) === 'https://example.org/lead',
+);
+check(
+  '«Технодайджест»: подвал — техническая дирекция',
+  ((await page.locator('.app-digest-foot-sub').first().textContent()) ?? '').includes('ПМиПИР'),
 );
 await page.locator('.app-news-send button').first().click();
 await page.waitForFunction(

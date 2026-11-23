@@ -699,6 +699,464 @@ p.app-required {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/*
+ * «Технодайджест» — брендовая полоса (2026-11-23, по макету тёмной темы).
+ *
+ * Макет взят из письма ТЕХНОНИКОЛЬ: красная марка сверху, шапка с эмблемой и
+ * плашкой месяца, вводный блок, ведущая новость кадром, остальные карточками,
+ * баннер источника и подвал. Тёмная палитра живёт ТОЛЬКО в этом классе:
+ * остальные экраны приложения остаются в теме Telegram — решение пользователя
+ * 2026-11-23. Переменные локальные (--dg-*), чтобы бренд не протёк в
+ * кнопки и ссылки других экранов.
+ */
+.app-digest {
+  --dg-bg: #111722;
+  --dg-deep: #090d14;
+  --dg-card: #17202f;
+  --dg-line: #1f2a3a;
+  --dg-line-soft: #232f42;
+  --dg-text: #e2e8f0;
+  --dg-title: #f8fafc;
+  --dg-muted: #94a3b8;
+  --dg-body: #cbd5e1;
+  --dg-red: #e30613;
+  --dg-red-soft: #f87171;
+  background: var(--dg-bg);
+  color: var(--dg-text);
+  border: 1px solid var(--dg-line);
+  border-radius: var(--app-radius);
+  overflow: hidden;
+  margin-bottom: var(--app-gap);
+  font-size: 14px;
+}
+
+.app-digest-bar {
+  height: 4px;
+  background: var(--dg-red);
+}
+
+.app-digest-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid #1c2536;
+}
+
+.app-digest-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-digest-mark {
+  flex: none;
+  background: var(--dg-red);
+  color: #ffffff;
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.app-digest-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-digest-word {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--dg-title);
+  letter-spacing: 0.3px;
+  line-height: 1.15;
+}
+
+.app-digest-word-red {
+  color: var(--dg-red);
+}
+
+.app-digest-word-tail {
+  color: #fcfbfb;
+}
+
+.app-digest-tagline {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dg-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.app-digest-stamp {
+  flex: none;
+  background: #1a2332;
+  border: 1px solid #283548;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.app-digest-months {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 16px 0;
+}
+
+.app-digest .app-digest-month {
+  background: #1a2332;
+  border-color: #283548;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.app-digest .app-month-current {
+  border-color: var(--dg-red);
+  color: #fca5a5;
+  background: #3b1419;
+}
+
+.app-digest-intro {
+  padding: 18px 16px 6px;
+}
+
+.app-digest-eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--dg-red);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+.app-digest-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  line-height: 1.25;
+  color: var(--dg-title);
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+
+.app-digest-lead {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--dg-muted);
+}
+
+.app-digest-empty {
+  padding: 8px 16px 20px;
+  color: var(--dg-muted);
+}
+
+/* Ведущая новость: кадр, плашка рубрики поверх и текст под ним. */
+.app-digest-hero {
+  margin: 12px 16px 4px;
+  padding: 0;
+  border: 1px solid #253346;
+  border-radius: 8px;
+  background: var(--dg-card);
+  overflow: hidden;
+}
+
+.app-digest .app-news {
+  border-top: 0;
+  padding: 0;
+}
+
+.app-digest-hero-media {
+  position: relative;
+  height: 160px;
+  background: linear-gradient(135deg, #0a0e17 0%, #161e2b 60%, #1f2b3e 100%);
+  border-bottom: 3px solid var(--dg-red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-digest-hero-media-empty {
+  color: #ef4444;
+}
+
+.app-digest-hero-icon {
+  width: 60px;
+  height: 60px;
+}
+
+.app-digest-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.app-digest-badge {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  background: rgba(227, 6, 19, 0.95);
+  color: #ffffff;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 3px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.app-digest-hero-body {
+  padding: 16px;
+}
+
+.app-digest .app-news-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--dg-title);
+  font-weight: 800;
+}
+
+.app-digest .app-news-lead .app-news-title {
+  font-size: 18px;
+}
+
+.app-digest .app-news-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-digest-byline {
+  margin: 0 0 8px;
+  color: var(--dg-muted);
+  font-size: 12px;
+}
+
+.app-digest-hero-lead {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--dg-body);
+}
+
+.app-digest-text {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--dg-body);
+}
+
+.app-digest-hero-cta {
+  margin: 0 0 10px;
+}
+
+.app-digest-button {
+  display: inline-block;
+  background: var(--dg-red);
+  color: #ffffff !important;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 6px;
+  letter-spacing: 0.2px;
+}
+
+/* Кнопка «Отправить в чат» в тёмной полосе: брендовая, а не синяя Telegram. */
+.app-digest .app-button-ghost {
+  background: transparent;
+  color: var(--dg-red-soft);
+  border: 1px solid #7f1d1d;
+  font-size: 13px;
+  padding: 7px 12px;
+}
+
+.app-digest .app-error-text {
+  color: #fca5a5;
+}
+
+.app-digest-divider {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 16px 0;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--dg-line-soft);
+}
+
+.app-digest-divider-title {
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: #f1f5f9;
+}
+
+.app-digest-divider-side {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dg-red-soft);
+}
+
+.app-digest-news {
+  padding: 14px 16px;
+  border-top: 1px dashed var(--dg-line-soft);
+}
+
+.app-digest-thumb {
+  display: block;
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  background: #0a0e17;
+}
+
+.app-digest-chip {
+  display: inline-block;
+  background: #3b1419;
+  color: #fca5a5;
+  border: 1px solid #7f1d1d;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.app-digest-news-lead {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--dg-muted);
+}
+
+.app-digest-full {
+  margin: 0 0 8px;
+}
+
+.app-digest-full summary {
+  color: var(--dg-red-soft);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.app-digest-more {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dg-red-soft);
+  text-decoration: none;
+}
+
+/* Нижний баннер: в макете здесь анонс Академии, у нас — источник выпуска. */
+.app-digest-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 16px 18px;
+  padding: 14px 16px;
+  background: #151d2a;
+  border: 1px solid #253346;
+  border-left: 4px solid var(--dg-red);
+  border-radius: 6px;
+}
+
+.app-digest-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.app-digest-banner-eyebrow {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--dg-red-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.app-digest-banner-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dg-title);
+  line-height: 1.3;
+}
+
+.app-digest-banner-sub {
+  font-size: 11.5px;
+  color: var(--dg-muted);
+}
+
+.app-digest-outline {
+  flex: none;
+  display: inline-block;
+  border: 1px solid #334155;
+  background: #172030;
+  color: #f1f5f9 !important;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.app-digest-foot {
+  background: var(--dg-deep);
+  border-top: 1px solid #1a2230;
+  padding: 20px 16px;
+}
+
+.app-digest-foot-brand {
+  font-size: 15px;
+  font-weight: 900;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.app-digest-foot-sub {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--dg-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+@media screen and (max-width: 380px) {
+  .app-digest-head {
+    flex-wrap: wrap;
+  }
+
+  .app-digest-hero-media {
+    height: 140px;
+  }
+
+  .app-digest-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
 `;
 
 /** Идемпотентно: повторный вызов (StrictMode) не плодит второй <style>. */

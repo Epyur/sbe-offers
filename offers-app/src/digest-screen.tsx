@@ -2,20 +2,36 @@
  * Экран «Технодайджест» (2026-11-23).
  *
  * Показывает новости выпуска из Базы знаний: месяц, рубрику, заголовок, лид,
- * текст, автора и ссылку на источник. Месяцы переключаются строкой ссылок —
- * так же, как разделы на экранах списков.
+ * текст, автора, картинку и ссылку на источник. Месяцы переключаются строкой
+ * ссылок — так же, как разделы на экранах списков.
+ *
+ * Вёрстка — по макету брендовой полосы (тёмная тема ТЕХНОНИКОЛЬ): красная
+ * марка сверху, шапка с эмблемой и плашкой месяца, вводный блок, ведущая
+ * новость крупной карточкой с кадром, остальные — карточками, подвал.
+ * Тёмная палитра живёт ТОЛЬКО здесь (класс `app-digest`): остальные экраны
+ * приложения остаются в теме Telegram — решение пользователя 2026-11-23.
+ *
+ * Блоки макета, которых нет в данных (письмо редакции, анонс курса Академии),
+ * собраны из того, что известно: месяц и число новостей в вводной строке,
+ * ссылка на источник ведущей новости в нижнем баннере. Выдуманных обещаний
+ * здесь нет — их нечем подтвердить.
  *
  * У каждой новости своя кнопка «Отправить в чат»: человек читает в приложении,
- * а переслать коллеге в рабочий чат удобнее сообщением бота. Вне Telegram
- * (пустой `initData`) кнопки нет — там отправлять некуда.
+ * а переслать коллеге в рабочий чат удобнее сообщением бота (картинкой и
+ * текстом). Вне Telegram (пустой `initData`) кнопки нет — там отправлять некуда.
  */
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { ApiError } from './api.ts';
 import {
   digestParagraphs,
+  issueIntro,
+  leadNews,
   loadDigest,
   monthLabel,
   newsByline,
+  newsCountLabel,
+  newsImageURL,
+  otherNews,
   sendNewsToChat,
   type DigestFeed,
   type DigestItem,
@@ -58,8 +74,8 @@ export function DigestCard({ ym }: { ym: string }): JSX.Element {
 
   return (
     <section>
-      <HomeLink />
       <h1>Технодайджест</h1>
+      <HomeLink />
       {state.kind === 'loading' ? <p className="app-muted">Загружаем новости…</p> : null}
       {state.kind === 'error' ? (
         <div className="app-card app-error">
@@ -85,17 +101,81 @@ export function DigestCard({ ym }: { ym: string }): JSX.Element {
   );
 }
 
+/** Полоса выпуска: шапка, вводный блок, новости, баннер источника, подвал. */
 function Feed({ feed, ym }: { feed: DigestFeed; ym: string }): JSX.Element {
   const shown = feed.issue.ym === '' ? ym : feed.issue.ym;
+  // Считаем РИСУЕМЫЕ новости, а не поле выпуска: в нём База знаний может
+  // держать и очередь модерации, и тогда подпись «4 новости» рядом с тремя
+  // карточками читалась бы как пропажа.
+  const total = feed.items.length;
+  const lead = leadNews(feed.items);
+  const rest = otherNews(feed.items);
+  const issueTitle = feed.issue.title === '' ? 'Технические новости' : feed.issue.title;
+
   return (
-    <>
+    <div className="app-digest">
+      <div className="app-digest-bar" />
+
+      <header className="app-digest-head">
+        <div className="app-digest-brand">
+          <span className="app-digest-mark" aria-hidden="true">
+            TN
+          </span>
+          <span className="app-digest-brand-text">
+            <span className="app-digest-word">
+              ТЕХНО<span className="app-digest-word-red">ДАЙДЖЕСТ</span>
+              <span className="app-digest-word-tail">.LOGICTEAM</span>
+            </span>
+            <span className="app-digest-tagline">Инженерные решения и сервисы</span>
+          </span>
+        </div>
+        <span className="app-digest-stamp">{monthLabel(shown)}</span>
+      </header>
+
       {feed.issues.length > 0 ? <Months issues={feed.issues} shown={shown} current={feed.current} /> : null}
-      <p className="app-muted">{feed.issue.title}</p>
-      {feed.items.length === 0 ? <p className="app-muted">В этом выпуске новостей пока нет.</p> : null}
-      {feed.items.map((item) => (
-        <News key={item.id} item={item} ym={shown} />
-      ))}
-    </>
+
+      <div className="app-digest-intro">
+        <div className="app-digest-eyebrow">Инженерная практика</div>
+        <h2 className="app-digest-title">{issueTitle}</h2>
+        <p className="app-digest-lead">{issueIntro(feed.issue, total)}</p>
+      </div>
+
+      {lead === null ? <p className="app-digest-empty">В этом выпуске новостей пока нет.</p> : null}
+
+      {lead === null ? null : <Hero item={lead} ym={shown} />}
+
+      {rest.length === 0 ? null : (
+        <>
+          <div className="app-digest-divider">
+            <span className="app-digest-divider-title">Новости выпуска</span>
+            <span className="app-digest-divider-side">{newsCountLabel(total)}</span>
+          </div>
+          {rest.map((item) => (
+            <News key={item.id} item={item} ym={shown} />
+          ))}
+        </>
+      )}
+
+      {lead === null || lead.linkUrl === '' ? null : (
+        <div className="app-digest-banner">
+          <span className="app-digest-banner-body">
+            <span className="app-digest-banner-eyebrow">Выпуск {monthLabel(shown)}</span>
+            <span className="app-digest-banner-title">{lead.linkText === '' ? 'Источник ведущей новости' : lead.linkText}</span>
+            <span className="app-digest-banner-sub">{newsCountLabel(total)} · База знаний</span>
+          </span>
+          <a className="app-digest-outline" href={lead.linkUrl} target="_blank" rel="noopener noreferrer">
+            Открыть
+          </a>
+        </div>
+      )}
+
+      <footer className="app-digest-foot">
+        <div className="app-digest-foot-brand">
+          LOGIC<span className="app-digest-word-red">TEAM</span>
+        </div>
+        <div className="app-digest-foot-sub">Техническая дирекция СБЕ ПМиПИР</div>
+      </footer>
+    </div>
   );
 }
 
@@ -110,19 +190,19 @@ function Months({
   current: string;
 }): JSX.Element {
   return (
-    <div className="app-months">
+    <div className="app-digest-months">
       {issues.map((issue) => {
         const label = monthLabel(issue.ym);
         if (issue.ym === shown) {
           return (
-            <span key={issue.ym} className="app-month app-month-current" aria-current="page">
+            <span key={issue.ym} className="app-month app-month-current app-digest-month" aria-current="page">
               {label}
               {issue.ym === current ? ' · текущий' : ''}
             </span>
           );
         }
         return (
-          <a key={issue.ym} className="app-month" href={routeHash({ name: 'digest', ym: issue.ym })}>
+          <a key={issue.ym} className="app-month app-digest-month" href={routeHash({ name: 'digest', ym: issue.ym })}>
             {label}
           </a>
         );
@@ -131,22 +211,110 @@ function Months({
   );
 }
 
-function News({ item, ym }: { item: DigestItem; ym: string }): JSX.Element {
+/**
+ * Кадр новости. Ошибка загрузки гасит картинку, а не оставляет битый значок:
+ * новость читается и без неё (сервис мог не отдать файл из хранилища).
+ */
+function NewsImage({ item, className }: { item: DigestItem; className: string }): JSX.Element | null {
+  const url = newsImageURL(item);
+  const [broken, setBroken] = useState(false);
+  if (url === '' || broken) return null;
   return (
-    <article className={item.isLead ? 'app-news app-news-lead' : 'app-news'}>
-      {item.rubric === '' ? null : <p className="app-news-rubric">{item.rubric}</p>}
-      <h2 className="app-news-title">{item.title}</h2>
-      {newsByline(item) === '' ? null : <p className="app-news-byline">{newsByline(item)}</p>}
-      {item.lead === '' ? null : <p className="app-news-lead-text">{item.lead}</p>}
-      {digestParagraphs(item.body).map((paragraph, index) => (
-        <p key={index}>{paragraph}</p>
-      ))}
+    <img
+      className={className}
+      src={url}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
+/** Ведущая новость — крупная карточка с кадром и плашкой поверх него. */
+function Hero({ item, ym }: { item: DigestItem; ym: string }): JSX.Element {
+  const image = newsImageURL(item);
+  const paragraphs = digestParagraphs(item.body);
+  return (
+    <article className="app-news app-news-lead app-digest-hero">
+      <div className={image === '' ? 'app-digest-hero-media app-digest-hero-media-empty' : 'app-digest-hero-media'}>
+        <NewsImage item={item} className="app-digest-photo" />
+        {image === '' ? (
+          // Без кадра — чертёжный паттерн макета: пустое место читалось бы как
+          // «картинка не загрузилась».
+          <svg
+            className="app-digest-hero-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 21h18" />
+            <path d="M5 21V7l8-4v18" />
+            <path d="M19 21V11l-6-4" />
+            <path d="M9 9h1" />
+            <path d="M9 13h1" />
+            <path d="M9 17h1" />
+          </svg>
+        ) : null}
+        <span className="app-digest-badge">{item.rubric === '' ? 'Ведущая новость' : item.rubric}</span>
+      </div>
+      <div className="app-digest-hero-body">
+        <h3 className="app-news-title">{item.title}</h3>
+        {newsByline(item) === '' ? null : <p className="app-digest-byline">{newsByline(item)}</p>}
+        {item.lead === '' ? null : <p className="app-digest-hero-lead">{item.lead}</p>}
+        {paragraphs.map((paragraph, index) => (
+          <p key={index} className="app-digest-text">
+            {paragraph}
+          </p>
+        ))}
+        {item.linkUrl === '' ? null : (
+          <p className="app-digest-hero-cta">
+            <a className="app-digest-button" href={item.linkUrl} target="_blank" rel="noopener noreferrer">
+              {item.linkText === '' ? 'Открыть источник' : item.linkText} →
+            </a>
+          </p>
+        )}
+        <NewsSendButton ym={ym} id={item.id} />
+      </div>
+    </article>
+  );
+}
+
+/** Новость полосы: рубрика, заголовок, лид, полный текст под раскрытием, ссылка. */
+function News({ item, ym }: { item: DigestItem; ym: string }): JSX.Element {
+  const paragraphs = digestParagraphs(item.body);
+  const title = item.linkUrl === '' ? (
+    item.title
+  ) : (
+    <a href={item.linkUrl} target="_blank" rel="noopener noreferrer">
+      {item.title}
+    </a>
+  );
+  return (
+    <article className="app-news app-digest-news">
+      <NewsImage item={item} className="app-digest-thumb" />
+      {item.rubric === '' ? null : <span className="app-digest-chip">{item.rubric}</span>}
+      <h3 className="app-news-title">{title}</h3>
+      {newsByline(item) === '' ? null : <p className="app-digest-byline">{newsByline(item)}</p>}
+      {item.lead === '' ? null : <p className="app-digest-news-lead">{item.lead}</p>}
+      {paragraphs.length === 0 ? null : (
+        <details className="app-digest-full">
+          <summary>Читать полностью</summary>
+          {paragraphs.map((paragraph, index) => (
+            <p key={index} className="app-digest-text">
+              {paragraph}
+            </p>
+          ))}
+        </details>
+      )}
       {item.linkUrl === '' ? null : (
-        <p>
-          <a className="app-link" href={item.linkUrl} target="_blank" rel="noopener noreferrer">
-            {item.linkText === '' ? item.linkUrl : item.linkText}
-          </a>
-        </p>
+        <a className="app-digest-more" href={item.linkUrl} target="_blank" rel="noopener noreferrer">
+          {item.linkText === '' ? 'Открыть источник' : item.linkText} →
+        </a>
       )}
       <NewsSendButton ym={ym} id={item.id} />
     </article>

@@ -8,7 +8,7 @@
  * docker-сети.
  */
 import http from 'node:http';
-import { sendDocument, verifyToken } from './telegram.ts';
+import { sendDocument, sendPhoto, verifyToken } from './telegram.ts';
 import { runAsk } from './flow/askrun.ts';
 import type { BotDeps } from './routes.ts';
 
@@ -215,10 +215,59 @@ async function handleNotify(req: http.IncomingMessage, res: http.ServerResponse)
   }
 }
 
+/**
+ * Отправка картинки в чат по просьбе сервиса (2026-11-23).
+ *
+ * Первый потребитель — «Отправить в чат» у новости Технодайджеста: кадр
+ * новости идёт подписью, а текст приходит следом отдельным сообщением.
+ * Гейт тот же, что у документа: только `X-Service-Secret`, наружу маршрута нет.
+ */
+async function handlePhoto(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!SECRET || req.headers['x-service-secret'] !== SECRET) {
+    send(res, 403, { ok: false, error: 'forbidden' });
+    return;
+  }
+  const body = await readBodyWithLimit(req, MAX_ANSWER_BODY);
+  if (body === null) {
+    send(res, 413, { ok: false, error: 'request too large' });
+    return;
+  }
+  let parsed: { chat_id?: unknown; file_name?: unknown; caption?: unknown; content?: unknown };
+  try {
+    parsed = JSON.parse(body) as typeof parsed;
+  } catch {
+    send(res, 400, { ok: false, error: 'invalid json' });
+    return;
+  }
+  const chatId = typeof parsed.chat_id === 'string' ? parsed.chat_id.trim() : '';
+  if (!/^-?[0-9]+$/.test(chatId)) {
+    send(res, 400, { ok: false, error: 'нет chat_id' });
+    return;
+  }
+  if (typeof parsed.content !== 'string' || parsed.content === '') {
+    send(res, 400, { ok: false, error: 'нет картинки' });
+    return;
+  }
+  const fileName = typeof parsed.file_name === 'string' && parsed.file_name !== '' ? parsed.file_name : 'photo.jpg';
+  const caption = typeof parsed.caption === 'string' ? parsed.caption : '';
+  try {
+    // Ошибку Telegram отдаём текстом: вызывающему нужно понять, что кадра не
+    // будет, и отправить новость текстом, а не потерять её.
+    await sendPhoto(chatId, fileName, Buffer.from(parsed.content, 'base64'), caption);
+    send(res, 200, { ok: true });
+  } catch (e) {
+    send(res, 502, { ok: false, error: (e as Error).message });
+  }
+}
+
 export function startVerifyServer(): http.Server {
   const server = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/internal/answer') {
       void handleAnswer(req, res);
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/internal/photo') {
+      void handlePhoto(req, res);
       return;
     }
     if (req.method === 'POST' && req.url === '/internal/ask') {

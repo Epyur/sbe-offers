@@ -201,6 +201,56 @@ func (s *Server) sendChatText(ctx context.Context, chatID, text string) error {
 	return nil
 }
 
+// sendChatPhoto — картинка ботом в чат с подписью.
+//
+// Отдельная ручка от `notify` (текст) и от `answer` (документ): у Telegram три
+// разных метода, и смешивать их в одном значит гадать по имени файла, что
+// человек хотел получить. Картинку новости Технодайджеста (2026-11-23) шлём
+// этим путём; ошибку отдаём вызывающему — новость без кадра всё равно уйдёт.
+func (s *Server) sendChatPhoto(ctx context.Context, chatID, fileName string, data []byte, caption string) error {
+	base := strings.TrimRight(getEnv("OFFERS_BOT_URL"), "/")
+	if base == "" {
+		base = "http://offers-bot:3000"
+	}
+	payload, err := json.Marshal(map[string]any{
+		"chat_id":   chatID,
+		"file_name": fileName,
+		"caption":   caption,
+		"content":   base64.StdEncoding.EncodeToString(data),
+	})
+	if err != nil {
+		return err
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, answerTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, base+"/internal/photo", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Secret", getEnv("OFFERS_BOT_SECRET"))
+	resp, err := (&http.Client{Timeout: answerTimeout}).Do(req)
+	if err != nil {
+		return fmt.Errorf("бот недоступен: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, answerMaxReply))
+	var reply struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &reply); err != nil {
+		return fmt.Errorf("бот ответил не по формату (%d)", resp.StatusCode)
+	}
+	if !reply.OK {
+		if strings.TrimSpace(reply.Error) != "" {
+			return errors.New(reply.Error)
+		}
+		return fmt.Errorf("Telegram отклонил отправку картинки (%d)", resp.StatusCode)
+	}
+	return nil
+}
+
 // answerDocx готовит файл ТЕМИ ЖЕ путями, что бот: своих сборщиков здесь нет.
 func (s *Server) answerDocx(r *http.Request, req appAnswerRequest, email string) ([]byte, string, int, string) {
 	return s.answerDocxCtx(r.Context(), req, email)

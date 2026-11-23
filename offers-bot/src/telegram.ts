@@ -144,6 +144,91 @@ export async function telegramRequest<T>(
  *  идёт через туннель — держимся заведомо безопасных 20 МБ. */
 export const MAX_DOCUMENT_BYTES = 20 << 20;
 
+/** Предел картинки: у sendPhoto Telegram свой, 10 МБ. Тяжелее — не отправляем,
+ *  вызывающий решает, что делать (новость Технодайджеста уходит текстом). */
+export const MAX_PHOTO_BYTES = 10 << 20;
+
+/** Вид картинки по первым байтам: Telegram смотрит внутрь файла, но multipart
+ *  без осмысленного Content-Type он тоже разбирает хуже. */
+function photoMime(content: Buffer): string {
+  if (content.length >= 8 && content.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (content.length >= 3 && content[0] === 0xff && content[1] === 0xd8 && content[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (content.length >= 6 && content.subarray(0, 3).toString('latin1') === 'GIF') {
+    return 'image/gif';
+  }
+  if (content.length >= 12 && content.subarray(0, 4).toString('latin1') === 'RIFF' && content.subarray(8, 12).toString('latin1') === 'WEBP') {
+    return 'image/webp';
+  }
+  return 'application/octet-stream';
+}
+
+/**
+ * Отправка картинки в чат (2026-11-23, Технодайджест).
+ *
+ * Тот же путь, что у `sendDocument`: файл лежит у нас, `file_id` не подходит.
+ * Отдельная функция, а не флаг у документа: у Telegram это разные методы, и
+ * подменить один другим нельзя — `sendDocument` показал бы кадр файлом.
+ */
+export async function sendPhoto(
+  chatId: string,
+  fileName: string,
+  content: Buffer,
+  caption?: string,
+): Promise<void> {
+  if (content.length === 0) throw new Error('пустая картинка');
+  if (content.length > MAX_PHOTO_BYTES) throw new Error('картинка тяжелее 10 МБ');
+  const boundary = `offers${Date.now().toString(16)}`;
+  const parts: Buffer[] = [];
+  const text = (name: string, value: string): void => {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`, 'utf8'));
+  };
+  text('chat_id', chatId);
+  if (caption) text('caption', caption);
+  parts.push(
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="${fileName}"\r\n` +
+        `Content-Type: ${photoMime(content)}\r\n\r\n`,
+      'utf8',
+    ),
+  );
+  parts.push(content);
+  parts.push(Buffer.from('\r\n', 'utf8'));
+  parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+  const body = Buffer.concat(parts);
+  const token = await resolveBotToken();
+
+  const res = await new Promise<TelegramApiResult<unknown>>((resolve, reject) => {
+    const req = https.request(
+      `${TELEGRAM_API_BASE}/bot${token}/sendPhoto`,
+      {
+        method: 'POST',
+        agent: socksAgent,
+        headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': body.length },
+      },
+      (r) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as TelegramApiResult<unknown>);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.setTimeout(60000, () => req.destroy(new Error('Telegram sendPhoto не ответил за 60000мс')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+  if (!res.ok) throw new Error(res.description || 'Telegram sendPhoto не удался');
+}
+
 /** Сверить предлагаемый токен с Telegram (getMe) — этим живёт ручка
  *  /internal/verify: сервис сам в Telegram не ходит, туда есть путь только
  *  отсюда, через SOCKS. Возвращает @username бота. */

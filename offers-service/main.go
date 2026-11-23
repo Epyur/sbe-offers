@@ -107,6 +107,10 @@ func main() {
 	// initData, как у /app/answer; сама лента — обычный JWT приложения, потому
 	// что ключ Mini App в kb-service не принимается (чужой app_id). См. appdigest.go.
 	mux.HandleFunc("GET /api/offers/digest", s.requirePerm("viewer")(s.handleAppDigest))
+	// Картинка новости идёт подписанной ссылкой, а не JWT: её грузит `<img>`,
+	// у которого нет заголовка авторизации. Гейт — подпись в адресе. См.
+	// appdigest_image.go.
+	mux.HandleFunc("GET /api/offers/digest/image", s.handleAppDigestImage)
 	mux.HandleFunc("POST /api/offers/app/news", s.handleAppNews)
 
 	mux.HandleFunc("GET /api/offers/permissions/me", s.requirePerm("viewer")(s.handleMyPermission))

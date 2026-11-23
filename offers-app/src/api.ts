@@ -11,8 +11,22 @@ const DEFAULT_API_URL = 'https://epyur.fvds.ru';
 function apiBase(): string {
   // Пусто → тот же домен, с которого раздаётся приложение (так и работает на
   // сервере). Переменная нужна для запуска на стенде и локально.
-  const fromEnv = import.meta.env.VITE_OFFERS_API_URL;
-  return (fromEnv && fromEnv.trim() !== '' ? fromEnv : DEFAULT_API_URL).replace(/\/+$/, '');
+  //
+  // `import.meta.env` есть только у сборщика: в `node --test` его нет, и
+  // прямой доступ уронил бы проверки, которые собирают адрес картинки.
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  const fromEnv = env?.VITE_OFFERS_API_URL ?? '';
+  return (fromEnv.trim() !== '' ? fromEnv : DEFAULT_API_URL).replace(/\/+$/, '');
+}
+
+/**
+ * Полный адрес запроса к сервису — для того, что грузит не `fetch`, а браузер
+ * (картинка в `<img>`): у такого запроса нет наших заголовков, поэтому адрес
+ * должен быть готовым. Путь — тот, что отдал сервис (БЕЗ `/api/offers`).
+ */
+export function apiUrlOf(path: string): string {
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${apiBase()}/api/offers${suffix}`;
 }
 
 let token = '';

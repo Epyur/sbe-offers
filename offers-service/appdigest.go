@@ -52,17 +52,22 @@ type digestIssueView struct {
 //
 // Время уходит в RFC3339 (time.Time), а подпись «5 ноября» и сокращённую дату
 // собирает клиент: формат показа — решение экрана, а не сервиса.
+//
+// `ImagePath` — наш подписанный ПУТЬ картинки (см. `appdigest_image.go`), а не
+// адрес: приложение склеивает его со своим адресом API. Пустая строка означает
+// «картинки нет» — и это тот случай, когда показывать нечего, а не ошибка.
 type digestNewsView struct {
-	ID       int64  `json:"id"`
-	Title    string `json:"title"`
-	Lead     string `json:"lead"`
-	Body     string `json:"body"`
-	Rubric   string `json:"rubric"`
-	Author   string `json:"author"`
-	At       string `json:"at"`
-	IsLead   bool   `json:"isLead"`
-	LinkURL  string `json:"linkUrl"`
-	LinkText string `json:"linkText"`
+	ID        int64  `json:"id"`
+	Title     string `json:"title"`
+	Lead      string `json:"lead"`
+	Body      string `json:"body"`
+	Rubric    string `json:"rubric"`
+	Author    string `json:"author"`
+	At        string `json:"at"`
+	IsLead    bool   `json:"isLead"`
+	LinkURL   string `json:"linkUrl"`
+	LinkText  string `json:"linkText"`
+	ImagePath string `json:"imagePath"`
 }
 
 // digestFeed — ответ GET /api/offers/digest.
@@ -192,16 +197,17 @@ func digestNewsViews(news []KBDigestNews) []digestNewsView {
 			at = n.CreatedAt.Format(time.RFC3339)
 		}
 		out = append(out, digestNewsView{
-			ID:       n.ID,
-			Title:    strings.TrimSpace(n.Title),
-			Lead:     strings.TrimSpace(n.Lead),
-			Body:     strings.TrimSpace(n.BodyMD),
-			Rubric:   strings.TrimSpace(n.RubricName),
-			Author:   digestAuthorOf(n),
-			At:       at,
-			IsLead:   n.IsLead,
-			LinkURL:  strings.TrimSpace(n.LinkURL),
-			LinkText: strings.TrimSpace(n.LinkText),
+			ID:        n.ID,
+			Title:     strings.TrimSpace(n.Title),
+			Lead:      strings.TrimSpace(n.Lead),
+			Body:      strings.TrimSpace(n.BodyMD),
+			Rubric:    strings.TrimSpace(n.RubricName),
+			Author:    digestAuthorOf(n),
+			At:        at,
+			IsLead:    n.IsLead,
+			LinkURL:   strings.TrimSpace(n.LinkURL),
+			LinkText:  strings.TrimSpace(n.LinkText),
+			ImagePath: digestImageSignedPath(n.ImageHash, n.ImageName),
 		})
 	}
 	return out
@@ -293,17 +299,74 @@ func (s *Server) handleAppNews(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := context.WithoutCancel(r.Context())
-	if err := s.sendChatText(ctx, chatID, digestNewsForChat(issue, newsItem, ym)); err != nil {
-		// Причина — в журнал, человеку — свой текст: ответ бота («бот ответил
-		// 403 forbidden») ничего не говорит менеджеру и раскрывает внутренности.
-		log.Printf("digest: новость %d в чат %s не ушла: %v", req.ID, chatID, err)
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": "Бот не смог отправить новость в чат — попробуйте ещё раз",
-		})
-		return
+	// Текст и подпись собираются ДО отправки: сначала решаем, уйдёт ли кадр,
+	// и только потом решаем, что писать под ним.
+	caption := digestCaptionForChat(issue, newsItem, ym)
+	text := digestNewsForChat(issue, newsItem, ym)
+	photoSent := false
+	if photo, fileName, ok := s.digestNewsPhoto(ctx, newsItem); ok {
+		if err := s.sendChatPhoto(ctx, chatID, fileName, photo, caption); err != nil {
+			// Картинка необязательна: новость уйдёт текстом, как раньше, а
+			// причина останется в журнале (спросить уже некого).
+			log.Printf("digest: картинка новости %d в чат %s не ушла: %v", req.ID, chatID, err)
+		} else {
+			photoSent = true
+			// Подпись под кадром уже называет выпуск, рубрику и заголовок —
+			// второй раз их в сообщении не повторяем.
+			text = digestNewsBodyForChat(newsItem)
+		}
+	}
+	if strings.TrimSpace(text) != "" {
+		if err := s.sendChatText(ctx, chatID, text); err != nil {
+			// Причина — в журнал, человеку — свой текст: ответ бота («бот ответил
+			// 403 forbidden») ничего не говорит менеджеру и раскрывает внутренности.
+			log.Printf("digest: новость %d в чат %s не ушла: %v", req.ID, chatID, err)
+			// Кадр уже дошёл — новость человек получил. Отвечать отказом значило
+			// бы звать нажать ещё раз и подарить второй кадр.
+			if !photoSent {
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error": "Бот не смог отправить новость в чат — попробуйте ещё раз",
+				})
+				return
+			}
+		}
 	}
 	log.Printf("digest: новость %d отправлена в чат %s (%s)", req.ID, chatID, email)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// digestNewsPhoto — картинка новости для чата.
+//
+// Три отказа вместо половины работы: нет хеша/имени, хранилище не ответило,
+// файл тяжелее предела Telegram. Все три означают «шлём текстом» — новость
+// важнее кадра, и человек не должен остаться без неё из-за картинки.
+func (s *Server) digestNewsPhoto(ctx context.Context, n KBDigestNews) ([]byte, string, bool) {
+	hash := strings.TrimSpace(n.ImageHash)
+	name := strings.TrimSpace(n.ImageName)
+	if !digestImageHashRe.MatchString(hash) || !digestImageNameOK(name) {
+		return nil, "", false
+	}
+	if s.kb == nil || !s.kb.configured() {
+		return nil, "", false
+	}
+	src := NewKBImageSource(s.kb)
+	if src == nil {
+		return nil, "", false
+	}
+	data, err := src.Get(ctx, digestImageObjectKey(hash, name))
+	if err != nil {
+		log.Printf("digest: картинка %s для чата не прочитана: %v", hash, err)
+		return nil, "", false
+	}
+	if len(data) == 0 || len(data) > digestPhotoMaxBytes {
+		log.Printf("digest: картинка %s не годится для чата (%d байт)", hash, len(data))
+		return nil, "", false
+	}
+	if !strings.HasPrefix(http.DetectContentType(data), "image/") {
+		log.Printf("digest: по хешу %s пришёл не образ", hash)
+		return nil, "", false
+	}
+	return data, name, true
 }
 
 // digestNewsByID — вышедшая новость выпуска по номеру.
@@ -340,9 +403,12 @@ func digestPlainText(body string) string {
 	return strings.TrimSpace(out)
 }
 
-// digestNewsForChat — текст сообщения. Формат один на все новости, поэтому он
-// проверяется тестом, а не глазами в чате.
-func digestNewsForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
+// digestHeadlineForChat — шапка новости: выпуск, рубрика, заголовок.
+//
+// Одна и та же последовательность идёт и в подпись под картинкой, и в начало
+// текстового сообщения — поэтому она собрана здесь, а не двумя похожими
+// кусками кода (разошлись бы на первой же правке).
+func digestHeadlineForChat(issue KBDigestIssue, n KBDigestNews, ym string) []string {
 	parts := []string{"📰 " + digestIssueViewOf(issue, ym).Title}
 	if rubric := strings.TrimSpace(n.RubricName); rubric != "" {
 		parts = append(parts, rubric)
@@ -350,6 +416,15 @@ func digestNewsForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
 	if title := strings.TrimSpace(n.Title); title != "" {
 		parts = append(parts, title)
 	}
+	return parts
+}
+
+// digestNewsBodyForChat — новость БЕЗ шапки: анонс, текст, автор, источник.
+//
+// Отдельно от шапки, потому что она уже стоит в подписи под картинкой: без
+// этого разделения одно и то же названо дважды подряд.
+func digestNewsBodyForChat(n KBDigestNews) string {
+	parts := []string{}
 	if lead := strings.TrimSpace(n.Lead); lead != "" {
 		parts = append(parts, lead)
 	}
@@ -374,4 +449,40 @@ func digestNewsForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
 		parts = append(parts, "Источник: "+text+" — "+link)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// digestNewsForChat — текст сообщения целиком: шапка и новость.
+//
+// Формат один на все новости, поэтому он проверяется тестом, а не глазами в
+// чате. Этим текстом новость уходит и тогда, когда картинка не отправилась.
+func digestNewsForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
+	parts := digestHeadlineForChat(issue, n, ym)
+	if body := digestNewsBodyForChat(n); body != "" {
+		parts = append(parts, body)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// digestCaptionForChat — подпись под картинкой новости.
+//
+// Telegram пускает в подпись не больше 1024 знаков и считает СИМВОЛЫ, а не
+// байты, поэтому обрезка — по рунам. Шапка короткая по построению; предел всё
+// равно держим, чтобы длинный заголовок не превратил отправку в отказ.
+func digestCaptionForChat(issue KBDigestIssue, n KBDigestNews, ym string) string {
+	return cutRunes(strings.Join(digestHeadlineForChat(issue, n, ym), "\n"), digestCaptionLimit)
+}
+
+// cutRunes — обрезать текст по числу символов, поставив многоточие.
+func cutRunes(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit == 1 {
+		return "…"
+	}
+	return string(runes[:limit-1]) + "…"
 }

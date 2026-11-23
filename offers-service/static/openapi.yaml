@@ -319,12 +319,73 @@ paths:
                           type: string
                         linkText:
                           type: string
+                        imagePath:
+                          type: string
+                          description: >-
+                            Подписанный ПУТЬ картинки новости (без `/api/offers`):
+                            приложение склеивает его со своим адресом API.
+                            Пусто — картинки нет.
         '400':
           description: Месяц задан неверно
         '404':
           description: Такого выпуска нет
         '502':
           description: База знаний не ответила
+        '503':
+          description: База знаний не настроена
+
+  /api/offers/digest/image:
+    get:
+      summary: Картинка новости Технодайджеста
+      description: |
+        Кадр новости по подписанной ссылке из ленты (`imagePath`). Гейт —
+        подпись в адресе, а не JWT: картинку грузит `<img>`, у которого нет
+        заголовка авторизации. Подпись связана и с хешем, и с именем файла,
+        поэтому по ней нельзя попросить другой объект хранилища.
+
+        Байты забирает сервис: `POST` не нужен, а хранилище Базы знаний закрыто
+        от приложения её же ключом (`app_id`).
+
+        Коды: 400 — хеш или имя не годятся; 403 — подпись неверна; 404 —
+        файла нет в хранилище; 502 — по хешу пришёл не образ; 503 — База знаний
+        не настроена.
+      security: []
+      parameters:
+        - name: hash
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{32,128}$'
+          description: Хеш содержимого картинки (`image_hash` новости)
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя файла картинки (`image_name` новости)
+        - name: sig
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Подпись сервиса
+      responses:
+        '200':
+          description: Файл картинки
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Хеш или имя не годятся
+        '403':
+          description: Подпись неверна — обновите выпуск
+        '404':
+          description: Картинки нет в хранилище
+        '502':
+          description: По хешу пришёл не образ
         '503':
           description: База знаний не настроена
 
