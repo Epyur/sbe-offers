@@ -37,19 +37,100 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.15** — released 2026-11-23. The Mini App's fourth card
-«Технодайджест» is no longer a stub: it shows the month's news from the Knowledge
-Base digest (month switcher, rubric, lead, body, source) and gives every item its
-own «📤 Отправить в чат» button (a bot message; the window stays open). The
-previous version (0.11.14) made the product list appear only after typing in the
-КП/combat windows and signed chosen products with their names.
+Current version = **0.11.16** — released 2026-11-23. The Mini App's «Технодайджест»
+is drawn as the brand strip from the reference mockup (dark `app-digest` palette,
+only on this screen), news images are shown (cover of the lead item, thumbnails of
+the rest) through a signed proxy route, and «📤 Отправить в чат» sends the news as
+a bot photo with a caption followed by the text. The previous version (0.11.15)
+made the fourth card real: the month's news from the Knowledge Base digest with a
+month switcher and a per-item chat button.
 
 The Mini App key cannot read kb-service (a token is issued to ONE app), so
 `offers-service` proxies the digest with its service-to-service token; see
-`appdigest.go` and the gotcha about `app_id`. Deploy the service **before** the
-new app bundle. Two independent reviews (server/access, client/product) before
-deploy found **no blockers**; their findings are fixed and listed in
-`HANDOFF.md` («Две независимые ревизии…»).
+`appdigest.go`, `appdigest_image.go` and the gotcha about `app_id`. Deploy the
+service **before** the new app bundle. Two independent reviews (server/access,
+client/product) before the 0.11.15 deploy found **no blockers**; their findings
+are fixed and listed in `HANDOFF.md` («Две независимые ревизии…»).
+
+> **2026-11-23 (вечер) — «Технодайджест» по макету полосы, картинки в приложении и в чате.
+> ВЫПУЩЕНО 0.11.16.**
+> Задача пользователя: «привести к макету» интерактивного просмотра выпуска и
+> сделать так, чтобы картинки новостей показывались в мини-аппе и уходили в чат.
+>
+> **(1) Экран — по макету брендовой полосы.** `offers-app/src/digest-screen.tsx`
+> перерисован по референсу: красная марка сверху, шапка с эмблемой `TN`, словом
+> `ТЕХНОДАЙДЖЕСТ.LOGICTEAM` и плашкой месяца, вводный блок (надзаголовок, имя
+> выпуска, вводная строка), ведущая новость крупной карточкой с кадром и плашкой
+> рубрики поверх него, остальные — карточками с чипом рубрики, ведущей строкой и
+> «Читать полностью» под раскрытием, нижний баннер с источником ведущей новости,
+> подвал `LOGICTEAM · Техническая дирекция СБЕ ПМиПИР`. Тёмная палитра живёт
+> **только** в классе `app-digest` (`--dg-*`): остальные экраны остаются в теме
+> Telegram (решение пользователя 2026-11-23). Блоки макета без данных (письмо
+> редакции, анонс курса Академии) собраны из фактов: `issueIntro` — месяц и
+> число новостей, баннер — ссылка на источник ведущей; нет данных — блок не
+> рисуется.
+>
+> **(2) Картинка новости идёт подписанной ссылкой сервиса.** Взять её приложению
+> негде: файл лежит в хранилище Базы знаний, её ручки закрыты JWT с `app_id=kb`,
+> а у `<img>` нет заголовка авторизации. `offers-service/appdigest_image.go`:
+> `GET /api/offers/digest/image?hash=…&name=…&sig=…`, где `sig` =
+> HMAC-SHA256(`digest-image\0hash\0name`, `OFFERS_SERVICE_SECRET`), 32 hex.
+> Гейт — **подпись** (ручка публичная намеренно), подпись связана и с хешем, и с
+> именем, а имя проверяется (без `/`, `\`, `..`) — иначе адрес стал бы способом
+> попросить произвольный объект хранилища. Байты забирает сервис:
+> `kb.FileLink` по ключу **`kb/<image_hash>/<image_name>`** → presigned-ссылка →
+> чтение (`NewKBImageSource`, тот же путь, что у картинок карточек). Лента отдаёт
+> `imagePath` (путь БЕЗ `/api/offers`) только у новости, у которой картинка есть;
+> приложение склеивает его со своим `apiBase` (`apiUrlOf` в `api.ts`).
+>
+> **(3) «Отправить в чат»: кадр с подписью, затем текст.** `handleAppNews` сначала
+> пробует `POST {bot}/internal/photo` (новая ручка бота + `sendPhoto` в
+> `telegram.ts`), подпись — выпуск, рубрика, заголовок (`digestCaptionForChat`,
+> обрезка по СИМВОЛАМ, предел 1000). Ушёл кадр — текст идёт без шапки
+> (`digestNewsBodyForChat`), не ушёл — уходит полный текст, как раньше: **кадр
+> необязателен, новость обязательна**. Картинку в `digestNewsPhoto` отсекают три
+> проверки: нет хеша/имени, файл тяжелее 10 МБ (предел Telegram), по хешу пришёл
+> не образ.
+>
+> **Проверки (2026-11-23):** `gofmt -l` пусто, `go vet` 0,
+> `go test -count=1 ./...` зелёный (**+10** новых: подпись требует секрет, мусор
+> в хеше/имени не даёт ссылки, подпись связана с именем, отказы ручки 400/403/503,
+> ключ `kb/<hash>/<name>`, путь в ленте только у новости с картинкой и только при
+> секрете, подпись под кадром по символам, текст без шапки, транспорт
+> `sendPhoto` и его отказ); OpenAPI **128/128** (новая ручка описана);
+> приложение `typecheck` 0, **105** тестов (+5), `build` OK,
+> `size` код 116 650 Б / картинки 192 618 Б; `check_home_screen.mjs` — **34**
+> проверки (+8: эмблема, название полосы, плашка месяца, кадр ведущей,
+> миниатюра обычной новости, кнопка-ссылка, баннер источника, подвал); бот
+> `typecheck` 0, `build` OK, **231** тест; плагин `tsc` 0,
+> `check_bundle_strings` 0, `check_marker_registry` OK,
+> `check_sections_conditions` 16/16, `check_combat_sections_rules` 20/20,
+> `check_docs_state` OK; стенд `offers_local_e2e` **630/0** (первый прогон дал
+> 629/1 — тот же неустойчивый таймаут, что и при 0.11.15; повтор зелёный).
+>
+> **Выложено 2026-11-23:** `backend` `1df30f2` (код; доки — следующим коммитом),
+> `main` `9c102c7` (срез 0.11.16); образы `offers` и `offers-bot` пересобраны и
+> пересозданы (бэкапы `offers-service.bak-20261123-2230.tgz`,
+> `offers-bot.bak-20261123-2230.tgz`); приложение — `assets/index-DhsIQ4Dm.js`
+> (573 182 Б; бэкап `app-offers.bak-20261123-2230`, старый бандл
+> `index-CFG7cu1o.js` удалён); самораздача `manifest f0d5a783…` / `main
+> 6c3dd3d7…` / `styles 2517a7cf…`; реестр `sbe-apstore-registry` `6b70295`
+> (запись 0.11.16). Подробности — `HANDOFF.md`, «Три точки сходятся (0.11.16)».
+>
+> **Живая сверка (2026-11-23):** health `200`; без токена `/form`, `/offers`,
+> `/combat`, `/digest` — `401`; `GET /digest` под служебным токеном `offers` —
+> `200`, выпуск `2026-11`, 7 новостей, **4 с картинками**; картинка по
+> подписанной ссылке — `200 image/png` **255 243 Б** (`\x89PNG`), испорченная
+> подпись и подменённое имя — `403`, имя с путём — `400`;
+> `POST /app/news` с мусором — `400`; `/internal/photo` без секрета — `403`;
+> бандл и три файла самораздачи по https совпали с локальными sha256;
+> `/registry.json` отдаёт `0.11.16`. **Ключ хранилища подтверждён живьём:** в
+> `attachments` строка `kb/<hash>/<имя>` совпадает с проекцией, по одному хешу
+> `file-link` отвечает `404`.
+>
+> **Не проверено:** живая отправка новости в чат из Telegram (нужна настоящая
+> подпись `initData` и живой чат — за человеком) и вид полосы в настоящем
+> Telegram (снимок — Edge, 430 px).
 
 > **0.11.14 (2026-11-21) — окна выбора продукта: список после ввода, выбранное — названиями.**
 > Две живые жалобы по окнам создания/редактирования КП и боевого листка.
@@ -365,8 +446,8 @@ deploy found **no blockers**; their findings are fixed and listed in
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `3516da9` (code; docs — следующим коммитом), `main` `4eabd60`
-(release slice of 0.11.15; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `1df30f2` (code; docs — следующим коммитом), `main` `9c102c7`
+(release slice of 0.11.16; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -1215,7 +1296,7 @@ offers-bot (Node)  --X-Service-Secret-->  offers-service
 | `scripts/check_layout_mode_defect.py` | live HTTP check of the layout modes (offer vs combat sheet) |
 | `scripts/check_app_auth.mjs` | live check of the Mini App sign-in: initData signed with the real bot token, 8 checks (accept / wrong token / stale / tampered / empty / garbage / config / bare route still 401) |
 | `scripts/{auth,kb,llm,bot}-stub.mjs` | stand stubs for the services the plugin talks to |
-| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`, `#/digest/:ym`), `base: './'`, built to `offers-app/dist/`. **S0+S1+B+ done**: scaffold, placeholder screens, sign-in (initData → JWT), and the bot's «📱 Открыть приложение» buttons. **Since 2026-11-23** the fourth card «Технодайджест» is real: `src/digest.ts` (pure: `digestFeedOf` boundary parse, `digestParagraphs`, `monthLabel`, `sendNewsToChat`) + `src/digest-screen.tsx` (news of the month from the KB digest, month switcher, «📤 Отправить в чат» per item, window not closed). Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 113 677 B of code used), `npm test` (100 passing), `scripts/check_home_screen.mjs` (26 checks, real browser). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
+| `offers-app/` | **Telegram Mini App** (React + Vite + TS, 2026-11-13). Owns the document — КП systems/positions/texts and combat sheets; the bot keeps identity, entry and the brief. Hash routing (`#/list/offers`, `#/offer/:id`, `#/sheet/:id`, `#/digest/:ym`), `base: './'`, built to `offers-app/dist/`. **S0+S1+B+ done**: scaffold, placeholder screens, sign-in (initData → JWT), and the bot's «📱 Открыть приложение» buttons. **Since 2026-11-23** the fourth card «Технодайджест» is real and drawn as the brand strip (dark `app-digest` palette, only this screen): `src/digest.ts` (pure: `digestFeedOf` boundary parse, `digestParagraphs`, `monthLabel`, `issueIntro`, `leadNews`/`otherNews`, `newsCountLabel`, `newsImageURL`, `sendNewsToChat`) + `src/digest-screen.tsx` (news of the month from the KB digest, month switcher, cover photo of the lead item, thumbnails of the rest, «📤 Отправить в чат» per item — the bot sends the picture with a caption and then the text). Bundle deployed to `/app-offers/` (Caddy). Checks: `npm run typecheck`, `npm run build`, `npm run size` (200 KiB gzip budget — 116 650 B of code used), `npm test` (105 passing), `scripts/check_home_screen.mjs` (34 checks, real browser). Plan: `docs/superpowers/plans/2026-11-13-sbe-offers-webapp-{START-HERE,migration-plan}.md` |
 
 **Mini App, S1 — identity (2026-11-13).** `offers-service/appauth.go`:
 `verifyInitData` (HMAC per Telegram docs, constant-time compare, `auth_date`
@@ -1891,6 +1972,39 @@ measurements) are in the archive.
   not put the KB token into the browser. `requireServiceSecret`/JWT gates stay
   as they are: the digest feed is `requirePerm("viewer")`, the chat send is
   gated by the Telegram signature.
+
+- **An `<img>` cannot carry a JWT — a protected picture needs a SIGNED ADDRESS**
+  (2026-11-23). The digest cover is a KB file, and the browser asks for it
+  without our headers, so `GET /api/offers/digest/image?hash=…&name=…&sig=…`
+  (public on purpose, gate = HMAC of `digest-image\0hash\0name`,
+  `appdigest_image.go`) proxies the bytes. **The signature binds EVERY part that
+  identifies the object**: sign the hash alone and the same address could ask for
+  any file under it; the name is validated too (no `/`, `\`, `..`). The feed
+  returns a PATH (`imagePath`), not a URL: the API origin is the app's business
+  (`apiUrlOf`), and a second origin written by the service would drift.
+
+- **A digest image is addressed by hash AND name, not by the hash alone**
+  (2026-11-23). The KB has no GET route for digest pictures, and `file-link`
+  takes the STORAGE KEY — `kb/<content_hash>/<name>` (the bucket rule:
+  `scripts/kb_s3_gc.sh`, first path segment is the hash, and digest images are
+  kept alive by `kb_digest_items.image_hash`). So `image_hash` without
+  `image_name` is not enough; both travel in the signed address. This is derived
+  from the storage rule, not yet confirmed against a live response — check it on
+  the first issue that really has a picture.
+
+- **A picture is optional, the news is not** (2026-11-23). `handleAppNews` tries
+  `sendPhoto` first and, on any refusal (no hash/name, KB silent, >10 MB, not an
+  image, Telegram refusal), sends the full text instead and only logs the reason.
+  The reverse — losing the news because the photo failed — is the defect this
+  rule exists to prevent. And when the photo DID arrive but the text behind it
+  failed, the answer is still `ok`: calling it a failure would invite a second
+  press and a duplicate picture. `/internal/photo` is its OWN bot route next to
+  `notify` (text) and `answer` (document): Telegram has three methods, and one
+  route guessing the kind by file name is how a picture becomes a document.
+
+- **A Telegram caption is limited in CHARACTERS, not bytes** (2026-11-23).
+  `sendPhoto` accepts 1024; `digestCaptionForChat` caps at 1000 and cuts by runes
+  (`cutRunes`), so a long Cyrillic title cannot turn the send into a refusal.
 
 - **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
   (2026-11-13, R2). `nd:pick:3` must become `{prefix:'nd:pick', id:3}`. Parsing
