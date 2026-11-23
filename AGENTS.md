@@ -37,14 +37,14 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.17** — released 2026-11-23. The Mini App's «Технодайджест»
-is drawn as the brand strip from the reference mockup (dark `app-digest` palette,
-only on this screen); EVERY news is its own framed card like the lead item, and
-«📤 Отправить в чат» sends the whole news as ONE bot message — a photo with the
-full text in its caption, or a single text message when it does not fit or there
-is no picture. The previous version (0.11.16) drew the strip by the mockup and
-showed news images through a signed proxy route; 0.11.15 made the fourth card
-real (month's news from the Knowledge Base digest with a month switcher).
+Current version = **0.11.18** — released 2026-11-23. The Mini App's «Технодайджест»
+is the brand strip from the reference mockup (dark `app-digest` palette, only on
+this screen): the emblem is the Knowledge Base digest's own logo, the masthead font
+follows the viewport width, the month sits on its own line as a DROPDOWN of issues,
+every news is a framed card, and «📤 Отправить в чат» sends the whole news as ONE
+bot message. Previous versions: 0.11.17 framed the cards and made the chat send a
+single message, 0.11.16 drew the strip by the mockup with news images through a
+signed proxy route, 0.11.15 made the fourth card real.
 
 The Mini App key cannot read kb-service (a token is issued to ONE app), so
 `offers-service` proxies the digest with its service-to-service token; see
@@ -52,6 +52,36 @@ The Mini App key cannot read kb-service (a token is issued to ONE app), so
 service **before** the new app bundle. Two independent reviews (server/access,
 client/product) before the 0.11.15 deploy found **no blockers**; their findings
 are fixed and listed in `HANDOFF.md` («Две независимые ревизии…»).
+
+> **Правка шапки дайджеста (2026-11-23): месяц строкой ниже и списком,
+> эмблема из Базы знаний, кегль под ширину экрана. ВЫПУЩЕНО 0.11.18.**
+> Четыре просьбы пользователя по шапке экрана «Технодайджест».
+> **(1) Месяц — отдельной строкой под названием.** Плашка стояла в одной строке с
+> `ТЕХНОДАЙДЖЕСТ.LOGICTEAM` и наезжала на `LOGICTEAM`; теперь она ниже (блок
+> `.app-digest-pick`), проверка в браузере сравнивает низ шапки и верх строки
+> выпуска.
+> **(2) Кегль верхней строки зависит от ширины экрана:**
+> `clamp(12px, 3.9vw, 16px)` (было фиксированных 14 px). Проверка меряет
+> вычисленный кегль при 320 и 430 px: 12.48 против 16.
+> **(3) Эмблема — та же, что в шапке полосы Базы знаний:**
+> `kb-service/templates/logo.png` (белая на прозрачном). Лежит рядом с
+> приложением — `offers-app/public/digest-logo.png`, в бандл НЕ вшивается: 4 КБ
+> картинки незачем гонять через бюджет кода. Текстовый квадратик `TN` удалён.
+> **(4) Выбор выпуска — выпадающий список** (`<select>` с месяцем, у текущего
+> подпись «· текущий») вместо строки месяцев ссылками. Смена значения ведёт на
+> `#/digest/:ym`, экран перечитывает ленту. Классы `.app-months`/`.app-month`
+> удалены вместе с разметкой: правило, которым ничего не рисуется, — вторая
+> правда о том же экране.
+> **Проверки:** приложение `typecheck` 0, **105** тестов, `build` OK, `size` код
+> **121 258 Б** / картинки 192 618 Б; `check_home_screen.mjs` — **43** проверки
+> (+6: список выпусков, выбранный месяц, эмблема загружена, месяц ниже шапки,
+> кегль зависит от ширины, выбор ведёт на адрес выпуска и лента рисуется снова;
+> три прежние проверки плашки/строки месяцев заменены).
+> **Выложено 2026-11-23:** `backend` `1dc83aa`, `main` `3a23956`; приложение —
+> `assets/index-B-SuAGPg.js` (574 800 Б; бэкап `app-offers.bak-20261123-2320`,
+> старый бандл `index-_Wvi0O71.js` удалён) плюс `digest-logo.png` (4 158 Б);
+> самораздача `manifest ce578fb0…` / `main 2200c056…` / `styles 2517a7cf…`;
+> реестр `sbe-apstore-registry` `ea2082b`. Сервис и бот не менялись.
 
 > **2026-11-23 (позже) — новости дайджеста карточками, в чат одним сообщением.
 > ВЫПУЩЕНО 0.11.17.**
@@ -483,8 +513,8 @@ are fixed and listed in `HANDOFF.md` («Две независимые ревиз
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `ea5103f` (code; docs — следующим коммитом), `main` `bc0a1c8`
-(release slice of 0.11.17; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `1dc83aa` (code; docs — следующим коммитом), `main` `3a23956`
+(release slice of 0.11.18; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -2060,6 +2090,23 @@ measurements) are in the archive.
   blanket `.app-digest .app-news { padding: 0 }`**: its specificity (0,2,0) beat
   the card rule (0,1,0) and quietly stripped the frame and padding. The browser
   guard checks COMPUTED styles and bounding boxes, not class names.
+
+- **A header is measured, not eyeballed; a logo in the bundle is not free**
+  (2026-11-23). Three rules from one live complaint («плашка месяца наезжает на
+  название logicteam»):
+  1. **The month is its own block BELOW the head** (`.app-digest-pick`); sharing
+     the row with `ТЕХНОДАЙДЖЕСТ.LOGICTEAM` made them overlap as soon as the
+     screen narrowed. The guard compares the head's bottom edge with the picker's
+     top instead of trusting the eye.
+  2. **The masthead font follows the viewport**: `clamp(12px, 3.9vw, 16px)` with
+     `white-space: nowrap`; a fixed 14 px either overflowed or wasted space. The
+     guard measures the computed size at 320 and 430 px and requires it to
+     shrink.
+  3. **The emblem is the Knowledge Base digest's own logo**
+     (`kb-service/templates/logo.png` — white on transparent) copied to
+     `offers-app/public/digest-logo.png` and served as a file, NOT embedded as a
+     data URI: it would sit in the code budget for no reason. If the KB logo is
+     replaced, re-copy the file; the mini app does not read kb-service.
 
 - **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
   (2026-11-13, R2). `nd:pick:3` must become `{prefix:'nd:pick', id:3}`. Parsing
