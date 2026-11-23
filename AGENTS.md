@@ -37,13 +37,14 @@ a new window:
 > Открой `C:\Obsidian\mailers\.obsidian\plugins\sbe-offers\NEXT-SESSION-PROMPT.md`
 > и выполни его как ТЗ.
 
-Current version = **0.11.16** — released 2026-11-23. The Mini App's «Технодайджест»
+Current version = **0.11.17** — released 2026-11-23. The Mini App's «Технодайджест»
 is drawn as the brand strip from the reference mockup (dark `app-digest` palette,
-only on this screen), news images are shown (cover of the lead item, thumbnails of
-the rest) through a signed proxy route, and «📤 Отправить в чат» sends the news as
-a bot photo with a caption followed by the text. The previous version (0.11.15)
-made the fourth card real: the month's news from the Knowledge Base digest with a
-month switcher and a per-item chat button.
+only on this screen); EVERY news is its own framed card like the lead item, and
+«📤 Отправить в чат» sends the whole news as ONE bot message — a photo with the
+full text in its caption, or a single text message when it does not fit or there
+is no picture. The previous version (0.11.16) drew the strip by the mockup and
+showed news images through a signed proxy route; 0.11.15 made the fourth card
+real (month's news from the Knowledge Base digest with a month switcher).
 
 The Mini App key cannot read kb-service (a token is issued to ONE app), so
 `offers-service` proxies the digest with its service-to-service token; see
@@ -51,6 +52,42 @@ The Mini App key cannot read kb-service (a token is issued to ONE app), so
 service **before** the new app bundle. Two independent reviews (server/access,
 client/product) before the 0.11.15 deploy found **no blockers**; their findings
 are fixed and listed in `HANDOFF.md` («Две независимые ревизии…»).
+
+> **2026-11-23 (позже) — новости дайджеста карточками, в чат одним сообщением.
+> ВЫПУЩЕНО 0.11.17.**
+> Две живые жалобы на 0.11.16.
+> **(1) «Карточки разъезжаются по всей ширине и почти наезжают друг на друга».**
+> Обычные новости рисовались строками полосы с пунктирным разделителем, а
+> ведущая — карточкой. Теперь у каждой новости своя карточка, как у ведущей:
+> подложка `--dg-card`, рамка `#253346`, радиус 8 px, отступы 16 px по краям
+> полосы и **10 px между карточками** (`.app-digest .app-digest-news`). Общее
+> правило `.app-digest .app-news` удалено: с ним карточка теряла рамку и padding,
+> а ведущая описана своим классом. Сторож в браузере проверяет ВЫЧИСЛЕННЫЕ стили
+> и зазоры, а не имена классов (фон `rgb(23,32,47)`, рамка 1 px, радиус 8 px,
+> зазор 10 px, ширина 372 px при экране 430).
+> **(2) «При экспорте в чат новость не должна резаться на несколько сообщений».**
+> Было два сообщения: кадр с короткой подписью и следом текст. Теперь новость
+> уходит **ОДНИМ** сообщением: `handleAppNews` собирает весь текст (шапка, лид,
+> тело, автор, источник) и, если он влезает в подпись Telegram
+> (`digestFitsCaption`, 1000 знаков) и картинка есть, отправляет кадр с ЭТИМ
+> текстом в подписи; иначе — одно текстовое сообщение. Живые новости выпуска —
+> 256–647 знаков, то есть целиком попадают в подпись. `digestOneMessage` держит
+> текст в пределах 3800 знаков (лимит Telegram 4096) и режет по границе слова с
+> многоточием, чтобы бот (`splitForTelegram`) не разрезал новость сам.
+> **Проверки:** `gofmt -l` пусто, `go vet` 0, `go test -count=1 ./...` зелёный
+> (тест «одно сообщение» вместо теста подписи: короткая новость целиком в
+> подписи, длинная — одно сообщение с многоточием, пустая — пусто); приложение
+> `typecheck` 0, **105** тестов, `build` OK, `size` код **116 838 Б** /
+> картинки 192 618 Б; `check_home_screen.mjs` — **37** проверок (+3: карточка в
+> рамке на своей подложке, зазор 10 px, карточка уже полосы); бот `typecheck` 0,
+> **231** тест; плагин `tsc` 0, `check_bundle_strings` 0,
+> `check_marker_registry` OK, `check_docs_state` OK.
+> **Выложено 2026-11-23:** `backend` `ea5103f`, `main` `bc0a1c8`; образ `offers`
+> пересобран и пересоздан (бэкап `offers-service.bak-20261123-2250.tgz`);
+> приложение — `assets/index-_Wvi0O71.js` (573 697 Б; бэкап
+> `app-offers.bak-20261123-2250`); самораздача `manifest 032fbd5e…` / `main
+> 062dfe7b…` / `styles 2517a7cf…`; реестр `sbe-apstore-registry` `d09da20`.
+> `offers-bot` не менялся.
 
 > **2026-11-23 (вечер) — «Технодайджест» по макету полосы, картинки в приложении и в чате.
 > ВЫПУЩЕНО 0.11.16.**
@@ -446,8 +483,8 @@ are fixed and listed in `HANDOFF.md` («Две независимые ревиз
 Previous version 0.11.1 — RELEASED 2026-11-16 (block «Бриф» in the app, repeat
 brief from the app, file parsing in «Позиции»).
 
-Code heads: `backend` `1df30f2` (code; docs — следующим коммитом), `main` `9c102c7`
-(release slice of 0.11.16; code; `offers-service/`, `offers-bot/`,
+Code heads: `backend` `ea5103f` (code; docs — следующим коммитом), `main` `bc0a1c8`
+(release slice of 0.11.17; code; `offers-service/`, `offers-bot/`,
 `offers-app/` live on `backend` only).
 
 > **0.11.1 — блок «Бриф» в карточке КП, повторный бриф из приложения и файл
@@ -1992,19 +2029,37 @@ measurements) are in the archive.
   from the storage rule, not yet confirmed against a live response — check it on
   the first issue that really has a picture.
 
-- **A picture is optional, the news is not** (2026-11-23). `handleAppNews` tries
-  `sendPhoto` first and, on any refusal (no hash/name, KB silent, >10 MB, not an
-  image, Telegram refusal), sends the full text instead and only logs the reason.
-  The reverse — losing the news because the photo failed — is the defect this
-  rule exists to prevent. And when the photo DID arrive but the text behind it
-  failed, the answer is still `ok`: calling it a failure would invite a second
-  press and a duplicate picture. `/internal/photo` is its OWN bot route next to
-  `notify` (text) and `answer` (document): Telegram has three methods, and one
-  route guessing the kind by file name is how a picture becomes a document.
+- **One news = ONE chat message. A photo is allowed only when the WHOLE news fits
+  its caption** (2026-11-23, the user's live complaint «не должна резаться на
+  несколько сообщений»). `handleAppNews` composes the full text first and asks
+  `digestFitsCaption` (1000 of Telegram's 1024 characters): fits and there is a
+  picture → `sendPhoto` with the news as the caption; otherwise → one text
+  message. Two messages («headline + text», «photo + text») are forbidden by the
+  contract, not by accident: the reader used to get the headline twice and the
+  news split across bubbles. The reverse — losing the news because the photo
+  failed — is also forbidden: the text goes instead and the reason is logged.
+  `/internal/photo` is its OWN bot route next to `notify` (text) and `answer`
+  (document): Telegram has three methods, and one route guessing the kind by file
+  name is how a picture becomes a document.
 
-- **A Telegram caption is limited in CHARACTERS, not bytes** (2026-11-23).
-  `sendPhoto` accepts 1024; `digestCaptionForChat` caps at 1000 and cuts by runes
-  (`cutRunes`), so a long Cyrillic title cannot turn the send into a refusal.
+- **A Telegram limit is counted in CHARACTERS and the bot splits at 4000** —
+  so the news must be capped BEFORE it is handed to the bot (2026-11-23).
+  `digestOneMessage` cuts at 3800 runes (margin for emoji/surrogate pairs) on a
+  word boundary and marks the cut with «…»; `digestFitsCaption` compares runes,
+  not bytes, for the same reason. Handing a longer text over means the bot's
+  `splitForTelegram` turns one news into several messages — exactly what the
+  user asked to stop. Real issue news are 256–647 characters, so this is a
+  safety net, not the normal path.
+
+- **A news card must be INSET, not full-bleed** (2026-11-23, the user's live
+  complaint «карточки разъезжаются по всей ширине и почти наезжают друг на
+  друга»). The lead news was a card while the rest were full-width rows with a
+  dashed divider, so on a phone the text of one news read as a continuation of
+  the next. Every news now uses `.app-digest .app-digest-news` (own background,
+  1 px border, 8 px radius, 16 px side margins, 10 px gap). **Do not re-add a
+  blanket `.app-digest .app-news { padding: 0 }`**: its specificity (0,2,0) beat
+  the card rule (0,1,0) and quietly stripped the frame and padding. The browser
+  guard checks COMPUTED styles and bounding boxes, not class names.
 
 - **A `callback_data` prefix can be COMPOSITE — parse by the LAST colon**
   (2026-11-13, R2). `nd:pick:3` must become `{prefix:'nd:pick', id:3}`. Parsing
